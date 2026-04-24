@@ -22,7 +22,7 @@ code duplication.
 ## Evolution
 
 It started as a single-user Python + AppleScript Frankenstein —
-hardcoded to me, hardcoded to one Notion workspace. After ~6 months
+hardcoded to me, hardcoded to one Notion workspace. After ~1 month
 of daily use and a clear picture of what actually mattered, I
 rewrote it from scratch:
 

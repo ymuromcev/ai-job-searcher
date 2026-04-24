@@ -224,7 +224,9 @@ function buildCandidateProfileBlocks(profile) {
   const identity = profile.identity || {};
   const prefs = profile.preferences || {};
 
-  const blocks = [];
+  // Leading heading — anchors the subpage in rendered Notion view and
+  // matches the contract exercised by buildCandidateProfileBlocks tests.
+  const blocks = [heading2("Candidate Profile")];
 
   // Identity lines — bold key, value plain. Mirrors legacy prototype format.
   const name = identity.name || identity.full_name;

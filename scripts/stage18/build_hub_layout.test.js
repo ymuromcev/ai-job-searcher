@@ -112,10 +112,16 @@ test("buildCandidateProfileBlocks: uses identity + preferences, ends with sentin
   assert.equal(blocks[0].type, "heading_2");
   assert.equal(blocks[0].heading_2.rich_text[0].text.content, "Candidate Profile");
 
-  // Must include each identity line
+  // Must include each identity line. Extract rich_text from any block
+  // variant (paragraph / bulleted_list_item / heading_3) so the assertions
+  // don't care which Notion block type the impl chose.
   const texts = blocks.map((b) => {
-    const rt = (b.paragraph && b.paragraph.rich_text) || [];
-    return rt.map((r) => r.text.content).join("");
+    const payload =
+      (b.paragraph && b.paragraph.rich_text) ||
+      (b.bulleted_list_item && b.bulleted_list_item.rich_text) ||
+      (b.heading_3 && b.heading_3.rich_text) ||
+      [];
+    return payload.map((r) => r.text.content).join("");
   });
   assert.ok(texts.some((t) => t.includes("Name: JARED MOORE")));
   assert.ok(texts.some((t) => t.includes("Location: Sacramento, CA")));
