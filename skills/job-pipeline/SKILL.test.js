@@ -13,9 +13,9 @@ test("SKILL.md exists and starts with the required frontmatter", () => {
   assert.match(text, /description:.*scan.*validate.*sync/i);
 });
 
-test("SKILL.md documents all three CLI commands", () => {
+test("SKILL.md documents all five CLI commands", () => {
   const text = fs.readFileSync(SKILL_PATH, "utf8");
-  for (const cmd of ["scan", "validate", "sync"]) {
+  for (const cmd of ["scan", "validate", "sync", "prepare", "check"]) {
     assert.match(text, new RegExp(`/job-pipeline ${cmd}`), `missing /${cmd} doc`);
     assert.match(
       text,

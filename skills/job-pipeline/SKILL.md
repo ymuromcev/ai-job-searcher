@@ -1,6 +1,6 @@
 ---
 name: job-pipeline
-description: "Multi-profile job-search pipeline — scan ATS adapters, validate the pipeline, prepare Inbox jobs (fit scoring, CL gen, Notion push), and sync with Notion. Trigger on: /job-pipeline, /job-pipeline scan, /job-pipeline validate, /job-pipeline sync, /job-pipeline prepare, or when user asks to scan/validate/sync/prepare jobs for a specific profile (see the `profiles/` directory for the current list)."
+description: "Multi-profile job-search pipeline — scan ATS adapters, validate the pipeline, prepare Inbox jobs (fit scoring, CL gen, Notion push), sync with Notion, and check Gmail for responses. Trigger on: /job-pipeline, /job-pipeline scan, /job-pipeline validate, /job-pipeline sync, /job-pipeline prepare, /job-pipeline check, or when user asks to scan/validate/sync/prepare/check jobs for a specific profile (see the `profiles/` directory for the current list)."
 ---
 
 # job-pipeline — Multi-profile Job Search Pipeline
@@ -13,6 +13,7 @@ Single engine, per-profile data. All commands take `--profile <id>`. Currently s
 - **`/job-pipeline validate`** — Pre-flight: TSV hygiene, company-cap check, URL liveness on active applications.
 - **`/job-pipeline sync`** — Reconcile per-profile applications with Notion. **Default = dry-run**, must pass `--apply` to commit.
 - **`/job-pipeline prepare`** — Two-phase processing of Inbox jobs: mechanical pre-phase (filter / URL check / JD fetch / salary) + Claude LLM phase (geo check / fit score / CL gen / Notion push).
+- **`/job-pipeline check`** — Two-phase Gmail response check: `--prepare` builds Gmail search batches for Claude MCP, `--apply` consumes Claude-written emails and updates Notion + TSV + logs.
 
 If no mode is specified, show this help and ask which to run.
 
@@ -93,6 +94,7 @@ Default mode prints the plan and runs the read-only pull preview. **Pass `--appl
 
 - **Do not** run any command without `--profile` — the CLI will refuse and print help.
 - **Do not** invoke `sync` without `--apply` and assume it will write — it always defaults to dry-run.
+- **Do not** invoke `check --apply` without first running `check --prepare` + the Phase-2 Gmail MCP reads — the script will error on missing `raw_emails.json`.
 - **Do not** edit `data/jobs.tsv` or `profiles/<id>/applications.tsv` by hand while a scan is running. Atomic-rename protects against partial writes but not against logical conflicts.
 - **Do not** commit `data/` or `profiles/<id>/` to git — both are in `.gitignore` for a reason. Only `profiles/_example/` is committed.
 - **Do not** mix profiles in one process. Each CLI invocation loads exactly one profile's secrets — never load `JARED_*` and `PAT_*` together.
@@ -277,6 +279,71 @@ Summarize:
 - **`jdText` is null for many jobs** — Greenhouse / Lever API may have changed; investigate `engine/core/jd_cache.js`. Geo + fit can still run from the job title + company name.
 - **Notion page creation fails** — check `JARED_NOTION_TOKEN` env var and that the DB id in `profile.json` is correct. Re-run the SKILL for the failed jobs only (skip already-created ones by key).
 - **Unknown company tier (salary = null)** — add the company to `profile.json.company_tiers` or `profiles/<id>/salary_matrix.md` and re-run `--phase pre`.
+
+### check
+
+Two-phase Gmail response checker. Reads are delegated to Claude via Gmail MCP — the script never touches OAuth.
+
+#### Phase 1 — prepare (CLI)
+
+```
+node engine/cli.js check --profile <id> --prepare [--since <ISO>]
+```
+
+Builds a search plan without hitting Gmail:
+
+1. Loads `profiles/<id>/applications.tsv` → picks rows where `status ∈ {Applied, To Apply, Interview, Onsite, Offer}` AND `notion_page_id` is set → forms `activeJobsMap`.
+2. Computes cursor epoch: `saved.last_check` or `--since` ISO, clamped to 30 days ago.
+3. Emits Gmail query batches (10 companies/batch + fixed LinkedIn batch + fixed recruiter batch).
+4. Writes `profiles/<id>/.gmail-state/check_context.json`.
+5. Prints JSON: `{ epoch, batches, processedIds }`.
+
+#### Phase 2 — Gmail reads (Claude via MCP)
+
+Claude executes in parallel:
+
+1. For each `batches[i]` → call Gmail MCP `search_threads` with the query + `pageSize: 50`.
+2. Collect all `messageId` values across threads, dedupe, remove any already in `processedIds`.
+3. For each new `messageId` → call `gmail_read_message` in parallel. Build per-email object:
+   ```json
+   {
+     "messageId": "...",
+     "subject": "<headers.Subject>",
+     "from": "<headers.From>",
+     "date": "<headers.Date>",
+     "body": "<body>"
+   }
+   ```
+4. Write the array to `profiles/<id>/.gmail-state/raw_emails.json` via Write tool.
+
+If 0 new IDs found → write `[]` and proceed (Phase 3 still runs to bump `last_check`).
+
+#### Phase 3 — apply (CLI)
+
+```
+node engine/cli.js check --profile <id> [--apply]
+```
+
+Default is dry-run (plan only, no Notion writes, no TSV mutations). With `--apply`:
+
+1. Reads `raw_emails.json` + `check_context.json`.
+2. Filters out messages already in `processed_messages.json`.
+3. Branches per email:
+   - **LinkedIn job alert** (`from:jobalerts-noreply@linkedin.com`) → add to Inbox in TSV.
+   - **Recruiter outreach** (subject matches recruiter keywords): if sender's company is in pipeline → Inbox; otherwise → `recruiter_leads.md` only.
+   - **Normal pipeline** → `classifier.js` assigns one of: `REJECTION`, `INTERVIEW_INVITE`, `INFO_REQUEST`, `ACKNOWLEDGMENT`, `OTHER`. Then `email_matcher.js` resolves to a pipeline (company, role) tuple.
+4. Plans Notion actions per match:
+   - `REJECTION` → `Status → Rejected` + add comment.
+   - `INTERVIEW_INVITE` → `Status → Interview` + add comment. (Notion DB only has `Interview` — do NOT push `Phone Screen` / `Onsite`.)
+   - `INFO_REQUEST` → comment only (no status change).
+   - Skips any row whose current status is `Rejected` / `Closed`.
+5. With `--apply`: calls `updatePageStatus` + `addPageComment` via Notion SDK v5; appends to `profiles/<id>/rejection_log.md`, `recruiter_leads.md`, `email_check_log.md`; writes `processed_messages.json`; saves TSV.
+
+#### Failure modes (check-specific)
+
+- **`raw_emails.json` missing** — Phase 2 didn't run or Claude didn't write the file. Re-do Phase 2.
+- **Notion 400 on status push** — a status option doesn't exist in the DB (e.g. tried pushing `Phone Screen`). The mapping lives in `engine/commands/check.js` — keep it in sync with the DB's `Status` select options.
+- **Cursor epoch stuck at 30d** — `last_check` was never saved (all prior `--apply` runs were dry-run). Override with `--since <ISO>` once, then `--apply` will bump `last_check`.
 
 ---
 
