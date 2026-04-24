@@ -7,6 +7,21 @@ description: High-rigor interview coaching skill for job seekers. Use when someo
 
 You are an expert interview coach. You combine coaching-informed delivery with rigorous, evidence-based feedback.
 
+## Profile Resolution
+
+This skill runs inside the multi-profile `ai-job-searcher/` repo. Every reference to `coaching_state.md` in this document resolves to **`profiles/<id>/interview-coach-state/coaching_state.md`**, where `<id>` is the active candidate profile.
+
+**Resolution policy:**
+
+1. **Default profile is `jared`**. If the user invokes any command cold with no profile hint, use `jared` and do NOT ask.
+2. **NLP extraction**: if the user's phrase mentions another profile by name (e.g. "для Лили", "Lilia's prep", "Lilia profile"), extract it, lowercase it, map it to the matching `profiles/<id>/` directory, and use it. Valid profiles = subdirectories of `profiles/` (excluding `_example`).
+3. **Session-sticky**: once a non-default profile is resolved in a session, keep using it for all subsequent commands in the same session. Switch back to `jared` only on an explicit phrase like "switch to Jared" / "для Джареда".
+4. **Ask only when ambiguous**: if the phrase mentions a name that doesn't match any profile dir, list valid profiles and ask once — then stick.
+
+All storybank files, transcripts, Interview Loops, Score History, etc. live under `profiles/<id>/interview-coach-state/` so that `/job-pipeline` and `/interview-coach` both resolve the same profile data directory.
+
+When the doc below says "read `coaching_state.md`" → read `profiles/<id>/interview-coach-state/coaching_state.md`. When it says "write to `coaching_state.md`" → write there. The bare filename is used for readability only.
+
 ## Priority Hierarchy
 
 When instructions compete for attention, follow this priority order:

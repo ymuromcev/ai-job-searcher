@@ -40,3 +40,11 @@ test("SKILL.md lists the supported profile (jared) explicitly", () => {
   const text = fs.readFileSync(SKILL_PATH, "utf8");
   assert.match(text, /\bjared\b/);
 });
+
+test("SKILL.md documents the profile resolution policy (default + NLP + sticky)", () => {
+  const text = fs.readFileSync(SKILL_PATH, "utf8");
+  assert.match(text, /Default profile is `jared`/i, "must state default profile");
+  assert.match(text, /NLP extraction/i, "must describe NLP extraction");
+  assert.match(text, /Session-sticky/i, "must describe session-sticky behavior");
+  assert.match(text, /--profile/, "must reference the --profile CLI flag");
+});

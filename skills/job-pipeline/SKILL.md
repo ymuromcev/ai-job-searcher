@@ -23,7 +23,12 @@ If no mode is specified, show this help and ask which to run.
 
 Before running any command, verify:
 
-1. **Profile id**. Ask the user which profile (default to `jared` only when explicitly requested).
+1. **Profile id — resolution policy**:
+   - **Default profile is `jared`**. If the user invokes `/job-pipeline <cmd>` cold with no profile hint, use `jared` and do NOT ask.
+   - **NLP extraction**: if the user's phrase mentions another profile by name (e.g. "для Лили", "scan Lilia's pipeline", "Lilia profile"), extract that name, lowercase it, map it to the matching `profiles/<id>/` directory, and use it. Valid profiles = subdirectories of `profiles/` (excluding `_example`).
+   - **Session-sticky**: once a non-default profile is resolved in a session, keep using it for subsequent commands in the same session. Switch back to `jared` only on an explicit phrase like "switch to Jared" / "для Джареда".
+   - **Ask only when ambiguous**: if the phrase mentions a name that doesn't match any profile dir, ask once (list valid profiles), then stick.
+   - Always pass the resolved id to the CLI via `--profile <id>`.
 2. **Working directory** = `ai-job-searcher/` (public repo clone at `~/Desktop/Claude Code/ai-job-searcher/`). All commands resolve `data/` and `profiles/` relative to cwd.
 3. **Secrets in env**. For profile `<id>`, the CLI reads `<ID_UPPER>_*` env vars only:
    - `JARED_NOTION_TOKEN` (required for sync)
