@@ -119,7 +119,7 @@ ashby, smartrecruiters, workday. Leave a line commented out to disable.
 
 ## I. Required .env variables
 
-Confirm you've set these in `AIJobSearcher/.env` (do not paste values here):
+Confirm you've set these in the root `.env` of your `ai-job-searcher/` clone (do not paste values here):
 
 - env_notion_token_set: <!-- yes/no. Variable: <PROFILE_ID_UPPER>_NOTION_TOKEN -->
 - env_usajobs_set: <!-- yes/no — only required if usajobs is in modules. Variables: <PROFILE_ID_UPPER>_USAJOBS_API_KEY + _USAJOBS_EMAIL -->

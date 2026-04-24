@@ -23,7 +23,7 @@ If no mode is specified, show this help and ask which to run.
 Before running any command, verify:
 
 1. **Profile id**. Ask the user which profile (default to `jared` only when explicitly requested).
-2. **Working directory** = `AIJobSearcher/`. All commands resolve `data/` and `profiles/` relative to cwd.
+2. **Working directory** = `ai-job-searcher/` (public repo clone at `~/Desktop/Claude Code/ai-job-searcher/`). All commands resolve `data/` and `profiles/` relative to cwd.
 3. **Secrets in env**. For profile `<id>`, the CLI reads `<ID_UPPER>_*` env vars only:
    - `JARED_NOTION_TOKEN` (required for sync)
    - `JARED_USAJOBS_API_KEY`, `JARED_USAJOBS_EMAIL` (required if discovery:usajobs is enabled)
