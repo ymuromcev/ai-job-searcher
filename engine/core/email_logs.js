@@ -96,7 +96,7 @@ function buildSummary({
     );
   }
   const interviews = logRows.filter((r) =>
-    (r.action || "").includes("Phone Screen")
+    (r.action || "").includes("Interview")
   );
   if (interviews.length > 0) {
     parts.push(

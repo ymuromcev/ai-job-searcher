@@ -260,8 +260,8 @@ test("updatePageStatus uses status property map + toPropertyValue", async () => 
 
 test("updatePageStatus falls back to default property map when omitted", async () => {
   const client = makeFakeClient();
-  await updatePageStatus(client, "page-1", "Phone Screen");
-  assert.equal(client.calls[0].params.properties["Status"].status.name, "Phone Screen");
+  await updatePageStatus(client, "page-1", "Interview");
+  assert.equal(client.calls[0].params.properties["Status"].status.name, "Interview");
 });
 
 test("updatePageStatus throws on missing args", async () => {

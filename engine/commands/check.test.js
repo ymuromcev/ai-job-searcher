@@ -129,7 +129,7 @@ test("buildActiveJobsMap: filters to active + notion_page_id set", () => {
     fakeApp({ key: "a", status: "Applied", notion_page_id: "p1", companyName: "Acme" }),
     fakeApp({ key: "b", status: "Rejected", notion_page_id: "p2", companyName: "Acme" }),
     fakeApp({ key: "c", status: "Inbox", notion_page_id: "", companyName: "Acme" }),
-    fakeApp({ key: "d", status: "Phone Screen", notion_page_id: "p4", companyName: "Beta" }),
+    fakeApp({ key: "d", status: "Interview", notion_page_id: "p4", companyName: "Beta" }),
   ];
   const map = buildActiveJobsMap(apps);
   assert.deepEqual(Object.keys(map).sort(), ["Acme", "Beta"]);
@@ -322,7 +322,7 @@ test("processPipeline: REJECTION skipped if already Rejected", () => {
   assert.equal(res.action, undefined);
 });
 
-test("processPipeline: INTERVIEW_INVITE → Phone Screen", () => {
+test("processPipeline: INTERVIEW_INVITE → Interview", () => {
   const res = processPipeline(
     {
       messageId: "m1",
@@ -338,7 +338,7 @@ test("processPipeline: INTERVIEW_INVITE → Phone Screen", () => {
     })
   );
   assert.equal(res.row.type, "INTERVIEW_INVITE");
-  assert.equal(res.action.newStatus, "Phone Screen");
+  assert.equal(res.action.newStatus, "Interview");
 });
 
 test("processPipeline: INFO_REQUEST → comment_only, no status", () => {

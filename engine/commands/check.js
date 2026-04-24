@@ -54,7 +54,7 @@ const emailLogs = require("../core/email_logs.js");
 const ACTIVE_STATUSES = new Set([
   "Applied",
   "To Apply",
-  "Phone Screen",
+  "Interview",
   "Onsite",
   "Offer",
 ]);
@@ -394,10 +394,10 @@ function processPipeline(email, ctx, state) {
       kind: "status+comment",
       pageId: job.notion_id,
       appKey: job.key,
-      newStatus: "Phone Screen",
+      newStatus: "Interview",
       comment: `🔔 Приглашение на интервью! Тема: ${email.subject}. Проверь письмо и запланируй.`,
     };
-    row.action = "queued: Status → Phone Screen";
+    row.action = "queued: Status → Interview";
     row.comment = "✅ queued";
     return { row, action };
   }

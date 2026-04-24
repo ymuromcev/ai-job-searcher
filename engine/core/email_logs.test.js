@@ -72,7 +72,7 @@ test("buildSummary: 1 rejection → RU text", () => {
 
 test("buildSummary: interview invite", () => {
   const out = buildSummary({
-    logRows: [{ type: "INTERVIEW_INVITE", action: "queued: Status → Phone Screen", company: "Block" }],
+    logRows: [{ type: "INTERVIEW_INVITE", action: "queued: Status → Interview", company: "Block" }],
     actionCount: 1,
   });
   assert.match(out, /🔔 1 приглашение на интервью \(Block\)/);
