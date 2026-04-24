@@ -1,0 +1,42 @@
+{
+  "id": "example",
+  "identity": {
+    "name": "EXAMPLE CANDIDATE",
+    "phone": "+1 (555) 000-0000",
+    "location": "San Francisco, CA",
+    "email": "candidate@example.com",
+    "linkedin": "linkedin.com/in/example"
+  },
+  "modules": [
+    "discovery:greenhouse",
+    "discovery:lever",
+    "discovery:ashby"
+  ],
+  "discovery": {
+    "companies_whitelist": null,
+    "companies_blacklist": []
+  },
+  "filter_rules_file": "filter_rules.example.json",
+  "resume": {
+    "versions_file": "resume_versions.example.json",
+    "output_dir": "resumes",
+    "master_format": "docx"
+  },
+  "cover_letter": {
+    "config_file": "cover_letter_versions.example.json",
+    "template_file": "cover_letter_template.example.md",
+    "output_dir": "cover_letters"
+  },
+  "notion": {
+    "jobs_pipeline_db_id": "REPLACE_WITH_YOUR_NOTION_DATABASE_ID",
+    "property_map": {
+      "title":       { "field": "Title",   "type": "title" },
+      "companyName": { "field": "Company", "type": "rich_text" },
+      "source":      { "field": "Source",  "type": "select" },
+      "jobId":       { "field": "JobID",   "type": "rich_text" },
+      "url":         { "field": "URL",     "type": "url" },
+      "status":      { "field": "Status",  "type": "status" },
+      "key":         { "field": "Key",     "type": "rich_text" }
+    }
+  }
+}

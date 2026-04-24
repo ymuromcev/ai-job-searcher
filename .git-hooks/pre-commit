@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+#
+# pre-commit — PII + secret leak guard.
+#
+# Runs against the staged diff only. Exits non-zero if any pattern matches,
+# with a hint on what to do. Bypass (discouraged) with `git commit --no-verify`.
+
+set -u
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM)
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+# Only scan text-ish files. Skip binaries, generated artifacts, node_modules.
+FILES=""
+for f in $STAGED; do
+  case "$f" in
+    node_modules/*|dist/*|build/*|coverage/*) continue ;;
+    *.pdf|*.docx|*.xlsx|*.png|*.jpg|*.jpeg|*.gif|*.ico) continue ;;
+    *.lock|package-lock.json|yarn.lock|pnpm-lock.yaml) continue ;;
+    # The hook file itself contains the PII regex patterns literally.
+    # Self-exclude to avoid false positives on hook edits.
+    .git-hooks/pre-commit) continue ;;
+  esac
+  if [ -f "$f" ]; then
+    FILES="$FILES $f"
+  fi
+done
+
+if [ -z "$FILES" ]; then
+  exit 0
+fi
+
+FAIL=0
+report() {
+  if [ "$FAIL" -eq 0 ]; then
+    echo ""
+    echo "pre-commit: potential leak detected in staged changes."
+    echo "-------------------------------------------------------"
+  fi
+  FAIL=1
+  echo ""
+  echo "[$1]"
+  echo "$2"
+}
+
+# --- Secret patterns --------------------------------------------------------
+# Notion integration tokens (ntn_ + 50 chars, case-insensitive).
+HIT=$(git diff --cached -U0 -- $FILES | grep -iE '^\+.*\bntn_[a-z0-9]{40,}\b' || true)
+[ -n "$HIT" ] && report "Notion token (ntn_...)" "$HIT"
+
+# Legacy Notion secret tokens.
+HIT=$(git diff --cached -U0 -- $FILES | grep -iE '^\+.*\bsecret_[a-z0-9]{40,}\b' || true)
+[ -n "$HIT" ] && report "Legacy Notion token (secret_...)" "$HIT"
+
+# Google OAuth client secrets.
+HIT=$(git diff --cached -U0 -- $FILES | grep -E '^\+.*GOCSPX-[A-Za-z0-9_-]{20,}' || true)
+[ -n "$HIT" ] && report "Google OAuth client secret" "$HIT"
+
+# Generic "API key" style assignments with long opaque values.
+HIT=$(git diff --cached -U0 -- $FILES | grep -iE '^\+.*(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|bearer)[[:space:]]*[:=][[:space:]]*["'\''`][A-Za-z0-9_\-]{24,}["'\''`]' || true)
+[ -n "$HIT" ] && report "API key / token assignment" "$HIT"
+
+# Private key blocks.
+HIT=$(git diff --cached -U0 -- $FILES | grep -E '^\+.*-----BEGIN ((RSA|EC|OPENSSH|DSA) )?PRIVATE KEY-----' || true)
+[ -n "$HIT" ] && report "Private key block" "$HIT"
+
+# AWS-style access keys.
+HIT=$(git diff --cached -U0 -- $FILES | grep -E '^\+.*\bAKIA[0-9A-Z]{16}\b' || true)
+[ -n "$HIT" ] && report "AWS access key id" "$HIT"
+
+# --- PII patterns -----------------------------------------------------------
+# Author's real first name + surname. Poor-man's word boundary: allows the
+# public handle `ymuromcev` through (it contains `muromcev` but preceded by
+# `y`, a letter, so the `[^a-z]` boundary fails) while blocking `Muromcev`,
+# `Yaroslav`, `Iaroslav` as standalone tokens. The `+` at line start counts
+# as a non-letter boundary via the optional `(.*[^a-z])?` prefix, so a bare
+# `+Iaroslav` is still caught.
+HIT=$(git diff --cached -U0 -- $FILES | grep -iE '^\+(.*[^a-z])?(muromcev|muromtsev|yaroslav|iaroslav)([^a-z]|$)' || true)
+[ -n "$HIT" ] && report "Real name leak" "$HIT"
+
+# Secondary profile real names (edit to match your own if you fork).
+HIT=$(git diff --cached -U0 -- $FILES | grep -iE '^\+(.*[^a-z])?(chirova|khrystyna)([^a-z]|$)' || true)
+[ -n "$HIT" ] && report "Secondary profile real name" "$HIT"
+
+# --- Committed .env ---------------------------------------------------------
+for f in $FILES; do
+  case "$f" in
+    .env|.env.*)
+      if [ "$f" != ".env.example" ]; then
+        report "Committing .env file" "$f — .env is gitignored for a reason."
+      fi
+      ;;
+  esac
+done
+
+if [ "$FAIL" -ne 0 ]; then
+  echo ""
+  echo "-------------------------------------------------------"
+  echo "If this is a false positive, inspect the diff above and"
+  echo "bypass with 'git commit --no-verify'. Prefer fixing the"
+  echo "diff."
+  echo ""
+  exit 1
+fi
+
+exit 0

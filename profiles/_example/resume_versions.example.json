@@ -1,0 +1,33 @@
+{
+  "_description": "Resume master source. `contact` + `shared_experience` + `certifications` are used across all versions; each entry in `versions` is an archetype (named variant of the resume) with version-specific summary, bullets, and skill emphases.",
+  "contact": {
+    "name": "EXAMPLE CANDIDATE",
+    "phone": "+1 (555) 000-0000",
+    "location": "San Francisco, CA",
+    "email": "candidate@example.com",
+    "linkedin": "linkedin.com/in/example"
+  },
+  "shared_experience": [
+    {
+      "company": "Example Corp",
+      "role": "Senior Product Manager",
+      "period": "2022 — Present",
+      "bullets": [
+        "Drove roadmap for flagship fintech product, growing ARR from $2M to $15M over 18 months.",
+        "Shipped risk-scoring ML feature that reduced fraud losses by 34%."
+      ]
+    }
+  ],
+  "certifications": [
+    { "name": "Certified Scrum Product Owner", "year": 2021 }
+  ],
+  "versions": {
+    "fintech_generalist": {
+      "title": "Product Manager — Fintech",
+      "summary": "Product leader with 6+ years in fintech; focus on risk, fraud, and consumer lending.",
+      "skillsProduct": ["Roadmap", "A/B testing", "OKRs"],
+      "skillsDomain": ["Risk modelling", "Credit", "Payments"],
+      "filename": "resume_example_fintech.docx"
+    }
+  }
+}

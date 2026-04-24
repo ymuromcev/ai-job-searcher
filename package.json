@@ -1,0 +1,29 @@
+{
+  "name": "ai-job-searcher",
+  "version": "0.1.0",
+  "description": "Multi-profile job search pipeline: one engine, multiple candidates.",
+  "type": "commonjs",
+  "main": "engine/cli.js",
+  "scripts": {
+    "test": "node --test 'engine/**/*.test.js' 'skills/**/*.test.js' 'scripts/**/*.test.js'",
+    "setup-hooks": "node scripts/setup-hooks.js"
+  },
+  "author": {
+    "name": "Jared Moore",
+    "email": "ymuromcev@gmail.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ymuromcev/ai-job-searcher.git"
+  },
+  "dependencies": {
+    "@notionhq/client": "^5.19.0",
+    "docx": "^9.6.1",
+    "dotenv": "^17.4.2",
+    "pdfkit": "^0.18.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

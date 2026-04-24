@@ -1,0 +1,22 @@
+{
+  "_description": "Pre-Notion filter rules. Applied BEFORE creating Notion pages. Jobs matching these rules go straight to Archive in TSV, never reach Notion.",
+  "company_cap": {
+    "max_active": 3,
+    "active_statuses": ["Applied", "To Apply", "Interview", "Offer"],
+    "action": "Archive",
+    "note": "ATS systems may deprioritize candidates with too many applications to same company",
+    "overrides": {}
+  },
+  "company_blocklist": {
+    "_description": "Companies where ALL roles are a weak fit for this candidate. Auto-archive.",
+    "companies": []
+  },
+  "title_blocklist": {
+    "_description": "Title patterns that auto-archive regardless of company. Matched case-insensitively as substrings.",
+    "patterns": []
+  },
+  "location_rules": {
+    "_description": "Restrict to specific locations / remote-only. Empty = no location filter.",
+    "allowed_substrings": []
+  }
+}

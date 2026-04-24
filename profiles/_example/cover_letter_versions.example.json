@@ -1,0 +1,15 @@
+{
+  "_description": "Keyed cover-letter variants. Each key is a profile-chosen identifier (e.g. company_role_focus). Fields populate the template placeholders; unknown fields are ignored.",
+  "example_company_fintech_pm": {
+    "companyName": "Example Fintech",
+    "roleTitle": "Senior Product Manager",
+    "hiringManager": "Hiring Team",
+    "openingParagraph": "Your mission to make credit accessible lines up with work I have led shipping risk-scoring products for similar audiences.",
+    "bodyParagraph": "At Example Corp I drove a roadmap that grew ARR 7x in 18 months while cutting fraud losses by 34%. The wins came from a disciplined loop: weekly cohort reads, tight scope on experiments, and a bias toward shipping the smallest thing that would teach us something.",
+    "closingParagraph": "I would love to talk about where your product is heading next quarter and where I can help.",
+    "candidateName": "EXAMPLE CANDIDATE",
+    "candidateEmail": "candidate@example.com",
+    "candidatePhone": "+1 (555) 000-0000",
+    "candidateLinkedin": "linkedin.com/in/example"
+  }
+}

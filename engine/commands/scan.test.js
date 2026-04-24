@@ -1,0 +1,456 @@
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+
+const { makeScanCommand, modulesToSources, applyTargetFilters, redactor } = require("./scan.js");
+
+function captureOut() {
+  const stdout = [];
+  const stderr = [];
+  return {
+    stdout: (s) => stdout.push(s),
+    stderr: (s) => stderr.push(s),
+    write: (s) => stdout.push(s), // legacy alias
+    lines: stdout,
+    all: () => stdout.concat(stderr).join("\n"),
+  };
+}
+
+function fakeJob(overrides = {}) {
+  return {
+    source: "greenhouse",
+    slug: "affirm",
+    jobId: "1",
+    companyName: "Affirm",
+    title: "Senior PM",
+    url: "https://x/1",
+    locations: ["SF"],
+    team: "Product",
+    postedAt: "2026-04-15",
+    rawExtra: {},
+    ...overrides,
+  };
+}
+
+function makeDeps(overrides = {}) {
+  const calls = { saveJobs: [], saveApplications: [], scan: [], loadProfile: [] };
+  const deps = {
+    loadProfile: (id) => {
+      calls.loadProfile.push(id);
+      return {
+        id,
+        modules: ["discovery:greenhouse", "discovery:lever"],
+        discovery: { companies_blacklist: [] },
+        paths: { root: "/tmp/profiles/jared" },
+      };
+    },
+    loadSecrets: () => ({ NOTION_TOKEN: "tok" }),
+    loadCompanies: () => ({
+      rows: [
+        { name: "Affirm", source: "greenhouse", slug: "affirm", extra: null },
+        { name: "Stripe", source: "lever", slug: "stripe", extra: null },
+        { name: "Old", source: "ashby", slug: "old", extra: null },
+      ],
+    }),
+    groupBySource: (rows) => {
+      const out = {};
+      for (const r of rows) {
+        if (!out[r.source]) out[r.source] = [];
+        out[r.source].push({ name: r.name, slug: r.slug });
+      }
+      return out;
+    },
+    loadJobs: () => ({ jobs: [] }),
+    saveJobs: (file, jobs) => {
+      calls.saveJobs.push({ file, count: jobs.length });
+      return { path: file, count: jobs.length };
+    },
+    loadApplications: () => ({ apps: [] }),
+    saveApplications: (file, apps) => {
+      calls.saveApplications.push({ file, count: apps.length });
+      return { path: file, count: apps.length };
+    },
+    appendNewApplications: (existing, jobs) => {
+      const fresh = jobs.map((j) => ({
+        key: `${j.source}:${j.jobId}`,
+        source: j.source,
+        jobId: j.jobId,
+        companyName: j.companyName,
+        title: j.title,
+        url: j.url,
+        status: "Inbox",
+        notion_page_id: "",
+        resume_ver: "",
+        cl_key: "",
+        createdAt: "now",
+        updatedAt: "now",
+      }));
+      return { apps: existing.concat(fresh), fresh };
+    },
+    scan: async ({ targetsBySource, adapters, existing, ctx }) => {
+      calls.scan.push({ targetsBySource, adapters: Object.keys(adapters), existingCount: existing.length, ctx });
+      return {
+        fresh: [fakeJob({ jobId: "1" }), fakeJob({ source: "lever", slug: "stripe", jobId: "2", companyName: "Stripe" })],
+        pool: [fakeJob({ jobId: "1" }), fakeJob({ source: "lever", slug: "stripe", jobId: "2", companyName: "Stripe" })],
+        summary: { greenhouse: { total: 1, error: null }, lever: { total: 1, error: null } },
+        errors: [],
+      };
+    },
+    listAdapters: () => ["greenhouse", "lever", "ashby"],
+    getAdapter: (src) => ({ source: src, discover: async () => [] }),
+    now: () => "2026-04-20T00:00:00Z",
+    ...overrides,
+  };
+  return { deps, calls };
+}
+
+function makeCtx(overrides = {}) {
+  const out = captureOut();
+  return {
+    ctx: {
+      command: "scan",
+      profileId: "jared",
+      flags: { dryRun: false, apply: false, verbose: false },
+      env: { JARED_NOTION_TOKEN: "x" },
+      stdout: out.stdout,
+      stderr: out.stderr,
+      profilesDir: "/tmp/profiles",
+      dataDir: "/tmp/data",
+      ...overrides,
+    },
+    out,
+  };
+}
+
+test("scan dispatches enabled discovery modules and writes both files", async () => {
+  const { deps, calls } = makeDeps();
+  const { ctx, out } = makeCtx();
+  const code = await makeScanCommand(deps)(ctx);
+  assert.equal(code, 0);
+
+  // Only greenhouse + lever are in profile.modules — ashby targets must be filtered out.
+  const passedSources = Object.keys(calls.scan[0].targetsBySource).sort();
+  assert.deepEqual(passedSources, ["greenhouse", "lever"]);
+  // Adapter map mirrors that.
+  assert.deepEqual(calls.scan[0].adapters.sort(), ["greenhouse", "lever"]);
+
+  // ctx.secrets must be threaded through to the orchestrator.
+  assert.equal(calls.scan[0].ctx.secrets.NOTION_TOKEN, "tok");
+
+  assert.equal(calls.saveJobs.length, 1);
+  assert.equal(calls.saveApplications.length, 1);
+  assert.equal(calls.saveJobs[0].count, 2);
+  assert.equal(calls.saveApplications[0].count, 2);
+  assert.match(out.lines.join("\n"), /fresh jobs: 2/);
+});
+
+test("scan honours --dry-run by skipping writes", async () => {
+  const { deps, calls } = makeDeps();
+  const { ctx, out } = makeCtx({ flags: { dryRun: true, apply: false, verbose: false } });
+  const code = await makeScanCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(calls.saveJobs.length, 0);
+  assert.equal(calls.saveApplications.length, 0);
+  assert.match(out.lines.join("\n"), /\(dry-run\) would write 2 rows/);
+  assert.match(out.lines.join("\n"), /\(dry-run\) would append 2 rows/);
+});
+
+test("scan exits 1 when companies pool is empty", async () => {
+  const { deps } = makeDeps({ loadCompanies: () => ({ rows: [] }) });
+  const { ctx, out } = makeCtx();
+  const code = await makeScanCommand(deps)(ctx);
+  assert.equal(code, 1);
+  assert.match(out.all(), /companies pool is empty/);
+});
+
+test("scan returns early when profile has no discovery modules", async () => {
+  const { deps } = makeDeps({
+    loadProfile: () => ({
+      id: "jared",
+      modules: ["tracking:gmail"],
+      discovery: {},
+      paths: { root: "/tmp/profiles/jared" },
+    }),
+  });
+  const { ctx, out } = makeCtx();
+  const code = await makeScanCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.match(out.lines.join("\n"), /no discovery modules enabled/);
+});
+
+test("scan warns about sources without registered adapter", async () => {
+  const { deps } = makeDeps({
+    loadProfile: () => ({
+      id: "jared",
+      modules: ["discovery:greenhouse", "discovery:lever", "discovery:ashby"],
+      discovery: {},
+      paths: { root: "/tmp/profiles/jared" },
+    }),
+    listAdapters: () => ["greenhouse", "lever"], // ashby missing
+  });
+  const { ctx, out } = makeCtx();
+  await makeScanCommand(deps)(ctx);
+  assert.match(out.all(), /no adapter for source "ashby"/);
+});
+
+test("modulesToSources extracts only discovery: entries", () => {
+  assert.deepEqual(
+    [...modulesToSources(["discovery:greenhouse", "tracking:gmail", "discovery:lever"])].sort(),
+    ["greenhouse", "lever"]
+  );
+  assert.deepEqual([...modulesToSources([])], []);
+  assert.deepEqual([...modulesToSources("nope")], []);
+});
+
+test("redactor masks secret values in error messages and ignores short ones", () => {
+  const r = redactor(["sk-abcd1234longtoken", "ab"]); // short value "ab" should be ignored
+  assert.equal(r("error: Authorization-Key sk-abcd1234longtoken invalid"),
+    "error: Authorization-Key *** invalid");
+  assert.equal(r("no abracadabra here"), "no abracadabra here"); // short value not redacted
+  assert.equal(r(null), "");
+  assert.equal(r(undefined), "");
+});
+
+test("scan --verbose prints the redactor mask count", async () => {
+  const { deps } = makeDeps({
+    loadSecrets: () => ({ NOTION_TOKEN: "ntn_longenough", SHORT: "ab", OTHER: "secret12345" }),
+  });
+  const { ctx, out } = makeCtx({ flags: { dryRun: true, apply: false, verbose: true } });
+  await makeScanCommand(deps)(ctx);
+  // "ab" is below the length-6 threshold, so 2 active masks.
+  assert.match(out.all(), /redactor: 2 secret value\(s\) will be masked/);
+});
+
+test("scan is idempotent — second run without new jobs does not rewrite jobs.tsv", async () => {
+  const fs = require("fs");
+  const os = require("os");
+  const path = require("path");
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aijs-scan-idem-"));
+  const profilesDir = path.join(tmpRoot, "profiles");
+  const dataDir = path.join(tmpRoot, "data");
+  const profileDir = path.join(profilesDir, "jared");
+  fs.mkdirSync(profileDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(profileDir, "profile.json"),
+    JSON.stringify({ id: "jared", modules: ["discovery:greenhouse"], discovery: {} })
+  );
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dataDir, "companies.tsv"),
+    "name\tats_source\tats_slug\textra_json\nAffirm\tgreenhouse\taffirm\t\n"
+  );
+
+  const stubAdapter = {
+    source: "greenhouse",
+    discover: async () => [
+      {
+        source: "greenhouse",
+        slug: "affirm",
+        jobId: "777",
+        companyName: "Affirm",
+        title: "Stable PM",
+        url: "https://x/777",
+        locations: ["SF"],
+        team: null,
+        postedAt: "2026-04-15",
+        rawExtra: {},
+      },
+    ],
+  };
+  const cmd = makeScanCommand({
+    listAdapters: () => ["greenhouse"],
+    getAdapter: () => stubAdapter,
+    now: () => "2026-04-20T00:00:00Z",
+  });
+  const makeRunCtx = () => {
+    const out = captureOut();
+    return {
+      out,
+      ctx: {
+        command: "scan",
+        profileId: "jared",
+        flags: { dryRun: false, apply: false, verbose: false },
+        env: {},
+        stdout: out.stdout,
+        stderr: out.stderr,
+        profilesDir,
+        dataDir,
+      },
+    };
+  };
+
+  // First run — file is written.
+  const first = makeRunCtx();
+  const code1 = await cmd(first.ctx);
+  assert.equal(code1, 0);
+  const jobsPath = path.join(dataDir, "jobs.tsv");
+  const firstSnapshot = fs.readFileSync(jobsPath, "utf8");
+  const firstMtime = fs.statSync(jobsPath).mtimeMs;
+
+  await new Promise((r) => setTimeout(r, 20)); // ensure the filesystem clock advances
+
+  // Second run — no new jobs (stub returns the same id). File must not change.
+  const second = makeRunCtx();
+  const code2 = await cmd(second.ctx);
+  assert.equal(code2, 0);
+  const secondSnapshot = fs.readFileSync(jobsPath, "utf8");
+  const secondMtime = fs.statSync(jobsPath).mtimeMs;
+  assert.equal(secondSnapshot, firstSnapshot, "jobs.tsv content must not change on idempotent scan");
+  assert.equal(secondMtime, firstMtime, "jobs.tsv mtime must not change on idempotent scan");
+  assert.match(second.out.all(), /no new jobs — nothing to write/);
+});
+
+test("scan redacts secret values from adapter error messages", async () => {
+  const secretVal = "ntn_super_secret_token_xyz";
+  const { deps } = makeDeps({
+    loadSecrets: () => ({ NOTION_TOKEN: secretVal }),
+    scan: async () => ({
+      fresh: [],
+      pool: [],
+      summary: { greenhouse: { total: 0, error: `HTTP 401 (token=${secretVal})` } },
+      errors: [],
+    }),
+  });
+  const { ctx, out } = makeCtx();
+  await makeScanCommand(deps)(ctx);
+  const joined = out.all();
+  assert.doesNotMatch(joined, new RegExp(secretVal));
+  assert.match(joined, /\*\*\*/);
+});
+
+test("applyTargetFilters honours whitelist + blacklist", () => {
+  const grouped = {
+    greenhouse: [{ name: "Affirm", slug: "affirm" }, { name: "Stripe", slug: "stripe" }],
+    lever: [{ name: "Plaid", slug: "plaid" }],
+  };
+  const wl = applyTargetFilters(grouped, {
+    discovery: { companies_whitelist: ["Affirm", "Plaid"] },
+  });
+  assert.equal(wl.greenhouse.length, 1);
+  assert.equal(wl.greenhouse[0].name, "Affirm");
+  assert.equal(wl.lever.length, 1);
+
+  const bl = applyTargetFilters(grouped, {
+    discovery: { companies_blacklist: ["stripe"] },
+  });
+  assert.equal(bl.greenhouse.length, 1);
+  assert.equal(bl.greenhouse[0].name, "Affirm");
+});
+
+test("scan injects synthetic feed target for feedMode adapters with no companies", async () => {
+  // Profile enables "discovery:remoteok"; companies.tsv has no remoteok entries.
+  // Scan command should inject { name: 'feed', slug: '__feed__' } and invoke the adapter.
+  const feedJobs = [];
+  const { deps } = makeDeps({
+    loadProfile: () => ({
+      id: "jared",
+      modules: ["discovery:remoteok"],
+      discovery: {},
+      paths: { root: "/tmp/profiles/jared" },
+    }),
+    loadCompanies: () => ({ rows: [] }), // no companies at all
+    listAdapters: () => ["remoteok"],
+    getAdapter: (src) => ({
+      source: src,
+      discover: async (targets) => {
+        feedJobs.push(...targets);
+        return [];
+      },
+      feedMode: true,
+    }),
+    scan: async ({ targetsBySource }) => {
+      // Verify synthetic target was injected before scan was called.
+      assert.ok(targetsBySource.remoteok, "remoteok should be in targetsBySource");
+      assert.equal(targetsBySource.remoteok[0].slug, "__feed__");
+      return { fresh: [], pool: [], summary: { remoteok: { total: 0, error: null } }, errors: [] };
+    },
+  });
+  const { ctx } = makeCtx();
+  const code = await makeScanCommand(deps)(ctx);
+  assert.equal(code, 0);
+});
+
+test("scan does NOT inject feed target for non-feed adapters with no companies", async () => {
+  // Non-feedMode adapter + empty companies pool → no targets → companies pool error.
+  const { deps } = makeDeps({
+    loadProfile: () => ({
+      id: "jared",
+      modules: ["discovery:greenhouse"],
+      discovery: {},
+      paths: { root: "/tmp/profiles/jared" },
+    }),
+    loadCompanies: () => ({ rows: [] }), // no greenhouse companies
+    listAdapters: () => ["greenhouse"],
+    getAdapter: (src) => ({ source: src, discover: async () => [], feedMode: false }),
+  });
+  const { ctx, out } = makeCtx();
+  const code = await makeScanCommand(deps)(ctx);
+  assert.equal(code, 1);
+  assert.match(out.all(), /companies pool is empty/);
+});
+
+test("scan integrates end-to-end against tmp filesystem with stub adapter", async () => {
+  // Setup tmp profile + data dirs
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aijs-scan-"));
+  const profilesDir = path.join(tmpRoot, "profiles");
+  const dataDir = path.join(tmpRoot, "data");
+  const profileDir = path.join(profilesDir, "jared");
+  fs.mkdirSync(profileDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(profileDir, "profile.json"),
+    JSON.stringify({
+      id: "jared",
+      modules: ["discovery:greenhouse"],
+      discovery: {},
+    })
+  );
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dataDir, "companies.tsv"),
+    "name\tats_source\tats_slug\textra_json\nAffirm\tgreenhouse\taffirm\t\n"
+  );
+
+  // Stub adapter returning one job
+  const stubAdapter = {
+    source: "greenhouse",
+    discover: async () => [
+      {
+        source: "greenhouse",
+        slug: "affirm",
+        jobId: "999",
+        companyName: "Affirm",
+        title: "Live PM",
+        url: "https://x/999",
+        locations: ["SF"],
+        team: "Product",
+        postedAt: "2026-04-15",
+        rawExtra: {},
+      },
+    ],
+  };
+
+  const cmd = makeScanCommand({
+    listAdapters: () => ["greenhouse"],
+    getAdapter: () => stubAdapter,
+  });
+
+  const out = captureOut();
+  const code = await cmd({
+    command: "scan",
+    profileId: "jared",
+    flags: { dryRun: false, apply: false, verbose: false },
+    env: {},
+    stdout: out.stdout,
+    stderr: out.stderr,
+    profilesDir,
+    dataDir,
+  });
+  assert.equal(code, 0);
+
+  const jobsTsvText = fs.readFileSync(path.join(dataDir, "jobs.tsv"), "utf8");
+  assert.match(jobsTsvText, /Live PM/);
+  const appsText = fs.readFileSync(path.join(profileDir, "applications.tsv"), "utf8");
+  assert.match(appsText, /greenhouse:999/);
+});
