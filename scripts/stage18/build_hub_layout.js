@@ -65,24 +65,28 @@ function paragraphText(block) {
 // Config
 // ---------------------------------------------------------------------------
 
-// Subpage titles are in Russian for the user-facing tabs (the user's working
-// language is Russian; the surrounding workspace UI is too). Keys stay
-// English/snake_case — they're stable identifiers used in profile.json,
-// state.json, and tests; renaming them would force a migration.
+// Subpage titles stay in English (stable labels used throughout the codebase
+// and Notion search). The PAGE BODIES are in Russian for Workflow / Target
+// Tier / Resume Versions — that's the user's working language. Candidate
+// Profile body stays English (identity facts pulled verbatim from
+// profile.json — labels like "Email" / "LinkedIn" don't translate well).
 //
-// LEGACY_TITLES lets us recognize subpages created before the rename so we
-// can rename them in-place via pages.update instead of creating duplicates.
+// LEGACY_TITLES lets us recognize subpages whose title was at some point
+// changed (in code or by hand) so re-running build_hub_layout renames them
+// back to canonical instead of creating duplicates.
 const SUBPAGES = [
   { key: "candidate_profile", title: "Candidate Profile", icon: "👤", mode: "candidate_profile" },
-  { key: "workflow", title: "Воркфлоу", icon: "⚙️", mode: "workflow" },
-  { key: "target_tier", title: "Тиры компаний", icon: "🎯", mode: "target_tier" },
-  { key: "resume_versions", title: "Версии резюме", icon: "📌", mode: "resume_versions" },
+  { key: "workflow", title: "Workflow", icon: "⚙️", mode: "workflow" },
+  { key: "target_tier", title: "Target Tier", icon: "🎯", mode: "target_tier" },
+  { key: "resume_versions", title: "Resume Versions", icon: "📌", mode: "resume_versions" },
 ];
 
+// Includes the brief Russian-titled era (2026-04-27) so any profile that ran
+// build_hub_layout during that window gets renamed back on next deploy.
 const LEGACY_TITLES = {
-  workflow: ["Workflow"],
-  target_tier: ["Target Tier"],
-  resume_versions: ["Resume Versions"],
+  workflow: ["Воркфлоу"],
+  target_tier: ["Тиры компаний"],
+  resume_versions: ["Версии резюме"],
 };
 
 const HUB_LAYOUT_SENTINEL = "⟡ hub-layout-v1 (managed by scripts/stage18/build_hub_layout.js)";
@@ -339,162 +343,162 @@ function buildWorkflowBlocks(profileId, profile) {
       { text: "." },
     ], "💡", "blue_background"),
     paragraphRich([
-      "Automated pipeline executed by Claude Code on request. The same two skills (",
-      { text: "job-pipeline", code: true }, " upstream + ",
-      { text: "interview-coach", code: true }, " downstream) serve every profile from one engine — every command below takes ",
+      "Автоматический пайплайн, который Claude Code запускает по запросу. Один и тот же набор из двух скиллов (",
+      { text: "job-pipeline", code: true }, " наверху + ",
+      { text: "interview-coach", code: true }, " внизу) обслуживает каждый профиль из общего движка — каждая команда ниже принимает ",
       { text: `--profile ${p}`, code: true }, ".",
     ]),
     bulletRich([
       { text: "job-pipeline", code: true, bold: true },
-      " — upstream: scan → Notion → CV/CL → submit → sync → check email responses.",
+      " — верхняя часть: scan → Notion → CV/CL → submit → sync → проверка ответов в почте.",
     ]),
     bulletRich([
       { text: "interview-coach", code: true, bold: true },
-      " — downstream: prep → mock → debrief → negotiate, triggered once Notion Status reaches ",
+      " — нижняя часть: prep → mock → debrief → negotiate, включается, как только Notion Status доходит до ",
       { text: "Interview", code: true },
-      " or later.",
+      " или дальше.",
     ]),
 
-    heading2("Commands — job-pipeline (upstream)"),
+    heading2("Команды — job-pipeline (верхняя часть)"),
 
     heading3("/job-pipeline scan — Найти новые вакансии"),
-    bulletRich([{ text: `node engine/cli.js scan --profile ${p}`, code: true }, " — scans all target companies via enabled discovery adapters (Greenhouse / Lever / Ashby / SmartRecruiters / Workday / CalCareers / RemoteOK)"]),
-    bullet("Level filter — reject Director / Principal / Staff / VP / Intern / Associate / GPM / New Grad"),
-    bullet("Company cap — max 3 active jobs per company (Applied + To Apply)"),
-    bulletRich(["Dedup — check against ", { text: `profiles/${p}/applications.tsv`, code: true }, " + shared ", { text: "data/jobs.tsv", code: true }]),
-    bullet("Create in Notion — all required fields filled, Company relation set (create company if needed)"),
-    bullet("Update TSV with notion_id"),
-    bullet("Validate: 0 pending notion_ids, 0 empty Company relations, 0 over-level in active"),
-    bullet("Report: added X, filtered Y, companies created Z, errors N"),
+    bulletRich([{ text: `node engine/cli.js scan --profile ${p}`, code: true }, " — сканирует все целевые компании через включённые discovery-адаптеры (Greenhouse / Lever / Ashby / SmartRecruiters / Workday / CalCareers / RemoteOK)"]),
+    bullet("Фильтр по уровню — отбраковывает Director / Principal / Staff / VP / Intern / Associate / GPM / New Grad"),
+    bullet("Лимит на компанию — максимум 3 активные вакансии (Applied + To Apply)"),
+    bulletRich(["Дедуп — сверка с ", { text: `profiles/${p}/applications.tsv`, code: true }, " + общим ", { text: "data/jobs.tsv", code: true }]),
+    bullet("Создание в Notion — все обязательные поля заполнены, привязка Company выставлена (компания создаётся, если её ещё нет)"),
+    bullet("Обновление TSV — записывается notion_id"),
+    bullet("Валидация: 0 pending notion_ids, 0 пустых Company-связей, 0 over-level в активных"),
+    bullet("Отчёт: добавлено X, отсеяно Y, компаний создано Z, ошибок N"),
 
     heading3("/job-pipeline prepare — Подготовить материалы"),
-    paragraph("Two phases: draft everything, then approve before push."),
-    bulletRich([{ text: `node engine/cli.js prepare --profile ${p} --phase pre --batch 20`, code: true }, " — collect fresh rows (status=", { text: "To Apply", code: true }, " + no Notion page id), level-validate, skip already-prepared, assign CV archetype, draft CL, compute salary (Tier × Level + COL), emit ", { text: "results-<ts>.json", code: true }]),
-    bulletRich(["Review ", { text: "results-<ts>.json", code: true }]),
-    bulletRich([{ text: `node engine/cli.js prepare --profile ${p} --phase commit --results-file results-<ts>.json`, code: true }, " — accept drafts: update TSV (resume_version + cl_key + salary), push Notion page (creates page with Status=", { text: "To Apply", code: true }, "), write CL PDF"]),
-    bullet("CL rules — 4 paragraphs (Hook → proof paragraph → relevance paragraph → Close), confident-practitioner voice, numbers mandatory. Run /humanizer before showing to user."),
-    bullet("Validate: 0 fresh rows remaining, 0 To Apply without CL / CV"),
-    bullet("Report: prepared X, skipped Y, archived Z, errors N"),
+    paragraph("Две фазы: сначала черновики, потом подтверждение и пуш."),
+    bulletRich([{ text: `node engine/cli.js prepare --profile ${p} --phase pre --batch 20`, code: true }, " — собирает свежие строки (status=", { text: "To Apply", code: true }, " + нет Notion page id), проверяет уровень, пропускает уже подготовленные, выбирает архетип CV, набрасывает CL, считает зарплату (Tier × Level + COL), пишет ", { text: "results-<ts>.json", code: true }]),
+    bulletRich(["Просмотреть ", { text: "results-<ts>.json", code: true }]),
+    bulletRich([{ text: `node engine/cli.js prepare --profile ${p} --phase commit --results-file results-<ts>.json`, code: true }, " — принять черновики: обновить TSV (resume_version + cl_key + salary), запушить страницу в Notion (создаётся со Status=", { text: "To Apply", code: true }, "), сохранить CL PDF"]),
+    bullet("Правила CL — 4 абзаца (Hook → доказательная часть → релевантная часть → Close), уверенный голос практика, цифры обязательны. Перед показом пользователю прогнать через /humanizer."),
+    bullet("Валидация: 0 свежих строк осталось, 0 To Apply без CL / CV"),
+    bullet("Отчёт: подготовлено X, пропущено Y, заархивировано Z, ошибок N"),
 
     heading3("/job-pipeline sync — Синхронизировать статусы"),
-    bulletRich([{ text: `node engine/cli.js sync --profile ${p}`, code: true }, " — fetch non-archived pages via Notion API, diff against TSV"]),
-    bulletRich(["Parse ", { text: "sync_result.json", code: true }, " — mismatches, empty Company relations, not-in-TSV"]),
-    bullet("Apply ALL mismatches to TSV. Notion wins, no exceptions."),
-    bulletRich(["Applied / Rejected / Closed: update TSV + append to ", { text: "rejection_log.md", code: true }, " on Rejected"]),
-    bullet("Integrity checks: empty Companies, not-in-TSV pages, pending notion_ids"),
-    bullet("Report: changes X (Applied A, Rejected B, Closed C), empty companies E, not-in-TSV F"),
+    bulletRich([{ text: `node engine/cli.js sync --profile ${p}`, code: true }, " — забирает не-архивные страницы через Notion API, сравнивает с TSV"]),
+    bulletRich(["Разобрать ", { text: "sync_result.json", code: true }, " — рассинхрон, пустые Company-связи, отсутствующие в TSV"]),
+    bullet("Применить ВСЕ расхождения к TSV. Источник истины — Notion, без исключений."),
+    bulletRich(["Applied / Rejected / Closed: обновить TSV + при Rejected дописать в ", { text: "rejection_log.md", code: true }]),
+    bullet("Проверки целостности: пустые Companies, страницы без TSV, pending notion_ids"),
+    bullet("Отчёт: изменений X (Applied A, Rejected B, Closed C), пустых компаний E, не в TSV F"),
 
     heading3("/job-pipeline check — Проверить ответы по email"),
-    paragraph("Two-phase MCP-driven flow (Gmail reads delegated to Claude MCP — no OAuth on disk)."),
-    bulletRich([{ text: `node engine/cli.js check --profile ${p} --prepare`, code: true }, " — build active-jobs map from TSV (To Apply / Applied / Interview / Offer), compute cursor epoch, print Gmail batches JSON (10 companies / batch + LinkedIn + recruiter queries)"]),
-    bulletRich(["Claude MCP reads Gmail per the printed batches, writes ", { text: "raw_emails.json", code: true }, " into ", { text: `profiles/${p}/.gmail-state/`, code: true }]),
-    bulletRich([{ text: `node engine/cli.js check --profile ${p} --apply`, code: true }, " — classify each email (REJECTION / INTERVIEW_INVITE / INFO_REQUEST / ACKNOWLEDGMENT / OTHER), match to role (HIGH / LOW / NONE), update Notion: REJECTION → Rejected + comment; INTERVIEW_INVITE → Interview + comment; INFO_REQUEST → comment only; LOW match → comment asking to clarify"]),
-    bulletRich(["Update logs: ", { text: "rejection_log.md", code: true }, ", ", { text: "email_check_log.md", code: true }, ", ", { text: "recruiter_leads.md", code: true }]),
-    bulletRich(["Save dedup: ", { text: "processed_messages.json", code: true }, " (auto-prune > 30 days)"]),
+    paragraph("Двухфазный поток через MCP (чтение Gmail делегировано Claude MCP — никаких OAuth-токенов на диске)."),
+    bulletRich([{ text: `node engine/cli.js check --profile ${p} --prepare`, code: true }, " — собирает active-jobs map из TSV (To Apply / Applied / Interview / Offer), считает курсорный epoch, печатает Gmail-батчи в JSON (10 компаний на батч + LinkedIn + рекрутеры)"]),
+    bulletRich(["Claude MCP читает Gmail по этим батчам и пишет ", { text: "raw_emails.json", code: true }, " в ", { text: `profiles/${p}/.gmail-state/`, code: true }]),
+    bulletRich([{ text: `node engine/cli.js check --profile ${p} --apply`, code: true }, " — классифицирует каждое письмо (REJECTION / INTERVIEW_INVITE / INFO_REQUEST / ACKNOWLEDGMENT / OTHER), матчит к роли (HIGH / LOW / NONE), обновляет Notion: REJECTION → Rejected + комментарий; INTERVIEW_INVITE → Interview + комментарий; INFO_REQUEST → только комментарий; LOW match → комментарий с просьбой уточнить"]),
+    bulletRich(["Обновляет логи: ", { text: "rejection_log.md", code: true }, ", ", { text: "email_check_log.md", code: true }, ", ", { text: "recruiter_leads.md", code: true }]),
+    bulletRich(["Сохраняет дедуп: ", { text: "processed_messages.json", code: true }, " (автоочистка > 30 дней)"]),
 
-    heading3("/job-pipeline validate — Retro blocklist sweep + TSV integrity"),
-    bulletRich([{ text: `node engine/cli.js validate --profile ${p}`, code: true }, " — re-apply company + title blocklists to existing To Apply rows (catches rows let through before a filter update)"]),
-    bulletRich(["Report matches → exit 1. With ", { text: "--apply", code: true }, ": set ", { text: "status=Archived", code: true }]),
-    bullet("Also checks TSV integrity (empty Company relations, stale notion_ids, pending ids)"),
+    heading3("/job-pipeline validate — Ретро-зачистка по блоклистам + целостность TSV"),
+    bulletRich([{ text: `node engine/cli.js validate --profile ${p}`, code: true }, " — заново применяет company + title блоклисты к существующим строкам To Apply (ловит то, что прошло до обновления фильтра)"]),
+    bulletRich(["Сообщает совпадения → exit 1. С ", { text: "--apply", code: true }, ": проставляет ", { text: "status=Archived", code: true }]),
+    bullet("Также проверяет целостность TSV (пустые Company-связи, протухшие notion_ids, pending ids)"),
 
-    heading2("Guard Rails (all modes)"),
-    bullet("Level filter: PM / Senior PM / Lead PM only. Reject Director, Principal, Staff, VP, AVP, SVP, EVP, GPM, Group PM, Head of, Associate, Junior, Intern, New Grad"),
-    bullet("Company cap: max 3 active per company"),
-    bullet("Fit Score: domain fit only (Strong / Medium / Weak). Level does NOT affect score."),
-    bullet("Early-stage modifier (pre-Series B, <50 people): −1 level"),
-    bullet("Notion completeness: every page must have Role, Company (relation), Status, Fit Score, Job URL, Source, Date Added, Work Format, City, State, Notes"),
+    heading2("Ограничения (для всех режимов)"),
+    bullet("Уровень: только PM / Senior PM / Lead PM. Отбраковка: Director, Principal, Staff, VP, AVP, SVP, EVP, GPM, Group PM, Head of, Associate, Junior, Intern, New Grad"),
+    bullet("Лимит на компанию: максимум 3 активные позиции"),
+    bullet("Fit Score: только доменное соответствие (Strong / Medium / Weak). Уровень на скор НЕ влияет."),
+    bullet("Поправка на early-stage (до Series B, < 50 человек): −1 уровень"),
+    bullet("Полнота Notion: на каждой странице должны быть Role, Company (relation), Status, Fit Score, Job URL, Source, Date Added, Work Format, City, State, Notes"),
     bulletRich([
-      "US-marker safeguard: location blocklist is skipped when ",
+      "US-маркер: блоклист по локации пропускается, если в строке есть ",
       { text: "united states", code: true }, " / ",
       { text: "usa", code: true }, " / ",
       { text: ", us", code: true }, " / ",
       { text: "(us)", code: true }, " / ",
-      { text: "u.s.", code: true }, " is present",
+      { text: "u.s.", code: true },
     ]),
-    bullet("Recruiter outreach: never mention location / remote / relocation preferences in outbound — reveal as late as possible in the funnel"),
-    bullet("Humanizer mandatory on CLs and recruiter email drafts before user review"),
+    bullet("Письма рекрутерам: никогда не упоминать локацию / remote / переезд в исходящих — раскрываем как можно позже в воронке"),
+    bullet("Humanizer обязателен на CL и черновиках писем рекрутерам перед показом пользователю"),
 
-    heading2("Key files"),
-    bulletRich([{ text: `profiles/${p}/applications.tsv`, code: true }, " — per-profile vacancy / status registry (v2 schema, 15 cols)"]),
-    bulletRich([{ text: "data/jobs.tsv", code: true }, " / ", { text: "data/companies.tsv", code: true }, " — shared cross-profile master pools (dedup)"]),
-    bulletRich([{ text: `profiles/${p}/cover_letter_versions.json`, code: true }, " — all CL data"]),
-    bulletRich([{ text: `profiles/${p}/resume_versions.json`, code: true }, " — all CV data"]),
-    bulletRich([{ text: "engine/cli.js", code: true }, " — entry point for all commands"]),
-    bulletRich([{ text: "skills/job-pipeline/SKILL.md", code: true }, " — full skill definition with detailed steps"]),
-    bulletRich([{ text: `profiles/${p}/email_check_log.md`, code: true }, " — log of all email check runs"]),
-    bulletRich([{ text: `profiles/${p}/.gmail-state/processed_messages.json`, code: true }, " — Gmail dedup registry"]),
+    heading2("Ключевые файлы"),
+    bulletRich([{ text: `profiles/${p}/applications.tsv`, code: true }, " — реестр вакансий и статусов конкретного профиля (схема v2, 15 колонок)"]),
+    bulletRich([{ text: "data/jobs.tsv", code: true }, " / ", { text: "data/companies.tsv", code: true }, " — общие cross-profile master pools (дедуп)"]),
+    bulletRich([{ text: `profiles/${p}/cover_letter_versions.json`, code: true }, " — все данные по CL"]),
+    bulletRich([{ text: `profiles/${p}/resume_versions.json`, code: true }, " — все данные по CV"]),
+    bulletRich([{ text: "engine/cli.js", code: true }, " — точка входа для всех команд"]),
+    bulletRich([{ text: "skills/job-pipeline/SKILL.md", code: true }, " — полное определение скилла с пошаговыми инструкциями"]),
+    bulletRich([{ text: `profiles/${p}/email_check_log.md`, code: true }, " — лог всех запусков email-проверки"]),
+    bulletRich([{ text: `profiles/${p}/.gmail-state/processed_messages.json`, code: true }, " — реестр дедупа Gmail"]),
 
-    heading2("Commands — interview-coach (downstream)"),
+    heading2("Команды — interview-coach (нижняя часть)"),
     paragraphRich([
-      "All interview-coach commands read ",
+      "Перед запуском все команды interview-coach читают ",
       { text: `profiles/${p}/interview-coach-state/constraints.md`, code: true },
-      " and ",
+      " и ",
       { text: "coaching_state.md", code: true },
-      " before running. State is persistent across sessions.",
+      ". Состояние сохраняется между сессиями.",
     ]),
 
-    heading3("/stories — Build / enrich storybank"),
-    bullet("Storybank is reusable across all companies — never company-specific"),
-    bullet("Seed stories (S001–S00N) pre-loaded from resume — one per notable project or outcome"),
-    bulletRich(["Run ", { text: "stories improve S###", code: true }, " to turn a seed into battle-ready STAR with tested Earned Secret"]),
-    bullet("Prioritize by leverage: lead with stories that map to this profile's strongest pillars"),
+    heading3("/stories — Собрать / расширить storybank"),
+    bullet("Storybank переиспользуется на всех компаниях — никогда не привязан к конкретной"),
+    bullet("Стартовые истории (S001–S00N) подгружаются из резюме — по одной на каждый заметный проект или результат"),
+    bulletRich(["Запустить ", { text: "stories improve S###", code: true }, ", чтобы превратить заготовку в боеспособный STAR с проверенным Earned Secret"]),
+    bullet("Приоритет по leverage: первыми ставим истории, которые попадают в самые сильные опоры этого профиля"),
 
-    heading3("/prep [company] — Company + role prep brief"),
-    bulletRich(["Trigger: Notion Status transitions ", { text: "Applied → Interview", code: true }]),
-    bullet("Read JD + company data from Notion Jobs Pipeline + Companies DBs"),
-    bullet("Generate: interviewer intel, round formats, likely questions, story mapping (which S### to deploy)"),
-    bulletRich(["Save to ", { text: "coaching_state.md", code: true }, " → Interview Loops"]),
+    heading3("/prep [company] — Бриф по компании и роли"),
+    bulletRich(["Триггер: Notion Status переходит ", { text: "Applied → Interview", code: true }]),
+    bullet("Читает JD и данные компании из Notion Jobs Pipeline + Companies DB"),
+    bullet("Формирует: интел по интервьюерам, форматы раундов, вероятные вопросы, мэппинг историй (какие S### доставать)"),
+    bulletRich(["Сохраняет в ", { text: "coaching_state.md", code: true }, " → Interview Loops"]),
 
-    heading3("/hype — Pre-interview confidence + 3×3 plan"),
-    bullet("Run immediately before interview"),
-    bullet("Anxiety profile check, 3 strengths to lead with × 3 stories to deploy"),
+    heading3("/hype — Уверенность перед интервью + план 3×3"),
+    bullet("Запускать прямо перед интервью"),
+    bullet("Чек-ин по уровню тревожности, 3 ведущие сильные стороны × 3 истории к развороту"),
 
-    heading3("/mock [format] — Full simulated interview"),
-    bulletRich(["Formats: ", { text: "behavioral", code: true }, " / ", { text: "system-design", code: true }, " / ", { text: "case-study", code: true }, " / ", { text: "panel", code: true }, " / ", { text: "technical", code: true }]),
-    bullet("4–6 questions, scored on 5 dimensions (Substance, Structure, Relevance, Credibility, Differentiation)"),
-    bulletRich(["Trigger: subsequent ", { text: "Interview", code: true }, " round (post phone-screen onsite / panel)"]),
+    heading3("/mock [format] — Полная симуляция интервью"),
+    bulletRich(["Форматы: ", { text: "behavioral", code: true }, " / ", { text: "system-design", code: true }, " / ", { text: "case-study", code: true }, " / ", { text: "panel", code: true }, " / ", { text: "technical", code: true }]),
+    bullet("4–6 вопросов, оценка по 5 осям (Substance, Structure, Relevance, Credibility, Differentiation)"),
+    bulletRich(["Триггер: следующий ", { text: "Interview", code: true }, " раунд (после phone-screen onsite / panel)"]),
 
-    heading3("/debrief — Post-interview rapid capture (same day)"),
-    bullet("Run immediately after any real interview"),
-    bullet("Captures: questions asked, stories used, recruiter / interviewer feedback, emotional read"),
-    bullet("Updates: Interview Intelligence, Storybank Last Used + Use Count, Outcome Log (pending)"),
+    heading3("/debrief — Быстрый разбор сразу после интервью (в тот же день)"),
+    bullet("Запускать сразу после любого реального интервью"),
+    bullet("Фиксирует: какие были вопросы, какие истории использовали, фидбек рекрутера / интервьюера, эмоциональный срез"),
+    bullet("Обновляет: Interview Intelligence, Storybank Last Used + Use Count, Outcome Log (pending)"),
 
-    heading3("/analyze [transcript] — Transcript scoring"),
-    bulletRich(["Place transcript in ", { text: "interview-coach-state/transcripts/", code: true }]),
-    bullet("Auto-detects format (Otter / Zoom / Grain / Teams)"),
-    bullet("Scores answers on 5 dimensions, identifies root-cause bottleneck, updates Active Coaching Strategy"),
+    heading3("/analyze [transcript] — Разбор транскрипта"),
+    bulletRich(["Положить транскрипт в ", { text: "interview-coach-state/transcripts/", code: true }]),
+    bullet("Сам определяет формат (Otter / Zoom / Grain / Teams)"),
+    bullet("Оценивает ответы по 5 осям, находит корневое узкое место, обновляет Active Coaching Strategy"),
 
-    heading3("/concerns + /questions — Pre-onsite prep"),
-    bulletRich([{ text: "concerns", code: true }, ": ranked list of likely interviewer objections + counter strategies"]),
-    bulletRich([{ text: "questions", code: true }, ": top 3 tailored questions to ask the interviewer (saved to Interview Loops)"]),
+    heading3("/concerns + /questions — Подготовка к onsite"),
+    bulletRich([{ text: "concerns", code: true }, ": ранжированный список вероятных возражений интервьюеров + контр-стратегии"]),
+    bulletRich([{ text: "questions", code: true }, ": топ-3 точечных вопроса интервьюеру (сохраняются в Interview Loops)"]),
 
-    heading3("/negotiate — Post-offer negotiation"),
-    bulletRich(["Trigger: Notion Status → ", { text: "Offer", code: true }]),
-    bullet("Inputs: offer details (base / equity / bonus / sign-on), competing offers, BATNA, floor"),
-    bullet("Output: stage-by-stage scripts (recruiter callback → first counter → follow-up → close)"),
+    heading3("/negotiate — Переговоры после оффера"),
+    bulletRich(["Триггер: Notion Status → ", { text: "Offer", code: true }]),
+    bullet("Вход: детали оффера (база / equity / бонус / sign-on), конкурирующие офферы, BATNA, нижний предел"),
+    bullet("Выход: пошаговые скрипты (звонок рекрутеру → первый counter → follow-up → закрытие)"),
 
-    heading3("/linkedin · /pitch · /outreach — Positioning layer"),
-    bulletRich([{ text: "linkedin", code: true }, ": profile audit (recruiter discoverability, credibility, differentiation)"]),
-    bulletRich([{ text: "pitch", code: true }, ": 30–45 sec positioning statement anchored on Earned Secret"]),
-    bulletRich([{ text: "outreach", code: true }, ": cold networking coaching (candidate starts from zero US fintech network)"]),
+    heading3("/linkedin · /pitch · /outreach — Слой позиционирования"),
+    bulletRich([{ text: "linkedin", code: true }, ": аудит профиля (видимость для рекрутеров, доверие, дифференциация)"]),
+    bulletRich([{ text: "pitch", code: true }, ": 30–45 сек self-pitch, опирающийся на Earned Secret"]),
+    bulletRich([{ text: "outreach", code: true }, ": коучинг по cold-нетворкингу (кандидат стартует с нулевой US fintech-сети)"]),
 
-    heading3("/progress · /feedback · /reflect — Meta"),
-    bulletRich([{ text: "progress", code: true }, ": trend review, self-calibration, drift detection (every 3 sessions)"]),
-    bulletRich([{ text: "feedback", code: true }, ": capture recruiter feedback, outcomes, corrections"]),
-    bulletRich([{ text: "reflect", code: true }, ": post-search retrospective + archive (never deletes)"]),
+    heading3("/progress · /feedback · /reflect — Мета-уровень"),
+    bulletRich([{ text: "progress", code: true }, ": тренды, самокалибровка, ловля дрейфа (раз в 3 сессии)"]),
+    bulletRich([{ text: "feedback", code: true }, ": фиксация фидбека рекрутеров, исходов, корректировок"]),
+    bulletRich([{ text: "reflect", code: true }, ": ретроспектива всего поиска + архив (никогда не удаляет)"]),
 
-    heading2("Triggers by Notion Status"),
+    heading2("Триггеры по статусу в Notion"),
     table(
       [
-        ["Status transition", "Coach commands"],
+        ["Переход статуса", "Команды коуча"],
         [
           [{ text: "Applied → Interview", code: true }],
           [{ text: "prep [company]", code: true }, " · ", { text: "hype", code: true }],
         ],
         [
-          "after each interview round",
+          "после каждого раунда интервью",
           [
-            { text: "debrief", code: true }, " · (opt.) ",
+            { text: "debrief", code: true }, " · (опц.) ",
             { text: "analyze [transcript]", code: true }, " · ",
             { text: "mock [format]", code: true }, " · ",
             { text: "questions", code: true }, " · ",
@@ -505,40 +509,40 @@ function buildWorkflowBlocks(profileId, profile) {
           [{ text: "Interview → Offer", code: true }],
           [{ text: "negotiate", code: true }],
         ],
-        ["Rejection", [{ text: "feedback", code: true }, " · ", { text: "progress", code: true }]],
+        ["Отказ", [{ text: "feedback", code: true }, " · ", { text: "progress", code: true }]],
       ],
       { hasHeader: true }
     ),
 
-    heading2("Guard Rails — interview-coach"),
+    heading2("Ограничения — interview-coach"),
     bulletRich([
-      { text: "Resume FROZEN", bold: true }, ": 13 archetypes only (see Resume Versions subpage). ",
-      { text: "/resume", code: true }, " restricted to critique + archetype selection + delta suggestions for ",
-      { text: "resume_versions.json", code: true }, ". Never inline-writes or creates company-tailored CVs.",
+      { text: "Резюме ЗАМОРОЖЕНО", bold: true }, ": только 13 архетипов (см. подстраницу Resume Versions). ",
+      { text: "/resume", code: true }, " ограничен критикой + выбором архетипа + предложениями дельт для ",
+      { text: "resume_versions.json", code: true }, ". Никогда не пишет инлайн и не делает CV под конкретную компанию.",
     ]),
     bulletRich([
       { text: "JD ", bold: true }, { text: "decode", code: true, bold: true },
-      { text: " batch DISABLED", bold: true }, ": duplicate of upstream scan + filter_rules pipeline. Single-vacancy decode allowed only for jobs already in Notion, as input to ",
+      { text: " batch ОТКЛЮЧЁН", bold: true }, ": дублирует upstream-пайплайн scan + filter_rules. Single-vacancy decode разрешён только для вакансий, уже лежащих в Notion, как вход в ",
       { text: "prep", code: true }, ".",
     ]),
     bulletRich([
-      { text: "Role framing hard-wired", bold: true },
-      ": advisory / employment / founder distinctions for each experience are locked in ",
+      { text: "Role framing зашит", bold: true },
+      ": разделение advisory / employment / founder для каждого опыта зафиксировано в ",
       { text: "constraints.md", code: true },
-      " and must be respected across every command.",
+      " и должно соблюдаться во всех командах.",
     ]),
-    bulletRich([{ text: "Notion = source of truth", bold: true }, ": Interview Loops in ", { text: "coaching_state.md", code: true }, " is a working copy. On conflict with Notion, Notion wins."]),
-    bulletRich([{ text: "Company cap 3", bold: true }, " still enforced — coach never suggests preparing a 4th loop at the same company."]),
-    bulletRich([{ text: "Targeting", bold: true }, ": PM / Senior PM / Lead PM only (same as upstream)."]),
-    bulletRich([{ text: "210 chars default", bold: true }, " for Application Q&A form answers."]),
-    bulletRich([{ text: "Never delete files", bold: true }, " without explicit permission. ", { text: "reflect", code: true }, " archives only."]),
+    bulletRich([{ text: "Notion = источник истины", bold: true }, ": Interview Loops в ", { text: "coaching_state.md", code: true }, " — рабочая копия. При конфликте побеждает Notion."]),
+    bulletRich([{ text: "Лимит компании 3", bold: true }, " действует и здесь — коуч никогда не предлагает готовиться к 4-му раунду в той же компании."]),
+    bulletRich([{ text: "Таргетинг", bold: true }, ": только PM / Senior PM / Lead PM (как в upstream)."]),
+    bulletRich([{ text: "210 знаков по умолчанию", bold: true }, " для ответов в форме Application Q&A."]),
+    bulletRich([{ text: "Никогда не удаляет файлы", bold: true }, " без явного разрешения. ", { text: "reflect", code: true }, " только архивирует."]),
 
-    heading2("Key files — interview-coach"),
-    bulletRich([{ text: "skills/interview-coach/SKILL.md", code: true }, " — upstream skill (installed globally via ", { text: "~/.claude/skills/interview-coach", code: true }, " symlink)"]),
-    bulletRich([{ text: "skills/interview-coach/references/", code: true }, " — command reference + engine files"]),
-    bulletRich([{ text: `profiles/${p}/interview-coach-state/constraints.md`, code: true }, " — project-local overrides (resume freeze, role framing, decode restriction). Read before every coach command."]),
-    bulletRich([{ text: `profiles/${p}/interview-coach-state/coaching_state.md`, code: true }, " — persistent state (profile, storybank, Interview Loops, Score History, Calibration)"]),
-    bulletRich([{ text: `profiles/${p}/interview-coach-state/transcripts/`, code: true }, " — drop real interview transcripts here for ", { text: "analyze", code: true }]),
+    heading2("Ключевые файлы — interview-coach"),
+    bulletRich([{ text: "skills/interview-coach/SKILL.md", code: true }, " — upstream-скилл (ставится глобально через симлинк ", { text: "~/.claude/skills/interview-coach", code: true }, ")"]),
+    bulletRich([{ text: "skills/interview-coach/references/", code: true }, " — справочник команд + движковые файлы"]),
+    bulletRich([{ text: `profiles/${p}/interview-coach-state/constraints.md`, code: true }, " — локальные правки на проект (заморозка резюме, role framing, ограничение decode). Читается перед каждой коуч-командой."]),
+    bulletRich([{ text: `profiles/${p}/interview-coach-state/coaching_state.md`, code: true }, " — постоянное состояние (профиль, storybank, Interview Loops, Score History, Calibration)"]),
+    bulletRich([{ text: `profiles/${p}/interview-coach-state/transcripts/`, code: true }, " — складывать сюда транскрипты реальных интервью для ", { text: "analyze", code: true }]),
 
     paragraph(subpageSentinel("workflow")),
   ];
@@ -554,32 +558,32 @@ function buildTargetTierBlocks(profile) {
   const totals = `S:${counts.S} | A:${counts.A} | B:${counts.B} | C:${counts.C}`;
 
   const rows = [
-    ["S", "Top target — dream companies; apply whenever a relevant role is open."],
-    ["A", "Strong strategic fit; apply within 48h of discovery."],
-    ["B", "Worthwhile; apply if bandwidth allows and salary matches."],
-    ["C", "Backup / opportunistic; use only if pipeline is thin."],
+    ["S", "Главные цели — компании мечты; подаваться, как только открывается релевантная роль."],
+    ["A", "Сильное стратегическое совпадение; подаваться в течение 48 часов после появления вакансии."],
+    ["B", "Стоит того; подаваться, если есть ресурс и зарплата подходит."],
+    ["C", "Запасные / по случаю; использовать, только если пайплайн пустой."],
   ];
 
   const blocks = [
-    heading2("Target Tier"),
+    heading2("Тиры компаний"),
     paragraph(
-      "Generic tiering scheme. Assign a tier to each company in the Companies DB to drive prioritization."
+      "Универсальная схема тиров. Каждой компании в Companies DB проставляется тир — так движок понимает, что в приоритете."
     ),
   ];
   for (const [tier, text] of rows) {
     const c = counts[tier];
     blocks.push(bullet(`${tier} (${c}) — ${text}`));
   }
-  blocks.push(paragraph(`Current counts — ${totals}`));
+  blocks.push(paragraph(`Текущие счётчики — ${totals}`));
   blocks.push(paragraph(subpageSentinel("target_tier")));
   return blocks;
 }
 
 function buildResumeVersionsSubpageBlocks(versionsFile) {
   const blocks = [
-    heading2("Resume Versions"),
+    heading2("Версии резюме"),
     paragraph(
-      "Archetypes maintained in resume_versions.json. Use `node engine/cli.js prepare …` to select automatically by tags / title match."
+      "Архетипы лежат в resume_versions.json. Команда `node engine/cli.js prepare …` сама подбирает нужный по тегам / совпадению с тайтлом."
     ),
   ];
   const versions = (versionsFile && versionsFile.versions) || {};

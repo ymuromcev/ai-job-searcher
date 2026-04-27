@@ -74,11 +74,11 @@ test("hasHubLayoutSentinelV1: accepts both stage16 and stage18 sentinels", () =>
 // ---------------------------------------------------------------------------
 
 test("SUBPAGES: all 4 canonical pages present with title+icon+mode", () => {
-  // Three subpages have Russian titles (the user's working language).
-  // Candidate Profile stays English — it's a stable label used throughout
-  // the codebase and isn't customer-facing in the same way.
+  // All four subpages keep English titles (stable labels used across the
+  // codebase, Notion search, and tests). The PAGE BODIES are localized for
+  // workflow / target_tier / resume_versions — see body builder tests.
   const titles = SUBPAGES.map((s) => s.title);
-  assert.deepEqual(titles, ["Candidate Profile", "Воркфлоу", "Тиры компаний", "Версии резюме"]);
+  assert.deepEqual(titles, ["Candidate Profile", "Workflow", "Target Tier", "Resume Versions"]);
   for (const s of SUBPAGES) {
     assert.ok(s.key, "key missing");
     assert.ok(s.title, "title missing");
@@ -87,13 +87,14 @@ test("SUBPAGES: all 4 canonical pages present with title+icon+mode", () => {
   }
 });
 
-test("LEGACY_TITLES: covers every renamed subpage so re-runs rename in-place", () => {
-  // For every key whose current title differs from the historical English
-  // title, LEGACY_TITLES must list the historical title so build_hub_layout
-  // can rename existing pages instead of duplicating them.
-  assert.ok(LEGACY_TITLES.workflow.includes("Workflow"));
-  assert.ok(LEGACY_TITLES.target_tier.includes("Target Tier"));
-  assert.ok(LEGACY_TITLES.resume_versions.includes("Resume Versions"));
+test("LEGACY_TITLES: covers historical titles so re-runs rename in-place", () => {
+  // For ~24h on 2026-04-27 the three subpages had Russian titles before we
+  // moved Russian to the body and reverted titles to English. Profiles that
+  // ran build_hub_layout in that window need the Russian variants in
+  // LEGACY_TITLES so the next run renames them back.
+  assert.ok(LEGACY_TITLES.workflow.includes("Воркфлоу"));
+  assert.ok(LEGACY_TITLES.target_tier.includes("Тиры компаний"));
+  assert.ok(LEGACY_TITLES.resume_versions.includes("Версии резюме"));
   // No legacy entry for candidate_profile — title hasn't changed.
   assert.equal(LEGACY_TITLES.candidate_profile, undefined);
 });
@@ -223,10 +224,10 @@ test("buildWorkflowBlocks: callout substitutes the right profile id (jared, lili
   }
 });
 
-test("buildWorkflowBlocks: still has English intro paragraph after the callout", () => {
-  // Existing English intro paragraph stays as block #2. We don't translate
-  // command bullets — they describe technical CLI behavior — but the
-  // opening Russian callout makes the per-profile binding obvious.
+test("buildWorkflowBlocks: intro paragraph after callout is Russian + parametrized", () => {
+  // Block #2 is the human-readable intro paragraph. Body copy is Russian,
+  // but technical tokens (--profile <id>, skill names) stay verbatim so
+  // they remain copy-pasteable and grep-able.
   const blocks = buildWorkflowBlocks("lilia");
   const second = blocks[1];
   assert.equal(second.type, "paragraph");
@@ -234,6 +235,31 @@ test("buildWorkflowBlocks: still has English intro paragraph after the callout",
   assert.ok(intro.includes("--profile lilia"));
   assert.ok(intro.includes("job-pipeline"));
   assert.ok(intro.includes("interview-coach"));
+  // Russian body copy markers
+  assert.ok(/Автоматический|пайплайн|команда/.test(intro), `expected Russian body, got: ${intro}`);
+});
+
+test("buildWorkflowBlocks: section headings are in Russian", () => {
+  // The user's working language is Russian; section headings on the
+  // Workflow subpage are translated. Command names + CLI args remain
+  // verbatim because they're literal tokens.
+  const blocks = buildWorkflowBlocks("lilia");
+  const headings = blocks
+    .filter((b) => b.type === "heading_2" || b.type === "heading_3")
+    .map((b) =>
+      ((b.heading_2 || b.heading_3).rich_text || [])
+        .map((r) => r.text.content)
+        .join("")
+    );
+  // At least one h2 must be in Russian
+  assert.ok(
+    headings.some((h) => /Команды|Ограничения|Ключевые файлы|Триггеры/.test(h)),
+    `expected at least one Russian h2 heading, got: ${headings.join(" | ")}`
+  );
+  // Headings include a Russian descriptor on key commands
+  assert.ok(headings.some((h) => h.includes("Найти новые вакансии")), "scan heading translated");
+  assert.ok(headings.some((h) => h.includes("Подготовить материалы")), "prepare heading translated");
+  assert.ok(headings.some((h) => h.includes("Синхронизировать")), "sync heading translated");
 });
 
 test("buildWorkflowBlocks: uses unified 8-status set (no Phone Screen / Onsite / Inbox transitions)", () => {
@@ -304,6 +330,25 @@ test("buildTargetTierBlocks: empty tiers all zero", () => {
   assert.ok(bulletTexts.some((t) => t.startsWith("S (0) — ")));
 });
 
+test("buildTargetTierBlocks: heading + body are in Russian", () => {
+  const blocks = buildTargetTierBlocks({ company_tiers: { Stripe: "S" } });
+  assert.equal(blocks[0].type, "heading_2");
+  assert.equal(blocks[0].heading_2.rich_text[0].text.content, "Тиры компаний");
+  // Intro paragraph (block #1) is Russian
+  const intro = blocks[1].paragraph.rich_text[0].text.content;
+  assert.ok(/тиров|компаний|приоритет/.test(intro), `expected Russian intro, got: ${intro}`);
+  // Bullet bodies are Russian
+  const bullets = blocks
+    .filter((b) => b.type === "bulleted_list_item")
+    .map((b) => b.bulleted_list_item.rich_text[0].text.content);
+  assert.ok(bullets.some((t) => t.includes("компании мечты")), "S tier body in Russian");
+  // Counts paragraph is Russian
+  const paragraphs = blocks
+    .filter((b) => b.type === "paragraph")
+    .map((b) => b.paragraph.rich_text[0].text.content);
+  assert.ok(paragraphs.some((t) => t.includes("Текущие счётчики")), "counts label in Russian");
+});
+
 // ---------------------------------------------------------------------------
 // Resume Versions block builder
 // ---------------------------------------------------------------------------
@@ -332,6 +377,14 @@ test("buildResumeVersionsSubpageBlocks: no versions still emits heading + sentin
     blocks[blocks.length - 1].paragraph.rich_text[0].text.content,
     subpageSentinel("resume_versions")
   );
+});
+
+test("buildResumeVersionsSubpageBlocks: heading + intro are in Russian", () => {
+  const blocks = buildResumeVersionsSubpageBlocks({ versions: { x: { title: "X" } } });
+  assert.equal(blocks[0].heading_2.rich_text[0].text.content, "Версии резюме");
+  const intro = blocks[1].paragraph.rich_text[0].text.content;
+  assert.ok(/Архетипы|архетип/.test(intro), `expected Russian intro, got: ${intro}`);
+  assert.ok(intro.includes("resume_versions.json"), "filename token preserved");
 });
 
 // ---------------------------------------------------------------------------
