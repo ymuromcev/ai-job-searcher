@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   SUBPAGES,
+  LEGACY_TITLES,
   HUB_LAYOUT_SENTINEL,
   hasHubLayoutSentinelV1,
   subpageSentinel,
@@ -73,14 +74,28 @@ test("hasHubLayoutSentinelV1: accepts both stage16 and stage18 sentinels", () =>
 // ---------------------------------------------------------------------------
 
 test("SUBPAGES: all 4 canonical pages present with title+icon+mode", () => {
+  // Three subpages have Russian titles (the user's working language).
+  // Candidate Profile stays English — it's a stable label used throughout
+  // the codebase and isn't customer-facing in the same way.
   const titles = SUBPAGES.map((s) => s.title);
-  assert.deepEqual(titles, ["Candidate Profile", "Workflow", "Target Tier", "Resume Versions"]);
+  assert.deepEqual(titles, ["Candidate Profile", "Воркфлоу", "Тиры компаний", "Версии резюме"]);
   for (const s of SUBPAGES) {
     assert.ok(s.key, "key missing");
     assert.ok(s.title, "title missing");
     assert.ok(s.icon, "icon missing");
     assert.ok(s.mode, "mode missing");
   }
+});
+
+test("LEGACY_TITLES: covers every renamed subpage so re-runs rename in-place", () => {
+  // For every key whose current title differs from the historical English
+  // title, LEGACY_TITLES must list the historical title so build_hub_layout
+  // can rename existing pages instead of duplicating them.
+  assert.ok(LEGACY_TITLES.workflow.includes("Workflow"));
+  assert.ok(LEGACY_TITLES.target_tier.includes("Target Tier"));
+  assert.ok(LEGACY_TITLES.resume_versions.includes("Resume Versions"));
+  // No legacy entry for candidate_profile — title hasn't changed.
+  assert.equal(LEGACY_TITLES.candidate_profile, undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -178,16 +193,47 @@ test("buildWorkflowBlocks: mentions cli.js + profile id + sentinel", () => {
   assert.equal(last.paragraph.rich_text[0].text.content, subpageSentinel("workflow"));
 });
 
-test("buildWorkflowBlocks: opening paragraph notes per-profile invocation", () => {
-  // Important banner for users browsing Lilia's hub: the same skills serve
-  // every profile; she invokes via `--profile lilia`.
+test("buildWorkflowBlocks: opens with a Russian profile-binding callout", () => {
+  // The very first block on every Workflow subpage is a Russian-language
+  // callout that loudly states the per-profile invocation pattern. This
+  // is the answer to "как вызывать команды именно для этого профиля".
   const blocks = buildWorkflowBlocks("lilia");
   const first = blocks[0];
-  assert.equal(first.type, "paragraph");
-  const intro = first.paragraph.rich_text.map((r) => r.text.content).join("");
-  assert.ok(intro.includes("--profile lilia"), "opening paragraph references --profile lilia");
-  assert.ok(intro.includes("job-pipeline"), "mentions job-pipeline skill");
-  assert.ok(intro.includes("interview-coach"), "mentions interview-coach skill");
+  assert.equal(first.type, "callout");
+  const text = first.callout.rich_text.map((r) => r.text.content).join("");
+  assert.ok(text.includes("--profile lilia"), "callout references --profile lilia");
+  assert.ok(text.includes("node engine/cli.js scan --profile lilia"), "shows full example");
+  assert.ok(/Этот профиль|вызыв/.test(text), "Russian framing present");
+  assert.ok(text.includes("job-pipeline"));
+  assert.ok(text.includes("interview-coach"));
+  // Per-profile flag appears at least three times: instruction, example,
+  // and the data-dir reminder. Count via global regex.
+  const matches = text.match(/--profile lilia/g) || [];
+  assert.ok(matches.length >= 2, `expected ≥2 mentions of --profile lilia, got ${matches.length}`);
+});
+
+test("buildWorkflowBlocks: callout substitutes the right profile id (jared, lilia, …)", () => {
+  for (const id of ["jared", "lilia", "weird_id_42"]) {
+    const blocks = buildWorkflowBlocks(id);
+    const first = blocks[0];
+    assert.equal(first.type, "callout");
+    const text = first.callout.rich_text.map((r) => r.text.content).join("");
+    assert.ok(text.includes(`--profile ${id}`), `id=${id} expected --profile ${id}`);
+    assert.ok(text.includes(`profiles/${id}/`), `id=${id} expected profiles/${id}/ data-dir hint`);
+  }
+});
+
+test("buildWorkflowBlocks: still has English intro paragraph after the callout", () => {
+  // Existing English intro paragraph stays as block #2. We don't translate
+  // command bullets — they describe technical CLI behavior — but the
+  // opening Russian callout makes the per-profile binding obvious.
+  const blocks = buildWorkflowBlocks("lilia");
+  const second = blocks[1];
+  assert.equal(second.type, "paragraph");
+  const intro = second.paragraph.rich_text.map((r) => r.text.content).join("");
+  assert.ok(intro.includes("--profile lilia"));
+  assert.ok(intro.includes("job-pipeline"));
+  assert.ok(intro.includes("interview-coach"));
 });
 
 test("buildWorkflowBlocks: uses unified 8-status set (no Phone Screen / Onsite / Inbox transitions)", () => {

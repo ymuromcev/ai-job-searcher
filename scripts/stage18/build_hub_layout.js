@@ -65,12 +65,25 @@ function paragraphText(block) {
 // Config
 // ---------------------------------------------------------------------------
 
+// Subpage titles are in Russian for the user-facing tabs (the user's working
+// language is Russian; the surrounding workspace UI is too). Keys stay
+// English/snake_case — they're stable identifiers used in profile.json,
+// state.json, and tests; renaming them would force a migration.
+//
+// LEGACY_TITLES lets us recognize subpages created before the rename so we
+// can rename them in-place via pages.update instead of creating duplicates.
 const SUBPAGES = [
   { key: "candidate_profile", title: "Candidate Profile", icon: "👤", mode: "candidate_profile" },
-  { key: "workflow", title: "Workflow", icon: "⚙️", mode: "workflow" },
-  { key: "target_tier", title: "Target Tier", icon: "🎯", mode: "target_tier" },
-  { key: "resume_versions", title: "Resume Versions", icon: "📌", mode: "resume_versions" },
+  { key: "workflow", title: "Воркфлоу", icon: "⚙️", mode: "workflow" },
+  { key: "target_tier", title: "Тиры компаний", icon: "🎯", mode: "target_tier" },
+  { key: "resume_versions", title: "Версии резюме", icon: "📌", mode: "resume_versions" },
 ];
+
+const LEGACY_TITLES = {
+  workflow: ["Workflow"],
+  target_tier: ["Target Tier"],
+  resume_versions: ["Resume Versions"],
+};
 
 const HUB_LAYOUT_SENTINEL = "⟡ hub-layout-v1 (managed by scripts/stage18/build_hub_layout.js)";
 
@@ -134,6 +147,21 @@ function callout(text, emoji = "📥") {
       rich_text: [{ type: "text", text: { content: text } }],
       icon: { type: "emoji", emoji },
       color: "gray_background",
+    },
+  };
+}
+
+// Callout variant that accepts rich-text segments (mix of plain + bold + code).
+// Same shape as `callout` but driven by `richText(segments)` instead of a
+// single string, so we can highlight `--profile <id>` inline.
+function calloutRich(segments, emoji = "💡", color = "blue_background") {
+  return {
+    object: "block",
+    type: "callout",
+    callout: {
+      rich_text: richText(segments),
+      icon: { type: "emoji", emoji },
+      color,
     },
   };
 }
@@ -291,6 +319,25 @@ function buildCandidateProfileBlocks(profile) {
 function buildWorkflowBlocks(profileId, profile) {
   const p = profileId;
   const blocks = [
+    // Russian profile-binding callout at the very top — answers "как вызывать
+    // команды именно для этого профиля". Loud and visible because the same
+    // engine + skills serve every profile; the only per-profile knob is the
+    // `--profile <id>` flag.
+    calloutRich([
+      { text: "Этот профиль вызывается с флагом ", bold: true },
+      { text: `--profile ${p}`, code: true, bold: true },
+      { text: ". Пример: " },
+      { text: `node engine/cli.js scan --profile ${p}`, code: true },
+      { text: ". Один и тот же движок и те же скиллы (" },
+      { text: "job-pipeline", code: true },
+      { text: " + " },
+      { text: "interview-coach", code: true },
+      { text: ") обслуживают всех кандидатов — разница только в " },
+      { text: `--profile ${p}`, code: true },
+      { text: " и в данных в " },
+      { text: `profiles/${p}/`, code: true },
+      { text: "." },
+    ], "💡", "blue_background"),
     paragraphRich([
       "Automated pipeline executed by Claude Code on request. The same two skills (",
       { text: "job-pipeline", code: true }, " upstream + ",
@@ -775,7 +822,44 @@ async function main() {
       profileId: id,
     });
 
-    const existingId = existingByTitle.get(s.title) || subpageIds[s.key];
+    // Resolve existing subpage by current title (Russian) OR legacy title
+    // (English pre-rename, top-level only) OR profile.json id. The last wins
+    // because users may reorganize the hub — subpages can end up nested
+    // inside column_lists where listChildren on the workspace page no longer
+    // surfaces them by title.
+    let existingId = existingByTitle.get(s.title) || subpageIds[s.key];
+    if (!existingId && LEGACY_TITLES[s.key]) {
+      for (const legacy of LEGACY_TITLES[s.key]) {
+        const cand = existingByTitle.get(legacy);
+        if (cand) {
+          existingId = cand;
+          break;
+        }
+      }
+    }
+    // Rename: if we have the page id, fetch its current title directly
+    // (pages.retrieve) and pages.update if it's an old/legacy title. We
+    // can't rely on existingByTitle reverse lookup because the user may
+    // have moved the subpage off the top level into a column_list, where
+    // it doesn't appear as a direct child_page block of the workspace.
+    if (existingId && (LEGACY_TITLES[s.key] || []).length) {
+      try {
+        const page = await client.pages.retrieve({ page_id: existingId });
+        const titleProp = Object.values(page.properties || {}).find((v) => v.type === "title");
+        const currentTitle = titleProp?.title?.[0]?.plain_text || "";
+        if (currentTitle && currentTitle !== s.title) {
+          console.log(`    [${s.key}] rename "${currentTitle}" → "${s.title}" on ${existingId}`);
+          if (args.apply) {
+            await client.pages.update({
+              page_id: existingId,
+              properties: { title: { title: [{ type: "text", text: { content: s.title } }] } },
+            });
+          }
+        }
+      } catch (err) {
+        console.log(`    [${s.key}] rename check failed for ${existingId}: ${err.message}`);
+      }
+    }
     if (existingId) {
       subpageIds[s.key] = existingId;
       const sentinelPresent = await hasSubpageSentinel(client, existingId, s.key);
@@ -863,6 +947,7 @@ if (require.main === module) {
 
 module.exports = {
   SUBPAGES,
+  LEGACY_TITLES,
   HUB_LAYOUT_SENTINEL,
   hasHubLayoutSentinelV1,
   subpageSentinel,
