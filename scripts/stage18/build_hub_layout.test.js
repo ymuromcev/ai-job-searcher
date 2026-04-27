@@ -10,6 +10,7 @@ const {
   buildWorkflowBlocks,
   buildTargetTierBlocks,
   buildResumeVersionsSubpageBlocks,
+  buildIntro,
   buildLayoutBody,
   buildSubpageBody,
   splitList,
@@ -177,6 +178,45 @@ test("buildWorkflowBlocks: mentions cli.js + profile id + sentinel", () => {
   assert.equal(last.paragraph.rich_text[0].text.content, subpageSentinel("workflow"));
 });
 
+test("buildWorkflowBlocks: opening paragraph notes per-profile invocation", () => {
+  // Important banner for users browsing Lilia's hub: the same skills serve
+  // every profile; she invokes via `--profile lilia`.
+  const blocks = buildWorkflowBlocks("lilia");
+  const first = blocks[0];
+  assert.equal(first.type, "paragraph");
+  const intro = first.paragraph.rich_text.map((r) => r.text.content).join("");
+  assert.ok(intro.includes("--profile lilia"), "opening paragraph references --profile lilia");
+  assert.ok(intro.includes("job-pipeline"), "mentions job-pipeline skill");
+  assert.ok(intro.includes("interview-coach"), "mentions interview-coach skill");
+});
+
+test("buildWorkflowBlocks: uses unified 8-status set (no Phone Screen / Onsite / Inbox transitions)", () => {
+  const blocks = buildWorkflowBlocks("p");
+  const joined = JSON.stringify(blocks);
+  assert.ok(joined.includes("Interview"), "workflow should mention Interview status");
+  assert.ok(!joined.includes("Inbox →"), "no Inbox transition");
+  assert.ok(!joined.includes("→ Phone Screen"), "no transition to Phone Screen status");
+  assert.ok(!joined.includes("Phone Screen →"), "no transition from Phone Screen status");
+  assert.ok(!joined.includes("Onsite →"), "no transition from Onsite status");
+  assert.ok(!joined.includes("→ Onsite"), "no transition to Onsite status");
+  assert.ok(!joined.includes("Inbox + To Apply"), "company cap should not include Inbox");
+});
+
+test("buildWorkflowBlocks: ignores legacy flavor field — single workflow for all profiles", () => {
+  // Healthcare flavor was retired 2026-04-27. A profile that still has the
+  // field set should produce the same skill-commands workflow as any other.
+  const profile = {
+    flavor: "healthcare",
+    preferences: { target_roles: ["Medical Receptionist"] },
+  };
+  const blocksWithFlavor = buildWorkflowBlocks("lilia", profile);
+  const blocksWithout = buildWorkflowBlocks("lilia");
+  assert.equal(blocksWithFlavor.length, blocksWithout.length);
+  const joined = JSON.stringify(blocksWithFlavor);
+  assert.ok(joined.includes("interview-coach"), "interview-coach surfaced regardless of flavor");
+  assert.ok(joined.includes("scan --profile lilia"), "skill commands parametrized by id");
+});
+
 // ---------------------------------------------------------------------------
 // Target Tier block builder
 // ---------------------------------------------------------------------------
@@ -282,7 +322,7 @@ test("buildLayoutBody: intro → candidate link → column_list → divider → 
   const cols = columnList.column_list.children;
   assert.equal(cols.length, 3);
 
-  // Col 1: callout
+  // Col 1: callout — "Inbox: N" semantics (status='To Apply' && !notion_page_id)
   const col1Children = cols[0].column.children;
   assert.equal(col1Children[0].type, "callout");
   assert.ok(col1Children[0].callout.rich_text[0].text.content.includes("Inbox: 42"));
@@ -328,6 +368,110 @@ test("buildLayoutBody: omits candidate link when id missing, skips missing DB id
   const dbLinks = col3Children.filter((b) => b.type === "link_to_page");
   assert.equal(dbLinks.length, 1);
   assert.equal(dbLinks[0].link_to_page.database_id, "db-c");
+});
+
+test("buildLayoutBody: with `profile` argument uses preferences-driven intro", () => {
+  const profile = {
+    identity: { name: "JARED MOORE", location: "Sacramento, CA" },
+    preferences: {
+      target_roles: ["Senior AI Product Manager"],
+      target_industries: ["Fintech", "Digital Banking"],
+      work_format: "Remote",
+    },
+  };
+  const blocks = buildLayoutBody({
+    profileName: "Jared Moore",
+    profile,
+    subpageIds: {},
+    dbIds: {},
+    inboxCount: 0,
+    updatedAt: "2026-04-27",
+  });
+  const intro = blocks[0].paragraph.rich_text[0].text.content;
+  assert.ok(intro.startsWith("Central command for Jared's US job search."), `got: ${intro}`);
+  assert.ok(intro.includes("Senior AI Product Manager"));
+  assert.ok(intro.includes("Sacramento, CA"));
+  assert.ok(intro.includes("Remote-friendly"));
+});
+
+test("buildLayoutBody: profile.hub.intro override wins over template", () => {
+  const profile = {
+    identity: { name: "Jared", location: "Anywhere" },
+    preferences: { target_roles: ["X"] },
+    hub: { intro: "Custom intro text — bespoke." },
+  };
+  const blocks = buildLayoutBody({
+    profileName: "Jared",
+    profile,
+    subpageIds: {},
+    dbIds: {},
+    inboxCount: 5,
+    updatedAt: "2026-04-27",
+  });
+  assert.equal(blocks[0].paragraph.rich_text[0].text.content, "Custom intro text — bespoke.");
+});
+
+// ---------------------------------------------------------------------------
+// buildIntro
+// ---------------------------------------------------------------------------
+
+test("buildIntro: minimal profile (only name) emits readable fallback", () => {
+  const block = buildIntro({ identity: { name: "Sam Carter" } });
+  const text = block.paragraph.rich_text[0].text.content;
+  assert.ok(text.includes("Sam"));
+  assert.ok(text.startsWith("Central command for"));
+});
+
+test("buildIntro: ALL-CAPS first name pretty-cased", () => {
+  const block = buildIntro({ identity: { name: "JARED MOORE" } });
+  const text = block.paragraph.rich_text[0].text.content;
+  assert.ok(text.includes("Jared"));
+  assert.ok(!text.includes("JARED"));
+});
+
+test("buildIntro: industry phrasing — 1 / 2 / 3+ industries", () => {
+  const one = buildIntro({
+    identity: { name: "X" },
+    preferences: { target_roles: ["PM"], target_industries: ["Healthcare"] },
+  }).paragraph.rich_text[0].text.content;
+  assert.ok(one.includes("in Healthcare"));
+
+  const two = buildIntro({
+    identity: { name: "X" },
+    preferences: { target_roles: ["PM"], target_industries: ["Fintech", "SaaS"] },
+  }).paragraph.rich_text[0].text.content;
+  assert.ok(two.includes("in Fintech and SaaS"));
+
+  const many = buildIntro({
+    identity: { name: "X" },
+    preferences: { target_roles: ["PM"], target_industries: ["A", "B", "C", "D"] },
+  }).paragraph.rich_text[0].text.content;
+  assert.ok(many.includes("in A, B and adjacent industries"));
+});
+
+test("buildIntro: work_format phrasing — remote / any / hybrid / onsite / unset", () => {
+  const cases = {
+    remote: "Remote-friendly",
+    any: "Remote-friendly",
+    hybrid: "Hybrid acceptable",
+    onsite: "Onsite preferred",
+    "on-site": "Onsite preferred",
+  };
+  for (const [fmt, expected] of Object.entries(cases)) {
+    const text = buildIntro({
+      identity: { name: "X" },
+      preferences: { target_roles: ["PM"], work_format: fmt },
+    }).paragraph.rich_text[0].text.content;
+    assert.ok(text.includes(expected), `format=${fmt} should yield "${expected}", got: ${text}`);
+  }
+  // Unset → no format suffix
+  const noFmt = buildIntro({
+    identity: { name: "X" },
+    preferences: { target_roles: ["PM"] },
+  }).paragraph.rich_text[0].text.content;
+  assert.ok(!noFmt.includes("Remote-friendly"));
+  assert.ok(!noFmt.includes("Hybrid"));
+  assert.ok(!noFmt.includes("Onsite"));
 });
 
 // ---------------------------------------------------------------------------

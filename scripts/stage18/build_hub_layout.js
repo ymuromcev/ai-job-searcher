@@ -285,10 +285,18 @@ function buildCandidateProfileBlocks(profile) {
   return blocks;
 }
 
-function buildWorkflowBlocks(profileId) {
+// Build the Workflow subpage. Single generic skill-commands playbook, used by
+// every profile. All commands take `--profile <id>` — the same job-pipeline /
+// interview-coach skills serve every profile from one engine.
+function buildWorkflowBlocks(profileId, profile) {
   const p = profileId;
   const blocks = [
-    paragraph("Automated pipeline executed by Claude Code on request. Two skills drive it:"),
+    paragraphRich([
+      "Automated pipeline executed by Claude Code on request. The same two skills (",
+      { text: "job-pipeline", code: true }, " upstream + ",
+      { text: "interview-coach", code: true }, " downstream) serve every profile from one engine — every command below takes ",
+      { text: `--profile ${p}`, code: true }, ".",
+    ]),
     bulletRich([
       { text: "job-pipeline", code: true, bold: true },
       " — upstream: scan → Notion → CV/CL → submit → sync → check email responses.",
@@ -296,7 +304,7 @@ function buildWorkflowBlocks(profileId) {
     bulletRich([
       { text: "interview-coach", code: true, bold: true },
       " — downstream: prep → mock → debrief → negotiate, triggered once Notion Status reaches ",
-      { text: "Phone Screen", code: true },
+      { text: "Interview", code: true },
       " or later.",
     ]),
 
@@ -305,7 +313,7 @@ function buildWorkflowBlocks(profileId) {
     heading3("/job-pipeline scan — Найти новые вакансии"),
     bulletRich([{ text: `node engine/cli.js scan --profile ${p}`, code: true }, " — scans all target companies via enabled discovery adapters (Greenhouse / Lever / Ashby / SmartRecruiters / Workday / CalCareers / RemoteOK)"]),
     bullet("Level filter — reject Director / Principal / Staff / VP / Intern / Associate / GPM / New Grad"),
-    bullet("Company cap — max 3 active jobs per company (Applied + To Apply + Inbox)"),
+    bullet("Company cap — max 3 active jobs per company (Applied + To Apply)"),
     bulletRich(["Dedup — check against ", { text: `profiles/${p}/applications.tsv`, code: true }, " + shared ", { text: "data/jobs.tsv", code: true }]),
     bullet("Create in Notion — all required fields filled, Company relation set (create company if needed)"),
     bullet("Update TSV with notion_id"),
@@ -314,11 +322,11 @@ function buildWorkflowBlocks(profileId) {
 
     heading3("/job-pipeline prepare — Подготовить материалы"),
     paragraph("Two phases: draft everything, then approve before push."),
-    bulletRich([{ text: `node engine/cli.js prepare --profile ${p} --phase pre --batch 20`, code: true }, " — collect Inbox, level-validate, skip already-prepared, assign CV archetype, draft CL, compute salary (Tier × Level + COL), emit ", { text: "results-<ts>.json", code: true }]),
+    bulletRich([{ text: `node engine/cli.js prepare --profile ${p} --phase pre --batch 20`, code: true }, " — collect fresh rows (status=", { text: "To Apply", code: true }, " + no Notion page id), level-validate, skip already-prepared, assign CV archetype, draft CL, compute salary (Tier × Level + COL), emit ", { text: "results-<ts>.json", code: true }]),
     bulletRich(["Review ", { text: "results-<ts>.json", code: true }]),
-    bulletRich([{ text: `node engine/cli.js prepare --profile ${p} --phase commit --results-file results-<ts>.json`, code: true }, " — accept drafts: update TSV (Inbox → To Apply + resume_version + cl_key + salary), push Notion (Status → To Apply), write CL PDF"]),
+    bulletRich([{ text: `node engine/cli.js prepare --profile ${p} --phase commit --results-file results-<ts>.json`, code: true }, " — accept drafts: update TSV (resume_version + cl_key + salary), push Notion page (creates page with Status=", { text: "To Apply", code: true }, "), write CL PDF"]),
     bullet("CL rules — 4 paragraphs (Hook → proof paragraph → relevance paragraph → Close), confident-practitioner voice, numbers mandatory. Run /humanizer before showing to user."),
-    bullet("Validate: 0 Inbox remaining, 0 To Apply without CL / CV"),
+    bullet("Validate: 0 fresh rows remaining, 0 To Apply without CL / CV"),
     bullet("Report: prepared X, skipped Y, archived Z, errors N"),
 
     heading3("/job-pipeline sync — Синхронизировать статусы"),
@@ -331,14 +339,14 @@ function buildWorkflowBlocks(profileId) {
 
     heading3("/job-pipeline check — Проверить ответы по email"),
     paragraph("Two-phase MCP-driven flow (Gmail reads delegated to Claude MCP — no OAuth on disk)."),
-    bulletRich([{ text: `node engine/cli.js check --profile ${p} --prepare`, code: true }, " — build active-jobs map from TSV (Applied / Phone Screen / Onsite / Offer / To Apply), compute cursor epoch, print Gmail batches JSON (10 companies / batch + LinkedIn + recruiter queries)"]),
+    bulletRich([{ text: `node engine/cli.js check --profile ${p} --prepare`, code: true }, " — build active-jobs map from TSV (To Apply / Applied / Interview / Offer), compute cursor epoch, print Gmail batches JSON (10 companies / batch + LinkedIn + recruiter queries)"]),
     bulletRich(["Claude MCP reads Gmail per the printed batches, writes ", { text: "raw_emails.json", code: true }, " into ", { text: `profiles/${p}/.gmail-state/`, code: true }]),
-    bulletRich([{ text: `node engine/cli.js check --profile ${p} --apply`, code: true }, " — classify each email (REJECTION / INTERVIEW_INVITE / INFO_REQUEST / ACKNOWLEDGMENT / OTHER), match to role (HIGH / LOW / NONE), update Notion: REJECTION → Rejected + comment; INTERVIEW_INVITE → Phone Screen + comment; INFO_REQUEST → comment only; LOW match → comment asking to clarify"]),
+    bulletRich([{ text: `node engine/cli.js check --profile ${p} --apply`, code: true }, " — classify each email (REJECTION / INTERVIEW_INVITE / INFO_REQUEST / ACKNOWLEDGMENT / OTHER), match to role (HIGH / LOW / NONE), update Notion: REJECTION → Rejected + comment; INTERVIEW_INVITE → Interview + comment; INFO_REQUEST → comment only; LOW match → comment asking to clarify"]),
     bulletRich(["Update logs: ", { text: "rejection_log.md", code: true }, ", ", { text: "email_check_log.md", code: true }, ", ", { text: "recruiter_leads.md", code: true }]),
     bulletRich(["Save dedup: ", { text: "processed_messages.json", code: true }, " (auto-prune > 30 days)"]),
 
     heading3("/job-pipeline validate — Retro blocklist sweep + TSV integrity"),
-    bulletRich([{ text: `node engine/cli.js validate --profile ${p}`, code: true }, " — re-apply company + title blocklists to existing Inbox / To Apply rows (catches rows let through before a filter update)"]),
+    bulletRich([{ text: `node engine/cli.js validate --profile ${p}`, code: true }, " — re-apply company + title blocklists to existing To Apply rows (catches rows let through before a filter update)"]),
     bulletRich(["Report matches → exit 1. With ", { text: "--apply", code: true }, ": set ", { text: "status=Archived", code: true }]),
     bullet("Also checks TSV integrity (empty Company relations, stale notion_ids, pending ids)"),
 
@@ -385,7 +393,7 @@ function buildWorkflowBlocks(profileId) {
     bullet("Prioritize by leverage: lead with stories that map to this profile's strongest pillars"),
 
     heading3("/prep [company] — Company + role prep brief"),
-    bulletRich(["Trigger: Notion Status transitions ", { text: "Applied → Phone Screen", code: true }]),
+    bulletRich(["Trigger: Notion Status transitions ", { text: "Applied → Interview", code: true }]),
     bullet("Read JD + company data from Notion Jobs Pipeline + Companies DBs"),
     bullet("Generate: interviewer intel, round formats, likely questions, story mapping (which S### to deploy)"),
     bulletRich(["Save to ", { text: "coaching_state.md", code: true }, " → Interview Loops"]),
@@ -397,7 +405,7 @@ function buildWorkflowBlocks(profileId) {
     heading3("/mock [format] — Full simulated interview"),
     bulletRich(["Formats: ", { text: "behavioral", code: true }, " / ", { text: "system-design", code: true }, " / ", { text: "case-study", code: true }, " / ", { text: "panel", code: true }, " / ", { text: "technical", code: true }]),
     bullet("4–6 questions, scored on 5 dimensions (Substance, Structure, Relevance, Credibility, Differentiation)"),
-    bulletRich(["Trigger: ", { text: "Phone Screen → Onsite", code: true }, " transition"]),
+    bulletRich(["Trigger: subsequent ", { text: "Interview", code: true }, " round (post phone-screen onsite / panel)"]),
 
     heading3("/debrief — Post-interview rapid capture (same day)"),
     bullet("Run immediately after any real interview"),
@@ -432,12 +440,25 @@ function buildWorkflowBlocks(profileId) {
     table(
       [
         ["Status transition", "Coach commands"],
-        [[{ text: "Applied → Phone Screen", code: true }], [[{ text: "prep [company]", code: true }, " · ", { text: "hype", code: true }]]],
-        ["after phone screen", [[{ text: "debrief", code: true }, " · (opt.) ", { text: "analyze [transcript]", code: true }]]],
-        [[{ text: "Phone Screen → Onsite", code: true }], [[{ text: "mock [format]", code: true }, " · ", { text: "questions", code: true }, " · ", { text: "concerns", code: true }]]],
-        ["after each onsite round", [[{ text: "debrief", code: true }, " · ", { text: "analyze", code: true }]]],
-        [[{ text: "Onsite → Offer", code: true }], [[{ text: "negotiate", code: true }]]],
-        ["Rejection", [[{ text: "feedback", code: true }, " · ", { text: "progress", code: true }]]],
+        [
+          [{ text: "Applied → Interview", code: true }],
+          [{ text: "prep [company]", code: true }, " · ", { text: "hype", code: true }],
+        ],
+        [
+          "after each interview round",
+          [
+            { text: "debrief", code: true }, " · (opt.) ",
+            { text: "analyze [transcript]", code: true }, " · ",
+            { text: "mock [format]", code: true }, " · ",
+            { text: "questions", code: true }, " · ",
+            { text: "concerns", code: true },
+          ],
+        ],
+        [
+          [{ text: "Interview → Offer", code: true }],
+          [{ text: "negotiate", code: true }],
+        ],
+        ["Rejection", [{ text: "feedback", code: true }, " · ", { text: "progress", code: true }]],
       ],
       { hasHeader: true }
     ),
@@ -536,10 +557,56 @@ function buildResumeVersionsSubpageBlocks(versionsFile) {
 // Hub body
 // ---------------------------------------------------------------------------
 
-function buildLayoutBody({ profileName, subpageIds, dbIds, inboxCount, updatedAt }) {
-  const intro = paragraph(
-    `${profileName}'s AI Job Search Hub — pipelines, companies, playbooks. Managed via \`node engine/cli.js\`.`
-  );
+// Build the hub intro paragraph. Three-tier resolution:
+//   1. profile.hub.intro — verbatim override (best for hand-tuned copy).
+//   2. preferences-driven template (target_roles[0] + target_industries +
+//      identity.location + work_format).
+//   3. Minimal fallback if preferences are sparse.
+function buildIntro(profile) {
+  const hub = (profile && profile.hub) || {};
+  if (typeof hub.intro === "string" && hub.intro.trim()) {
+    return paragraph(hub.intro.trim());
+  }
+  const identity = (profile && profile.identity) || {};
+  const prefs = (profile && profile.preferences) || {};
+
+  const fullName = identity.name || identity.full_name || "";
+  const firstName = fullName.trim().split(/\s+/)[0] || "Candidate";
+  // "JARED" → "Jared" if all-caps
+  const firstNamePretty = /^[A-Z]+$/.test(firstName)
+    ? firstName.charAt(0) + firstName.slice(1).toLowerCase()
+    : firstName;
+
+  const roles = splitList(prefs.target_roles);
+  const primaryRole = roles[0] || "fitting";
+
+  const industries = splitList(prefs.target_industries);
+  let industryPhrase = "";
+  if (industries.length === 1) industryPhrase = ` in ${industries[0]}`;
+  else if (industries.length === 2) industryPhrase = ` in ${industries.join(" and ")}`;
+  else if (industries.length >= 3) industryPhrase = ` in ${industries.slice(0, 2).join(", ")} and adjacent industries`;
+
+  const location = identity.location || (splitList(prefs.locations_ok)[0] || "");
+
+  let formatPhrase = "";
+  const fmt = (prefs.work_format || "").toString().toLowerCase();
+  if (fmt === "remote" || fmt === "any") formatPhrase = " Remote-friendly.";
+  else if (fmt === "hybrid") formatPhrase = " Hybrid acceptable.";
+  else if (fmt === "onsite" || fmt === "on-site") formatPhrase = " Onsite preferred.";
+
+  let line = `Central command for ${firstNamePretty}'s US job search. Target: ${primaryRole} roles${industryPhrase}.`;
+  if (location) line += ` Location: ${location}.`;
+  line += formatPhrase;
+  return paragraph(line.trim());
+}
+
+function buildLayoutBody({ profileName, profile, subpageIds, dbIds, inboxCount, updatedAt }) {
+  // Back-compat: if `profile` not provided, fall back to legacy generic intro.
+  const intro = profile
+    ? buildIntro(profile)
+    : paragraph(
+        `${profileName}'s AI Job Search Hub — pipelines, companies, playbooks. Managed via \`node engine/cli.js\`.`
+      );
 
   const col1 = {
     object: "block",
@@ -604,13 +671,20 @@ async function hasSubpageSentinel(client, pageId, key) {
 }
 
 async function createSubpage(client, parentPageId, title, icon, bodyBlocks) {
+  // Notion API limits pages.create to 100 children. For longer bodies we
+  // create with the first 90 and append the rest in chunks.
+  const FIRST_BATCH = 90;
   const args = {
     parent: { type: "page_id", page_id: parentPageId },
     properties: { title: { title: [{ type: "text", text: { content: title } }] } },
   };
   if (icon) args.icon = { type: "emoji", emoji: icon };
-  if (bodyBlocks && bodyBlocks.length) args.children = bodyBlocks;
+  const all = bodyBlocks || [];
+  if (all.length) args.children = all.slice(0, FIRST_BATCH);
   const resp = await client.pages.create(args);
+  if (all.length > FIRST_BATCH) {
+    await appendBlocks(client, resp.id, all.slice(FIRST_BATCH));
+  }
   return resp.id;
 }
 
@@ -630,7 +704,7 @@ async function appendBlocks(client, pageId, blocks) {
 
 function buildSubpageBody(mode, { profile, versionsFile, profileId }) {
   if (mode === "candidate_profile") return buildCandidateProfileBlocks(profile);
-  if (mode === "workflow") return buildWorkflowBlocks(profileId);
+  if (mode === "workflow") return buildWorkflowBlocks(profileId, profile);
   if (mode === "target_tier") return buildTargetTierBlocks(profile);
   if (mode === "resume_versions") return buildResumeVersionsSubpageBlocks(versionsFile);
   throw new Error(`unknown subpage mode: ${mode}`);
@@ -739,7 +813,11 @@ async function main() {
       const tsvPath = path.join(REPO_ROOT, "profiles", id, "applications.tsv");
       if (fs.existsSync(tsvPath)) {
         const { apps } = load(tsvPath);
-        inboxCount = apps.filter((a) => a.status === "Inbox").length;
+        // "Inbox" semantics in the unified 8-status set: status="To Apply"
+        // AND not yet pushed to Notion (no notion_page_id). Once a row gets
+        // a Notion page (CV+CL prepared), it stays "To Apply" but leaves
+        // the inbox queue.
+        inboxCount = apps.filter((a) => a.status === "To Apply" && !a.notion_page_id).length;
       }
     } catch (err) {
       console.log(`    inbox count unavailable: ${err.message}`);
@@ -747,6 +825,7 @@ async function main() {
     const updatedAt = new Date().toISOString().slice(0, 10);
     const blocks = buildLayoutBody({
       profileName: (profile.identity && (profile.identity.name || profile.identity.full_name)) || id,
+      profile,
       subpageIds,
       dbIds,
       inboxCount,
@@ -791,6 +870,7 @@ module.exports = {
   buildWorkflowBlocks,
   buildTargetTierBlocks,
   buildResumeVersionsSubpageBlocks,
+  buildIntro,
   buildLayoutBody,
   buildSubpageBody,
   splitList,
