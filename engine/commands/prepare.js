@@ -1,7 +1,10 @@
-// `prepare` command — two-phase Inbox processing.
+// `prepare` command — two-phase processing of "fresh" pipeline rows.
+//
+// "Fresh" = status="To Apply" AND notion_page_id="" (never pushed). The 8-status
+// set has no "Inbox" — fresh rows land directly as "To Apply" via scan/check.
 //
 // Phase `pre`:
-//   1. Load Inbox apps from applications.tsv.
+//   1. Load fresh apps from applications.tsv.
 //   2. Apply title blocklist + company cap from filter_rules.json.
 //   3. Take first `batchSize` (default 30) passed jobs.
 //   4. URL-check each job (HEAD + GET fallback, SSRF guard).
@@ -13,7 +16,9 @@
 //   Read a results JSON file produced by the Claude SKILL (see SKILL.md) and
 //   update applications.tsv accordingly:
 //     decision "to_apply"  → status="To Apply", set cl_key / resume_ver / notion_page_id
-//     decision "skip"      → no change (stays Inbox)
+//                            (row keeps "To Apply" but gains notion_page_id, so
+//                             it stops appearing in fresh list on next pre run)
+//     decision "skip"      → no change (still "To Apply" with no notion_page_id)
 //     decision "archive"   → status="Archived"
 //
 //   The factory `makePrepareCommand({ deps })` is exported so tests can inject
@@ -29,8 +34,10 @@ const { fetchAll: fetchAllJds } = require("../core/jd_cache.js");
 const { calcSalary } = require("../core/salary_calc.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 
-// Active statuses that count toward the company cap (Inbox is NOT counted —
-// only pre-existing active pipeline rows block additional prepares).
+// Active statuses that count toward the company cap. "To Apply" is included
+// because every triaged row will become Applied — counting it prevents over-
+// preparing for the same company. Archived/Rejected/Closed/No Response don't
+// block. (8-status set; there is no "Inbox" status.)
 const CAP_ACTIVE_STATUSES = new Set(["To Apply", "Applied", "Interview", "Offer"]);
 
 const DEFAULT_BATCH_SIZE = 30;
@@ -163,8 +170,13 @@ async function runPre(ctx, deps) {
   const applicationsPath = profile.paths.applicationsTsv;
   const { apps } = deps.loadApplications(applicationsPath);
 
-  const inboxApps = apps.filter((a) => a.status === "Inbox");
-  stdout(`inbox: ${inboxApps.length} jobs`);
+  // 8-status set has no "Inbox". "Fresh / not triaged" now = status "To Apply"
+  // AND no notion_page_id (never pushed). After prepare commit, the row keeps
+  // status "To Apply" and gains a notion_page_id, so it stops appearing here.
+  const inboxApps = apps.filter(
+    (a) => a.status === "To Apply" && !a.notion_page_id
+  );
+  stdout(`fresh-to-prepare: ${inboxApps.length} jobs`);
 
   const activeCounts = buildActiveCounts(apps);
   const { passed, skipped: filteredOut } = applyPrepareFilter(

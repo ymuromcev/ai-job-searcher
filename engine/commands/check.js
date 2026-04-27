@@ -51,14 +51,16 @@ const {
 const emailState = require("../core/email_state.js");
 const emailLogs = require("../core/email_logs.js");
 
+// 8-status set used by both Jared and Lilia DBs:
+//   To Apply / Applied / Interview / Offer / Rejected / Closed / No Response / Archived
+// "Active" = still in flight from candidate's POV (we want to listen for emails on these).
 const ACTIVE_STATUSES = new Set([
-  "Applied",
   "To Apply",
+  "Applied",
   "Interview",
-  "Onsite",
   "Offer",
 ]);
-const SKIP_STATUSES = new Set(["Rejected", "Closed"]);
+const SKIP_STATUSES = new Set(["Rejected", "Closed", "Archived", "No Response"]);
 
 const BATCH_SIZE = 10;
 
@@ -248,7 +250,7 @@ function processLinkedIn(email, ctx, state) {
       companyName: parsed.company,
       title: parsed.role,
       url: "",
-      status: "Inbox",
+      status: "To Apply",
       notion_page_id: "",
       resume_ver: "",
       cl_key: "",
@@ -260,7 +262,7 @@ function processLinkedIn(email, ctx, state) {
     };
     state.newInboxRows.push(newRow);
     state.tsvCache.push(newRow);
-    logRow.action = "→ Inbox";
+    logRow.action = "→ To Apply";
     logRow.comment = "✅";
   }
   return logRow;
@@ -298,7 +300,7 @@ function processRecruiter(email, ctx, state) {
           companyName: company,
           title: role,
           url: "",
-          status: "Inbox",
+          status: "To Apply",
           notion_page_id: "",
           resume_ver: "",
           cl_key: "",
@@ -311,7 +313,7 @@ function processRecruiter(email, ctx, state) {
         state.newInboxRows.push(newRow);
         state.tsvCache.push(newRow);
         logRow.company = company;
-        logRow.action = "→ Inbox";
+        logRow.action = "→ To Apply";
         logRow.comment = "✅";
       }
     } else {

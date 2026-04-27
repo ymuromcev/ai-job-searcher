@@ -23,7 +23,7 @@ function hasUsMarker(locLower) {
 // location) or null if nothing matches. Content-only: does NOT consult
 // company_cap. Used by:
 //   - checkJob: full SCAN-time gate (blocklists + cap)
-//   - validate retro-sweep: re-screen existing Inbox/To Apply rows after
+//   - validate retro-sweep: re-screen existing "To Apply" rows after
 //     filter_rules updates, without re-counting caps.
 //
 // Note: TSV rows (applications.tsv) do not store `location`, so retro-sweep

@@ -7,7 +7,9 @@
 //             <TAB> createdAt <TAB> updatedAt
 //
 // `key` = "<source>:<jobId>" — primary, used for dedup against the master pool.
-// New entries default to status="Inbox", notion_page_id="" until sync runs.
+// New entries default to status="To Apply", notion_page_id="" until sync runs.
+// (Notion DBs use the 8-status set: To Apply / Applied / Interview / Offer /
+// Rejected / Closed / No Response / Archived. There is no "Inbox" status.)
 // Backward compat: v1 files (12 cols) are auto-upgraded on load with empty
 // values for the three new columns — save() always writes v2.
 
@@ -199,7 +201,7 @@ function save(filePath, apps) {
   return { path: filePath, count: apps.length };
 }
 
-function appendNew(existing, jobs, { now = new Date().toISOString(), defaultStatus = "Inbox" } = {}) {
+function appendNew(existing, jobs, { now = new Date().toISOString(), defaultStatus = "To Apply" } = {}) {
   const seen = new Set(existing.map((a) => a.key));
   const fresh = [];
   for (const job of jobs) {

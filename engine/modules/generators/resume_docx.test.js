@@ -106,3 +106,35 @@ test("generateResumeDocx works without version.title (name-only header)", async 
     fs.unlinkSync(tmp);
   }
 });
+
+test("generateResumeDocx renders personal projects section with url", async () => {
+  const tmp = path.join(os.tmpdir(), `resume-projects-${process.pid}-${Date.now()}.docx`);
+  const fixture = {
+    ...FIXTURE,
+    projects: [
+      {
+        name: "AI Job Search Agent",
+        dates: "2026",
+        url: "github.com/ymuromcev/ai-job-searcher",
+        description: "End-to-end job search pipeline. 1,127 jobs tracked.",
+        bullets: [[{ text: "8 ATS adapters, 499 tests" }]],
+      },
+    ],
+  };
+  await generateResumeDocx(fixture, tmp);
+  try {
+    assert.ok(fs.statSync(tmp).size > 0);
+  } finally {
+    fs.unlinkSync(tmp);
+  }
+});
+
+test("generateResumeDocx works without projects (backward compat)", async () => {
+  const tmp = path.join(os.tmpdir(), `resume-noprojects-${process.pid}-${Date.now()}.docx`);
+  await generateResumeDocx(FIXTURE, tmp);
+  try {
+    assert.ok(fs.statSync(tmp).size > 0);
+  } finally {
+    fs.unlinkSync(tmp);
+  }
+});

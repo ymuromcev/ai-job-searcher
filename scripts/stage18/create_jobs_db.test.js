@@ -9,7 +9,7 @@ test("injectCompaniesDbId replaces placeholder with actual db id", () => {
   const before = schema.Company.relation.database_id;
   assert.equal(before, "__COMPANIES_DB__");
   const after = injectCompaniesDbId(schema, "abc-123");
-  assert.equal(after.Company.relation.database_id, "abc-123");
+  assert.equal(after.Company.relation.data_source_id, "abc-123");
   assert.equal(after.Company.relation.type, "single_property");
   assert.deepEqual(after.Company.relation.single_property, {});
 });

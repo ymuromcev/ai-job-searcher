@@ -77,11 +77,10 @@ function appToNotionJob(app, companyRelationId) {
   return out;
 }
 
-// Inbox is a registry-only state — it does not correspond to a Notion Status
-// option. Pages are created by the `prepare` commit phase once a job has
-// been triaged (status moves to "To Apply" and notion_page_id is set atomically).
-// So sync's push step skips both already-pushed, Archived, and Inbox rows.
-const PUSH_SKIP_STATUSES = new Set(["Archived", "Inbox"]);
+// 8-status set used by both Jared and Lilia DBs:
+//   To Apply / Applied / Interview / Offer / Rejected / Closed / No Response / Archived
+// Push step skips already-archived rows (terminal state, not worth touching).
+const PUSH_SKIP_STATUSES = new Set(["Archived"]);
 
 // Stage 16 opt-in gate: if a push manifest is present, only its keys are
 // eligible for push. Used during prototype→new-engine migration so TSV-only

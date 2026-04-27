@@ -104,8 +104,22 @@ function renderSkills(doc, skills) {
   for (const s of skills) skillLine(doc, s.label, s.value);
 }
 
+function renderProjects(doc, projects) {
+  if (!projects || projects.length === 0) return;
+  sectionHeader(doc, "PERSONAL PROJECTS");
+  projects.forEach((p, i) => {
+    if (i > 0) doc.moveDown(0.15);
+    const header = p.url ? `${p.name}  |  ${p.dates}  \u2022  ${p.url}` : `${p.name}  |  ${p.dates}`;
+    doc.font("Helvetica-Bold").fontSize(9).text(header);
+    if (p.description) {
+      doc.font("Helvetica").fontSize(8.5).text(p.description, { lineGap: 1 });
+    }
+    for (const b of p.bullets || []) bulletItem(doc, b);
+  });
+}
+
 function generateResumePdf(
-  { contact, version, sharedExperience, sharedSections, certifications },
+  { contact, version, sharedExperience, sharedSections, certifications, projects },
   outputPath
 ) {
   return new Promise((resolve, reject) => {
@@ -125,6 +139,7 @@ function generateResumePdf(
     const experience = [...(version.experienceOverride || []), ...(sharedExperience || [])];
     for (const r of experience) renderRole(doc, r);
 
+    renderProjects(doc, projects);
     renderEducation(doc, sharedSections && sharedSections.education);
     renderCertifications(doc, certifications);
 

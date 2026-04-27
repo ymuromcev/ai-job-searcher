@@ -7,6 +7,7 @@
 //   sharedExperience?: [ { role, company, location, dates, description?, bullets } ]
 //   sharedSections?: { skillsFixed?: [{label, value}], education?: [{degree, school, dates}] }
 //   certifications?: [ { name, issuer, displayDate? | date } ]
+//   projects?: [ { name, dates, url?, description?, bullets } ]
 //
 // Bullets are rich-text segments: [{ text, bold? }].
 
@@ -159,6 +160,37 @@ function certificationBlock(certs) {
   return out;
 }
 
+function projectsBlock(projects) {
+  if (!projects || projects.length === 0) return [];
+  const out = [sectionHeader("PERSONAL PROJECTS")];
+  projects.forEach((p, i) => {
+    const headerChildren = [
+      new TextRun({ text: p.name, bold: true, font: "Arial", size: 20 }),
+      new TextRun({ text: `  |  ${p.dates}`, bold: true, font: "Arial", size: 20 }),
+    ];
+    if (p.url) {
+      headerChildren.push(new TextRun({ text: "  \u2022  ", font: "Arial", size: 20 }));
+      headerChildren.push(
+        new ExternalHyperlink({
+          children: [new TextRun({ text: p.url, style: "Hyperlink", font: "Arial", size: 20 })],
+          link: `https://${p.url}`,
+        })
+      );
+    }
+    out.push(new Paragraph({ spacing: { before: i === 0 ? 100 : 200 }, children: headerChildren }));
+    if (p.description) {
+      out.push(
+        new Paragraph({
+          spacing: { before: 40, after: 60 },
+          children: [new TextRun({ text: p.description, font: "Arial", size: 20 })],
+        })
+      );
+    }
+    for (const b of p.bullets || []) out.push(bulletParagraph(b));
+  });
+  return out;
+}
+
 function skillsBlock(skills) {
   if (!skills || skills.length === 0) return [];
   const out = [sectionHeader("SKILLS & TOOLS")];
@@ -176,7 +208,7 @@ function skillsBlock(skills) {
   return out;
 }
 
-function buildDocument({ contact, version, sharedExperience, sharedSections, certifications }) {
+function buildDocument({ contact, version, sharedExperience, sharedSections, certifications, projects }) {
   const experience = [...(version.experienceOverride || []), ...(sharedExperience || [])];
   const skills = [
     ...((sharedSections && sharedSections.skillsFixed) || []),
@@ -193,6 +225,7 @@ function buildDocument({ contact, version, sharedExperience, sharedSections, cer
     }),
     sectionHeader("PROFESSIONAL EXPERIENCE"),
     ...experience.flatMap(roleBlock),
+    ...projectsBlock(projects),
     ...educationBlock(education),
     ...certificationBlock(certifications),
     ...skillsBlock(skills),

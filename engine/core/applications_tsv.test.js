@@ -31,14 +31,16 @@ test("load returns empty when file missing", () => {
   assert.deepEqual(out, []);
 });
 
-test("appendNew adds previously-unseen jobs as Inbox entries", () => {
+test("appendNew adds previously-unseen jobs as 'To Apply' entries (default status)", () => {
   const result = apps.appendNew([], [fixtureJob(), fixtureJob({ jobId: "2" })], {
     now: "2026-04-20T00:00:00Z",
   });
   assert.equal(result.apps.length, 2);
   assert.equal(result.fresh.length, 2);
   assert.equal(result.apps[0].key, "greenhouse:1");
-  assert.equal(result.apps[0].status, "Inbox");
+  // 8-status set has no "Inbox"; fresh rows start as "To Apply" with no notion_page_id.
+  assert.equal(result.apps[0].status, "To Apply");
+  assert.equal(result.apps[0].notion_page_id, "");
   assert.equal(result.apps[0].createdAt, "2026-04-20T00:00:00Z");
 });
 

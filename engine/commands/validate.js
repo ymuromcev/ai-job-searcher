@@ -21,10 +21,12 @@ const applications = require("../core/applications_tsv.js");
 const { matchBlocklists } = require("../core/filter.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 
-const ACTIVE_STATUSES = new Set(["Inbox", "To Apply", "Applied", "Interview", "Offer"]);
-// Rows eligible for retro blocklist sweep. Prototype (validate_inbox.js)
-// re-screens only "not yet applied" rows — Applied/Interview/Offer are kept as-is.
-const RETRO_SWEEP_STATUSES = new Set(["Inbox", "To Apply"]);
+// 8-status set: To Apply / Applied / Interview / Offer / Rejected / Closed /
+// No Response / Archived. "Active" = still in flight (worth re-validating URL).
+const ACTIVE_STATUSES = new Set(["To Apply", "Applied", "Interview", "Offer"]);
+// Rows eligible for retro blocklist sweep. Re-screen only "not yet applied"
+// rows — Applied/Interview/Offer are kept as-is.
+const RETRO_SWEEP_STATUSES = new Set(["To Apply"]);
 const DEFAULT_URL_CAP = 500;
 const DEFAULT_PING_TIMEOUT_MS = 5000;
 const DEFAULT_PING_CONCURRENCY = 8;
@@ -275,7 +277,8 @@ function makeValidateCommand(overrides = {}) {
     }
 
     // 4. Retro blocklist sweep: re-apply title/company blocklists to existing
-    // Inbox/To Apply rows. Catches the case where a pattern was added to
+    // "To Apply" rows (the only pre-apply triage state in the 8-status set).
+    // Catches the case where a pattern was added to
     // filter_rules.json after old rows landed — prototype parity with
     // validate_inbox.js. TSV rows carry no `location`, so only company+title
     // blocklists exercise here (location_blocklist applies at SCAN time only).

@@ -128,7 +128,8 @@ test("buildActiveJobsMap: filters to active + notion_page_id set", () => {
   const apps = [
     fakeApp({ key: "a", status: "Applied", notion_page_id: "p1", companyName: "Acme" }),
     fakeApp({ key: "b", status: "Rejected", notion_page_id: "p2", companyName: "Acme" }),
-    fakeApp({ key: "c", status: "Inbox", notion_page_id: "", companyName: "Acme" }),
+    // Active status but no notion_page_id → excluded (never pushed to Notion yet).
+    fakeApp({ key: "c", status: "To Apply", notion_page_id: "", companyName: "Acme" }),
     fakeApp({ key: "d", status: "Interview", notion_page_id: "p4", companyName: "Beta" }),
   ];
   const map = buildActiveJobsMap(apps);
@@ -185,17 +186,18 @@ test("processLinkedIn: unparseable → skipped", () => {
   assert.equal(row.action, "unparseable subject");
 });
 
-test("processLinkedIn: new parseable subject → Inbox row pushed", () => {
+test("processLinkedIn: new parseable subject → 'To Apply' row pushed", () => {
   const state = makeState();
   const row = processLinkedIn(
     { messageId: "m1", subject: "Product Manager at Acme" },
     { nowIso: "2026-04-20" },
     state
   );
-  assert.equal(row.action, "→ Inbox");
+  assert.equal(row.action, "→ To Apply");
   assert.equal(state.newInboxRows.length, 1);
   assert.equal(state.newInboxRows[0].companyName, "Acme");
-  assert.equal(state.newInboxRows[0].status, "Inbox");
+  // 8-status set: fresh rows land as "To Apply" with no notion_page_id.
+  assert.equal(state.newInboxRows[0].status, "To Apply");
   assert.equal(state.newInboxRows[0].source, "linkedin");
 });
 
@@ -241,7 +243,7 @@ test("processRecruiter: role + no client → recruiter_leads", () => {
   assert.equal(state.recruiterLeads[0].role, "Senior PM");
 });
 
-test("processRecruiter: role + client → Inbox", () => {
+test("processRecruiter: role + client → 'To Apply' row pushed", () => {
   const state = makeState();
   const row = processRecruiter(
     {
@@ -253,8 +255,9 @@ test("processRecruiter: role + client → Inbox", () => {
     { nowIso: "x" },
     state
   );
-  assert.equal(row.action, "→ Inbox");
+  assert.equal(row.action, "→ To Apply");
   assert.equal(state.newInboxRows[0].companyName, "BigCorp");
+  assert.equal(state.newInboxRows[0].status, "To Apply");
 });
 
 // ---------- processPipeline ----------

@@ -43,7 +43,7 @@ Commands:
              to the shared pool + per-profile applications.
   validate   Pre-flight: URL liveness, company cap, TSV hygiene.
   sync       Reconcile per-profile applications with Notion. Default: dry-run.
-  prepare    Two-phase Inbox processing. See --phase.
+  prepare    Two-phase fresh-row triage (status="To Apply" + no notion_page_id). See --phase.
   check      Two-phase Gmail response polling. See --prepare / --apply.
 
 Flags:

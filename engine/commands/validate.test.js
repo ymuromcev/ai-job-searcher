@@ -26,7 +26,7 @@ function fakeApp(overrides = {}) {
     companyName: "Affirm",
     title: "PM",
     url: "https://x/1",
-    status: "Inbox",
+    status: "To Apply",
     notion_page_id: "",
     resume_ver: "",
     cl_key: "",
@@ -89,7 +89,7 @@ test("validate flags TSV parse errors", async () => {
 test("validate reports company_cap violations and exits 1", async () => {
   const apps = [
     fakeApp({ jobId: "1", companyName: "Stripe", status: "Applied" }),
-    fakeApp({ jobId: "2", companyName: "Stripe", status: "Inbox" }),
+    fakeApp({ jobId: "2", companyName: "Stripe", status: "To Apply" }),
     fakeApp({ jobId: "3", companyName: "Stripe", status: "Interview" }),
   ];
   const deps = makeDeps({
@@ -292,7 +292,7 @@ test("pingAll honours concurrency option", async () => {
 
 test("retro_sweep: no-op when filter_rules has no blocklists", async () => {
   // No company_blocklist or title_blocklist → sweep is skipped entirely.
-  const apps = [fakeApp({ status: "Inbox", companyName: "Stripe", title: "PM" })];
+  const apps = [fakeApp({ status: "To Apply", companyName: "Stripe", title: "PM" })];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
     loadProfile: () => ({
@@ -308,10 +308,10 @@ test("retro_sweep: no-op when filter_rules has no blocklists", async () => {
 
 test("retro_sweep: reports matches without --apply and exits 1", async () => {
   const apps = [
-    fakeApp({ key: "greenhouse:1", jobId: "1", status: "Inbox", companyName: "Toast", title: "Senior PM" }),
+    fakeApp({ key: "greenhouse:1", jobId: "1", status: "To Apply", companyName: "Toast", title: "Senior PM" }),
     fakeApp({ key: "greenhouse:2", jobId: "2", status: "To Apply", companyName: "Stripe", title: "Associate PM" }),
     fakeApp({ key: "greenhouse:3", jobId: "3", status: "Applied", companyName: "Toast", title: "Senior PM" }), // not swept
-    fakeApp({ key: "greenhouse:4", jobId: "4", status: "Inbox", companyName: "Stripe", title: "Senior PM" }), // passes
+    fakeApp({ key: "greenhouse:4", jobId: "4", status: "To Apply", companyName: "Stripe", title: "Senior PM" }), // passes
   ];
   let saved = null;
   const deps = makeDeps({
@@ -337,8 +337,8 @@ test("retro_sweep: reports matches without --apply and exits 1", async () => {
 
 test("retro_sweep: archives matches and writes TSV when --apply is set", async () => {
   const apps = [
-    fakeApp({ key: "greenhouse:1", jobId: "1", status: "Inbox", companyName: "Toast", title: "PM", updatedAt: "old" }),
-    fakeApp({ key: "greenhouse:2", jobId: "2", status: "Inbox", companyName: "Stripe", title: "PM", updatedAt: "old" }),
+    fakeApp({ key: "greenhouse:1", jobId: "1", status: "To Apply", companyName: "Toast", title: "PM", updatedAt: "old" }),
+    fakeApp({ key: "greenhouse:2", jobId: "2", status: "To Apply", companyName: "Stripe", title: "PM", updatedAt: "old" }),
   ];
   let savedPath, savedRows;
   const deps = makeDeps({
@@ -361,17 +361,17 @@ test("retro_sweep: archives matches and writes TSV when --apply is set", async (
   const stripe = savedRows.find((r) => r.companyName === "Stripe");
   assert.equal(toast.status, "Archived");
   assert.equal(toast.updatedAt, "2026-04-21T00:00:00Z");
-  assert.equal(stripe.status, "Inbox", "non-matching rows are untouched");
+  assert.equal(stripe.status, "To Apply", "non-matching rows are untouched");
   assert.equal(stripe.updatedAt, "old");
   assert.match(out.all(), /retro_sweep: archived 1 row/);
 });
 
-test("retro_sweep: only sweeps Inbox / To Apply, not Applied/Interview/Offer", async () => {
+test("retro_sweep: only sweeps 'To Apply', not Applied/Interview/Offer", async () => {
   const apps = [
     fakeApp({ key: "greenhouse:1", jobId: "1", status: "Applied", companyName: "Toast", title: "PM" }),
     fakeApp({ key: "greenhouse:2", jobId: "2", status: "Interview", companyName: "Toast", title: "PM" }),
     fakeApp({ key: "greenhouse:3", jobId: "3", status: "Offer", companyName: "Toast", title: "PM" }),
-    fakeApp({ key: "greenhouse:4", jobId: "4", status: "Inbox", companyName: "Toast", title: "PM" }),
+    fakeApp({ key: "greenhouse:4", jobId: "4", status: "To Apply", companyName: "Toast", title: "PM" }),
   ];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
@@ -385,7 +385,7 @@ test("retro_sweep: only sweeps Inbox / To Apply, not Applied/Interview/Offer", a
   const code = await makeValidateCommand(deps)(ctx);
   // Applied-row company_cap violation (3 Toast Applied+Interview+Offer under
   // the default cap of 2) will also fire but what we care about here:
-  // retro_sweep only flags 1 row (the Inbox one), not the 3 already advanced.
+  // retro_sweep only flags 1 row (the "To Apply" one), not the 3 already advanced.
   assert.match(out.all(), /retro_sweep: 1 row\(s\) now match blocklists/);
   assert.equal(code, 1);
 });

@@ -139,7 +139,7 @@ test("sync errors out when NOTION_TOKEN is missing in env", async () => {
 test("sync --apply applies pull updates from Notion (status wins)", async () => {
   const { deps, calls } = makeDeps({
     loadApplications: () => ({
-      apps: [fakeApp({ jobId: "1", status: "Inbox", notion_page_id: "p1" })],
+      apps: [fakeApp({ jobId: "1", status: "To Apply", notion_page_id: "p1" })],
     }),
     fetchJobsFromDatabase: async () => [
       { notionPageId: "p1", source: "greenhouse", jobId: "1", key: "greenhouse:1", status: "Applied" },
@@ -149,7 +149,7 @@ test("sync --apply applies pull updates from Notion (status wins)", async () => 
   const code = await makeSyncCommand(deps)(ctx);
   assert.equal(code, 0);
   assert.equal(calls.saveApplications.length, 1);
-  assert.match(out.all(), /status Inbox → Applied/);
+  assert.match(out.all(), /status To Apply → Applied/);
 });
 
 test("sync collects push errors and returns exit 1", async () => {
@@ -164,12 +164,13 @@ test("sync collects push errors and returns exit 1", async () => {
   assert.match(out.all(), /push error.*notion 429/);
 });
 
-test("planPush skips already-pushed, Archived, and Inbox apps", () => {
+test("planPush skips already-pushed and Archived apps; pushes 'To Apply' rows", () => {
+  // 8-status set: planPush only skips notion_page_id-set rows (already pushed)
+  // and Archived rows (terminal). All other statuses without a page_id are pushed.
   const apps = [
     fakeApp({ jobId: "1", notion_page_id: "", status: "To Apply" }),
     fakeApp({ jobId: "2", notion_page_id: "x", status: "To Apply" }),
     fakeApp({ jobId: "3", notion_page_id: "", status: "Archived" }),
-    fakeApp({ jobId: "4", notion_page_id: "", status: "Inbox" }),
   ];
   const out = planPush(apps);
   assert.equal(out.length, 1);
@@ -342,7 +343,7 @@ test("sync --apply pushes without resolver when companies_db_id missing", async 
 
 test("reconcilePull matches by key and reports status changes", () => {
   const apps = [
-    fakeApp({ key: "greenhouse:1", jobId: "1", status: "Inbox", notion_page_id: "" }),
+    fakeApp({ key: "greenhouse:1", jobId: "1", status: "To Apply", notion_page_id: "" }),
     fakeApp({ key: "greenhouse:2", jobId: "2", status: "Applied", notion_page_id: "p2" }),
   ];
   const pages = [

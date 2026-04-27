@@ -17,7 +17,7 @@ function makeApp(overrides = {}) {
     companyName: overrides.companyName || "Stripe",
     title: overrides.title || "Senior Product Manager",
     url: overrides.url || "https://boards.greenhouse.io/stripe/jobs/1001",
-    status: overrides.status || "Inbox",
+    status: overrides.status || "To Apply",
     notion_page_id: overrides.notion_page_id || "",
     resume_ver: overrides.resume_ver || "",
     cl_key: overrides.cl_key || "",
@@ -58,13 +58,13 @@ function makeDeadUrl(row) {
 
 // --- buildActiveCounts -------------------------------------------------------
 
-test("buildActiveCounts: counts To Apply, Applied, Interview, Offer", () => {
+test("buildActiveCounts: counts To Apply, Applied, Interview, Offer (skips Archived)", () => {
   const apps = [
     makeApp({ companyName: "Stripe", status: "To Apply" }),
     makeApp({ companyName: "Stripe", status: "Applied" }),
-    makeApp({ companyName: "Stripe", status: "Inbox" }),
     makeApp({ companyName: "Ramp", status: "Interview" }),
     makeApp({ companyName: "Ramp", status: "Archived" }),
+    makeApp({ companyName: "Brex", status: "Closed" }),
   ];
   const counts = buildActiveCounts(apps);
   assert.equal(counts["Stripe"], 2);
@@ -238,11 +238,15 @@ test("prepare --phase pre: dry-run does not write file", async () => {
   assert.ok(ctx._lines.some((l) => /dry-run/.test(l)));
 });
 
-test("prepare --phase pre: skips non-Inbox apps", async () => {
+test("prepare --phase pre: only picks fresh apps (status='To Apply' AND no notion_page_id)", async () => {
+  // 8-status set has no "Inbox". Fresh = "To Apply" + never pushed to Notion.
+  // After commit, the row keeps "To Apply" but gains notion_page_id, so it falls
+  // out of the fresh list. Applied/Interview/etc are skipped — they're past the
+  // pre-apply triage stage.
   const apps = [
-    makeApp({ status: "To Apply" }),
-    makeApp({ key: "gh:2", status: "Inbox" }),
-    makeApp({ key: "gh:3", status: "Applied" }),
+    makeApp({ key: "gh:1", status: "To Apply", notion_page_id: "abc" }), // already pushed
+    makeApp({ key: "gh:2", status: "To Apply", notion_page_id: "" }),    // fresh — picked
+    makeApp({ key: "gh:3", status: "Applied", notion_page_id: "" }),     // past triage
   ];
   const deps = makePrepDeps(apps);
   const cmd = makePrepareCommand(deps);
@@ -333,7 +337,7 @@ function makeCommitDeps(apps, overrides = {}) {
 }
 
 test("prepare --phase commit: to_apply sets status and fields", async () => {
-  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
   const results = {
     profileId: "testuser",
     results: [
@@ -358,7 +362,7 @@ test("prepare --phase commit: to_apply sets status and fields", async () => {
 });
 
 test("prepare --phase commit: to_apply writes salary_min/salary_max/cl_path from results", async () => {
-  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
   const results = {
     profileId: "testuser",
     results: [
@@ -388,7 +392,7 @@ test("prepare --phase commit: to_apply writes salary_min/salary_max/cl_path from
 });
 
 test("prepare --phase commit: defaults cl_path to clKey when clPath missing", async () => {
-  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
   const results = {
     profileId: "testuser",
     results: [
@@ -404,7 +408,7 @@ test("prepare --phase commit: defaults cl_path to clKey when clPath missing", as
 });
 
 test("prepare --phase commit: archive sets status", async () => {
-  const apps = [makeApp({ key: "gh:2", status: "Inbox" })];
+  const apps = [makeApp({ key: "gh:2", status: "To Apply" })];
   const results = {
     profileId: "testuser",
     results: [{ key: "gh:2", decision: "archive" }],
@@ -418,7 +422,7 @@ test("prepare --phase commit: archive sets status", async () => {
 });
 
 test("prepare --phase commit: skip leaves app unchanged", async () => {
-  const apps = [makeApp({ key: "gh:3", status: "Inbox" })];
+  const apps = [makeApp({ key: "gh:3", status: "To Apply" })];
   const results = {
     profileId: "testuser",
     results: [{ key: "gh:3", decision: "skip" }],
@@ -428,11 +432,12 @@ test("prepare --phase commit: skip leaves app unchanged", async () => {
   const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
   await cmd(ctx);
   const saved = deps._getSaved();
-  assert.equal(saved[0].status, "Inbox");
+  // "skip" decision leaves status untouched.
+  assert.equal(saved[0].status, "To Apply");
 });
 
 test("prepare --phase commit: dry-run does not save", async () => {
-  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
   const results = {
     profileId: "testuser",
     results: [{ key: "gh:1", decision: "to_apply" }],
@@ -447,7 +452,7 @@ test("prepare --phase commit: dry-run does not save", async () => {
 });
 
 test("prepare --phase commit: warns on unknown key", async () => {
-  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
   const results = {
     profileId: "testuser",
     results: [

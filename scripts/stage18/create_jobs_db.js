@@ -21,6 +21,7 @@ const {
   extractNotionPageId,
 } = require("./_common.js");
 const { resolvePropertyMap, toNotionSchema } = require("./property_map.js");
+const { resolveDataSourceId } = require("../../engine/core/notion_sync.js");
 
 function jobsDbTitle(intake) {
   const name = (intake.identity && intake.identity.full_name) || intake.identity.profile_id;
@@ -57,16 +58,21 @@ async function findDbByTitle(client, parentPageId, title) {
   return null;
 }
 
-// Inject the actual Companies DB id into the schema wherever a relation
-// has the __COMPANIES_DB__ placeholder.
-function injectCompaniesDbId(schema, companiesDbId) {
+// Inject the actual Companies data_source_id into the schema wherever a
+// relation has the __COMPANIES_DB__ placeholder.
+//
+// Notion SDK v5 requires `data_source_id` (not `database_id`) for relation
+// properties at DB-create time. The caller must resolve the Companies DB's
+// data_source_id via engine/core/notion_sync.resolveDataSourceId and pass it
+// here — otherwise Notion returns 400 "data_source_id should be defined".
+function injectCompaniesDbId(schema, companiesDataSourceId) {
   const out = {};
   for (const [field, body] of Object.entries(schema)) {
     if (body.type === "relation" && body.relation && body.relation.database_id === "__COMPANIES_DB__") {
       out[field] = {
         type: "relation",
         relation: {
-          database_id: companiesDbId,
+          data_source_id: companiesDataSourceId,
           // single_property = regular one-way relation (no back-ref). Matches
           // the default Notion UI creates.
           type: "single_property",
@@ -125,8 +131,14 @@ async function main() {
 
   const propertyMap = resolvePropertyMap(intake);
   const baseSchema = toNotionSchema(propertyMap);
-  const schema = companiesDbId
-    ? injectCompaniesDbId(baseSchema, companiesDbId)
+  // Notion SDK v5 requires data_source_id (not database_id) for relation props
+  // at DB-create time. Resolve the Companies DB's data_source_id before
+  // injecting it into the schema.
+  const companiesDataSourceId = companiesDbId
+    ? await resolveDataSourceId(client, companiesDbId)
+    : null;
+  const schema = companiesDataSourceId
+    ? injectCompaniesDbId(baseSchema, companiesDataSourceId)
     : baseSchema;
 
   let dbId = state.create_jobs_db.db_id;

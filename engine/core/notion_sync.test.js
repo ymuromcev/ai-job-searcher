@@ -222,7 +222,7 @@ test("createJobPage passes database_id and built properties to client", async ()
   const result = await createJobPage(
     client,
     "db-xyz",
-    { role: "PM", status: "Inbox", jobUrl: "https://x" },
+    { role: "PM", status: "To Apply", jobUrl: "https://x" },
     PROPERTY_MAP
   );
   assert.equal(result.id, "abc-123");
@@ -306,7 +306,7 @@ test("fetchJobsFromDatabase resolves data_source and paginates via dataSources.q
     id: `page-${i}`,
     properties: {
       Role: { type: "title", title: [{ plain_text: `Role ${i}` }] },
-      Status: { type: "select", select: { name: "Inbox" } },
+      Status: { type: "select", select: { name: "To Apply" } },
     },
   }));
   const client = makeFakeClient({ queryPages: pages, pageSize: 2, dataSourceId: "ds-xyz" });

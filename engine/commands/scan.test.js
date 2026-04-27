@@ -80,7 +80,7 @@ function makeDeps(overrides = {}) {
         companyName: j.companyName,
         title: j.title,
         url: j.url,
-        status: "Inbox",
+        status: "To Apply",
         notion_page_id: "",
         resume_ver: "",
         cl_key: "",
