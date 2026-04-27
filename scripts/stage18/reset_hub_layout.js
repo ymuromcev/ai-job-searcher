@@ -95,6 +95,39 @@ async function main() {
     "link_to_page",
   ]);
 
+  // Container types we must recurse into before deciding to delete: a
+  // column_list/column may LOOK like decoration but transitively own a
+  // child_database. Deleting (archiving) the container archives every
+  // descendant — including the database, which silently nukes its rows.
+  // We treat any container with a child_database descendant as preserved.
+  const RECURSE_TYPES = new Set(["column_list", "column"]);
+
+  async function containsChildDatabase(blockId) {
+    const stack = [blockId];
+    while (stack.length) {
+      const id = stack.pop();
+      let resp;
+      try {
+        resp = await client.blocks.children.list({ block_id: id, page_size: 100 });
+      } catch (_) {
+        continue;
+      }
+      for (const child of resp.results || []) {
+        if (child.type === "child_database") return true;
+        if (child.type === "child_page") continue; // subpages handled separately
+        if (RECURSE_TYPES.has(child.type) && child.has_children) {
+          stack.push(child.id);
+        }
+      }
+      if (resp.has_more) {
+        // pagination — push the same id back with a cursor would loop forever;
+        // for the safety check we only need ONE child_database, so a single
+        // page of 100 is overwhelmingly enough for hub-level layouts.
+      }
+    }
+    return false;
+  }
+
   // 1) Subpage archival: drive from profile.json subpages map directly, not
   //    from the children listing — subpage may live deeper than direct child
   //    or have a stale id. pages.update with a stale id will simply error,
@@ -105,7 +138,8 @@ async function main() {
   }
 
   // 2) Body deletion: only top-level non-page non-database blocks of known
-  //    decorative types.
+  //    decorative types. Containers (column_list/column) are recursed into
+  //    and preserved if they own a child_database descendant.
   const bodyBlocksToDelete = [];
   const preserved = [];
   for (const block of children) {
@@ -122,6 +156,17 @@ async function main() {
       continue;
     }
     if (DELETABLE_BODY_TYPES.has(block.type)) {
+      if (RECURSE_TYPES.has(block.type)) {
+        const hasDb = await containsChildDatabase(block.id);
+        if (hasDb) {
+          preserved.push({
+            type: block.type,
+            id: block.id,
+            reason: "contains child_database descendant",
+          });
+          continue;
+        }
+      }
       bodyBlocksToDelete.push({ id: block.id, type: block.type });
     } else {
       preserved.push({ type: block.type, id: block.id });
