@@ -4,19 +4,29 @@
 // Rules schema (see profiles/_example/filter_rules.example.json):
 //   company_cap:        { max_active, overrides: { [company]: max } }
 //   company_blocklist:  [names]                   case-insensitive exact match
-//   title_blocklist:    [{ pattern, reason }]     case-insensitive substring match
+//   title_blocklist:    [{ pattern, reason }]     case-insensitive WORD-BOUNDARY match
 //   location_blocklist: [substrings]              case-insensitive substring match,
 //                                                 skipped entirely when job location
 //                                                 contains a US marker (united states,
 //                                                 usa, ", us", "(us)", "u.s.")
 //
-// Semantics match the prototype's validate_inbox.js so that migrated filter_rules
-// behave identically in the new engine. See audit_prototype_alignment.md §6.
+// Title-blocklist semantics (2026-04-28 update — diverges from prototype):
+//   - Word-boundary regex (\b…\b) instead of plain substring. Avoids false
+//     positives like "PRN" matching "rn" or "orthodontic" matching "do".
+//   - Compound title split on "/" (slash-titles like "Receptionist/Office
+//     Manager"). If ANY split part is clean (no blocklist hit), the whole
+//     title passes — caters to hybrid roles where one half is desirable.
+//     NOTE: split is "/" only — not "," (e.g. "Supervisor, Medical" stays
+//     a single part: "Medical" is a department modifier, not a co-role).
 
 const US_MARKERS = ["united states", "usa", ", us", "(us)", "u.s."];
 
 function hasUsMarker(locLower) {
   return US_MARKERS.some((m) => locLower.includes(m));
+}
+
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // Returns a reason object for the first matching blocklist (company / title /
@@ -42,11 +52,40 @@ function matchBlocklists(job, rules) {
 
   const role = String(job.role || "");
   const roleLower = role.toLowerCase();
-  for (const pat of rules.title_blocklist || []) {
-    const needle = String(pat.pattern || "").toLowerCase();
-    if (needle && roleLower.includes(needle)) {
-      return { kind: "title_blocklist", pattern: pat.pattern, why: pat.reason };
+  if (roleLower) {
+    // Compound titles use "/" as a co-role separator. Split and check each
+    // part independently — if any single part is clean, the title passes.
+    // Example: "Dental Receptionist/Office Manager" passes for someone whose
+    // blocklist contains "manager" because "Dental Receptionist" is clean.
+    // We do NOT split on "," — "Supervisor, Medical" is one role with a
+    // department modifier, not two roles.
+    const titleParts = roleLower
+      .split("/")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    const parts = titleParts.length > 0 ? titleParts : [roleLower];
+
+    let firstHit = null;
+    let cleanPartFound = false;
+    for (const part of parts) {
+      let partHit = null;
+      for (const pat of rules.title_blocklist || []) {
+        const needle = String(pat.pattern || "").toLowerCase();
+        if (!needle) continue;
+        const re = new RegExp(`\\b${escapeRegex(needle)}\\b`, "i");
+        if (re.test(part)) {
+          partHit = { kind: "title_blocklist", pattern: pat.pattern, why: pat.reason };
+          break;
+        }
+      }
+      if (partHit) {
+        if (!firstHit) firstHit = partHit;
+      } else {
+        cleanPartFound = true;
+        break; // any clean part → title passes
+      }
     }
+    if (!cleanPartFound && firstHit) return firstHit;
   }
 
   const loc = String(job.location || "").toLowerCase();

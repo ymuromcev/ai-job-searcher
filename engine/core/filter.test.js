@@ -92,6 +92,84 @@ test("filterJobs title_blocklist treats metacharacters literally (no regex)", ()
   );
 });
 
+test("filterJobs title_blocklist uses word-boundary (rn does not match PRN)", () => {
+  // 2026-04-28 fix: short patterns like "rn", "do", "md" must not match
+  // mid-word substrings. "PRN" (per-shift) is NOT a registered nurse role.
+  const prn = { ...BASE_JOB, role: "Medical Records Assistant - PRN" };
+  const { passed, rejected } = filterJobs(
+    [prn],
+    { title_blocklist: [{ pattern: "rn", reason: "registered nurse" }] }
+  );
+  assert.equal(rejected.length, 0);
+  assert.equal(passed.length, 1);
+
+  // But standalone "RN" still matches.
+  const rn = { ...BASE_JOB, role: "RN — Acute Care" };
+  const { rejected: r2 } = filterJobs(
+    [rn],
+    { title_blocklist: [{ pattern: "rn", reason: "registered nurse" }] }
+  );
+  assert.equal(r2.length, 1);
+});
+
+test("filterJobs title_blocklist word-boundary (do does not match orthodontic)", () => {
+  // "DO" (Doctor of Osteopathy) must not match "orthodontic" or "doctor".
+  const ortho = { ...BASE_JOB, role: "Bilingual Orthodontic Receptionist" };
+  const { passed, rejected } = filterJobs(
+    [ortho],
+    { title_blocklist: [{ pattern: "do", reason: "doctor of osteopathy" }] }
+  );
+  assert.equal(rejected.length, 0);
+  assert.equal(passed.length, 1);
+
+  // Standalone "DO" still matches.
+  const dox = { ...BASE_JOB, role: "Family Practice DO" };
+  const { rejected: r2 } = filterJobs(
+    [dox],
+    { title_blocklist: [{ pattern: "do", reason: "doctor of osteopathy" }] }
+  );
+  assert.equal(r2.length, 1);
+});
+
+test("filterJobs title_blocklist compound title (slash) — any clean part passes", () => {
+  // 2026-04-28: "Dental Receptionist/Office Manager" must pass even if
+  // "manager" is on the blocklist — receptionist part is clean.
+  const compound = { ...BASE_JOB, role: "Dental Receptionist/Office Manager" };
+  const { passed, rejected } = filterJobs(
+    [compound],
+    { title_blocklist: [{ pattern: "manager", reason: "managerial" }] }
+  );
+  assert.equal(rejected.length, 0);
+  assert.equal(passed.length, 1);
+});
+
+test("filterJobs title_blocklist compound title (slash) — all parts blocked → rejected", () => {
+  // "Senior Manager/Director" — both halves hit "manager" / "director" → blocked.
+  const allBad = { ...BASE_JOB, role: "Senior Manager/Director of Ops" };
+  const { rejected } = filterJobs(
+    [allBad],
+    {
+      title_blocklist: [
+        { pattern: "manager", reason: "managerial" },
+        { pattern: "director", reason: "too senior" },
+      ],
+    }
+  );
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].reason.kind, "title_blocklist");
+});
+
+test("filterJobs title_blocklist does NOT split on comma (department modifier stays)", () => {
+  // "Supervisor, Medical" is ONE role with a department modifier — must block.
+  const role = { ...BASE_JOB, role: "Supervisor, Medical" };
+  const { rejected } = filterJobs(
+    [role],
+    { title_blocklist: [{ pattern: "supervisor", reason: "managerial" }] }
+  );
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].reason.pattern, "supervisor");
+});
+
 test("filterJobs rejects by location_blocklist substring", () => {
   const job = { ...BASE_JOB, location: "London, UK" };
   const { rejected } = filterJobs([job], { location_blocklist: ["UK"] });
