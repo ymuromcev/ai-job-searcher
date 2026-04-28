@@ -35,8 +35,11 @@ function fakeApp(overrides = {}) {
     url: "https://x/1",
     status: "To Apply",
     notion_page_id: "",
-    resume_ver: "",
-    cl_key: "",
+    // Defaults represent a "prepared" row (CL + resume assigned via
+    // `prepare commit`). Tests that exercise the push gate explicitly set
+    // these to "" to represent raw scan/check rows.
+    resume_ver: "Risk_Fraud",
+    cl_key: "default-cl",
     createdAt: "now",
     updatedAt: "now",
     ...overrides,
@@ -175,6 +178,29 @@ test("planPush skips already-pushed and Archived apps; pushes 'To Apply' rows", 
   const out = planPush(apps);
   assert.equal(out.length, 1);
   assert.equal(out[0].jobId, "1");
+});
+
+test("planPush gates raw scan rows (no cl_key + no resume_ver) — Inbox stays TSV-only", () => {
+  // Notion is the user-facing list of jobs ready to apply. Raw scan/check
+  // rows without a CL or resume have not been triaged via `prepare` and
+  // must NOT be pushed — they're "Inbox" semantically (counted in the hub
+  // callout, but absent from the Notion DB). Once prepare commit assigns
+  // cl_key/resume_ver, they become eligible for push.
+  const apps = [
+    // raw — neither cl_key nor resume_ver set → gated
+    fakeApp({ jobId: "raw", cl_key: "", resume_ver: "" }),
+    // prepared with CL only → push
+    fakeApp({ jobId: "cl-only", cl_key: "x", resume_ver: "" }),
+    // prepared with resume only → push (CL may be skipped for some sources)
+    fakeApp({ jobId: "resume-only", cl_key: "", resume_ver: "Risk_Fraud" }),
+    // fully prepared → push
+    fakeApp({ jobId: "full", cl_key: "x", resume_ver: "Risk_Fraud" }),
+  ];
+  const out = planPush(apps);
+  assert.deepEqual(
+    out.map((a) => a.jobId).sort(),
+    ["cl-only", "full", "resume-only"]
+  );
 });
 
 test("readPushManifest: missing file → null (gate disabled)", () => {

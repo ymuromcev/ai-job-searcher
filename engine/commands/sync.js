@@ -113,11 +113,22 @@ function readPushManifest(profileRoot) {
   return { path: p, keys: new Set(raw.keys) };
 }
 
+// Push gate: rows without a CL or resume version are "raw" scan/check entries
+// that haven't been triaged through `prepare`. Notion is the user-facing list
+// of jobs ready to apply (CV+CL prepared); raw rows should stay in TSV only
+// until prepare assigns them a cl_key / resume_ver. The hub callout
+// (build_hub_layout) shows the count of these raw rows as "Inbox", and the
+// Notion DB shows everything that made it past prepare.
+function isPrepared(a) {
+  return Boolean(a.cl_key) || Boolean(a.resume_ver);
+}
+
 function planPush(apps, options = {}) {
   const allowed = options.allowKeys instanceof Set ? options.allowKeys : null;
   return apps.filter((a) => {
     if (a.notion_page_id) return false;
     if (PUSH_SKIP_STATUSES.has(a.status)) return false;
+    if (!isPrepared(a)) return false;
     if (allowed && !allowed.has(a.key)) return false;
     return true;
   });
