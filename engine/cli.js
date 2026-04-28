@@ -13,7 +13,7 @@
 
 const { parseArgs } = require("util");
 
-const KNOWN_COMMANDS = ["scan", "validate", "sync", "prepare", "check"];
+const KNOWN_COMMANDS = ["scan", "validate", "sync", "prepare", "check", "indeed-prep"];
 
 const PARSE_OPTIONS = {
   options: {
@@ -45,6 +45,8 @@ Commands:
   sync       Reconcile per-profile applications with Notion. Default: dry-run.
   prepare    Two-phase fresh-row triage (status="To Apply" + no notion_page_id). See --phase.
   check      Two-phase Gmail response polling. See --prepare / --apply.
+  indeed-prep Print Indeed scan playbook for Claude browser MCP (URLs + JS snippet
+             + filter context). Phase 1 of the Indeed ingest flow.
 
 Flags:
   --profile <id>       Profile id (required for all commands). Lowercase, alphanum + - _.
@@ -103,6 +105,7 @@ function defaultCommands() {
     sync: require("./commands/sync.js"),
     prepare: require("./commands/prepare.js"),
     check: require("./commands/check.js"),
+    "indeed-prep": require("./commands/indeed_prepare.js"),
   };
 }
 

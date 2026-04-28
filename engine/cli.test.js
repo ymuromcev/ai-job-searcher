@@ -177,7 +177,7 @@ test("runCli reports missing handler with a clear error", async () => {
 });
 
 test("KNOWN_COMMANDS lists exactly the supported commands", () => {
-  assert.deepEqual([...KNOWN_COMMANDS].sort(), ["check", "prepare", "scan", "sync", "validate"]);
+  assert.deepEqual([...KNOWN_COMMANDS].sort(), ["check", "indeed-prep", "prepare", "scan", "sync", "validate"]);
 });
 
 test("runCli passes prepare-specific flags to handler", async () => {

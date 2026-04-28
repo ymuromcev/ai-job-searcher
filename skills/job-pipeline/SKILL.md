@@ -14,6 +14,7 @@ Single engine, per-profile data. All commands take `--profile <id>`. Currently s
 - **`/job-pipeline sync`** — Reconcile per-profile applications with Notion. **Default = dry-run**, must pass `--apply` to commit.
 - **`/job-pipeline prepare`** — Two-phase processing of Inbox jobs: mechanical pre-phase (filter / URL check / JD fetch / salary) + Claude LLM phase (geo check / fit score / CL gen / Notion push).
 - **`/job-pipeline check`** — Two-phase Gmail response check: `--prepare` builds Gmail search batches for Claude MCP, `--apply` consumes Claude-written emails and updates Notion + TSV + logs.
+- **`/job-pipeline indeed-prep`** — Phase 1 of Indeed ingest. Prints scan URLs + JS extraction snippet + filter context for the Claude browser MCP session. Phase 2 (browser fetch) is manual via Chrome MCP. Phase 3 = standard `scan` (the indeed adapter ingests the file Claude wrote).
 
 If no mode is specified, show this help and ask which to run.
 
@@ -349,6 +350,68 @@ Default is dry-run (plan only, no Notion writes, no TSV mutations). With `--appl
 - **`raw_emails.json` missing** — Phase 2 didn't run or Claude didn't write the file. Re-do Phase 2.
 - **Notion 400 on status push** — a status option doesn't exist in the DB (e.g. tried pushing `Phone Screen`). The mapping lives in `engine/commands/check.js` — keep it in sync with the DB's `Status` select options.
 - **Cursor epoch stuck at 30d** — `last_check` was never saved (all prior `--apply` runs were dry-run). Override with `--since <ISO>` once, then `--apply` will bump `last_check`.
+
+---
+
+### indeed-prep
+
+Three-phase Indeed ingest. Indeed has no public API and Cloudflare blocks scraping; the only reliable path is opening search pages in a browser. The CLI hands Claude a *playbook*; Claude does the browser work; the next `scan` ingests the result.
+
+**Use when**: profile has `discovery:indeed` in modules and `discovery.indeed.keywords` in `profile.json` (currently: lilia).
+
+#### Phase 1 — playbook (CLI)
+
+```
+node engine/cli.js indeed-prep --profile <id>
+```
+
+Reads `profile.discovery.indeed` and prints a JSON payload:
+- `scan_urls[]` — one entry per `keywords[]` (Indeed search URL with location/radius/fromage)
+- `extraction_snippet` — JS to paste into the browser console; returns pipe-separated rows `jk|title|company|location`
+- `viewjob_template` — `https://www.indeed.com/viewjob?jk={jk}` (open these to read JD before keeping)
+- `filters.cert_blockers[]` — license keywords (CMA / RN / LVN / CPC / RDA / RDH …) that disqualify candidates with no clinical certs
+- `filters.location_whitelist[]` / `location_blocklist[]` — geography gates
+- `ingest_file` — absolute path where Phase 2 must write the result
+- `instructions[]` — ordered checklist for the browser session
+
+Side effects: creates `profiles/<id>/.indeed-state/` and seeds an empty `raw_indeed.json` if missing. **Never overwrites** an existing ingest file — re-running `indeed-prep` is safe and idempotent.
+
+#### Phase 2 — browser (Claude via Chrome MCP)
+
+Claude executes:
+
+1. For each `scan_urls[].url` → open in a Chrome tab (recommend 2 in parallel to avoid CAPTCHA).
+2. In each tab: paste `extraction_snippet` into the browser console; copy the pipe-separated rows.
+3. Parse each row into `{ jk, title, company, location }`.
+4. Apply browser-side filters in this order (reject early):
+   - `location_blocklist` — skip if `location` matches any entry.
+   - `location_whitelist` (if non-empty) — keep ONLY if `location` matches.
+   - Title obvious-noise — driver / warehouse / nurse / therapist / physician (these never match the candidate's seeking intent).
+5. For surviving rows: navigate to `viewjob_template` with the row's `jk`, fetch JD body, check for any `cert_blockers` keyword (single match → reject). Use:
+   ```javascript
+   document.querySelector('#jobDescriptionText')?.innerText?.substring(0,1500)
+   ```
+6. Capture per surviving entry: `{ jk, title, company, location, url?, postedAt? }`.
+7. Overwrite `ingest_file` with the JSON array.
+
+If 0 entries survive → write `[]`. The next `scan` will simply produce zero new applications.
+
+CAPTCHA handling: if "Security Check" / "Один момент" appears, navigate to a different `scan_urls[].url`. If both tabs blocked, report to user — they may need to solve manually once.
+
+#### Phase 3 — ingest (CLI)
+
+```
+node engine/cli.js scan --profile <id>
+```
+
+Standard `scan` flow: the indeed adapter (`engine/modules/discovery/indeed.js`) reads the ingest file referenced in `data/companies.tsv` (row: `Indeed (<profile>) | indeed | <slug> | {"ingestFile": "profiles/<id>/.indeed-state/raw_indeed.json"}`), normalizes entries, dedupes against `data/jobs.tsv` and `applications.tsv`, and appends fresh rows with `status="To Apply"`.
+
+#### Failure modes (indeed-specific)
+
+- **Empty payload after Phase 1** — `discovery.indeed.keywords` is empty or missing. Edit `profile.json`.
+- **Phase 3 reports "ingest file not found"** — Phase 2 didn't write to the same path Phase 1 printed. Re-run Phase 1 (it's idempotent), then verify Claude's write target matches `ingest_file`.
+- **Phase 3 reports "0 fresh"** — either the ingest file is empty (`[]`) or every entry is a duplicate. Check `applications.tsv` for prior `jobId` matches.
+- **Cards extraction returns 0 rows** — Indeed changed selectors. Update `extraction_snippet` in `engine/commands/indeed_prepare.js` to match current `a[data-jk]` / `[data-testid="company-name"]` markup.
 
 ---
 

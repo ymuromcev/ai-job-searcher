@@ -23,6 +23,8 @@ data/
 **/.stage*/
 .gmail-state/
 **/.gmail-state/
+.indeed-state/
+**/.indeed-state/
 
 # Generated artifacts
 *.tsv
