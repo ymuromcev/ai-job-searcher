@@ -65,3 +65,32 @@ test("classify: evidence contains matched phrase", () => {
   assert.equal(r.type, "REJECTION");
   assert.match(r.evidence, /unfortunately/i);
 });
+
+// Regression: 2026-04-30. Headway rejection ("we've decided not to move
+// forward with your application") was classified as OTHER because none of the
+// patterns covered "decided not to move forward" / "not to move forward".
+test("classify: 'decided not to move forward' → REJECTION (Headway pattern)", () => {
+  const r = classify({
+    subject: "Thank you from Headway",
+    body:
+      "While we appreciate your interest, after careful review we've decided " +
+      "not to move forward with your application at this time.",
+  });
+  assert.equal(r.type, "REJECTION");
+});
+
+test("classify: 'will not be moving forward' → REJECTION", () => {
+  const r = classify({
+    subject: "Update",
+    body: "We will not be moving forward with your candidacy.",
+  });
+  assert.equal(r.type, "REJECTION");
+});
+
+test("classify: 'application was not selected' → REJECTION", () => {
+  const r = classify({
+    subject: "In regards to your application",
+    body: "After review by our team, your application was not selected for further consideration.",
+  });
+  assert.equal(r.type, "REJECTION");
+});

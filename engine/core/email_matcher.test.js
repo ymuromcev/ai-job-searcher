@@ -49,6 +49,87 @@ test("findCompany: returns null when no company matches", () => {
   assert.equal(findCompany(email, map), null);
 });
 
+// Regression: 2026-04-30. "Match Group" emails were falsely matching to
+// "IEX Group" because the prototype's tokens.some() picked the first entry
+// whose token (just "group") appeared in the haystack. New score-based logic
+// requires ALL tokens to match and prefers the entry with the highest token
+// count.
+test("findCompany: score-based match — Match Group beats IEX Group on shared 'Group' suffix", () => {
+  const email = {
+    from: "no-reply@hire.lever.co",
+    subject: "Thank you for your application to Match Group",
+    body: "",
+  };
+  const map = {
+    "IEX Group": [{ role: "PM, Options", notion_id: "iex1" }],
+    "Match Group": [{ role: "PM, Platform", notion_id: "match1" }],
+  };
+  const r = findCompany(email, map);
+  assert.equal(r.company, "Match Group");
+});
+
+test("findCompany: short-form match — 'Veeva' email matches 'Veeva Systems' TSV row", () => {
+  // Regression: when scoring required ALL tokens, this email was unmatched
+  // because "Systems" wasn't present. Absolute-count scoring still wins
+  // because it's the only entry with any token matched.
+  const email = {
+    from: "no-reply@hire.lever.co",
+    subject: "Senior Product Manager - Vault Platform Access Control at Veeva",
+    body: "",
+  };
+  const map = { "Veeva Systems": [{ role: "Senior PM, Vault", notion_id: "v1" }] };
+  const r = findCompany(email, map);
+  assert.equal(r.company, "Veeva Systems");
+});
+
+test("findCompany: count-based ranking — 2-token match beats 1-token match on shared suffix", () => {
+  // Generic "Group" word in subject would tie both companies at score 1, but
+  // when the email actually says "Match Group", Match Group scores 2 (both
+  // tokens) and beats IEX Group's 1.
+  const email = { from: "x@y.com", subject: "Update from Match Group", body: "" };
+  const map = {
+    "IEX Group": [{ role: "PM, Options", notion_id: "iex1" }],
+    "Match Group": [{ role: "PM, Platform", notion_id: "match1" }],
+  };
+  const r = findCompany(email, map);
+  assert.equal(r.company, "Match Group");
+});
+
+test("findCompany: company_aliases — Hinge email matches Match Group via alias", () => {
+  const email = {
+    from: "no-reply@hire.lever.co",
+    subject: "Thank You from Hinge - Regarding your Application for Lead PM, Platform",
+    body: "",
+  };
+  const map = {
+    "Match Group": [{ role: "Lead PM, Platform", notion_id: "m1" }],
+  };
+  const aliases = { "Match Group": ["Hinge", "Tinder"] };
+  const r = findCompany(email, map, aliases);
+  assert.equal(r.company, "Match Group");
+});
+
+test("findCompany: alias-only match wins over no match", () => {
+  // Only "Tinder" appears in the email, parent name "Match Group" doesn't.
+  const email = { from: "ats@example.com", subject: "Update on your Tinder app", body: "" };
+  const map = { "Match Group": [{ role: "PM", notion_id: "m1" }] };
+  const aliases = { "Match Group": ["Hinge", "Tinder"] };
+  const r = findCompany(email, map, aliases);
+  assert.equal(r.company, "Match Group");
+});
+
+test("findCompany: aliases work via body word boundary too", () => {
+  const email = {
+    from: "ats@example.com",
+    subject: "Update",
+    body: "Thank you for applying at Hinge. After careful review.",
+  };
+  const map = { "Match Group": [{ role: "PM", notion_id: "m1" }] };
+  const aliases = { "Match Group": ["Hinge"] };
+  const r = findCompany(email, map, aliases);
+  assert.equal(r.company, "Match Group");
+});
+
 test("findRole: single job → HIGH", () => {
   const jobs = [{ role: "PM, Growth", notion_id: "p1" }];
   const r = findRole({ subject: "Update", body: "" }, jobs);
@@ -74,6 +155,27 @@ test("findRole: multi-job → keyword disambiguation", () => {
   const r = findRole({ subject: "Credit opening", body: "" }, jobs);
   assert.equal(r.confidence, "HIGH");
   assert.equal(r.job.notion_id, "p2");
+});
+
+// Regression: 2026-04-30. Hinge "Senior Lead PM, Matching" rejection email
+// was falsely matched to "Lead PM, NUE" because the body said "candidates
+// whose experience more closely matches" and "experience" was a keyword for
+// the NUE role. Boilerplate words now in ROLE_MATCH_SKIP.
+test("findRole: rejection-boilerplate words don't act as disambiguators", () => {
+  const jobs = [
+    { role: "Lead Product Manager, New User Experience", notion_id: "nue" },
+    { role: "Lead Product Manager, Platform", notion_id: "plat" },
+  ];
+  const r = findRole(
+    {
+      subject: "Thank You from Hinge - Regarding your Application for Senior Lead Product Manager, Matching",
+      body: "Hi Jared, after careful consideration we've decided to move forward with candidates whose experience more closely matches the role.",
+    },
+    jobs
+  );
+  // Neither "experience" (in NUE) nor "platform" (in Platform) should win;
+  // body has "experience" only as boilerplate, not as a role signal.
+  assert.equal(r.confidence, "LOW");
 });
 
 test("findRole: multi-job with no differentiating signal → LOW, first job", () => {

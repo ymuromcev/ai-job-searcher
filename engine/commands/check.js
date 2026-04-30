@@ -334,7 +334,7 @@ function processRecruiter(email, ctx, state) {
 function processPipeline(email, ctx, state) {
   const cls = classify({ subject: email.subject, body: email.body });
   const type = cls.type;
-  const match = findCompany(email, state.activeJobsMap);
+  const match = findCompany(email, state.activeJobsMap, state.companyAliases);
   const row = {
     id: email.messageId,
     company: "?",
@@ -450,6 +450,7 @@ async function runApply(ctx, deps) {
   const nowIso = now.toISOString();
   const state = {
     activeJobsMap: context.activeJobsMap || {},
+    companyAliases: profile.company_aliases || {},
     filterRules: profile.filterRules || {},
     tsvCache,
     newInboxRows: [],
