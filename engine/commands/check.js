@@ -372,7 +372,7 @@ function processPipeline(email, ctx, state) {
       pageId: job.notion_id,
       appKey: job.key,
       newStatus: "Rejected",
-      comment: `❌ Получен отказ. Тема: ${email.subject}. Статус → Rejected.`,
+      comment: `❌ Тема: "${email.subject}". Решение: отказ → статус Rejected.`,
     };
     row.action = "queued: Status → Rejected";
     row.comment = "✅ queued";
@@ -397,7 +397,7 @@ function processPipeline(email, ctx, state) {
       pageId: job.notion_id,
       appKey: job.key,
       newStatus: "Interview",
-      comment: `🔔 Приглашение на интервью! Тема: ${email.subject}. Проверь письмо и запланируй.`,
+      comment: `🔔 Тема: "${email.subject}". Решение: приглашение на интервью → статус Interview. Проверь письмо и запланируй.`,
     };
     row.action = "queued: Status → Interview";
     row.comment = "✅ queued";
@@ -409,7 +409,7 @@ function processPipeline(email, ctx, state) {
       kind: "comment_only",
       pageId: job.notion_id,
       appKey: job.key,
-      comment: `📋 Запрос информации. Тема: ${email.subject}. Нужно ответить.`,
+      comment: `📋 Тема: "${email.subject}". Решение: запрос информации (assessment / take-home / детали). Нужно ответить.`,
     };
     row.action = "queued: comment_only";
     row.comment = "✅ queued";
