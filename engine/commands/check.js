@@ -452,6 +452,7 @@ async function runApply(ctx, deps) {
     activeJobsMap: context.activeJobsMap || {},
     companyAliases: profile.company_aliases || {},
     filterRules: profile.filterRules || {},
+    notionUserId: (profile.notion && profile.notion.user_id) || null,
     tsvCache,
     newInboxRows: [],
     recruiterLeads: [],
@@ -562,10 +563,10 @@ async function runApply(ctx, deps) {
     try {
       if (a.kind === "status+comment") {
         await deps.updatePageStatus(getClient(), a.pageId, a.newStatus, propertyMap);
-        await deps.addPageComment(getClient(), a.pageId, a.comment);
+        await deps.addPageComment(getClient(), a.pageId, a.comment, state.notionUserId);
         appliedStatusByAppKey[a.appKey] = a.newStatus;
       } else if (a.kind === "comment_only") {
-        await deps.addPageComment(getClient(), a.pageId, a.comment);
+        await deps.addPageComment(getClient(), a.pageId, a.comment, state.notionUserId);
       }
     } catch (err) {
       notionErrors += 1;

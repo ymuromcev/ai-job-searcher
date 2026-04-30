@@ -184,12 +184,24 @@ async function updatePageStatus(client, pageId, newStatus, propertyMap) {
 }
 
 // Adds a page-level comment. Notion SDK v5: client.comments.create.
-async function addPageComment(client, pageId, text) {
+// If `mentionUserId` (UUID) is supplied, the comment starts with an @mention
+// of that user — Notion sends them a push/email notification. Without it,
+// integration-authored comments are silent.
+async function addPageComment(client, pageId, text, mentionUserId = null) {
   if (!pageId) throw new Error("pageId is required");
   if (!text || !String(text).trim()) throw new Error("comment text is required");
+  const richText = [];
+  if (mentionUserId && typeof mentionUserId === "string" && mentionUserId.trim()) {
+    richText.push({
+      type: "mention",
+      mention: { type: "user", user: { id: mentionUserId.trim() } },
+    });
+    richText.push({ type: "text", text: { content: " " } });
+  }
+  richText.push({ type: "text", text: { content: String(text) } });
   return client.comments.create({
     parent: { page_id: pageId },
-    rich_text: [{ text: { content: String(text) } }],
+    rich_text: richText,
   });
 }
 

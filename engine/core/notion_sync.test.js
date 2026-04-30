@@ -284,6 +284,40 @@ test("addPageComment throws on empty text", async () => {
   await assert.rejects(() => addPageComment(client, "p1", "   "), /comment text is required/);
 });
 
+test("addPageComment without mentionUserId emits text-only rich_text", async () => {
+  const client = makeFakeClient();
+  await addPageComment(client, "page-1", "❌ Отказ");
+  const rt = client.calls[0].params.rich_text;
+  assert.equal(rt.length, 1);
+  assert.equal(rt[0].type, "text");
+  assert.equal(rt[0].text.content, "❌ Отказ");
+});
+
+test("addPageComment with mentionUserId prepends @mention + space", async () => {
+  const client = makeFakeClient();
+  const userId = "2110f54d-8d9d-43c6-9d89-07594eb1a6ac";
+  await addPageComment(client, "page-1", "❌ Отказ", userId);
+  const rt = client.calls[0].params.rich_text;
+  assert.equal(rt.length, 3);
+  assert.equal(rt[0].type, "mention");
+  assert.equal(rt[0].mention.type, "user");
+  assert.equal(rt[0].mention.user.id, userId);
+  assert.equal(rt[1].type, "text");
+  assert.equal(rt[1].text.content, " ");
+  assert.equal(rt[2].type, "text");
+  assert.equal(rt[2].text.content, "❌ Отказ");
+});
+
+test("addPageComment with empty/whitespace mentionUserId falls back to text-only", async () => {
+  const client = makeFakeClient();
+  await addPageComment(client, "p1", "x", "");
+  assert.equal(client.calls[0].params.rich_text.length, 1);
+  await addPageComment(client, "p1", "x", "   ");
+  assert.equal(client.calls[1].params.rich_text.length, 1);
+  await addPageComment(client, "p1", "x", null);
+  assert.equal(client.calls[2].params.rich_text.length, 1);
+});
+
 // ---------- resolveDataSourceId ----------
 
 test("resolveDataSourceId returns the first data_source id from the database", async () => {
