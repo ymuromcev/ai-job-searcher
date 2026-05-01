@@ -15,7 +15,6 @@
 # 8am PT, jared
 0 8 * * *  cd /app && node engine/cli.js check --profile jared --auto --apply || true
 
-# 8am PT, lilia — DISABLED until Lilia completes OAuth consent flow
-# (run `node scripts/gmail_auth.js --profile lilia` locally, then
-#  `fly secrets set LILIA_GMAIL_REFRESH_TOKEN=...` and uncomment this line).
-# 1 8 * * *  cd /app && node engine/cli.js check --profile lilia --auto --apply || true
+# 8:01am PT, lilia (offset 1min from Jared to avoid simultaneous Gmail
+# fetches). OAuth consent + secrets done 2026-05-01.
+1 8 * * *  cd /app && node engine/cli.js check --profile lilia --auto --apply || true
