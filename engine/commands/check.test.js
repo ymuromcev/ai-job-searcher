@@ -789,6 +789,33 @@ test("check --auto: failure with cron_ops_page_id → comment posted to ops page
   assert.equal(calls.appendFailureLog.length, 1);
 });
 
+test("check --auto: failure mention prefers cron_ops_user_id over user_id", async () => {
+  const { deps, calls } = makeAutoDeps({
+    loadProfile: () => ({
+      id: "lilia",
+      paths: {
+        root: "/tmp/profiles/lilia",
+        applicationsTsv: "/tmp/profiles/lilia/applications.tsv",
+      },
+      filterRules: {},
+      notion: {
+        user_id: "candidate-user", // pipeline mentions
+        cron_ops_user_id: "operator-user", // cron failures → operator
+        cron_ops_page_id: "ops-page-uuid",
+      },
+    }),
+    fetchGmailEmails: async () => {
+      throw new Error("invalid_grant");
+    },
+  });
+  const { ctx } = makeCtx({ auto: true, apply: true });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 1);
+  assert.equal(calls.addPageComment.length, 1);
+  // Operator gets pinged, not the candidate.
+  assert.equal(calls.addPageComment[0].mention, "operator-user");
+});
+
 test("check --auto: failure WITHOUT cron_ops_page_id → log only, no Notion call", async () => {
   const { deps, calls } = makeAutoDeps({
     loadProfile: () => ({

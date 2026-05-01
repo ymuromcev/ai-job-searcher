@@ -116,9 +116,13 @@ function statePaths(profile) {
 // ---------- Failure notification (Phase 3 / RFC 005 §4.6) ----------
 //
 // Best-effort: post a Notion comment to per-profile cron_ops_page_id with
-// @mention of notion.user_id (so user gets a real push notification), AND
-// append to cron_failures.log on disk. Notion-post failure is itself
-// swallowed — we never want a notification-failure to mask the original.
+// @mention of notion.cron_ops_user_id (fallback notion.user_id) so the
+// cron operator gets a real push notification, AND append to
+// cron_failures.log on disk. Notion-post failure is itself swallowed — we
+// never want a notification-failure to mask the original. Separate
+// cron_ops_user_id exists because notion.user_id is the candidate's id
+// (used for pipeline mentions); cron failures must ping the operator,
+// not the candidate.
 
 function buildFailureComment(profileId, err, now) {
   const ts = now.toISOString();
@@ -171,7 +175,10 @@ async function notifyFailure({
   try {
     const client = deps.makeClient(token);
     const text = buildFailureComment(profileId, err, now);
-    const userId = profile.notion && profile.notion.user_id;
+    const userId =
+      (profile.notion &&
+        (profile.notion.cron_ops_user_id || profile.notion.user_id)) ||
+      null;
     await deps.addPageComment(client, opsPageId, text, userId);
   } catch (notifyErr) {
     // Swallow — never mask original.
