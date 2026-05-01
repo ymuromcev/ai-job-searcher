@@ -182,9 +182,23 @@ ${unmatchedStr}
   fs.writeFileSync(filePath, log);
 }
 
+// Append a single failure entry to cron_failures.log (one event per call).
+// Format: ISO timestamp + error name + message + first 20 stack lines.
+// Always best-effort, idempotent — file is created on first call.
+function appendFailureLog(filePath, err, now = new Date()) {
+  const ts = now.toISOString();
+  const name = (err && err.name) || "Error";
+  const msg = (err && err.message) || String(err);
+  const stack = (err && err.stack) || "";
+  const stackHead = stack.split("\n").slice(0, 20).join("\n");
+  const block = `\n=== ${ts} ===\n${name}: ${msg}\n${stackHead}\n`;
+  fs.appendFileSync(filePath, block);
+}
+
 module.exports = {
   appendRecruiterLeads,
   appendRejectionLog,
   appendCheckLog,
+  appendFailureLog,
   buildSummary,
 };

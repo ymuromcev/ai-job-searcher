@@ -519,6 +519,7 @@ function makeAutoDeps(overrides = {}) {
     updatePageStatus: [],
     addPageComment: [],
     appendCheckLog: [],
+    appendFailureLog: [],
     fetchGmailEmails: [],
     assertGmailCredentials: [],
     makeGmailClient: [],
@@ -548,6 +549,7 @@ function makeAutoDeps(overrides = {}) {
     appendRecruiterLeads: () => {},
     appendRejectionLog: () => {},
     appendCheckLog: (p, opts) => calls.appendCheckLog.push({ p, opts }),
+    appendFailureLog: (p, err, now) => calls.appendFailureLog.push({ p, err, now }),
     buildSummary: () => "summary",
     makeClient: () => ({}),
     updatePageStatus: async (c, pageId, s) => {
@@ -755,4 +757,115 @@ test("check --apply: Notion error on one action — others still processed", asy
   // First failed at updatePageStatus (so comment was not called), second succeeded and called comment
   assert.equal(calls.addPageComment.length, 1);
   assert.match(out.all(), /rate limit/);
+});
+
+// ---------- Phase 3: failure notification ----------
+
+test("check --auto: failure with cron_ops_page_id → comment posted to ops page with @mention", async () => {
+  const { deps, calls } = makeAutoDeps({
+    loadProfile: () => ({
+      id: "jared",
+      paths: {
+        root: "/tmp/profiles/jared",
+        applicationsTsv: "/tmp/profiles/jared/applications.tsv",
+      },
+      filterRules: {},
+      notion: { user_id: "user-123", cron_ops_page_id: "ops-page-uuid" },
+    }),
+    fetchGmailEmails: async () => {
+      throw new Error("invalid_grant");
+    },
+  });
+  const { ctx } = makeCtx({ auto: true, apply: true });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 1);
+  assert.equal(calls.addPageComment.length, 1);
+  const c = calls.addPageComment[0];
+  assert.equal(c.pageId, "ops-page-uuid");
+  assert.equal(c.mention, "user-123");
+  assert.match(c.text, /🔴/);
+  assert.match(c.text, /check --auto failed for jared/);
+  assert.match(c.text, /invalid_grant/);
+  assert.equal(calls.appendFailureLog.length, 1);
+});
+
+test("check --auto: failure WITHOUT cron_ops_page_id → log only, no Notion call", async () => {
+  const { deps, calls } = makeAutoDeps({
+    loadProfile: () => ({
+      id: "jared",
+      paths: {
+        root: "/tmp/profiles/jared",
+        applicationsTsv: "/tmp/profiles/jared/applications.tsv",
+      },
+      filterRules: {},
+      notion: { user_id: "user-123" }, // no cron_ops_page_id
+    }),
+    fetchGmailEmails: async () => {
+      throw new Error("network down");
+    },
+  });
+  const { ctx, out } = makeCtx({ auto: true, apply: true });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 1);
+  assert.equal(calls.addPageComment.length, 0);
+  assert.equal(calls.appendFailureLog.length, 1);
+  assert.match(out.errs.join("\n"), /Notion notification skipped/);
+});
+
+test("check --auto: addPageComment throws → swallowed, log still written, returns 1", async () => {
+  const { deps, calls } = makeAutoDeps({
+    loadProfile: () => ({
+      id: "jared",
+      paths: {
+        root: "/tmp/profiles/jared",
+        applicationsTsv: "/tmp/profiles/jared/applications.tsv",
+      },
+      filterRules: {},
+      notion: { user_id: "user-123", cron_ops_page_id: "ops-page-uuid" },
+    }),
+    fetchGmailEmails: async () => {
+      throw new Error("primary failure");
+    },
+    addPageComment: async () => {
+      throw new Error("notion outage");
+    },
+  });
+  const { ctx, out } = makeCtx({ auto: true, apply: true });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 1);
+  assert.equal(calls.appendFailureLog.length, 1);
+  // Original error visible in stderr; notion-post failure doesn't mask it.
+  assert.match(out.errs.join("\n"), /primary failure/);
+  assert.match(out.errs.join("\n"), /failure notification post failed/);
+});
+
+test("check --auto: appendFailureLog receives error with stack info", async () => {
+  const { deps, calls } = makeAutoDeps({
+    fetchGmailEmails: async () => {
+      throw new Error("cursor write failed");
+    },
+  });
+  const { ctx } = makeCtx({ auto: true, apply: true });
+  await makeCheckCommand(deps)(ctx);
+  assert.equal(calls.appendFailureLog.length, 1);
+  const e = calls.appendFailureLog[0].err;
+  assert.equal(e.message, "cursor write failed");
+  assert.ok(e.stack, "stack should be present");
+});
+
+test("appendFailureLog: writes block with timestamp + name + message + stack head", () => {
+  const { appendFailureLog } = require("../core/email_logs.js");
+  const tmp = `/tmp/cron_failures_test_${Date.now()}.log`;
+  const err = new Error("oops");
+  err.name = "TestError";
+  appendFailureLog(tmp, err, new Date("2026-05-01T09:00:00Z"));
+  const txt = require("fs").readFileSync(tmp, "utf8");
+  assert.match(txt, /=== 2026-05-01T09:00:00\.000Z ===/);
+  assert.match(txt, /TestError: oops/);
+  // Append a second time → both entries present.
+  appendFailureLog(tmp, new Error("second"), new Date("2026-05-01T09:01:00Z"));
+  const txt2 = require("fs").readFileSync(tmp, "utf8");
+  assert.match(txt2, /TestError: oops/);
+  assert.match(txt2, /second/);
+  require("fs").unlinkSync(tmp);
 });

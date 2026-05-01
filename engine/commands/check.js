@@ -84,6 +84,7 @@ const DEFAULT_DEPS = {
   appendRecruiterLeads: emailLogs.appendRecruiterLeads,
   appendRejectionLog: emailLogs.appendRejectionLog,
   appendCheckLog: emailLogs.appendCheckLog,
+  appendFailureLog: emailLogs.appendFailureLog,
   buildSummary: emailLogs.buildSummary,
   makeClient: notion.makeClient,
   updatePageStatus: notion.updatePageStatus,
@@ -108,7 +109,74 @@ function statePaths(profile) {
     rejectionLogPath: path.join(profile.paths.root, "rejection_log.md"),
     recruiterLeadsPath: path.join(profile.paths.root, "recruiter_leads.md"),
     checkLogPath: path.join(profile.paths.root, "email_check_log.md"),
+    failuresLogPath: path.join(stateDir, "cron_failures.log"),
   };
+}
+
+// ---------- Failure notification (Phase 3 / RFC 005 §4.6) ----------
+//
+// Best-effort: post a Notion comment to per-profile cron_ops_page_id with
+// @mention of notion.user_id (so user gets a real push notification), AND
+// append to cron_failures.log on disk. Notion-post failure is itself
+// swallowed — we never want a notification-failure to mask the original.
+
+function buildFailureComment(profileId, err, now) {
+  const ts = now.toISOString();
+  const name = (err && err.name) || "Error";
+  const msg = (err && err.message) || String(err);
+  const stack = (err && err.stack) || "";
+  const stackHead = stack.split("\n").slice(0, 20).join("\n");
+  return (
+    `🔴 [${ts}] check --auto failed for ${profileId}\n\n` +
+    `${name}: ${msg}\n\n` +
+    `Stack:\n${stackHead}`
+  );
+}
+
+async function notifyFailure({
+  profile,
+  profileId,
+  paths,
+  err,
+  now,
+  env,
+  deps,
+  stderr,
+}) {
+  // Always write to disk first — that's the durable signal.
+  try {
+    const stateDir = path.dirname(paths.failuresLogPath);
+    if (!fs.existsSync(stateDir)) fs.mkdirSync(stateDir, { recursive: true });
+    deps.appendFailureLog(paths.failuresLogPath, err, now);
+  } catch (logErr) {
+    stderr(`  failure-log write failed: ${logErr.message}`);
+  }
+
+  const opsPageId =
+    profile && profile.notion && profile.notion.cron_ops_page_id;
+  if (!opsPageId) {
+    stderr("  no cron_ops_page_id in profile.json — Notion notification skipped");
+    return;
+  }
+
+  const secrets = deps.loadSecrets(profileId, env);
+  const token = secrets && secrets.NOTION_TOKEN;
+  if (!token) {
+    stderr(
+      `  no ${secretEnvName(profileId, "NOTION_TOKEN")} in env — Notion notification skipped`
+    );
+    return;
+  }
+
+  try {
+    const client = deps.makeClient(token);
+    const text = buildFailureComment(profileId, err, now);
+    const userId = profile.notion && profile.notion.user_id;
+    await deps.addPageComment(client, opsPageId, text, userId);
+  } catch (notifyErr) {
+    // Swallow — never mask original.
+    stderr(`  failure notification post failed: ${notifyErr.message}`);
+  }
 }
 
 // ---------- activeJobsMap builder ----------
@@ -689,22 +757,50 @@ async function runApply(ctx, deps) {
 //   --since <ISO>      override cursor (clamped to MAX_DAYS)
 
 async function runAuto(ctx, deps) {
+  const { profileId, env, stderr } = ctx;
+
+  // Profile + paths must load BEFORE we can notify anyone — log-only fallback
+  // if even that fails.
+  let profile;
+  let paths;
+  try {
+    const profilesDir = resolveProfilesDir(ctx, ctx.env || process.env);
+    profile = deps.loadProfile(profileId, { profilesDir });
+    paths = statePaths(profile);
+  } catch (err) {
+    stderr(`error: cannot load profile ${profileId}: ${err.message}`);
+    return 1;
+  }
+
+  try {
+    return await runAutoBody(ctx, deps, profile, paths);
+  } catch (err) {
+    stderr(`error: check --auto failed: ${err.message}`);
+    await notifyFailure({
+      profile,
+      profileId,
+      paths,
+      err,
+      now: deps.now(),
+      env,
+      deps,
+      stderr,
+    });
+    return 1;
+  }
+}
+
+// Body of --auto that may throw at any uncaught point. Caller (runAuto)
+// wraps in try/catch and routes throws to notifyFailure.
+async function runAutoBody(ctx, deps, profile, paths) {
   const { profileId, flags, stdout, stderr, env } = ctx;
-  const profilesDir = resolveProfilesDir(ctx, ctx.env || process.env);
-  const profile = deps.loadProfile(profileId, { profilesDir });
-  const paths = statePaths(profile);
 
   // Gmail credentials check first — fail fast before doing any work.
   const gmailCreds = deps.loadGmailCredentials(profileId, {
     env,
     profileRoot: profile.paths.root,
   });
-  try {
-    deps.assertGmailCredentials(gmailCreds, profileId);
-  } catch (err) {
-    stderr(`error: ${err.message}`);
-    return 1;
-  }
+  deps.assertGmailCredentials(gmailCreds, profileId);
 
   // Always read processed + last_check FRESH from disk (key difference from
   // runApply: no stale context snapshot).
@@ -723,21 +819,16 @@ async function runAuto(ctx, deps) {
   const searchWindow = `after:${epoch}`;
   const batches = buildBatches(companies, searchWindow);
 
-  // Fetch via Gmail OAuth.
+  // Fetch via Gmail OAuth — uncaught throws bubble to runAuto's try/catch
+  // which notifies + logs.
   const gmail = deps.makeGmailClient(gmailCreds);
-  let rawEmails;
-  try {
-    rawEmails = await deps.fetchGmailEmails(gmail, batches, {
-      onProgress: ({ phase, batchIndex, total, count }) => {
-        if (flags.verbose && phase === "ids") {
-          stderr(`  batch ${batchIndex + 1}/${total}: ${count} matches`);
-        }
-      },
-    });
-  } catch (err) {
-    stderr(`error: gmail fetch failed: ${err.message}`);
-    return 1;
-  }
+  const rawEmails = await deps.fetchGmailEmails(gmail, batches, {
+    onProgress: ({ phase, batchIndex, total, count }) => {
+      if (flags.verbose && phase === "ids") {
+        stderr(`  batch ${batchIndex + 1}/${total}: ${count} matches`);
+      }
+    },
+  });
 
   const processedSet = new Set((saved.processed || []).map((e) => e.id));
   const newEmails = rawEmails.filter(
