@@ -33,6 +33,7 @@ const { checkAll } = require("../core/url_check.js");
 const { fetchAll: fetchAllJds } = require("../core/jd_cache.js");
 const { calcSalary } = require("../core/salary_calc.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
+const { resolveProfilesDir } = require("../core/paths.js");
 
 // Active statuses that count toward the company cap. "To Apply" is included
 // because every triaged row will become Applied — counting it prevents over-
@@ -159,7 +160,7 @@ function makeDefaultDeps() {
 
 async function runPre(ctx, deps) {
   const { profileId, flags, stdout, stderr } = ctx;
-  const profilesDir = ctx.profilesDir || path.resolve(process.cwd(), "profiles");
+  const profilesDir = resolveProfilesDir(ctx, ctx.env || process.env);
   const batchSize = Number.isFinite(flags.batch) && flags.batch > 0
     ? flags.batch
     : DEFAULT_BATCH_SIZE;
@@ -284,7 +285,7 @@ async function runPre(ctx, deps) {
 
 async function runCommit(ctx, deps) {
   const { profileId, flags, stdout, stderr } = ctx;
-  const profilesDir = ctx.profilesDir || path.resolve(process.cwd(), "profiles");
+  const profilesDir = resolveProfilesDir(ctx, ctx.env || process.env);
 
   if (!flags.resultsFile) {
     stderr("error: --results-file <path> is required for --phase commit");

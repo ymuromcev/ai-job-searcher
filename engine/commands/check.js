@@ -29,6 +29,7 @@ const { secretEnvName } = profileLoader;
 const applicationsTsv = require("../core/applications_tsv.js");
 const notion = require("../core/notion_sync.js");
 const { classify } = require("../core/classifier.js");
+const { resolveProfilesDir } = require("../core/paths.js");
 const {
   companyTokens,
   findCompany,
@@ -50,6 +51,7 @@ const {
 } = require("../core/email_filters.js");
 const emailState = require("../core/email_state.js");
 const emailLogs = require("../core/email_logs.js");
+const gmailOauth = require("../modules/tracking/gmail_oauth.js");
 
 // 8-status set used by both Jared and Lilia DBs:
 //   To Apply / Applied / Interview / Offer / Rejected / Closed / No Response / Archived
@@ -86,6 +88,11 @@ const DEFAULT_DEPS = {
   makeClient: notion.makeClient,
   updatePageStatus: notion.updatePageStatus,
   addPageComment: notion.addPageComment,
+  // Gmail (used only by runAuto). Tests inject a fake.
+  loadGmailCredentials: gmailOauth.loadCredentials,
+  assertGmailCredentials: gmailOauth.assertCredentials,
+  makeGmailClient: gmailOauth.makeGmailClient,
+  fetchGmailEmails: gmailOauth.fetchEmailsForBatches,
   now: () => new Date(),
 };
 
@@ -163,7 +170,7 @@ function buildBatches(companies, searchWindow) {
 
 async function runPrepare(ctx, deps) {
   const { profileId, flags, stdout } = ctx;
-  const profilesDir = ctx.profilesDir || path.resolve(process.cwd(), "profiles");
+  const profilesDir = resolveProfilesDir(ctx, ctx.env || process.env);
   const profile = deps.loadProfile(profileId, { profilesDir });
   const paths = statePaths(profile);
 
@@ -425,127 +432,51 @@ function processPipeline(email, ctx, state) {
   return { row };
 }
 
-async function runApply(ctx, deps) {
-  const { profileId, flags, stdout, stderr, env } = ctx;
-  const profilesDir = ctx.profilesDir || path.resolve(process.cwd(), "profiles");
-  const profile = deps.loadProfile(profileId, { profilesDir });
-  const paths = statePaths(profile);
+// ---------- Shared per-email loop + apply helpers (used by both --apply and --auto) ----------
 
-  const context = deps.loadContext(paths.contextPath);
-  if (!context) {
-    stderr(`error: check_context.json not found at ${paths.contextPath}. Run --prepare first.`);
-    return 1;
-  }
-
-  const rawEmails = deps.loadRawEmails(paths.rawEmailsPath);
-  const processedSet = new Set(context.processedIds || []);
-  const newEmails = rawEmails.filter(
-    (e) => e && e.messageId && !processedSet.has(e.messageId)
-  );
-
-  const { apps } = deps.loadApplications(profile.paths.applicationsTsv);
-  const tsvCache = [...apps];
-
-  const now = deps.now();
-  const nowIso = now.toISOString();
-  const state = {
-    activeJobsMap: context.activeJobsMap || {},
-    companyAliases: profile.company_aliases || {},
-    filterRules: profile.filterRules || {},
-    notionUserId: (profile.notion && profile.notion.user_id) || null,
-    tsvCache,
-    newInboxRows: [],
-    recruiterLeads: [],
-  };
-  const procCtx = { nowIso };
-
+function processEmailsLoop(emails, state, procCtx) {
   const logRows = [];
   const actions = [];
   const rejections = [];
-
-  if (newEmails.length === 0) {
-    stdout(
-      JSON.stringify(
-        {
-          emailsFound: 0,
-          matched: 0,
-          actions: 0,
-          summary: deps.buildSummary({}),
-        },
-        null,
-        2
-      )
-    );
-    if (flags.apply) {
-      // Still bump last_check so the next --prepare window advances.
-      const saved = deps.loadProcessed(paths.processedPath);
-      deps.saveProcessed(paths.processedPath, saved, [], now);
-    }
-    return 0;
-  }
-
-  for (const email of newEmails) {
+  for (const email of emails) {
     const fromLower = (email.from || "").toLowerCase();
-
     if (fromLower.includes("jobalerts-noreply@linkedin.com")) {
       logRows.push(processLinkedIn(email, procCtx, state));
       continue;
     }
-
     if (!isATS(email.from) && matchesRecruiterSubject(email.subject || "")) {
       logRows.push(processRecruiter(email, procCtx, state));
       continue;
     }
-
     const { row, action, rejection } = processPipeline(email, procCtx, state);
     logRows.push(row);
     if (action) actions.push(action);
     if (rejection) rejections.push(rejection);
   }
+  return { logRows, actions, rejections };
+}
 
-  const inboxAdded = state.newInboxRows.length;
-  const recruiterLeadsCount = state.recruiterLeads.length;
-  const summary = deps.buildSummary({
-    rejections,
-    logRows,
-    actionCount: actions.length,
-    inboxAdded,
-    recruiterLeadsCount,
-  });
-
-  stdout(
-    JSON.stringify(
-      {
-        emailsFound: newEmails.length,
-        matched: logRows.filter((r) => r.match !== "NONE").length,
-        actions: actions.length,
-        inboxAdded,
-        recruiterLeadsLogged: recruiterLeadsCount,
-        results: logRows,
-        plan: actions.map((a) => ({
-          kind: a.kind,
-          pageId: a.pageId,
-          appKey: a.appKey,
-          newStatus: a.newStatus || null,
-        })),
-        summary,
-      },
-      null,
-      2
-    )
-  );
-
-  if (!flags.apply) {
-    stdout(`(dry-run — pass --apply to mutate TSV + Notion)`);
-    return 0;
-  }
-
-  // --- Apply phase: Notion first, then local state.
+async function applyMutations({
+  profile,
+  profileId,
+  paths,
+  apps,
+  state,
+  actions,
+  logRows,
+  rejections,
+  newEmails,
+  now,
+  procCtx,
+  env,
+  deps,
+  stderr,
+}) {
   const secrets = deps.loadSecrets(profileId, env);
   const token = secrets.NOTION_TOKEN;
   if (!token && actions.length > 0) {
     stderr(`error: missing ${secretEnvName(profileId, "NOTION_TOKEN")} in env`);
-    return 1;
+    return { ok: false, notionErrors: 0 };
   }
 
   const propertyMap =
@@ -582,11 +513,10 @@ async function runApply(ctx, deps) {
   for (const [appKey, newStatus] of Object.entries(appliedStatusByAppKey)) {
     const existing = byKey.get(appKey);
     if (existing) {
-      byKey.set(appKey, { ...existing, status: newStatus, updatedAt: nowIso });
+      byKey.set(appKey, { ...existing, status: newStatus, updatedAt: procCtx.nowIso });
     }
   }
-  const merged = Array.from(byKey.values());
-  deps.saveApplications(profile.paths.applicationsTsv, merged);
+  deps.saveApplications(profile.paths.applicationsTsv, Array.from(byKey.values()));
 
   // Logs.
   if (state.recruiterLeads.length > 0) {
@@ -599,8 +529,8 @@ async function runApply(ctx, deps) {
     logRows,
     actionCount: actions.length,
     rejections,
-    inboxAdded,
-    recruiterLeadsCount,
+    inboxAdded: state.newInboxRows.length,
+    recruiterLeadsCount: state.recruiterLeads.length,
     now,
   });
 
@@ -610,19 +540,271 @@ async function runApply(ctx, deps) {
     const r = logRows.find((rr) => rr.id === e.messageId) || {};
     return {
       id: e.messageId,
-      date: e.date || nowIso,
+      date: e.date || procCtx.nowIso,
       company: r.company || "unknown",
       type: r.type || "OTHER",
     };
   });
   deps.saveProcessed(paths.processedPath, saved, newEntries, now);
 
+  return { ok: true, notionErrors };
+}
+
+function buildPipelineState(profile, activeJobsMap, tsvCache) {
+  return {
+    activeJobsMap: activeJobsMap || {},
+    companyAliases: profile.company_aliases || {},
+    filterRules: profile.filterRules || {},
+    notionUserId: (profile.notion && profile.notion.user_id) || null,
+    tsvCache,
+    newInboxRows: [],
+    recruiterLeads: [],
+  };
+}
+
+function emitDryRunJson(stdout, deps, { newEmails, logRows, actions, state, rejections }) {
+  const inboxAdded = state.newInboxRows.length;
+  const recruiterLeadsCount = state.recruiterLeads.length;
+  const summary = deps.buildSummary({
+    rejections,
+    logRows,
+    actionCount: actions.length,
+    inboxAdded,
+    recruiterLeadsCount,
+  });
   stdout(
-    `applied: ${actions.length - notionErrors} Notion ops, ${inboxAdded} Inbox rows, ${rejections.length} rejections${
-      notionErrors ? `, ${notionErrors} errors` : ""
+    JSON.stringify(
+      {
+        emailsFound: newEmails.length,
+        matched: logRows.filter((r) => r.match !== "NONE").length,
+        actions: actions.length,
+        inboxAdded,
+        recruiterLeadsLogged: recruiterLeadsCount,
+        results: logRows,
+        plan: actions.map((a) => ({
+          kind: a.kind,
+          pageId: a.pageId,
+          appKey: a.appKey,
+          newStatus: a.newStatus || null,
+        })),
+        summary,
+      },
+      null,
+      2
+    )
+  );
+}
+
+async function runApply(ctx, deps) {
+  const { profileId, flags, stdout, stderr, env } = ctx;
+  const profilesDir = resolveProfilesDir(ctx, ctx.env || process.env);
+  const profile = deps.loadProfile(profileId, { profilesDir });
+  const paths = statePaths(profile);
+
+  const context = deps.loadContext(paths.contextPath);
+  if (!context) {
+    stderr(`error: check_context.json not found at ${paths.contextPath}. Run --prepare first.`);
+    return 1;
+  }
+
+  const rawEmails = deps.loadRawEmails(paths.rawEmailsPath);
+  const processedSet = new Set(context.processedIds || []);
+  const newEmails = rawEmails.filter(
+    (e) => e && e.messageId && !processedSet.has(e.messageId)
+  );
+
+  const { apps } = deps.loadApplications(profile.paths.applicationsTsv);
+  const tsvCache = [...apps];
+
+  const now = deps.now();
+  const nowIso = now.toISOString();
+  const state = buildPipelineState(profile, context.activeJobsMap, tsvCache);
+  const procCtx = { nowIso };
+
+  if (newEmails.length === 0) {
+    stdout(
+      JSON.stringify(
+        {
+          emailsFound: 0,
+          matched: 0,
+          actions: 0,
+          summary: deps.buildSummary({}),
+        },
+        null,
+        2
+      )
+    );
+    if (flags.apply) {
+      // Still bump last_check so the next --prepare window advances.
+      const saved = deps.loadProcessed(paths.processedPath);
+      deps.saveProcessed(paths.processedPath, saved, [], now);
+    }
+    return 0;
+  }
+
+  const { logRows, actions, rejections } = processEmailsLoop(newEmails, state, procCtx);
+
+  emitDryRunJson(stdout, deps, { newEmails, logRows, actions, state, rejections });
+
+  if (!flags.apply) {
+    stdout(`(dry-run — pass --apply to mutate TSV + Notion)`);
+    return 0;
+  }
+
+  const result = await applyMutations({
+    profile,
+    profileId,
+    paths,
+    apps,
+    state,
+    actions,
+    logRows,
+    rejections,
+    newEmails,
+    now,
+    procCtx,
+    env,
+    deps,
+    stderr,
+  });
+  if (!result.ok) return 1;
+
+  stdout(
+    `applied: ${actions.length - result.notionErrors} Notion ops, ${state.newInboxRows.length} Inbox rows, ${rejections.length} rejections${
+      result.notionErrors ? `, ${result.notionErrors} errors` : ""
     }`
   );
-  return notionErrors > 0 ? 1 : 0;
+  return result.notionErrors > 0 ? 1 : 0;
+}
+
+// ---------- Phase: --auto (single-process autonomous flow) ----------
+//
+// Same pipeline as --prepare → MCP fetch → --apply, but in one process. Reads
+// fresh state from disk on every run (no `check_context.json` snapshot to go
+// stale between phases). Used for cron / fly.io.
+//
+// Flags:
+//   --auto             enable
+//   --apply            commit (default: dry-run)
+//   --since <ISO>      override cursor (clamped to MAX_DAYS)
+
+async function runAuto(ctx, deps) {
+  const { profileId, flags, stdout, stderr, env } = ctx;
+  const profilesDir = resolveProfilesDir(ctx, ctx.env || process.env);
+  const profile = deps.loadProfile(profileId, { profilesDir });
+  const paths = statePaths(profile);
+
+  // Gmail credentials check first — fail fast before doing any work.
+  const gmailCreds = deps.loadGmailCredentials(profileId, {
+    env,
+    profileRoot: profile.paths.root,
+  });
+  try {
+    deps.assertGmailCredentials(gmailCreds, profileId);
+  } catch (err) {
+    stderr(`error: ${err.message}`);
+    return 1;
+  }
+
+  // Always read processed + last_check FRESH from disk (key difference from
+  // runApply: no stale context snapshot).
+  const saved = deps.loadProcessed(paths.processedPath);
+  const now = deps.now();
+  const sinceIso = flags.since || null;
+  const epoch = deps.computeCursorEpoch({
+    lastCheck: saved.last_check,
+    sinceIso,
+    now,
+  });
+
+  const { apps } = deps.loadApplications(profile.paths.applicationsTsv);
+  const activeJobsMap = buildActiveJobsMap(apps);
+  const companies = Object.keys(activeJobsMap);
+  const searchWindow = `after:${epoch}`;
+  const batches = buildBatches(companies, searchWindow);
+
+  // Fetch via Gmail OAuth.
+  const gmail = deps.makeGmailClient(gmailCreds);
+  let rawEmails;
+  try {
+    rawEmails = await deps.fetchGmailEmails(gmail, batches, {
+      onProgress: ({ phase, batchIndex, total, count }) => {
+        if (flags.verbose && phase === "ids") {
+          stderr(`  batch ${batchIndex + 1}/${total}: ${count} matches`);
+        }
+      },
+    });
+  } catch (err) {
+    stderr(`error: gmail fetch failed: ${err.message}`);
+    return 1;
+  }
+
+  const processedSet = new Set((saved.processed || []).map((e) => e.id));
+  const newEmails = rawEmails.filter(
+    (e) => e && e.messageId && !processedSet.has(e.messageId)
+  );
+
+  const tsvCache = [...apps];
+  const nowIso = now.toISOString();
+  const state = buildPipelineState(profile, activeJobsMap, tsvCache);
+  const procCtx = { nowIso };
+
+  if (newEmails.length === 0) {
+    stdout(
+      JSON.stringify(
+        {
+          emailsFound: 0,
+          matched: 0,
+          actions: 0,
+          summary: deps.buildSummary({}),
+          totalFetched: rawEmails.length,
+          batches: batches.length,
+          searchWindow,
+        },
+        null,
+        2
+      )
+    );
+    if (flags.apply) {
+      // Bump last_check even with zero new emails — cursor advances.
+      deps.saveProcessed(paths.processedPath, saved, [], now);
+    }
+    return 0;
+  }
+
+  const { logRows, actions, rejections } = processEmailsLoop(newEmails, state, procCtx);
+
+  emitDryRunJson(stdout, deps, { newEmails, logRows, actions, state, rejections });
+
+  if (!flags.apply) {
+    stdout(`(dry-run — pass --apply to mutate TSV + Notion)`);
+    return 0;
+  }
+
+  const result = await applyMutations({
+    profile,
+    profileId,
+    paths,
+    apps,
+    state,
+    actions,
+    logRows,
+    rejections,
+    newEmails,
+    now,
+    procCtx,
+    env,
+    deps,
+    stderr,
+  });
+  if (!result.ok) return 1;
+
+  stdout(
+    `applied: ${actions.length - result.notionErrors} Notion ops, ${state.newInboxRows.length} Inbox rows, ${rejections.length} rejections${
+      result.notionErrors ? `, ${result.notionErrors} errors` : ""
+    }`
+  );
+  return result.notionErrors > 0 ? 1 : 0;
 }
 
 // ---------- Entry ----------
@@ -630,6 +812,9 @@ async function runApply(ctx, deps) {
 function makeCheckCommand(overrides = {}) {
   const deps = { ...DEFAULT_DEPS, ...overrides };
   return async function checkCommand(ctx) {
+    if (ctx.flags && ctx.flags.auto) {
+      return runAuto(ctx, deps);
+    }
     if (ctx.flags && ctx.flags.prepare) {
       return runPrepare(ctx, deps);
     }

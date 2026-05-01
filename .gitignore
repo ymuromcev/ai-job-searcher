@@ -23,6 +23,8 @@ data/
 **/.stage*/
 .gmail-state/
 **/.gmail-state/
+.gmail-tokens/
+**/.gmail-tokens/
 .indeed-state/
 **/.indeed-state/
 

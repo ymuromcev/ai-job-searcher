@@ -1,0 +1,21 @@
+# supercronic cron schedule.
+#
+# Format: <minute> <hour> <day-of-month> <month> <day-of-week>  <command>
+#
+# TZ is set in the container to America/Los_Angeles, so 8 = 8am PT
+# (DST-aware: stays at 8am PST in winter, 8am PDT in summer).
+#
+# Each line runs ONE profile end-to-end. We chain `|| true` so that a
+# transient failure for one profile doesn't block the others. The single
+# command emits all logs to stderr/stdout — fly logs picks them up.
+#
+# To add a new profile: add a line. To re-trigger manually:
+#   fly ssh console --command "AI_JOB_SEARCHER_DATA_DIR=/data node /app/engine/cli.js check --profile <id> --auto --apply"
+
+# 8am PT, jared
+0 8 * * *  cd /app && node engine/cli.js check --profile jared --auto --apply || true
+
+# 8am PT, lilia — DISABLED until Lilia completes OAuth consent flow
+# (run `node scripts/gmail_auth.js --profile lilia` locally, then
+#  `fly secrets set LILIA_GMAIL_REFRESH_TOKEN=...` and uncomment this line).
+# 1 8 * * *  cd /app && node engine/cli.js check --profile lilia --auto --apply || true

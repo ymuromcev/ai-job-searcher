@@ -1,0 +1,58 @@
+# fly.io config for the ai-job-searcher cron container.
+#
+# One machine in `sjc` running supercronic. No public ports — this is a
+# pure background worker. State persists on a 1GB volume mounted at
+# /data; the engine reads/writes there via AI_JOB_SEARCHER_DATA_DIR.
+#
+# Bring-up (one time, manual):
+#   fly launch --no-deploy --name ai-job-searcher-cron --region sjc
+#   fly volumes create ai_job_searcher_data --region sjc --size 1
+#   fly secrets set JARED_NOTION_TOKEN=... JARED_GMAIL_CLIENT_ID=... \
+#                   JARED_GMAIL_CLIENT_SECRET=... JARED_GMAIL_REFRESH_TOKEN=... \
+#                   LILIA_NOTION_TOKEN=... LILIA_GMAIL_CLIENT_ID=... \
+#                   LILIA_GMAIL_CLIENT_SECRET=... LILIA_GMAIL_REFRESH_TOKEN=...
+#   fly deploy
+#
+# Daily ops:
+#   fly logs                            # tail recent runs
+#   fly status                          # machine state
+#   fly ssh console                     # shell into running machine
+#   fly machine restart <id>            # nudge supercronic if cron stopped
+#
+# See scripts/deploy_fly.sh for an end-to-end wrapper with pre-flight checks
+# and docs/gmail_cron.md for the full Phase 2 runbook.
+
+app = "ai-job-searcher-cron"
+primary_region = "sjc"
+kill_signal = "SIGINT"
+kill_timeout = 30
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # AI_JOB_SEARCHER_DATA_DIR is also baked into the Dockerfile as a default,
+  # but redeclaring here makes intent visible in fly config.
+  AI_JOB_SEARCHER_DATA_DIR = "/data"
+  TZ = "America/Los_Angeles"
+  NODE_ENV = "production"
+
+[[mounts]]
+  source = "ai_job_searcher_data"
+  destination = "/data"
+
+# Single shared-cpu-1x machine, 256MB RAM. Node + supercronic fits in <100MB
+# resident; we have plenty of headroom. Cron is idle most of the time.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  cpu_kind = "shared"
+
+# No public services — this app has no HTTP endpoint. Internal cron only.
+# (Omitting [[services]] block on purpose.)
+
+[deploy]
+  # `immediate` over `bluegreen`: we have a single machine and a volume
+  # mount. Rolling new code in immediately is fine — the worst case is a
+  # cron tick lands during a 10s restart and gets retried tomorrow.
+  strategy = "immediate"

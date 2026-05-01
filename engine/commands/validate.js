@@ -19,6 +19,7 @@ const profileLoader = require("../core/profile_loader.js");
 const jobsTsv = require("../core/jobs_tsv.js");
 const applications = require("../core/applications_tsv.js");
 const { matchBlocklists } = require("../core/filter.js");
+const { resolveProfilesDir } = require("../core/paths.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 
 // 8-status set: To Apply / Applied / Interview / Offer / Rejected / Closed /
@@ -184,7 +185,7 @@ function makeValidateCommand(overrides = {}) {
 
   return async function validateCommand(ctx) {
     const { profileId, flags, stdout } = ctx;
-    const profilesDir = ctx.profilesDir || path.resolve(process.cwd(), "profiles");
+    const profilesDir = resolveProfilesDir(ctx, ctx.env || process.env);
     const dataDir = ctx.dataDir || path.resolve(process.cwd(), "data");
 
     let profile;

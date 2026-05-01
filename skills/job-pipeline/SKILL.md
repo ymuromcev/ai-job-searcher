@@ -1,6 +1,6 @@
 ---
 name: job-pipeline
-description: "Multi-profile job-search pipeline — scan ATS adapters, validate the pipeline, prepare Inbox jobs (fit scoring, CL gen, Notion push), sync with Notion, and check Gmail for responses. Trigger on: /job-pipeline, /job-pipeline scan, /job-pipeline validate, /job-pipeline sync, /job-pipeline prepare, /job-pipeline check, or when user asks to scan/validate/sync/prepare/check jobs for a specific profile (see the `profiles/` directory for the current list)."
+description: "Multi-profile job-search pipeline — scan ATS adapters, validate the pipeline, prepare Inbox jobs (fit scoring, CL gen, Notion push), sync with Notion, check Gmail for responses, and answer application Q&A questions with reuse from a Notion-backed answer bank. Trigger on: /job-pipeline, /job-pipeline scan, /job-pipeline validate, /job-pipeline sync, /job-pipeline prepare, /job-pipeline check, /job-pipeline answer, or when user asks to scan/validate/sync/prepare/check/answer jobs for a specific profile (see the `profiles/` directory for the current list)."
 ---
 
 # job-pipeline — Multi-profile Job Search Pipeline
@@ -15,6 +15,7 @@ Single engine, per-profile data. All commands take `--profile <id>`. Currently s
 - **`/job-pipeline prepare`** — Two-phase processing of Inbox jobs: mechanical pre-phase (filter / URL check / JD fetch / salary) + Claude LLM phase (geo check / fit score / CL gen / Notion push).
 - **`/job-pipeline check`** — Two-phase Gmail response check: `--prepare` builds Gmail search batches for Claude MCP, `--apply` consumes Claude-written emails and updates Notion + TSV + logs.
 - **`/job-pipeline indeed-prep`** — Phase 1 of Indeed ingest. Prints scan URLs + JS extraction snippet + filter context for the Claude browser MCP session. Phase 2 (browser fetch) is manual via Chrome MCP. Phase 3 = standard `scan` (the indeed adapter ingests the file Claude wrote).
+- **`/job-pipeline answer`** — Generate or reuse application answers (Why join? / Influences? / Motivation? etc.). Three-phase: search Notion Q&A DB by dedup key → reuse if exact match else generate via Humanizer Rules → push answer back to Notion + write local `.md` backup. Per-profile DB at `profile.notion.application_qa_db_id`.
 
 If no mode is specified, show this help and ask which to run.
 
@@ -104,6 +105,9 @@ Default mode prints the plan and runs the read-only pull preview. **Pass `--appl
 - **Do not** edit `data/jobs.tsv` or `profiles/<id>/applications.tsv` by hand while a scan is running. Atomic-rename protects against partial writes but not against logical conflicts.
 - **Do not** commit `data/` or `profiles/<id>/` to git — both are in `.gitignore` for a reason. Only `profiles/_example/` is committed.
 - **Do not** mix profiles in one process. Each CLI invocation loads exactly one profile's secrets — never load `JARED_*` and `PAT_*` together.
+- **Do not** generate a new application answer without first running `answer --phase search` and inspecting matches. Reuse before regenerate is the rule for `/job-pipeline answer`.
+- **Do not** push an answer to the Notion Q&A DB without an explicit user approval signal (`пойдет` / `good` / `submitted` / `залил`). Same shared-state rule as the cover-letter flow.
+- **Do not** invent new Q&A categories. Use one of the 8 canonical names from the DB; the categorizer picks a default automatically.
 
 ### prepare
 
@@ -412,6 +416,103 @@ Standard `scan` flow: the indeed adapter (`engine/modules/discovery/indeed.js`) 
 - **Phase 3 reports "ingest file not found"** — Phase 2 didn't write to the same path Phase 1 printed. Re-run Phase 1 (it's idempotent), then verify Claude's write target matches `ingest_file`.
 - **Phase 3 reports "0 fresh"** — either the ingest file is empty (`[]`) or every entry is a duplicate. Check `applications.tsv` for prior `jobId` matches.
 - **Cards extraction returns 0 rows** — Indeed changed selectors. Update `extraction_snippet` in `engine/commands/indeed_prepare.js` to match current `a[data-jk]` / `[data-testid="company-name"]` markup.
+
+---
+
+### answer
+
+Two-phase application Q&A flow with **reuse-first** lookup against a Notion-backed answer bank. Per [RFC 009](../../rfc/009-application-answers-command.md).
+
+**Use when:** the user invokes `/job-pipeline answer` with a question + role context, e.g. for an "Additional Information" field, a "Why X?" prompt, motivation/influences/values questions on application forms.
+
+#### Phase 1 — search (CLI)
+
+```
+node engine/cli.js answer --profile <id> --phase search \
+  --company "<Company>" --role "<Role>" --question "<question text>"
+```
+
+Prints JSON to stdout:
+
+```json
+{
+  "key": "figma||product manager, ai platform||why do you want to join figma?",
+  "exact": { "pageId": "...", "question": "...", "answer": "...", "category": "Motivation" } | null,
+  "partials": [ /* same shape, same company+role OR same question across companies */ ],
+  "schema": { "categories": ["Behavioral","Technical","Culture Fit","Logistics","Salary","Other","Experience","Motivation"] },
+  "category_suggestion": "Motivation"
+}
+```
+
+#### Phase 2 — SKILL (Claude executes)
+
+**Step 1 — Parse the user request.** Extract `<company>`, `<role>`, and `<question>` from the user input. If any is missing or ambiguous, ask the user once.
+
+**Step 2 — Run search phase.** Call the CLI Phase 1 above with the three values.
+
+**Step 3 — Branch on results.**
+
+- **If `exact` is non-null** → show the existing answer to the user, with category and a clear note ("Found this in your answer bank for this exact role+question. Reuse?"). Offer `[reuse] / [regenerate] / [edit]`. If reuse — skip to Step 7 with `existingPageId = exact.pageId` and unchanged answer.
+- **If `partials` is non-empty** → mention them as reference ("Same role, different question: ...; Same question for Stripe: ..."), but proceed to Step 4 unless user asks to reuse one.
+- **Otherwise** → go to Step 4.
+
+**Step 4 — Load memory.** Read in this order:
+- `profiles/<id>/memory/user_writing_style.md`
+- `profiles/<id>/memory/user_resume_key_points.md`
+- Any `profiles/<id>/memory/feedback_*.md`
+
+If memory files are missing, fall back to `profiles/<id>/resume_versions.json`.
+
+**Step 5 — Generate the answer.** Apply [Humanizer Rules](#humanizer-rules-prepare--answer-modes) throughout. Default character limit: see `feedback_210_char_limit.md` (210 chars unless the form specifies otherwise; for essay-type questions like Linear's, ignore the default and write a fuller answer).
+
+**Step 6 — Show + categorize.** Show draft to the user. Mention `category_suggestion` from search response and confirm or adjust. Wait for approval signals: "пойдет" / "ok" / "good" / "submitted" / "залил".
+
+**Step 7 — Write the draft file.**
+
+Write `profiles/<id>/.answers/draft_<YYYYMMDD_HHMMSS>.json`:
+
+```json
+{
+  "company": "Figma",
+  "role": "Product Manager, AI Platform",
+  "question": "Why do you want to join Figma?",
+  "answer": "<final approved text>",
+  "category": "Motivation",
+  "notes": "Optional context. E.g. 210-char short version. Field: Additional Information.",
+  "existingPageId": null
+}
+```
+
+If the user chose to update an existing entry, set `existingPageId` to the matched `pageId` from Phase 1.
+
+#### Phase 3 — push (CLI)
+
+```
+node engine/cli.js answer --profile <id> --phase push \
+  --results-file profiles/<id>/.answers/draft_<timestamp>.json
+```
+
+CLI:
+- If `existingPageId` is set → updates Answer / Category / Notes on that Notion page.
+- Otherwise → creates a new page in `profile.notion.application_qa_db_id`.
+- Always writes a local `.md` backup to `profiles/<id>/application_answers/<Company>_<role-slug>_<YYYYMMDD>.md`. If a file with that name already exists today, suffix `_v2`, `_v3` etc.
+- Prints JSON: `{ pageId, action: "created"|"updated", url, backupPath }`.
+
+#### Step 8 — Report to user
+
+Summarize:
+- Action: created or updated.
+- Notion URL of the page.
+- Local backup path.
+- Char count of the saved answer.
+
+#### Failure modes (answer-specific)
+
+- **`no notion.application_qa_db_id configured`** — profile.json is missing the field. For `jared` it's `ca4fa9e8-b3a6-4ccb-bcc2-3a13ff6b06ae`. For other profiles, create the Q&A DB in Notion first.
+- **`missing JARED_NOTION_TOKEN`** — load it from `~/.bashrc` / `.env`. Same token used by `sync` and `check`.
+- **`invalid category`** — the draft includes a category not in the canonical 8. Fix to one of: Behavioral, Technical, Culture Fit, Logistics, Salary, Other, Experience, Motivation. The categorize() helper picks a default automatically.
+- **Notion 400 on create** — usually a missing required property or a Category option that doesn't exist in the DB. Categories must already be in the DB schema; do not invent new ones.
+- **Search returns nothing for a clearly recurring question** — the question text drift may exceed the 120-char dedup window. Look at `partials` for near-matches.
 
 ---
 

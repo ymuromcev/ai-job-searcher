@@ -16,6 +16,7 @@ const jobsTsv = require("../core/jobs_tsv.js");
 const applications = require("../core/applications_tsv.js");
 const { scan } = require("../core/scan.js");
 const adapterRegistry = require("../modules/discovery/index.js");
+const { resolveProfilesDir } = require("../core/paths.js");
 
 const DEFAULT_DEPS = {
   loadProfile: profileLoader.loadProfile,
@@ -92,7 +93,7 @@ function makeScanCommand(overrides = {}) {
 
   return async function scanCommand(ctx) {
     const { profileId, flags, env, stdout } = ctx;
-    const profilesDir = ctx.profilesDir || path.resolve(process.cwd(), "profiles");
+    const profilesDir = resolveProfilesDir(ctx, ctx.env || process.env);
     const dataDir = ctx.dataDir || path.resolve(process.cwd(), "data");
 
     const profile = deps.loadProfile(profileId, { profilesDir });

@@ -16,6 +16,7 @@ const { secretEnvName } = profileLoader;
 const applications = require("../core/applications_tsv.js");
 const notion = require("../core/notion_sync.js");
 const { makeCompanyResolver } = require("../core/company_resolver.js");
+const { resolveProfilesDir } = require("../core/paths.js");
 
 const DEFAULT_PROPERTY_MAP = {
   title: { field: "Title", type: "title" },
@@ -54,7 +55,12 @@ const DEFAULT_DEPS = {
 // Transforms an applications.tsv row into a shape matching the Notion
 // property_map. Only fields that should be written on push are included;
 // buildProperties drops undefined keys, so absent data stays absent on Notion.
-function appToNotionJob(app, companyRelationId) {
+//
+// canonicalArchetypes (optional Set): when provided, throws if app.resume_ver
+// is set to a value outside the set. Refuses to re-pollute the Notion select
+// dropdown the way pre-2026-04-30 mass-migration did (58 garbage options on
+// 259 pages). Caller builds the Set from profile.resumeVersions.versions keys.
+function appToNotionJob(app, companyRelationId, canonicalArchetypes) {
   const out = {
     title: app.title,
     source: app.source,
@@ -64,7 +70,19 @@ function appToNotionJob(app, companyRelationId) {
     key: app.key,
   };
   if (companyRelationId) out.companyRelation = [companyRelationId];
-  if (app.resume_ver) out.resumeVersion = app.resume_ver;
+  if (app.resume_ver) {
+    if (
+      canonicalArchetypes &&
+      canonicalArchetypes.size > 0 &&
+      !canonicalArchetypes.has(app.resume_ver)
+    ) {
+      throw new Error(
+        `non-canonical resume_ver "${app.resume_ver}" for ${app.key || "(no key)"}; ` +
+          `expected one of: ${[...canonicalArchetypes].sort().join(", ")}`
+      );
+    }
+    out.resumeVersion = app.resume_ver;
+  }
   if (app.salary_min) {
     const n = Number(app.salary_min);
     if (Number.isFinite(n)) out.salaryMin = n;
@@ -72,6 +90,17 @@ function appToNotionJob(app, companyRelationId) {
   if (app.salary_max) {
     const n = Number(app.salary_max);
     if (Number.isFinite(n)) out.salaryMax = n;
+  }
+  // TSV stores only Min/Max numbers; the display string for Notion's
+  // "Salary Expectations" rich_text is derived on push so we don't need a
+  // separate column. Skipped when either bound is missing — partial ranges
+  // would render as "$0-190K (95K mid)" which is worse than empty.
+  if (Number.isFinite(out.salaryMin) && Number.isFinite(out.salaryMax)) {
+    const mid =
+      Math.round((out.salaryMin + out.salaryMax) / 2 / 1000) * 1000;
+    out.salaryExpectations =
+      `$${out.salaryMin / 1000}-${out.salaryMax / 1000}K ` +
+      `($${mid / 1000}K mid)`;
   }
   if (app.cl_path) out.coverLetter = app.cl_path;
   return out;
@@ -177,7 +206,7 @@ function makeSyncCommand(overrides = {}) {
 
   return async function syncCommand(ctx) {
     const { profileId, flags, env, stdout } = ctx;
-    const profilesDir = ctx.profilesDir || path.resolve(process.cwd(), "profiles");
+    const profilesDir = resolveProfilesDir(ctx, ctx.env || process.env);
 
     const profile = deps.loadProfile(profileId, { profilesDir });
     const secrets = deps.loadSecrets(profileId, env);
@@ -195,6 +224,15 @@ function makeSyncCommand(overrides = {}) {
 
     const propertyMap =
       (profile.notion && profile.notion.property_map) || DEFAULT_PROPERTY_MAP;
+
+    // Canonical archetype gate: build the Set once from the profile's
+    // resume_versions.json. appToNotionJob throws if a TSV row carries a
+    // resume_ver outside this set, blocking a push that would re-pollute
+    // the Notion select dropdown. Empty set → no gate (e.g. profile has no
+    // resume_versions configured).
+    const canonicalArchetypes = new Set(
+      Object.keys((profile.resumeVersions && profile.resumeVersions.versions) || {})
+    );
 
     const applicationsPath = path.join(profile.paths.root, "applications.tsv");
     const { apps } = deps.loadApplications(applicationsPath);
@@ -271,7 +309,7 @@ function makeSyncCommand(overrides = {}) {
               ctx.stderr(`  company resolve error for ${app.companyName}: ${err.message}`);
             }
           }
-          const notionJob = appToNotionJob(app, companyRelationId);
+          const notionJob = appToNotionJob(app, companyRelationId, canonicalArchetypes);
           const page = await deps.createJobPage(getClient(), databaseId, notionJob, propertyMap);
           // Immutable update: write the page id through byKey rather than
           // mutating the original app in place, to keep `apps` clean.

@@ -510,6 +510,213 @@ test("check --apply: idempotent on re-run with same raw_emails", async () => {
   assert.equal(calls.addPageComment.length, 0);
 });
 
+// ---------- runAuto (--auto flag) ----------
+
+function makeAutoDeps(overrides = {}) {
+  const calls = {
+    saveProcessed: [],
+    saveApplications: [],
+    updatePageStatus: [],
+    addPageComment: [],
+    appendCheckLog: [],
+    fetchGmailEmails: [],
+    assertGmailCredentials: [],
+    makeGmailClient: [],
+  };
+  const deps = {
+    loadProfile: () => ({
+      id: "jared",
+      paths: {
+        root: "/tmp/profiles/jared",
+        applicationsTsv: "/tmp/profiles/jared/applications.tsv",
+      },
+      filterRules: {},
+      notion: { user_id: "user-123" },
+    }),
+    loadSecrets: () => ({ NOTION_TOKEN: "tok" }),
+    loadApplications: () => ({
+      apps: [fakeApp({ key: "k1", companyName: "Affirm", title: "PM", notion_page_id: "p1" })],
+    }),
+    saveApplications: (file, apps) => calls.saveApplications.push({ file, count: apps.length }),
+    loadProcessed: () => ({ processed: [], last_check: null }),
+    saveProcessed: (file, existing, entries, now) =>
+      calls.saveProcessed.push({ file, count: entries.length, now }),
+    computeCursorEpoch: () => 1700000000,
+    loadContext: () => null,
+    saveContext: () => {},
+    loadRawEmails: () => [],
+    appendRecruiterLeads: () => {},
+    appendRejectionLog: () => {},
+    appendCheckLog: (p, opts) => calls.appendCheckLog.push({ p, opts }),
+    buildSummary: () => "summary",
+    makeClient: () => ({}),
+    updatePageStatus: async (c, pageId, s) => {
+      calls.updatePageStatus.push({ pageId, status: s });
+      return { id: pageId };
+    },
+    addPageComment: async (c, pageId, text, mention) => {
+      calls.addPageComment.push({ pageId, text, mention });
+      return { id: "comment" };
+    },
+    loadGmailCredentials: () => ({
+      clientId: "cid",
+      clientSecret: "csec",
+      refreshToken: "rt",
+      source: "env",
+    }),
+    assertGmailCredentials: (creds, profileId) => {
+      calls.assertGmailCredentials.push({ creds, profileId });
+    },
+    makeGmailClient: (creds) => {
+      calls.makeGmailClient.push(creds);
+      return { __fake: true };
+    },
+    fetchGmailEmails: async (gmail, batches, opts) => {
+      calls.fetchGmailEmails.push({ gmail, batches, opts });
+      return [];
+    },
+    now: () => new Date("2026-04-30T12:00:00Z"),
+    ...overrides,
+  };
+  return { deps, calls };
+}
+
+test("check --auto: missing gmail creds → error 1, no fetch", async () => {
+  const { deps, calls } = makeAutoDeps({
+    assertGmailCredentials: () => {
+      throw new Error("missing JARED_GMAIL_REFRESH_TOKEN");
+    },
+  });
+  const { ctx, out } = makeCtx({ auto: true });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 1);
+  assert.equal(calls.fetchGmailEmails.length, 0);
+  assert.match(out.errs.join("\n"), /missing JARED_GMAIL_REFRESH_TOKEN/);
+});
+
+test("check --auto: zero emails fetched → no-op, bumps last_check on --apply", async () => {
+  const { deps, calls } = makeAutoDeps();
+  const { ctx, out } = makeCtx({ auto: true, apply: true });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(calls.fetchGmailEmails.length, 1);
+  assert.equal(calls.updatePageStatus.length, 0);
+  // saveProcessed called even with 0 entries to bump last_check
+  assert.equal(calls.saveProcessed.length, 1);
+  assert.equal(calls.saveProcessed[0].count, 0);
+  assert.match(out.lines.join("\n"), /"emailsFound": 0/);
+});
+
+test("check --auto --dry-run (default): zero emails → no last_check bump", async () => {
+  const { deps, calls } = makeAutoDeps();
+  const { ctx } = makeCtx({ auto: true });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(calls.saveProcessed.length, 0);
+});
+
+test("check --auto: rejection email end-to-end → Notion + TSV + processed + logs", async () => {
+  const { deps, calls } = makeAutoDeps({
+    fetchGmailEmails: async () => [
+      {
+        messageId: "m1",
+        threadId: "t1",
+        from: "no-reply@affirm.com",
+        subject: "An update on your application with Affirm",
+        body: "Unfortunately, we will not be proceeding.",
+        date: "2026-04-30T10:00:00Z",
+      },
+    ],
+  });
+  const { ctx, out } = makeCtx({ auto: true, apply: true });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(calls.updatePageStatus.length, 1);
+  assert.equal(calls.updatePageStatus[0].status, "Rejected");
+  assert.equal(calls.addPageComment.length, 1);
+  assert.equal(calls.addPageComment[0].mention, "user-123"); // notionUserId from profile
+  assert.equal(calls.saveApplications.length, 1);
+  assert.equal(calls.saveProcessed.length, 1);
+  assert.equal(calls.saveProcessed[0].count, 1);
+  assert.equal(calls.appendCheckLog.length, 1);
+  assert.match(out.lines.join("\n"), /applied: 1 Notion ops/);
+});
+
+test("check --auto: filters already-processed by messageId from disk (not context)", async () => {
+  const { deps, calls } = makeAutoDeps({
+    loadProcessed: () => ({
+      processed: [{ id: "m1", date: "2026-04-30T09:00:00Z", company: "Affirm", type: "REJECTION" }],
+      last_check: "2026-04-30T09:00:00Z",
+    }),
+    fetchGmailEmails: async () => [
+      {
+        messageId: "m1", // already processed
+        from: "no-reply@affirm.com",
+        subject: "another update",
+        body: "unfortunately",
+      },
+    ],
+  });
+  const { ctx } = makeCtx({ auto: true, apply: true });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(calls.updatePageStatus.length, 0);
+});
+
+test("check --auto: dry-run prints plan without mutations", async () => {
+  const { deps, calls } = makeAutoDeps({
+    fetchGmailEmails: async () => [
+      {
+        messageId: "m1",
+        from: "no-reply@affirm.com",
+        subject: "bad news",
+        body: "not moving forward",
+      },
+    ],
+  });
+  const { ctx, out } = makeCtx({ auto: true });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(calls.updatePageStatus.length, 0);
+  assert.equal(calls.saveApplications.length, 0);
+  assert.equal(calls.saveProcessed.length, 0);
+  assert.match(out.lines.join("\n"), /dry-run/);
+});
+
+test("check --auto: gmail fetch failure surfaces error", async () => {
+  const { deps } = makeAutoDeps({
+    fetchGmailEmails: async () => {
+      throw new Error("invalid_grant");
+    },
+  });
+  const { ctx, out } = makeCtx({ auto: true, apply: true });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 1);
+  assert.match(out.errs.join("\n"), /invalid_grant/);
+});
+
+test("check --auto: passes --since to computeCursorEpoch", async () => {
+  let lastEpochArgs = null;
+  const { deps } = makeAutoDeps({
+    computeCursorEpoch: (args) => {
+      lastEpochArgs = args;
+      return 1700000000;
+    },
+  });
+  const { ctx } = makeCtx({ auto: true, since: "2026-03-31T00:00:00Z" });
+  await makeCheckCommand(deps)(ctx);
+  assert.equal(lastEpochArgs.sinceIso, "2026-03-31T00:00:00Z");
+});
+
+test("check --auto: makeGmailClient receives loaded credentials", async () => {
+  const { deps, calls } = makeAutoDeps();
+  const { ctx } = makeCtx({ auto: true });
+  await makeCheckCommand(deps)(ctx);
+  assert.equal(calls.makeGmailClient.length, 1);
+  assert.equal(calls.makeGmailClient[0].clientId, "cid");
+  assert.equal(calls.makeGmailClient[0].refreshToken, "rt");
+});
+
 test("check --apply: Notion error on one action — others still processed", async () => {
   let callIdx = 0;
   const { deps, calls } = makeDeps({

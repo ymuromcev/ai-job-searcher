@@ -28,6 +28,7 @@ const fs = require("fs");
 const path = require("path");
 
 const profileLoader = require("../core/profile_loader.js");
+const { resolveProfilesDir } = require("../core/paths.js");
 
 const DEFAULT_LOCATION = "Sacramento, CA";
 const DEFAULT_RADIUS = 25;
@@ -159,7 +160,7 @@ function makeIndeedPrepCommand(overrides = {}) {
 
   return async function indeedPrepCommand(ctx) {
     const { profileId, flags, stdout, stderr } = ctx;
-    const profilesDir = ctx.profilesDir || path.resolve(process.cwd(), "profiles");
+    const profilesDir = resolveProfilesDir(ctx, ctx.env || process.env);
     const profile = deps.loadProfile(profileId, { profilesDir });
 
     let cfg;

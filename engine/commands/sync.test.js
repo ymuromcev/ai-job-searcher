@@ -331,6 +331,81 @@ test("appToNotionJob omits companyRelation when resolver returns null", () => {
   assert.equal(job.companyRelation, undefined);
 });
 
+// Regression: pre-2026-04-30 the push path wrote Salary Min/Max numbers but
+// never populated the "Salary Expectations" rich_text, leaving the user-facing
+// display string empty on hundreds of pipeline pages. The display string is
+// derived from min+max at push time.
+test("appToNotionJob derives salaryExpectations display string from min+max", () => {
+  const app = fakeApp({ salary_min: "140000", salary_max: "190000" });
+  const job = appToNotionJob(app, "page-affirm");
+  assert.equal(job.salaryExpectations, "$140-190K ($165K mid)");
+});
+
+test("appToNotionJob omits salaryExpectations when either bound is missing", () => {
+  const onlyMin = appToNotionJob(
+    fakeApp({ salary_min: "140000", salary_max: "" }),
+    "page-x"
+  );
+  assert.equal(onlyMin.salaryExpectations, undefined);
+
+  const onlyMax = appToNotionJob(
+    fakeApp({ salary_min: "", salary_max: "190000" }),
+    "page-x"
+  );
+  assert.equal(onlyMax.salaryExpectations, undefined);
+
+  const neither = appToNotionJob(fakeApp(), "page-x");
+  assert.equal(neither.salaryExpectations, undefined);
+});
+
+test("appToNotionJob rounds salaryExpectations midpoint to nearest $1k", () => {
+  // 140k + 191k = 331k; mid = 165500 → rounds to 166000.
+  const app = fakeApp({ salary_min: "140000", salary_max: "191000" });
+  const job = appToNotionJob(app, "page-x");
+  assert.equal(job.salaryExpectations, "$140-191K ($166K mid)");
+});
+
+// Regression: pre-2026-04-30 the Notion Resume Version dropdown accumulated 58
+// non-canonical options across 259 pages because no gate validated resume_ver
+// before push. The canonical Set is built from resume_versions.json keys and
+// passed into appToNotionJob to refuse non-canonical values.
+test("appToNotionJob accepts resume_ver inside canonical archetype set", () => {
+  const canon = new Set(["ConsumerGrowth", "Risk_Fraud", "AI_Platform"]);
+  const job = appToNotionJob(
+    fakeApp({ resume_ver: "Risk_Fraud" }),
+    "page-x",
+    canon
+  );
+  assert.equal(job.resumeVersion, "Risk_Fraud");
+});
+
+test("appToNotionJob throws on resume_ver outside canonical archetype set", () => {
+  const canon = new Set(["ConsumerGrowth", "Risk_Fraud", "AI_Platform"]);
+  assert.throws(
+    () =>
+      appToNotionJob(
+        fakeApp({ resume_ver: "CV_Jared_Moore_PaymentsInfra.docx" }),
+        "page-x",
+        canon
+      ),
+    /non-canonical resume_ver "CV_Jared_Moore_PaymentsInfra\.docx"/
+  );
+});
+
+test("appToNotionJob skips canonical check when archetype set is empty/unset", () => {
+  // Empty set → no gate (profile may not have resume_versions configured yet).
+  const job1 = appToNotionJob(
+    fakeApp({ resume_ver: "Anything" }),
+    "page-x",
+    new Set()
+  );
+  assert.equal(job1.resumeVersion, "Anything");
+
+  // Unset 3rd arg → also no gate (preserves callers that don't validate).
+  const job2 = appToNotionJob(fakeApp({ resume_ver: "Anything" }), "page-x");
+  assert.equal(job2.resumeVersion, "Anything");
+});
+
 test("sync --apply resolves company to Notion page when companies_db_id configured", async () => {
   const { deps, calls } = makeDeps({
     loadProfile: () => ({

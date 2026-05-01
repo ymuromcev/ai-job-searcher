@@ -1,0 +1,47 @@
+# Never let secrets / per-profile data into the image. State lives on the
+# fly volume at /data — never baked into the image. The cron container
+# pulls credentials from `fly secrets`, which inject as env vars at runtime.
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Per-profile state (TSV, JSON, generated docs, OAuth tokens). The volume
+# mount carries these — image must stay clean.
+profiles/
+**/.gmail-tokens/
+**/.gmail-state/
+**/.indeed-state/
+**/.stage16/
+**/.stage18/
+
+# Local node + dev artifacts.
+node_modules/
+npm-debug.log*
+
+# VCS / IDE
+.git/
+.gitignore
+.github/
+.vscode/
+.idea/
+
+# Testing / dev-only files
+**/*.test.js
+coverage/
+.nyc_output/
+
+# Docs that are useful in repo but unnecessary in container
+README.md
+incidents.md
+BACKLOG.md
+
+# OS junk
+.DS_Store
+
+# Local archive / backup files
+**/*.pre-stage16
+**/*.pre-migrate-*
+**/*.contaminated-*
+**/*.bak
+**/*.backup

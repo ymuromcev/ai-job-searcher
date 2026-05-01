@@ -13,7 +13,7 @@
 
 const { parseArgs } = require("util");
 
-const KNOWN_COMMANDS = ["scan", "validate", "sync", "prepare", "check", "indeed-prep"];
+const KNOWN_COMMANDS = ["scan", "validate", "sync", "prepare", "check", "indeed-prep", "answer"];
 
 const PARSE_OPTIONS = {
   options: {
@@ -27,6 +27,10 @@ const PARSE_OPTIONS = {
     batch: { type: "string" },
     prepare: { type: "boolean", default: false },
     since: { type: "string" },
+    auto: { type: "boolean", default: false },
+    company: { type: "string" },
+    role: { type: "string" },
+    question: { type: "string" },
   },
   allowPositionals: true,
   strict: true,
@@ -47,6 +51,9 @@ Commands:
   check      Two-phase Gmail response polling. See --prepare / --apply.
   indeed-prep Print Indeed scan playbook for Claude browser MCP (URLs + JS snippet
              + filter context). Phase 1 of the Indeed ingest flow.
+  answer     Two-phase application Q&A flow. See --phase. Searches the Notion
+             Application Q&A DB for reuse before generation, pushes approved
+             answers back. Per RFC 009.
 
 Flags:
   --profile <id>       Profile id (required for all commands). Lowercase, alphanum + - _.
@@ -65,7 +72,21 @@ prepare flags:
 check flags:
   --prepare              Phase 1: build Gmail batches, write check_context.json.
   --apply                Phase 3: commit TSV + Notion updates. Default: dry-run.
+  --auto                 Single-process autonomous flow (OAuth Gmail fetch +
+                         classify + apply). Use for cron / fly.io. Requires
+                         {ID}_GMAIL_CLIENT_ID, {ID}_GMAIL_CLIENT_SECRET, and a
+                         refresh_token (run scripts/gmail_auth.js once).
   --since <ISO>          Override cursor (clamped to 30 days max).
+
+answer flags:
+  --phase <search|push>  Required. "search" looks up existing Q&A by company+role+question
+                         and prints a JSON match report. "push" reads --results-file and
+                         creates/updates a page in the Notion Application Q&A DB.
+  --company <name>       Required for --phase search. Company name as it appears in Notion.
+  --role <title>         Required for --phase search. Role title.
+  --question <text>      Required for --phase search. Question text (one line).
+  --results-file <path>  Required for --phase push. JSON: {company, role, question,
+                         answer, category?, notes?, existingPageId?}.
 
 Environment:
   Per-profile secrets are namespaced by profile id (uppercased). For example,
@@ -106,6 +127,7 @@ function defaultCommands() {
     prepare: require("./commands/prepare.js"),
     check: require("./commands/check.js"),
     "indeed-prep": require("./commands/indeed_prepare.js"),
+    answer: require("./commands/answer.js"),
   };
 }
 
@@ -155,6 +177,10 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
       batch: parsed.values.batch ? parseInt(parsed.values.batch, 10) : 30,
       prepare: Boolean(parsed.values.prepare),
       since: parsed.values.since || "",
+      auto: Boolean(parsed.values.auto),
+      company: parsed.values.company || "",
+      role: parsed.values.role || "",
+      question: parsed.values.question || "",
     },
     env,
     stdout: writeOut,
