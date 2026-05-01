@@ -49,7 +49,22 @@ function loadProfile(id, options = {}) {
   const profileJsonPath = path.join(root, "profile.json");
   const profile = readJsonIfExists(profileJsonPath);
   if (!profile) {
-    throw new Error(`profile.json missing at ${profileJsonPath}`);
+    // Common onboarding mistake: user copied profiles/_example/ directly,
+    // so files still carry the `.example` suffix and CLI can't find them.
+    // Detect that case and point at the wizard explicitly.
+    const exampleJsonPath = path.join(root, "profile.example.json");
+    if (fs.existsSync(exampleJsonPath)) {
+      throw new Error(
+        `profile.json missing at ${profileJsonPath}. ` +
+          `Found profile.example.json — looks like you copied profiles/_example/ directly. ` +
+          `Templates aren't runnable; generate a real profile via the onboarding wizard ` +
+          `(scripts/stage18/README.md).`
+      );
+    }
+    throw new Error(
+      `profile.json missing at ${profileJsonPath}. ` +
+        `Run the onboarding wizard to generate one: scripts/stage18/README.md`
+    );
   }
   if (profile.id && profile.id !== id) {
     throw new Error(`profile.id "${profile.id}" does not match requested id "${id}"`);

@@ -93,16 +93,39 @@ git clone https://github.com/ymuromcev/ai-job-searcher.git
 cd ai-job-searcher
 npm install
 npm run setup-hooks          # installs the PII pre-commit guard
-npm test                     # 490+ tests, no network required
-
-cp -r profiles/_example profiles/me
-cp .env.example .env         # then fill in ME_NOTION_TOKEN etc.
-node engine/cli.js scan --profile me
+npm test                     # 686 tests, no network required
 ```
 
-Full onboarding (per-profile Notion DB provisioning + resume
-archetypes + cover-letter voice) goes through the
-[Stage 18 wizard](scripts/stage18/README.md).
+That gets the engine + tests working. To actually run a job search you
+need a profile, which means going through the onboarding wizard — the
+`profiles/_example/` directory ships template *shapes* (each file has a
+`.example` suffix), not a runnable profile.
+
+## First profile
+
+Pick a short id (e.g. `me`), then:
+
+1. **Fill in the intake form.** Copy `scripts/stage18/intake_template.md`
+   somewhere outside the repo, fill sections A–K, save as e.g.
+   `~/intake_filled.md`. Any language works (yes/no/да/нет both fine).
+2. **Add your Notion token to `.env`.** See
+   [docs/notion-setup.md](docs/notion-setup.md) for how to create the
+   integration and where to grant it page access.
+   ```
+   ME_NOTION_TOKEN=ntn_...
+   ```
+3. **Parse + deploy.** Both scripts default to `--dry-run`; pass
+   `--apply` to write.
+   ```bash
+   node scripts/stage18/parse_intake.js --input ~/intake_filled.md --apply
+   node scripts/stage18/deploy_profile.js --profile me --apply
+   ```
+4. **First scan.**
+   ```bash
+   node engine/cli.js scan --profile me
+   ```
+
+Full wizard runbook: [scripts/stage18/README.md](scripts/stage18/README.md).
 
 ## Requirements
 

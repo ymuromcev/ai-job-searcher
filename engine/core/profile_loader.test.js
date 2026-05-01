@@ -51,7 +51,22 @@ test("loadProfile throws when directory missing", () => {
 test("loadProfile throws when profile.json missing", () => {
   const dir = makeTempProfiles();
   fs.mkdirSync(path.join(dir, "bare"));
-  assert.throws(() => loadProfile("bare", { profilesDir: dir }), /profile\.json missing/);
+  assert.throws(
+    () => loadProfile("bare", { profilesDir: dir }),
+    /profile\.json missing[\s\S]*onboarding wizard/
+  );
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("loadProfile error hints at _example copy when profile.example.json present", () => {
+  const dir = makeTempProfiles();
+  const root = path.join(dir, "copied");
+  fs.mkdirSync(root);
+  fs.writeFileSync(path.join(root, "profile.example.json"), "{}");
+  assert.throws(
+    () => loadProfile("copied", { profilesDir: dir }),
+    /Found profile\.example\.json[\s\S]*copied profiles\/_example\/[\s\S]*scripts\/stage18/
+  );
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
