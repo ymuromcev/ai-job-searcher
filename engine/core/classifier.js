@@ -20,7 +20,12 @@ const PATTERNS = {
     /decided not to proceed/i,
     /will not be proceeding/i,
     /we have chosen/i,
-    /not selected/i,
+    // NOTE: bare /not selected/i was REMOVED 2026-04-30 — too broad. ATS
+    // confirmation emails (Greenhouse/Ashby/Figma/Lever) all use the
+    // boilerplate "If you are not selected for this position, keep an eye on
+    // our jobs page", which is conditional, not a real rejection. The more
+    // specific /your application was not selected/i below still catches the
+    // genuine rejection wording. See classifier.test.js regression cases.
     /not able to move/i,
     /move forward with other/i,
     /no longer moving/i,
@@ -59,6 +64,8 @@ const PATTERNS = {
     /received your application/i,
     /under review/i,
     /thank you for applying/i,
+    /thanks for applying/i,
+    /thank you for your (application|interest)/i,
     /application confirmed/i,
     /we have received/i,
     /we.ve received/i,

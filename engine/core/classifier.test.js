@@ -94,3 +94,80 @@ test("classify: 'application was not selected' → REJECTION", () => {
   });
   assert.equal(r.type, "REJECTION");
 });
+
+// Regression: 2026-04-30 incident. ATS confirmation emails (Greenhouse, Ashby,
+// Figma, Lever) all contain the boilerplate "If you are not selected for this
+// position, keep an eye on our jobs page". The bare /not selected/i pattern
+// caught this conditional and incorrectly produced REJECTION. After fix:
+// /not selected/i removed; the more specific /your application was not
+// selected/i kept. These 5 fixtures are real production emails from the
+// 2026-04-30 mis-classification incident. See incidents.md.
+test("classify: ATS confirmation 'if you are not selected' → ACKNOWLEDGMENT (incident 2026-04-30)", () => {
+  const fixtures = [
+    {
+      label: "Headway (Greenhouse)",
+      subject: "Thank you for applying to Headway",
+      body:
+        "Thank you for your interest in Headway! We have received your application " +
+        "for Senior Product Manager, Client Engagement and are delighted that you " +
+        "would consider joining our team.\n\n" +
+        "The Recruiting team will review your application and will be in touch if " +
+        "your qualifications match our needs at this time. If you are not selected " +
+        "for this position, keep an eye on our careers page.",
+    },
+    {
+      label: "Hopper (Ashby)",
+      subject: "Jared, thanks for applying to Hopper!",
+      body:
+        "Thank you for your interest in joining the team at Hopper! We truly " +
+        "appreciate the time and effort you put into submitting your application. " +
+        "We will be in touch if your qualifications match our needs for the role. " +
+        "If you are not selected for this position, keep an eye on our careers page.",
+    },
+    {
+      label: "Figma (Greenhouse) — AI Platform",
+      subject: "Thank you for your application to Figma",
+      body:
+        "Thank you for your interest in Figma! We wanted to let you know we received " +
+        "your application for Product Manager, AI Platform, and we are delighted " +
+        "that you would consider joining our team. While we're not able to respond " +
+        "to every applicant, our recruiting team will contact you if your skills and " +
+        "experience are a strong match for the role. If you are not selected for " +
+        "this position, keep an eye on our jobs page.",
+    },
+    {
+      label: "Figma (Greenhouse) — Figma Weave",
+      subject: "Thank you for your application to Figma",
+      body:
+        "Thank you for your interest in Figma! We wanted to let you know we received " +
+        "your application for Product Manager, Figma Weave (New York, United States). " +
+        "If you are not selected for this position, keep an eye on our jobs page.",
+    },
+    {
+      label: "WHOOP (Lever)",
+      subject: "Thank you for your application to WHOOP",
+      body:
+        "Thank you for your interest in WHOOP! We wanted to let you know we received " +
+        "your application for our Senior Product Manager, AI role. We will review " +
+        "your application and get in touch if your qualifications match our needs " +
+        "for the role. If you are not selected for this position, keep an eye on our " +
+        "jobs page.",
+    },
+  ];
+  for (const f of fixtures) {
+    const r = classify({ subject: f.subject, body: f.body });
+    assert.equal(
+      r.type,
+      "ACKNOWLEDGMENT",
+      `${f.label}: expected ACKNOWLEDGMENT, got ${r.type} (evidence: "${r.evidence}")`
+    );
+  }
+});
+
+test("classify: specific 'your application was not selected' still caught (no regression)", () => {
+  const r = classify({
+    subject: "Update on your application",
+    body: "After careful consideration, your application was not selected at this time.",
+  });
+  assert.equal(r.type, "REJECTION");
+});
