@@ -86,6 +86,24 @@ lives in `profiles/<id>/`.
   cover letter templates, provisions per-profile Notion databases,
   and (optionally) imports a prior hand-rolled prototype.
 
+## What this tool does NOT do
+
+Set expectations explicitly:
+
+- **Doesn't auto-apply.** It drafts cover letters and surfaces matches
+  in Notion; you decide which ones to send.
+- **Doesn't auto-reply to recruiters.** Email is read-only (Gmail
+  OAuth scope `gmail.readonly`). `check` reads replies to update
+  Notion status; the tool never sends mail.
+- **Doesn't poll Gmail continuously.** `check` runs only when invoked
+  (or once-a-day on a cron in `--auto` mode if you wire it up). No
+  background daemon, no realtime watcher.
+- **Doesn't store credentials in the repo.** Tokens live in gitignored
+  `.env`, namespaced per profile.
+- **Doesn't share profile data across candidates.** Each
+  `profiles/<id>/` is gitignored and isolated; the only shared state
+  is the master jobs/companies pool in `data/`.
+
 ## Quick start
 
 ```bash
@@ -108,6 +126,9 @@ Pick a short id (e.g. `me`), then:
 1. **Fill in the intake form.** Copy `scripts/stage18/intake_template.md`
    somewhere outside the repo, fill sections A–K, save as e.g.
    `~/intake_filled.md`. Any language works (yes/no/да/нет both fine).
+   The first field is `profile_id` — a short slug you choose:
+   lowercase letters, digits, `-`, `_`. It becomes the directory name
+   (`profiles/<id>/`) and the env-var prefix (e.g. `ME_NOTION_TOKEN`).
 2. **Add your Notion token to `.env`.** See
    [docs/notion-setup.md](docs/notion-setup.md) for how to create the
    integration and where to grant it page access.
@@ -127,6 +148,44 @@ Pick a short id (e.g. `me`), then:
 
 Full wizard runbook: [scripts/stage18/README.md](scripts/stage18/README.md).
 
+## Commands
+
+```bash
+node engine/cli.js <command> --profile <id> [flags]
+```
+
+| Command | Purpose |
+|---|---|
+| `scan` | Poll all configured ATS adapters; append new jobs to `data/jobs.tsv`. |
+| `validate` | Re-apply filter rules to the existing pool (catches retroactively-blocked jobs). |
+| `prepare` | Two-phase: pre (assign archetype + draft cover letter) → commit (write artifacts). |
+| `sync` | Push/pull against per-profile Notion DBs. Defaults to dry-run; `--apply` writes. |
+| `check` | Read Gmail replies via Claude MCP and update Notion status. |
+| `indeed-prep` | One-off helper for Indeed scraping prep (manual login flow). |
+| `answer` | Generate or reuse application answers and push back to Notion Q&A DB. |
+
+`node engine/cli.js --help` prints the same list with full flag docs.
+
+## Discovery adapters
+
+Nine adapters ship out of the box; enable them per profile in
+`profile.json.modules`:
+
+| Module | Source |
+|---|---|
+| `discovery:greenhouse` | Greenhouse-hosted careers pages |
+| `discovery:lever` | Lever-hosted careers pages |
+| `discovery:ashby` | Ashby-hosted careers pages |
+| `discovery:smartrecruiters` | SmartRecruiters-hosted careers pages |
+| `discovery:workday` | Workday tenant feeds |
+| `discovery:remoteok` | RemoteOK public feed |
+| `discovery:usajobs` | USAJOBS API (federal jobs; needs free API key) |
+| `discovery:calcareers` | CalCareers (California state jobs) |
+| `discovery:indeed` | Indeed (manual login prep via `indeed-prep`) |
+
+New adapters live under `engine/modules/discovery/` and auto-register
+via `index.js`.
+
 ## Requirements
 
 - Node 20+
@@ -141,14 +200,18 @@ Full wizard runbook: [scripts/stage18/README.md](scripts/stage18/README.md).
 All tokens live in a root `.env`, namespaced by profile id:
 
 ```
-ME_NOTION_TOKEN=secret_...
+ME_NOTION_TOKEN=ntn_...
 ME_USAJOBS_API_KEY=...
 ME_USAJOBS_EMAIL=...
 ```
 
-`profile_loader.loadSecrets(id, env)` strips the `<ID>_` prefix so
-engine code sees `NOTION_TOKEN` etc. The `.env` file is gitignored;
-a pre-commit hook scans diffs for common leak patterns as backup.
+The prefix is stripped automatically when the CLI loads the profile,
+so engine code just sees `NOTION_TOKEN`. Multiple profiles in one
+`.env` don't collide.
+
+`.env` is gitignored; a pre-commit hook (`.git-hooks/pre-commit`,
+installed by `npm run setup-hooks`) scans diffs for common leak
+patterns as backup.
 
 ## Development
 
