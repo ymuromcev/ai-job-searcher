@@ -18,9 +18,33 @@ test("sanitizeText collapses whitespace and trims", () => {
 test("parseIsoDate returns YYYY-MM-DD or null", () => {
   assert.equal(parseIsoDate("2026-04-15T10:20:30Z"), "2026-04-15");
   assert.equal(parseIsoDate("April 15, 2026"), "2026-04-15");
+  assert.equal(parseIsoDate("2026-04-15"), "2026-04-15");
   assert.equal(parseIsoDate(""), null);
   assert.equal(parseIsoDate("nope"), null);
   assert.equal(parseIsoDate(null), null);
+});
+
+test("parseIsoDate is TZ-stable for date-only inputs", () => {
+  // Regression: prior implementation projected local midnight through UTC,
+  // which drifted by one day on any +offset host (Moscow, Vladivostok, etc.).
+  // Both ISO date-only and human-readable date strings must round-trip the
+  // same date the caller wrote, regardless of host TZ.
+  const originalTZ = process.env.TZ;
+  try {
+    for (const tz of ["UTC", "America/Los_Angeles", "Europe/Moscow", "Asia/Vladivostok"]) {
+      process.env.TZ = tz;
+      assert.equal(parseIsoDate("2026-04-15"), "2026-04-15", `ISO date-only on ${tz}`);
+      assert.equal(parseIsoDate("April 15, 2026"), "2026-04-15", `human date on ${tz}`);
+    }
+  } finally {
+    if (originalTZ === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTZ;
+  }
+});
+
+test("parseIsoDate rejects invalid calendar dates in ISO prefix", () => {
+  assert.equal(parseIsoDate("2026-13-01"), null);
+  assert.equal(parseIsoDate("2026-02-30"), null);
 });
 
 test("normalizeLocation maps Remote variants", () => {
