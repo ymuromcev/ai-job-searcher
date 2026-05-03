@@ -297,7 +297,7 @@ test("prepare --phase pre: only picks fresh apps (status='To Apply' AND no notio
   assert.equal(written.batch[0].key, "gh:2");
 });
 
-test("prepare --phase pre: dead URLs go to skipped, not batch", async () => {
+test("prepare --phase pre: dead URLs go to skipped, NOT batch (G-12: alive-only batch)", async () => {
   const alive = makeApp({ key: "gh:1" });
   const dead = makeApp({ key: "gh:2", url: "https://dead.example.com/jobs/2" });
   const deps = makePrepDeps([alive, dead], {
@@ -312,13 +312,14 @@ test("prepare --phase pre: dead URLs go to skipped, not batch", async () => {
   const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
   assert.equal(result.stats.urlAlive, 1);
   assert.equal(result.stats.urlDead, 1);
-  // Both URLs are in batch (URL check runs on batch, dead is still in batchOut with urlAlive=false)
-  assert.equal(result.batch.length, 2);
-  const deadEntry = result.batch.find((e) => e.key === "gh:2");
-  assert.equal(deadEntry.urlAlive, false);
-  assert.equal(deadEntry.jdStatus, "skipped_dead_url");
-  // dead URL also in skipped list
+  // After G-12: batch is alive-only. Dead entries appear ONLY in skipped.
+  assert.equal(result.batch.length, 1);
+  assert.equal(result.batch[0].key, "gh:1");
+  assert.equal(result.batch[0].urlAlive, true);
+  assert.ok(!result.batch.some((e) => e.key === "gh:2"));
+  // dead URL in skipped list with the right reason
   assert.ok(result.skipped.some((s) => s.key === "gh:2" && s.reason === "url_dead"));
+  assert.equal(result.stats.skipReasons.url_dead, 1);
 });
 
 test("prepare --phase pre: respects batchSize", async () => {
@@ -374,6 +375,113 @@ test("prepare --phase pre: flags unknown-tier companies, dedupes across batch", 
   // unknownTierCompanies has unique sorted names (no Stripe)
   assert.deepEqual(result.unknownTierCompanies, ["NewCo", "OtherCo"]);
   assert.equal(result.stats.unknownTierCompanies, 2);
+});
+
+// --- G-12: fill-up loop + skip-reason breakdown ------------------------------
+
+test("prepare --phase pre (G-12): fills batch to target by pulling more from passed when first chunk has dead URLs", async () => {
+  // 10 candidates, first 3 are dead → fill-up loop should keep pulling until
+  // batchSize=5 alive entries are accumulated, never giving up.
+  const apps = Array.from({ length: 10 }, (_, i) =>
+    makeApp({ key: `gh:${i}`, jobId: String(i), companyName: "Stripe" })
+  );
+  const deadKeys = new Set(["gh:0", "gh:1", "gh:2"]);
+  const deps = makePrepDeps(apps, {
+    checkUrls: async (rows) =>
+      rows.map((r) => (deadKeys.has(r.key) ? makeDeadUrl(r) : makeAliveUrl(r))),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", batch: 5, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 5, "batch should be filled to 5 alive");
+  assert.ok(
+    result.batch.every((e) => e.urlAlive === true),
+    "all batch entries must be alive"
+  );
+  assert.equal(result.stats.urlAlive, 5);
+  assert.equal(result.stats.urlDead, 3);
+  assert.equal(result.stats.skipReasons.url_dead, 3);
+});
+
+test("prepare --phase pre (G-12): does NOT URL-check beyond what's needed (deferred count)", async () => {
+  // 30 candidates, batchSize=5, all alive. Loop should consume only 5
+  // (first chunk size = max(remaining=5, floor=5) = 5), leaving 25 deferred.
+  const apps = Array.from({ length: 30 }, (_, i) =>
+    makeApp({ key: `gh:${i}`, jobId: String(i) })
+  );
+  const deps = makePrepDeps(apps);
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", batch: 5, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 5);
+  assert.equal(result.stats.urlChecked, 5, "only first chunk is URL-checked");
+  assert.equal(result.stats.deferred, 25);
+});
+
+test("prepare --phase pre (G-12): pool exhausted — batch smaller than target", async () => {
+  // Only 3 candidates, all alive; batchSize=10. Result: 3 in batch, 0 deferred.
+  const apps = Array.from({ length: 3 }, (_, i) =>
+    makeApp({ key: `gh:${i}`, jobId: String(i) })
+  );
+  const deps = makePrepDeps(apps);
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", batch: 10, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 3);
+  assert.equal(result.stats.deferred, 0);
+});
+
+test("prepare --phase pre (G-12): skipReasons aggregates across cap + blocklist + url_dead", async () => {
+  const apps = [
+    makeApp({ key: "gh:1", title: "VP of Engineering" }),  // title_blocklist
+    makeApp({ key: "gh:2", title: "Director of PM" }),     // title_blocklist
+    makeApp({ key: "gh:3", companyName: "BadCo" }),        // company_blocklist
+    makeApp({ key: "gh:4", url: "https://dead.example.com/jobs/4" }), // url_dead
+    makeApp({ key: "gh:5" }),                              // alive
+  ];
+  const deps = makePrepDeps(apps, {
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: {
+        title_blocklist: [
+          { pattern: "vp of", reason: "vp" },
+          { pattern: "director of", reason: "director" },
+        ],
+        company_blocklist: ["BadCo"],
+      },
+      company_tiers: { Stripe: "S" },
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+    }),
+    checkUrls: async (rows) =>
+      rows.map((r) => (r.key === "gh:4" ? makeDeadUrl(r) : makeAliveUrl(r))),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", batch: 30, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.stats.skipReasons.title_blocklist, 2);
+  assert.equal(result.stats.skipReasons.company_blocklist, 1);
+  assert.equal(result.stats.skipReasons.url_dead, 1);
+  // batch contains only the one alive entry that passed all filters
+  assert.equal(result.batch.length, 1);
+  assert.equal(result.batch[0].key, "gh:5");
+});
+
+test("prepare --phase pre (G-12): empty skipReasons when nothing skipped", async () => {
+  const apps = [makeApp({ key: "gh:1" })];
+  const deps = makePrepDeps(apps);
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.deepEqual(result.stats.skipReasons, {});
 });
 
 test("prepare --phase pre: empty unknownTierCompanies when all companies tiered", async () => {

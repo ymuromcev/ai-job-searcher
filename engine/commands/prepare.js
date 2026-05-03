@@ -220,17 +220,44 @@ async function runPre(ctx, deps) {
   );
   stdout(`after filter: ${passed.length} passed, ${filteredOut.length} skipped`);
 
-  const batch = passed.slice(0, batchSize);
-  stdout(`batch: ${batch.length} jobs (limit ${batchSize})`);
+  // G-12: fill-up loop. Earlier behavior took the first batchSize candidates
+  // and URL-checked them, so dead URLs would shrink the actual pushable count
+  // (e.g. 30 → 18 alive). Now we keep pulling from `passed` in chunks until
+  // we have batchSize alive entries (or the pool is exhausted). Dead entries
+  // from consumed chunks are reported in `skipped` with reason "url_dead";
+  // unconsumed `passed` entries stay queued (status="To Apply", no
+  // notion_page_id), so they reappear next pre run.
+  stdout(`checking URLs (target: ${batchSize} alive)…`);
+  const aliveResults = [];
+  const allUrlResults = [];
+  let consumed = 0;
+  while (aliveResults.length < batchSize && consumed < passed.length) {
+    const remaining = batchSize - aliveResults.length;
+    // Chunk size: ask for what's still needed, with a small floor so we don't
+    // chip away one-at-a-time on a string of dead URLs.
+    const chunkSize = Math.max(remaining, 5);
+    const chunk = passed.slice(consumed, consumed + chunkSize);
+    consumed += chunk.length;
+    const checked = await deps.checkUrls(
+      chunk.map((a) => ({ ...a, url: a.url })),
+      deps.fetchFn,
+      { concurrency: 12 }
+    );
+    allUrlResults.push(...checked);
+    for (const r of checked) {
+      if (r.alive && aliveResults.length < batchSize) {
+        aliveResults.push(r);
+      }
+    }
+  }
 
-  // URL check
-  stdout(`checking URLs…`);
-  const urlRows = batch.map((a) => ({ ...a, url: a.url }));
-  const urlResults = await deps.checkUrls(urlRows, deps.fetchFn, { concurrency: 12 });
-
-  const alive = urlResults.filter((r) => r.alive);
-  const dead = urlResults.filter((r) => !r.alive);
-  stdout(`URLs: ${alive.length} alive, ${dead.length} dead`);
+  const dead = allUrlResults.filter((r) => !r.alive);
+  // batch is alive-only and capped at batchSize. Anything past batchSize
+  // alive (rare: chunk overshoot) was already excluded above.
+  const urlResults = aliveResults;
+  stdout(
+    `URLs: checked ${allUrlResults.length}, ${aliveResults.length} alive (target ${batchSize}), ${dead.length} dead, ${passed.length - consumed} deferred`
+  );
 
   // JD fetch for alive URLs only. Enrich each alive row with a `slug` parsed
   // from the public job URL so the ATS API endpoint is resolvable; map results
@@ -238,7 +265,7 @@ async function runPre(ctx, deps) {
   // jd_cache.fetchJd returns a cache-filename key, not the app composite key.
   const companyTiers = (profile.company_tiers) || {};
   const jdCacheDir = profile.paths.jdCacheDir;
-  const jdInputs = alive.map((a) => ({ ...a, slug: parseSlugFromUrl(a.source, a.url) }));
+  const jdInputs = aliveResults.map((a) => ({ ...a, slug: parseSlugFromUrl(a.source, a.url) }));
   const jdResults = jdInputs.length > 0
     ? await deps.fetchJds(jdInputs, jdCacheDir, { fetchFn: deps.fetchFn }, { concurrency: 8 })
     : [];
@@ -297,22 +324,47 @@ async function runPre(ctx, deps) {
     urlStatus: r.status,
   }));
 
+  const allSkipped = [...filteredOut, ...deadSkipped];
+  // G-12: skip-reason breakdown so the user sees WHY 12 jobs got skipped
+  // (company_cap: 5, title_blocklist: 2, url_dead: 1, …) instead of just
+  // a total count.
+  const skipReasons = {};
+  for (const s of allSkipped) {
+    const reason = s.reason || "unknown";
+    skipReasons[reason] = (skipReasons[reason] || 0) + 1;
+  }
+
   const context = {
     profileId,
     generatedAt: deps.now(),
     batchSize,
     batch: batchOut,
-    skipped: [...filteredOut, ...deadSkipped],
+    skipped: allSkipped,
     unknownTierCompanies,
     stats: {
       inboxTotal: inboxApps.length,
       afterFilter: passed.length,
-      inBatch: batch.length,
-      urlAlive: alive.length,
+      inBatch: batchOut.length,
+      urlChecked: allUrlResults.length,
+      urlAlive: aliveResults.length,
       urlDead: dead.length,
+      deferred: passed.length - consumed,
       unknownTierCompanies: unknownTierCompanies.length,
+      skipReasons,
     },
   };
+
+  const skipBreakdown = Object.entries(skipReasons)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join(", ");
+  if (skipBreakdown) {
+    stdout(`skip reasons — ${skipBreakdown}`);
+  }
+  if (passed.length - consumed > 0) {
+    stdout(
+      `deferred: ${passed.length - consumed} eligible jobs not URL-checked (target met) — they stay queued for next pre run`
+    );
+  }
 
   if (unknownTierCompanies.length > 0) {
     stdout(
