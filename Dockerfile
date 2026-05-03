@@ -33,7 +33,8 @@ FROM node:20-alpine AS runtime
 ARG SUPERCRONIC_VERSION=v0.2.29
 
 # Install supercronic + tzdata (so cron schedule honors America/Los_Angeles).
-RUN apk add --no-cache curl tzdata ca-certificates \
+# su-exec lets the entrypoint chown /data as root then drop to `app`.
+RUN apk add --no-cache curl tzdata ca-certificates su-exec \
     && ARCH=$(uname -m) \
     && if [ "$ARCH" = "x86_64" ]; then \
          SUPERCRONIC_ARCH=amd64; \
@@ -61,13 +62,19 @@ COPY --chown=app:app package.json package-lock.json ./
 # cron schedule. Skills / scripts / data / rfc / docs are dev-only.
 COPY --chown=app:app engine ./engine
 COPY --chown=app:app cron ./cron
+RUN chmod +x /app/cron/entrypoint.sh
 
 # /data is the persistent volume mount. Cron + the engine read/write here via
 # AI_JOB_SEARCHER_DATA_DIR=/data. The volume itself is created by
 # `fly volumes create` (see fly.toml + scripts/deploy_fly.sh).
+# Build-time chown only affects the image layer; at runtime the fly volume
+# mount may have different ownership — the entrypoint re-chowns on every
+# start to handle that.
 RUN mkdir -p /data && chown -R app:app /data /app
 
-USER app
+# Stay as root: entrypoint chowns /data then drops to `app` via su-exec.
+# (Previously USER app here caused EACCES on /data writes when the volume
+# was created with root-owned files. See incidents.md 2026-05-02.)
 
 # America/Los_Angeles -> 8am PST/PDT trigger lines up with cron schedule
 # `0 8 * * *` in cron/check.cron.
@@ -77,4 +84,5 @@ ENV NODE_ENV=production
 
 # supercronic runs in foreground; logs to stderr (fly logs picks them up).
 # -quiet suppresses heartbeat-style messages, keeps real output.
+ENTRYPOINT ["/app/cron/entrypoint.sh"]
 CMD ["supercronic", "-quiet", "/app/cron/check.cron"]
