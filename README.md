@@ -1,8 +1,8 @@
 # AI Job Searcher
 
 A personal AI agent for job search. One engine, many profiles. Built
-on [Claude Code](https://www.anthropic.com/claude-code) + a small
-TypeScript-free Node toolkit; all the AI lives behind the CLI.
+on [Claude Code](https://www.anthropic.com/claude-code) + a plain
+Node.js toolkit (no build step); all the AI lives behind the CLI.
 
 [![tests](https://github.com/ymuromcev/ai-job-searcher/actions/workflows/test.yml/badge.svg)](https://github.com/ymuromcev/ai-job-searcher/actions/workflows/test.yml)
 ![node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)

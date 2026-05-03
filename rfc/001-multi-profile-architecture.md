@@ -4,31 +4,31 @@
 **Tier**: L (new subproject, architecture, migration, 2+ users)
 **Author**: Claude + Jared Moore
 
-## Проблема
+## Problem
 
-Два раздельных кодбейса (`Job Search/` у Jared, `Profile B Job Search/` у второго профиля) реализуют похожий pipeline. Новые фичи появляются у Jared и не попадают второму профилю — чтобы он их получил, надо копировать код вручную. Это дорого и ведёт к drift'у: CL-генерация уже расходится, filter-rules оформлены по-разному, Notion-схемы неконсистентны.
+Two separate codebases (`Job Search/` for Jared, `Profile B Job Search/` for the second profile) implement similar pipelines. New features land in Jared's codebase and never reach the second profile — syncing them requires manual copying. This is expensive and leads to drift: CL generation has already diverged, filter rules are structured differently, and Notion schemas are inconsistent.
 
-Нужен единый движок, который обслуживает оба профиля из общего кода и масштабируется на третьего пользователя / будущий SaaS.
+We need a single engine that serves both profiles from shared code and scales to a third user or a future SaaS product.
 
-## Варианты
+## Options
 
-- **A. Новый подпроект `AIJobSearcher/` с per-profile конфигами.** Единый движок, `profiles/jared/` и `profiles/profile_b/` с данными. Старые папки не трогаем — они остаются read-only fallback.
-- **B. Shared library (npm-пакет) + два потребителя.** Переделать оба существующих проекта на общую либу. Минус: ломаем работающие MVP, пока либа не стабилизируется — у Jared поиск работы встанет. Противоречит требованию "старые проекты не трогать".
-- **C. Форкнуть Jared в the second profile и синхронизировать руками.** Технический долг не решён — тот же drift, просто быстрее на старте. Не решает задачу "обновления у обоих".
+- **A. New subproject `AIJobSearcher/` with per-profile configs.** Single engine, `profiles/jared/` and `profiles/profile_b/` for data. Old folders are left untouched — they remain as read-only fallback.
+- **B. Shared library (npm package) + two consumers.** Refactor both existing projects to use a common library. Downside: breaks working MVPs while the library stabilizes — Jared's job search goes offline. Contradicts the requirement to not touch old projects.
+- **C. Fork Jared into the second profile and sync manually.** Technical debt remains unresolved — the same drift, just slower at the start. Does not solve the "both get updates" requirement.
 
-## Выбрано + почему
+## Decision + Rationale
 
-**Вариант A.** Новый `AIJobSearcher/` движок с profile-оверлеем.
+**Option A.** New `AIJobSearcher/` engine with profile overlay.
 
-Причины:
-- Старые проекты продолжают работать — у Jared активный поиск работы, риск ноль.
-- Единый кодовый путь: фича пишется один раз, доступна обоим после `--profile X`.
-- Архитектура годится для SaaS: профиль — это данные, движок — сервис.
-- GitHub-публикация естественна (движок + `_example` профиль как стартовый kit).
+Reasons:
+- Old projects keep working — Jared has an active job search, zero risk.
+- Single code path: a feature is written once and available to both profiles after `--profile X`.
+- Architecture is SaaS-ready: the profile is data, the engine is a service.
+- GitHub publication is natural (engine + `_example` profile as a starter kit).
 
-## Архитектура
+## Architecture
 
-### Каталоги
+### Directory structure
 
 ```
 AIJobSearcher/
@@ -96,25 +96,25 @@ AIJobSearcher/
 └── package.json
 ```
 
-### Shared vs per-profile (правило разделения)
+### Shared vs per-profile (separation rule)
 
-**Shared (движок + `data/`)**:
-- Код всех модулей (discovery adapters, generators, sync).
-- `data/jobs.tsv` — мастер-пул вакансий. Дедуп по `(ats_source, job_id)`.
-- `data/companies.tsv` — мастер-пул компаний с `ats_source + ats_slug`. Когда открываем новую платформу или добавляем компанию для любого профиля — запись в общем пуле, доступна всем.
-- Адаптеры платформ: добавил файл в `engine/modules/discovery/` — автоматически доступен обоим профилям через `modules:` в profile.json.
+**Shared (engine + `data/`)**:
+- All module code (discovery adapters, generators, sync).
+- `data/jobs.tsv` — master job pool. Deduped by `(ats_source, job_id)`.
+- `data/companies.tsv` — master company pool with `ats_source + ats_slug`. When a new platform is onboarded or a company is added for any profile, the record goes into the shared pool and is available to everyone.
+- Platform adapters: add a file to `engine/modules/discovery/` and it automatically becomes available to both profiles via `modules:` in profile.json.
 
 **Per-profile (`profiles/<id>/`)**:
-- `profile.json` — идентичность, подключённые модули, ссылки на конфиги.
-- `filter_rules.json` — какие компании/роли/локации подходят.
-- `company_preferences.tsv` — оверлей на shared companies: Jared хранит tier (S/A/B/C), the second profile — sonography_pivot / LA_presence.
-- Resume/CL шаблоны и сгенерированные артефакты.
+- `profile.json` — identity, enabled modules, references to config files.
+- `filter_rules.json` — which companies/roles/locations are a fit.
+- `company_preferences.tsv` — overlay on shared companies: Jared stores tier (S/A/B/C), the second profile stores sonography_pivot / LA_presence.
+- Resume/CL templates and generated artifacts.
 - `applications.tsv` — per-profile pipeline: `job_id → profile → fit, status, resume_ver, cl_key, notion_page_id`.
-- Gmail-токены, Interview Coach state.
+- Gmail tokens, Interview Coach state.
 
-**Сценарий "discovery для одного — польза всем"**: ищем для the second profile на Indeed `OptumHealth` → запись уходит в `data/companies.tsv` с `ats_source=indeed`. Jared на следующем скане видит её в пуле, filter-rules решают, попадает ли она к нему в `applications.tsv`.
+**"Discovery for one, benefit for all" scenario**: scanning Indeed for `OptumHealth` on behalf of the second profile → the record lands in `data/companies.tsv` with `ats_source=indeed`. Jared sees it in the pool on the next scan; filter rules decide whether it makes it into his `applications.tsv`.
 
-### Контракт `profile.json`
+### `profile.json` contract
 
 ```json
 {
@@ -155,7 +155,7 @@ AIJobSearcher/
     "template_file": "cover_letter_template.md",
     "output_dir": "cover_letters/"
   },
-  "fit_prompt_template": "Оцени fit вакансии для PM с фокусом на fintech. Strong = ...; Weak = ...",
+  "fit_prompt_template": "Evaluate job fit for a PM with a fintech focus. Strong = ...; Weak = ...",
   "notion": {
     "jobs_pipeline_db_id": "...",
     "companies_db_id": "...",
@@ -164,11 +164,11 @@ AIJobSearcher/
 }
 ```
 
-### Секреты
+### Secrets
 
-Все токены в корневом `.env` с namespaced ключами: `{PROFILE_ID_UPPERCASE}_{SERVICE}_{KEY}`.
+All tokens go in the root `.env` with namespaced keys: `{PROFILE_ID_UPPERCASE}_{SERVICE}_{KEY}`.
 
-Пример:
+Example:
 ```
 JARED_NOTION_TOKEN=...
 JARED_USAJOBS_API_KEY=...
@@ -177,127 +177,127 @@ PROFILE_B_NOTION_TOKEN=...
 PROFILE_B_GMAIL_CLIENT_ID=...
 ```
 
-Gmail OAuth refresh-токены в файлах `profiles/<id>/.gmail-tokens/` (gitignored).
+Gmail OAuth refresh tokens live in `profiles/<id>/.gmail-tokens/` (gitignored).
 
 ### CLI
 
 `node engine/cli.js <cmd> --profile <id> [options]`
 
-Команды:
-- `scan` — обойти подключённые discovery-модули, обновить `data/jobs.tsv` + `profiles/<id>/applications.tsv`.
-- `prepare [--batch N]` — для новых заявок: назначить resume archetype, сгенерировать CL, создать Notion-страницу.
-- `sync` — двусторонняя синхронизация с Notion.
-- `check` — проверить Gmail на ответы, классифицировать, обновить Notion.
-- `answer` — сгенерировать ответы на form-questions (210 char limit из Jared's feedback).
+Commands:
+- `scan` — run all enabled discovery modules, update `data/jobs.tsv` + `profiles/<id>/applications.tsv`.
+- `prepare [--batch N]` — for new applications: assign resume archetype, generate CL, create Notion page.
+- `sync` — two-way sync with Notion.
+- `check` — scan Gmail for replies, classify, update Notion.
+- `answer` — generate answers to form questions (210 char limit from Jared's feedback).
 - `validate` — pre-flight: URL alive, company cap, TSV hygiene.
 
-## Риски / что может сломаться
+## Risks / What Could Break
 
-1. **Регрессия генераторов при переносе.** DOCX/PDF из `generate_resumes.js` у Jared — работающий код, копия которого может дать другой output.
-   → Smoke-тест сравнивает output с эталоном по ключевым полям; первый прогон на одном архетипе с визуальной проверкой.
+1. **Generator regression during migration.** DOCX/PDF from Jared's `generate_resumes.js` is working code; a copy of it may produce different output.
+   → Smoke test compares output against a reference on key fields; first run on a single archetype with visual review.
 
-2. **Дубли в Notion.** Миграция создаёт новые страницы в новых базах; старые остаются в старых базах.
-   → Новые Notion-базы создаём с нуля, дедуп внутри миграционного скрипта по `(company + job_id + source)`.
+2. **Notion duplicates.** Migration creates new pages in new databases; old pages remain in old databases.
+   → New Notion databases are created from scratch; dedup inside the migration script by `(company + job_id + source)`.
 
-3. **Rate limits Notion** при массовой заливке всей истории (~1000 страниц Jared + ~50 the second profile).
-   → Батчинг по 3 req/s (текущий лимит Notion), retry с exp backoff, checkpoint для возобновления.
+3. **Notion rate limits** when bulk-importing full history (~1000 Jared pages + ~50 for the second profile).
+   → Batch at 3 req/s (current Notion limit), retry with exponential backoff, checkpoint for resuming.
 
-4. **Concurrent scan → коллизия в `data/jobs.tsv`.**
-   → Scan последовательный per profile, `flock` на `data/jobs.tsv`.
+4. **Concurrent scan → collision in `data/jobs.tsv`.**
+   → Scans run sequentially per profile, `flock` on `data/jobs.tsv`.
 
-5. **Секреты в репо при публикации.**
-   → `profiles/*/` в `.gitignore` (кроме `_example`), `data/*` в `.gitignore`, `.env` тоже. Grep на token patterns перед financial commit.
+5. **Secrets committed to the repo on publication.**
+   → `profiles/*/` in `.gitignore` (except `_example`), `data/*` in `.gitignore`, `.env` too. Grep for token patterns before any public commit.
 
-6. **Старые скрипты Jared ссылаются на абсолютные пути.**
-   → Новый проект **полностью автономен**. Никаких симлинков/ссылок на старые папки. Interview-coach state и конфиги **копируются** на этапе миграции.
+6. **Jared's old scripts reference absolute paths.**
+   → The new project is **fully self-contained**. No symlinks or references to old folders. Interview Coach state and configs are **copied** during migration.
 
-7. **Потеря interview-coach state при параллельной работе в старом и новом проекте.**
-   → До финального переключения — работаем в старом проекте. Копию state'а берём одним снимком при переключении, дальше — только новый проект.
+7. **Loss of interview-coach state during parallel work in old and new projects.**
+   → Until the final cutover, work in the old project. State is captured in a single snapshot at cutover time; from that point on, only the new project is used.
 
-## План проверки
+## Verification Plan
 
-**Smoke-тесты (обязательны для всех, `node --test`)**:
-- `engine/modules/generators/resume_docx.test.js` — генерит DOCX из тестового profile, файл существует, валидный zip.
-- `engine/modules/generators/cover_letter_pdf.test.js` — PDF создан, магическое число `%PDF` на месте.
-- `engine/core/filter.test.js` — тестовая вакансия проходит/не проходит правила.
-- `engine/core/dedup.test.js` — два скана подряд дают 0 дубликатов.
-- `engine/cli.test.js` — `--profile` загружает правильный конфиг.
+**Smoke tests (required for all, `node --test`)**:
+- `engine/modules/generators/resume_docx.test.js` — generates DOCX from a test profile, file exists, valid zip.
+- `engine/modules/generators/cover_letter_pdf.test.js` — PDF created, magic bytes `%PDF` present.
+- `engine/core/filter.test.js` — test job passes/fails rules.
+- `engine/core/dedup.test.js` — two consecutive scans produce 0 duplicates.
+- `engine/cli.test.js` — `--profile` loads the correct config.
 
-**Юнит-тесты**:
+**Unit tests**:
 - `filter.js` — blocklists, company cap, location.
-- `dedup.js` — нормализация названий компаний, collision keys.
-- `fit_prompt.js` — подстановка переменных.
-- Discovery-адаптеры — парсинг ответа ATS API → normalized job record (моки сети).
+- `dedup.js` — company name normalization, collision keys.
+- `fit_prompt.js` — variable substitution.
+- Discovery adapters — parsing ATS API response → normalized job record (network mocks).
 
-**Интеграционные тесты**:
-- `notion_sync.js` против mock (stub `@notionhq/client`) — create/update/read.
-- `gmail.js` — моки Gmail API response.
+**Integration tests**:
+- `notion_sync.js` against a mock (stub `@notionhq/client`) — create/update/read.
+- `gmail.js` — mocked Gmail API responses.
 
-**Ручная проверка (чеклист)**:
-- [ ] Скан `--profile jared` даёт ≥1 новую вакансию в `data/jobs.tsv` и заявку в `profiles/jared/applications.tsv`.
-- [ ] Скан `--profile profile_b` через Indeed даёт ≥1 вакансию.
-- [ ] `prepare --profile jared` создаёт Notion-страницу, PDF резюме, PDF CL.
-- [ ] `sync --profile jared` подтягивает статусы из Notion.
-- [ ] То же для the second profile.
-- [ ] Визуальная сверка PDF резюме: макет не сломан.
-- [ ] Старые папки `Job Search/` и `Profile B Job Search/` **не изменены** — проверка `git status` в конце.
+**Manual verification (checklist)**:
+- [ ] Scan `--profile jared` yields ≥1 new job in `data/jobs.tsv` and an application in `profiles/jared/applications.tsv`.
+- [ ] Scan `--profile profile_b` via Indeed yields ≥1 job.
+- [ ] `prepare --profile jared` creates a Notion page, PDF resume, PDF CL.
+- [ ] `sync --profile jared` pulls statuses from Notion.
+- [ ] Same for the second profile.
+- [ ] Visual review of PDF resume: layout is intact.
+- [ ] Old folders `Job Search/` and `Profile B Job Search/` **are unchanged** — verified via `git status` at the end.
 
-**Миграция данных — двухфазная**:
-1. **Dry-run**: скрипт читает обе старые Notion-базы, строит `migration_plan.json`, показывает мне.
-2. После approve — реальный перенос с checkpoint'ом (возобновляем с места остановки).
+**Data migration — two-phase**:
+1. **Dry-run**: script reads both old Notion databases, builds `migration_plan.json`, shows it to me.
+2. After approval — real migration with checkpoint (resume from where it stopped).
 
-## План реализации по частям
+## Implementation Plan
 
-Каждый этап — свой mini-approve. Между этапами — self-check по DOD (перечитать diff, прогнать тесты, `git status` старых папок).
+Each stage has its own mini-approval. Between stages — self-check against DOD (re-read the diff, run tests, check `git status` for old folders).
 
-| Этап | Что | Тесты | Approve |
+| Stage | What | Tests | Approval |
 |---|---|---|---|
-| 1 | Scaffolding: каталоги, `package.json`, `.gitignore`, `CLAUDE.md`, `README.md`, `.env.example`, `BACKLOG.md`, `incidents.md`, RFC | — | дерево + файлы |
-| 2 | Generators: resume DOCX/PDF, CL PDF — перенос из Jared as-is | smoke + unit | diff + green |
+| 1 | Scaffolding: directories, `package.json`, `.gitignore`, `CLAUDE.md`, `README.md`, `.env.example`, `BACKLOG.md`, `incidents.md`, RFC | — | tree + files |
+| 2 | Generators: resume DOCX/PDF, CL PDF — ported from Jared as-is | smoke + unit | diff + green |
 | 3 | Core: filter, dedup, validator, fit_prompt, profile_loader | unit | diff + green |
-| 4 | Notion sync (hybrid) | integration с mock | diff + green |
-| 5 | Discovery adapters по одному: greenhouse → lever → ashby → SR → Workday → calcareers → usajobs → indeed | unit с mock | после всех |
+| 4 | Notion sync (hybrid) | integration with mock | diff + green |
+| 5 | Discovery adapters one by one: greenhouse → lever → ashby → SR → Workday → calcareers → usajobs → indeed | unit with mock | after all |
 | 6 | CLI + skill SKILL.md | smoke | diff + dry-run |
-| 7 | Profile Jared: перенос конфигов | ручной smoke: 1 resume + 1 CL | визуальная проверка |
-| 8 | Profile the second profile: перенос конфигов | ручной smoke | визуальная проверка |
-| 9 | Миграция dry-run | проверка `migration_plan.json` | approve плана |
-| 10 | Миграция реальная с checkpoint | ручная проверка нескольких страниц | финальный approve |
-| 11 | `/security-review` + `/review` на весь diff | critical fixed | финальный merge |
+| 7 | Profile Jared: config migration | manual smoke: 1 resume + 1 CL | visual review |
+| 8 | Profile second profile: config migration | manual smoke | visual review |
+| 9 | Migration dry-run | review `migration_plan.json` | approve plan |
+| 10 | Real migration with checkpoint | manual review of several pages | final approval |
+| 11 | `/security-review` + `/review` on full diff | critical issues fixed | final merge |
 
-## Безопасность (S1 — базовый)
+## Security (S1 — baseline)
 
-### Engine isolation (push-модель)
+### Engine isolation (push model)
 
-Движок — чистые функции. Модули в `engine/modules/` (generators, discovery, tracking) **не имеют** прямого доступа к `profiles/`. Данные идут снизу вверх: `profile → loader → CLI → engine`.
+The engine is pure functions. Modules in `engine/modules/` (generators, discovery, tracking) have **no** direct access to `profiles/`. Data flows bottom-up: `profile → loader → CLI → engine`.
 
-- **Единственная точка чтения `profiles/`** — `engine/core/profile_loader.js`. Остальные модули получают данные аргументом.
-- **Валидация id**: regex `^[a-z][a-z0-9_-]*$`, `path.resolve` + проверка, что resolved-путь строго внутри `PROFILES_DIR`. Никаких `../` и абсолютных путей.
-- **Per-invocation scope**: за одну CLI-команду loader вызывается ровно один раз для одного профиля. В памяти процесса — данные только активного профиля.
-- **Секреты**: CLI читает только `${ID.toUpperCase()}_*` env-переменные. При `--profile jared` токены `PROFILE_B_*` в память не подгружаются.
-- **Output paths**: генераторы принимают явный `outputPath`. Loader проверяет, что путь ведёт внутрь `profiles/<id>/`. Side-effect вне `profiles/<id>/` — запрещён.
-- **Grep-проверка** в code-review: engine-модули не должны содержать `profiles/`, `readFileSync.*profile`, id конкретных профилей.
+- **Single read point for `profiles/`** — `engine/core/profile_loader.js`. All other modules receive data as arguments.
+- **ID validation**: regex `^[a-z][a-z0-9_-]*$`, `path.resolve` + check that the resolved path is strictly inside `PROFILES_DIR`. No `../` or absolute paths.
+- **Per-invocation scope**: a single CLI command invokes the loader exactly once for one profile. Only the active profile's data is loaded into process memory.
+- **Secrets**: CLI reads only `${ID.toUpperCase()}_*` env variables. With `--profile jared`, `PROFILE_B_*` tokens are never loaded into memory.
+- **Output paths**: generators receive an explicit `outputPath`. The loader verifies the path is inside `profiles/<id>/`. Side effects outside `profiles/<id>/` are prohibited.
+- **Grep check** in code review: engine modules must not contain `profiles/`, `readFileSync.*profile`, or hard-coded profile IDs.
 
-Для будущего SaaS (S3) — per-profile процессы/контейнеры, runtime-изоляция на уровне ОС. Сейчас overkill.
+For future SaaS (S3) — per-profile processes/containers, OS-level runtime isolation. Overkill for now.
 
-### Общие правила S1
+### General S1 rules
 
-- `.env` только локально, `NOTION_TOKEN`, `USAJOBS_API_KEY`, `GMAIL_*` никогда в коде.
-- `profiles/jared/` и `profiles/profile_b/` в `.gitignore` целиком. `profiles/_example/` — только синтетика.
-- `data/*.tsv` в `.gitignore`.
-- Перед merge: `npm audit` на новые зависимости, `/security-review` на весь diff, grep на token patterns (`sk-`, `ntn_`, длинные base64).
-- Инциденты → `incidents.md` (blameless формат).
+- `.env` local only; `NOTION_TOKEN`, `USAJOBS_API_KEY`, `GMAIL_*` never in code.
+- `profiles/jared/` and `profiles/profile_b/` fully in `.gitignore`. `profiles/_example/` — synthetic data only.
+- `data/*.tsv` in `.gitignore`.
+- Before merge: `npm audit` on new dependencies, `/security-review` on the full diff, grep for token patterns (`sk-`, `ntn_`, long base64).
+- Incidents → `incidents.md` (blameless format).
 
-## Что НЕ делаем в этой итерации
+## Out of Scope for This Iteration
 
-Отложено в `BACKLOG.md` с датой и триггером:
-- SQLite/Postgres вместо TSV.
-- Чистый Notion API без MCP-гибрида.
-- `.env` per profile.
-- Унификация Interview Coach skill.
-- Markdown-vault экспорт для Obsidian.
-- Self-service для the second profile.
+Deferred to `BACKLOG.md` with date and trigger:
+- SQLite/Postgres instead of TSV.
+- Pure Notion API without the MCP hybrid.
+- Per-profile `.env` files.
+- Unified Interview Coach skill.
+- Markdown vault export for Obsidian.
+- Self-service onboarding for the second profile.
 - CI (GitHub Actions).
-- Линтеры (ESLint + Prettier).
+- Linters (ESLint + Prettier).
 - Pre-commit hook.
-- Выбор лицензии.
-- GitHub-витрина (README demo, скриншоты).
+- License selection.
+- GitHub showcase (README demo, screenshots).
