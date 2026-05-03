@@ -15,12 +15,8 @@
 # 8am PT, jared
 0 8 * * *  cd /app && node engine/cli.js check --profile jared --auto --apply || true
 
-# 8:01am PT, lilia — DISABLED 2026-05-01 pending classifier fix.
-# Incident: первый --apply прошёл с 11 ложными срабатываниями (Indeed match
-# alerts, Wells Fargo claim reply, "interview"/"availability"/"questionnaire"/
-# "assessment" в job description matched as pipeline updates, fuzzy company
-# match Natural vs Spa Dentistry). Phase 1 rollback выполнен. Re-enable после
-# Phase 2 (sender-allowlist + pattern tightening + matcher fix + regression
-# fixtures + replay против 110 Lilia emails).
-# OAuth consent + secrets done 2026-05-01.
-# 1 8 * * *  cd /app && node engine/cli.js check --profile lilia --auto --apply || true
+# 8:01am PT, lilia — re-enabled 2026-05-02 after Phase 2 classifier fix
+# (commits d7e8991 + a2e7712). Replay on real Lilia inbox: 11 actions →
+# 2, both true positives (real Indeed-Apply rejections, manually applied
+# 2026-05-02 before re-enable). See incidents.md for full write-up.
+1 8 * * *  cd /app && node engine/cli.js check --profile lilia --auto --apply || true
