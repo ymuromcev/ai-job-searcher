@@ -1,15 +1,31 @@
 // Workday tenant-specific jobs API.
 //   https://{slug}.{dc}.myworkdayjobs.com/wday/cxs/{slug}/{site}/jobs
 // Each target must carry tenant-specific metadata:
-//   { name, slug, dc?, site?, searchText?, searchTexts? }
-//   dc          — worker's data center (wd1/wd5/wd103/...), default "wd1".
-//   site        — career site path (jobs, External, Careers), default "jobs".
-//   searchText  — single full-text query (legacy single-query mode).
-//   searchTexts — array of full-text queries; adapter loops over each, dedups
-//                 results by externalPath. Use when one tenant needs broad
-//                 coverage of multiple role families (e.g. healthcare admin:
-//                 receptionist, scheduler, patient access, intake, etc.).
-//                 If both are present, searchTexts wins.
+//   { name, slug, dc?, site?, searchText?, searchTexts?, appliedFacets? }
+//   dc            — worker's data center (wd1/wd5/wd103/...), default "wd1".
+//   site          — career site path (jobs, External, Careers), default "jobs".
+//   searchText    — single full-text query (legacy single-query mode).
+//   searchTexts   — array of full-text queries; adapter loops over each, dedups
+//                   results by externalPath. Use when one tenant needs broad
+//                   coverage of multiple role families (e.g. healthcare admin:
+//                   receptionist, scheduler, patient access, intake, etc.).
+//                   If both are present, searchTexts wins.
+//   appliedFacets — object passed verbatim to Workday's POST body. Use to
+//                   restrict pulls server-side: country, region, job family,
+//                   etc. UUIDs are TENANT-SPECIFIC — discover them via the
+//                   facets payload in any /jobs response (see docs/workday-
+//                   facets.md). Critical for global tenants (Fresenius, etc.)
+//                   to keep non-US postings out of the pool entirely.
+//                   Example: { "locationCountry": ["bc33aa3152ec42d4995f4791a106ed09"] }
+//   locationAllow — array of substring patterns matched (case-insensitive)
+//                   against `locationsText`. When set, postings whose location
+//                   does NOT contain any pattern are dropped client-side.
+//                   Workday returns ambiguous "N Locations" for multi-location
+//                   postings; those are dropped when locationAllow is set
+//                   (cannot reliably filter without knowing the actual cities).
+//                   Use this for commute-radius filtering (e.g. ["Roseville",
+//                   "Sacramento", "Folsom"]). Combine with appliedFacets when
+//                   the tenant exposes a city-level facet (more efficient).
 //
 // Response shape:
 //   { total, jobPostings: [{ title, locationsText, externalPath, postedOn, bulletFields }] }
@@ -58,6 +74,19 @@ function buildTenantUrls(target) {
   };
 }
 
+function locationMatchesAllow(locationsText, allow) {
+  if (!Array.isArray(allow) || allow.length === 0) return true;
+  const lt = String(locationsText == null ? "" : locationsText).toLowerCase().trim();
+  if (!lt) return false;
+  // Workday hides multi-location postings behind "N Locations" / "N Location" —
+  // we cannot match cities without an extra API call, so drop conservatively.
+  if (/^\d+\s+locations?$/.test(lt)) return false;
+  return allow.some((p) => {
+    const needle = String(p == null ? "" : p).toLowerCase().trim();
+    return needle.length > 0 && lt.includes(needle);
+  });
+}
+
 function mapJob(target, viewBase, raw) {
   // externalPath is the stable primary key Workday uses to identify a posting
   // within a tenant. Without it we cannot produce a reliable dedup key
@@ -65,6 +94,9 @@ function mapJob(target, viewBase, raw) {
   // same title), so we drop such entries.
   const externalPath = raw && raw.externalPath ? String(raw.externalPath) : "";
   if (!externalPath) return null;
+  if (!locationMatchesAllow(raw && raw.locationsText, target.locationAllow)) {
+    return null;
+  }
   const locations = dedupeLocations([raw.locationsText]);
   const url = safeJoinUrl(viewBase, externalPath);
   const job = {
@@ -83,13 +115,17 @@ function mapJob(target, viewBase, raw) {
   return job;
 }
 
-async function fetchAllPages(fetchFn, apiUrl, searchText, signal) {
+async function fetchAllPages(fetchFn, apiUrl, searchText, appliedFacets, signal) {
   const all = [];
   for (let offset = 0; offset < MAX_JOBS_PER_TENANT; offset += PAGE_SIZE) {
+    const payload = { limit: PAGE_SIZE, offset, searchText: searchText || "" };
+    if (appliedFacets && typeof appliedFacets === "object") {
+      payload.appliedFacets = appliedFacets;
+    }
     const body = await fetchJson(fetchFn, apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ limit: PAGE_SIZE, offset, searchText: searchText || "" }),
+      body: JSON.stringify(payload),
       signal,
     });
     const page = Array.isArray(body && body.jobPostings) ? body.jobPostings : [];
@@ -125,25 +161,43 @@ async function discover(targets, ctx = {}) {
     if (!target || !target.slug) return [];
     const { apiUrl, viewBase } = buildTenantUrls(target);
     const queries = resolveSearchTexts(target);
+    const appliedFacets =
+      target.appliedFacets && typeof target.appliedFacets === "object"
+        ? target.appliedFacets
+        : null;
     // Dedup by externalPath (jobId). Same posting can match multiple queries
     // when searchTexts overlap (e.g. "scheduler" and "front desk" both pull
     // the same admin role). First-occurrence wins.
     const dedupedById = new Map();
-    let dropped = 0;
+    let droppedNoPath = 0;
+    let droppedByLocation = 0;
     for (const searchText of queries) {
-      const raws = await fetchAllPages(c.fetchFn, apiUrl, searchText, c.signal);
+      const raws = await fetchAllPages(c.fetchFn, apiUrl, searchText, appliedFacets, c.signal);
       for (const r of raws) {
+        const externalPath = r && r.externalPath ? String(r.externalPath) : "";
+        if (!externalPath) {
+          droppedNoPath += 1;
+          continue;
+        }
         const job = mapJob(target, viewBase, r);
         if (!job) {
-          dropped += 1;
+          // mapJob returned null for a non-externalPath reason — currently only
+          // the locationAllow filter triggers this. Track separately so the
+          // warning is honest about what was filtered vs. malformed.
+          droppedByLocation += 1;
           continue;
         }
         if (!dedupedById.has(job.jobId)) dedupedById.set(job.jobId, job);
       }
     }
-    if (dropped > 0) {
+    if (droppedNoPath > 0) {
       c.logger.warn(
-        `[${SOURCE}] ${target.slug}: dropped ${dropped} postings without externalPath`
+        `[${SOURCE}] ${target.slug}: dropped ${droppedNoPath} postings without externalPath`
+      );
+    }
+    if (droppedByLocation > 0) {
+      c.logger.warn(
+        `[${SOURCE}] ${target.slug}: dropped ${droppedByLocation} postings outside locationAllow`
       );
     }
     return Array.from(dedupedById.values());

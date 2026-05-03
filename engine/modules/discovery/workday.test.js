@@ -229,6 +229,211 @@ test("workday.discover prefers searchTexts over searchText when both present", a
   );
 });
 
+test("workday.discover passes appliedFacets to API body when set on target", async () => {
+  const recorded = [];
+  const fetchFn = makeFetch(
+    {
+      "https://acme.wd3.myworkdayjobs.com/wday/cxs/acme/jobs/jobs": {
+        status: 200,
+        body: {
+          total: 1,
+          jobPostings: [
+            {
+              title: "Patient Access Rep",
+              locationsText: "Sacramento, CA",
+              externalPath: "/job/Sac/PAR/JR-1",
+              postedOn: "Posted Today",
+            },
+          ],
+        },
+      },
+    },
+    recorded
+  );
+  const facets = { locationCountry: ["bc33aa3152ec42d4995f4791a106ed09"] };
+  const jobs = await workday.discover(
+    [
+      {
+        name: "Acme",
+        slug: "acme",
+        dc: "wd3",
+        searchText: "patient access",
+        appliedFacets: facets,
+      },
+    ],
+    { fetchFn }
+  );
+  assert.equal(jobs.length, 1);
+  assert.equal(recorded.length, 1);
+  assert.deepEqual(recorded[0].body.appliedFacets, facets);
+});
+
+test("workday.discover omits appliedFacets when not provided", async () => {
+  const recorded = [];
+  const fetchFn = makeFetch(
+    {
+      "https://nofacet.wd1.myworkdayjobs.com/wday/cxs/nofacet/jobs/jobs": {
+        status: 200,
+        body: { total: 0, jobPostings: [] },
+      },
+    },
+    recorded
+  );
+  await workday.discover([{ name: "NoFacet", slug: "nofacet" }], { fetchFn });
+  assert.equal(recorded.length, 1);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(recorded[0].body, "appliedFacets"),
+    false,
+    "appliedFacets should not be sent when target omits it"
+  );
+});
+
+test("workday.discover applies appliedFacets to every searchTexts query", async () => {
+  const recorded = [];
+  const fetchFn = makeFetch(
+    {
+      "https://multi.wd1.myworkdayjobs.com/wday/cxs/multi/jobs/jobs": (body) => ({
+        status: 200,
+        body: {
+          total: 1,
+          jobPostings: [
+            {
+              title: `${body.searchText} role`,
+              locationsText: "NYC",
+              externalPath: `/job/${body.searchText}/JR-${body.searchText}`,
+              postedOn: "Posted Today",
+            },
+          ],
+        },
+      }),
+    },
+    recorded
+  );
+  const facets = { locationCountry: ["us-uuid"] };
+  await workday.discover(
+    [
+      {
+        name: "Multi",
+        slug: "multi",
+        searchTexts: ["scheduler", "receptionist"],
+        appliedFacets: facets,
+      },
+    ],
+    { fetchFn }
+  );
+  assert.equal(recorded.length, 2);
+  for (const r of recorded) {
+    assert.deepEqual(r.body.appliedFacets, facets);
+  }
+});
+
+test("workday.discover drops postings outside locationAllow patterns", async () => {
+  const recorded = [];
+  const fetchFn = makeFetch(
+    {
+      "https://acme.wd1.myworkdayjobs.com/wday/cxs/acme/jobs/jobs": {
+        status: 200,
+        body: {
+          total: 5,
+          jobPostings: [
+            { title: "PCT Roseville", locationsText: "Roseville, CA", externalPath: "/job/1" },
+            { title: "PCT Sacramento", locationsText: "Sacramento, CA", externalPath: "/job/2" },
+            { title: "PCT Houston", locationsText: "Houston, TX", externalPath: "/job/3" },
+            { title: "PCT Long Beach", locationsText: "Long Beach, CA", externalPath: "/job/4" },
+            { title: "PCT Folsom", locationsText: "Folsom, CA", externalPath: "/job/5" },
+          ],
+        },
+      },
+    },
+    recorded
+  );
+  const jobs = await workday.discover(
+    [
+      {
+        name: "Acme",
+        slug: "acme",
+        locationAllow: ["Roseville", "Sacramento", "Folsom"],
+      },
+    ],
+    { fetchFn }
+  );
+  assert.equal(jobs.length, 3);
+  const titles = jobs.map((j) => j.title).sort();
+  assert.deepEqual(titles, ["PCT Folsom", "PCT Roseville", "PCT Sacramento"]);
+});
+
+test("workday.discover drops multi-location postings when locationAllow is set", async () => {
+  const recorded = [];
+  const fetchFn = makeFetch(
+    {
+      "https://acme.wd1.myworkdayjobs.com/wday/cxs/acme/jobs/jobs": {
+        status: 200,
+        body: {
+          total: 3,
+          jobPostings: [
+            { title: "Single", locationsText: "Roseville, CA", externalPath: "/job/1" },
+            { title: "Multi-2", locationsText: "2 Locations", externalPath: "/job/2" },
+            { title: "Multi-7", locationsText: "7 Locations", externalPath: "/job/3" },
+          ],
+        },
+      },
+    },
+    recorded
+  );
+  const jobs = await workday.discover(
+    [{ name: "Acme", slug: "acme", locationAllow: ["Roseville"] }],
+    { fetchFn }
+  );
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].title, "Single");
+});
+
+test("workday.discover keeps multi-location postings when locationAllow is not set", async () => {
+  const recorded = [];
+  const fetchFn = makeFetch(
+    {
+      "https://acme.wd1.myworkdayjobs.com/wday/cxs/acme/jobs/jobs": {
+        status: 200,
+        body: {
+          total: 2,
+          jobPostings: [
+            { title: "Single", locationsText: "Roseville, CA", externalPath: "/job/1" },
+            { title: "Multi", locationsText: "5 Locations", externalPath: "/job/2" },
+          ],
+        },
+      },
+    },
+    recorded
+  );
+  const jobs = await workday.discover([{ name: "Acme", slug: "acme" }], { fetchFn });
+  assert.equal(jobs.length, 2);
+});
+
+test("workday.discover locationAllow is case-insensitive and trims patterns", async () => {
+  const recorded = [];
+  const fetchFn = makeFetch(
+    {
+      "https://acme.wd1.myworkdayjobs.com/wday/cxs/acme/jobs/jobs": {
+        status: 200,
+        body: {
+          total: 2,
+          jobPostings: [
+            { title: "ROSEVILLE", locationsText: "ROSEVILLE, CA", externalPath: "/job/1" },
+            { title: "Houston", locationsText: "Houston, TX", externalPath: "/job/2" },
+          ],
+        },
+      },
+    },
+    recorded
+  );
+  const jobs = await workday.discover(
+    [{ name: "Acme", slug: "acme", locationAllow: ["  roseville  ", "", null] }],
+    { fetchFn }
+  );
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].title, "ROSEVILLE");
+});
+
 test("workday.discover isolates per-tenant failures", async () => {
   const fetchFn = makeFetch({
     "https://bad.wd1.myworkdayjobs.com/wday/cxs/bad/jobs/jobs": { status: 500, body: {} },
