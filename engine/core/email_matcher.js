@@ -62,6 +62,16 @@ function scoreSynonyms(synonyms, haystack, useWordBoundary) {
 // Pass 1: strong signal — from + subject. Pass 2: body with word boundaries.
 // Within each pass, pick the entry with the highest token-match score (so
 // "Match Group" beats "IEX Group" on a Match Group email).
+//
+// Tie-break (added 2026-05-02 after Lilia incident): if two entries score
+// equally, REQUIRE that the winner has at least one DISCRIMINATING token
+// (a token unique to that entry's synonym set, not present in the other
+// tied entry's synonym set) that appears in the haystack. Without this,
+// "Sacramento Natural Dentistry" and "Sacramento Spa Dentistry" both score
+// 2 on tokens ["sacramento","dentistry"] for ANY haystack mentioning a
+// Sacramento dental clinic, and the matcher would return whichever was
+// iterated first — a 50/50 false match. With the tie-break, neither wins
+// unless the discriminating token ("natural" / "spa") actually appears.
 function findCompany(email, activeJobsMap, companyAliases = {}) {
   const from = (email.from || "").toLowerCase();
   const subject = (email.subject || "").toLowerCase();
@@ -73,28 +83,79 @@ function findCompany(email, activeJobsMap, companyAliases = {}) {
     return { company, jobs, synonyms: [company, ...aliases] };
   });
 
-  let bestPass1 = null;
-  for (const entry of entries) {
-    const score = scoreSynonyms(entry.synonyms, haystack, false);
-    if (score > 0 && (!bestPass1 || score > bestPass1.score)) {
-      bestPass1 = { entry, score };
-    }
-  }
-  if (bestPass1) {
-    return { company: bestPass1.entry.company, jobs: bestPass1.entry.jobs };
-  }
+  const winner = pickBestWithTieBreak(entries, haystack, false);
+  if (winner) return { company: winner.entry.company, jobs: winner.entry.jobs };
 
-  let bestPass2 = null;
-  for (const entry of entries) {
-    const score = scoreSynonyms(entry.synonyms, body, true);
-    if (score > 0 && (!bestPass2 || score > bestPass2.score)) {
-      bestPass2 = { entry, score };
-    }
-  }
-  if (bestPass2) {
-    return { company: bestPass2.entry.company, jobs: bestPass2.entry.jobs };
-  }
+  const winner2 = pickBestWithTieBreak(entries, body, true);
+  if (winner2) return { company: winner2.entry.company, jobs: winner2.entry.jobs };
 
+  return null;
+}
+
+// More lenient tokenization for tie-break only. Includes short distinctive
+// words ("spa", "ENT", "MSO") that companyTokens drops by its length>3 rule.
+// Still strips stop-words and corporate suffixes (LLC/Inc) which never
+// discriminate. Used ONLY by pickBestWithTieBreak to decide between
+// equally-scored entries.
+const TIE_BREAK_STOP_WORDS = new Set([
+  "and", "the", "for", "with", "from", "its", "our", "not", "of",
+  "llc", "inc", "ltd", "corp", "co", "&",
+]);
+
+function tieBreakTokens(name) {
+  return (name || "")
+    .toLowerCase()
+    .replace(/\(wd\)/g, "")
+    .replace(/inc\.?/g, "")
+    .replace(/llc\.?/g, "")
+    .replace(/[^a-z0-9.]/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length > 0 && !TIE_BREAK_STOP_WORDS.has(t));
+}
+
+// Pick the entry with highest score. If a tie, require the winner to have
+// at least one discriminating token (unique to its synonym set vs the other
+// tied entries) present in the haystack. If no entry passes the tie-break,
+// return null — better to skip than mis-attribute.
+function pickBestWithTieBreak(entries, haystack, useWordBoundary) {
+  const scored = entries
+    .map((entry) => ({ entry, score: scoreSynonyms(entry.synonyms, haystack, useWordBoundary) }))
+    .filter((s) => s.score > 0);
+  if (scored.length === 0) return null;
+
+  scored.sort((a, b) => b.score - a.score);
+  const top = scored[0];
+  const tied = scored.filter((s) => s.score === top.score);
+  if (tied.length === 1) return top;
+
+  // Tie-break: find each tied entry's discriminating tokens (tokens in its
+  // synonym set that aren't in ANY other tied entry's synonym set), check
+  // if any appear in the haystack. Uses tieBreakTokens (more lenient) to
+  // catch short distinctive words like "spa" / "ENT" that companyTokens
+  // drops.
+  const allTiedTokens = tied.map((s) =>
+    new Set(s.entry.synonyms.flatMap((syn) => tieBreakTokens(syn)))
+  );
+  const candidatesWithUniqueMatch = tied.filter((s, i) => {
+    const myTokens = allTiedTokens[i];
+    const otherTokens = new Set();
+    for (let j = 0; j < allTiedTokens.length; j++) {
+      if (j === i) continue;
+      for (const t of allTiedTokens[j]) otherTokens.add(t);
+    }
+    const discriminating = [...myTokens].filter((t) => !otherTokens.has(t));
+    if (discriminating.length === 0) return false;
+    return discriminating.some((t) =>
+      useWordBoundary
+        ? new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(haystack)
+        : haystack.includes(t)
+    );
+  });
+
+  if (candidatesWithUniqueMatch.length === 1) return candidatesWithUniqueMatch[0];
+  // Either zero (no entry has a unique signal — ambiguous, skip) or
+  // multiple (still ambiguous between them — skip too, safer than guessing).
   return null;
 }
 

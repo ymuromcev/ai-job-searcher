@@ -8,6 +8,8 @@ const {
   processLinkedIn,
   processRecruiter,
   processPipeline,
+  processEmailsLoop,
+  buildPipelineState,
 } = require("./check.js");
 
 function captureOut() {
@@ -384,6 +386,76 @@ test("processPipeline: LOW confidence → skipped, no action", () => {
   assert.equal(res.row.match, "LOW");
   assert.match(res.row.action, /LOW confidence/);
   assert.equal(res.action, undefined);
+});
+
+// ---------- Sender-allowlist (Lilia incident 2026-05-02) ----------
+
+test("processEmailsLoop: Indeed match-alert digest is skipped before classify", () => {
+  const state = buildPipelineState(
+    { company_aliases: {}, filterRules: {}, notion: { user_id: "u1" } },
+    { Affirm: [{ role: "PM", status: "Applied", notion_id: "p1", key: "k1" }] },
+    []
+  );
+  const emails = [
+    {
+      messageId: "m1",
+      from: "donotreply@match.indeed.com",
+      subject: "Medical Receptionist + 5 more new jobs",
+      // JD text that WOULD trip /interview/ /availability/ /assessment/ if
+      // it reached classify.
+      body:
+        "Job description: Front desk role, weekend availability required. " +
+        "Multi-stage interview process. Skills assessment included.",
+    },
+  ];
+  const { logRows, actions, rejections } = processEmailsLoop(emails, state, { nowIso: "x" });
+  assert.equal(logRows.length, 1);
+  assert.equal(logRows[0].type, "JOB_ALERT");
+  assert.match(logRows[0].action, /skipped/);
+  assert.equal(actions.length, 0);
+  assert.equal(rejections.length, 0);
+});
+
+test("processEmailsLoop: bank sender (Wells Fargo) is skipped before classify", () => {
+  const state = buildPipelineState(
+    { company_aliases: {}, filterRules: {}, notion: { user_id: "u1" } },
+    { Affirm: [{ role: "PM", status: "Applied", notion_id: "p1", key: "k1" }] },
+    []
+  );
+  const emails = [
+    {
+      messageId: "m1",
+      from: "wellsfargo@notify.wellsfargo.com",
+      subject: "We received your claim inquiry",
+      body: "We have received your claim and will respond within 10 business days.",
+    },
+  ];
+  const { logRows, actions } = processEmailsLoop(emails, state, { nowIso: "x" });
+  assert.equal(logRows.length, 1);
+  assert.equal(logRows[0].type, "NON_PIPELINE");
+  assert.match(logRows[0].action, /skipped/);
+  assert.equal(actions.length, 0);
+});
+
+test("processEmailsLoop: real ATS rejection still flows through to classify", () => {
+  const state = buildPipelineState(
+    { company_aliases: {}, filterRules: {}, notion: { user_id: "u1" } },
+    { Affirm: [{ role: "PM", status: "Applied", notion_id: "p1", key: "k1" }] },
+    []
+  );
+  const emails = [
+    {
+      messageId: "m1",
+      from: "no-reply@greenhouse-mail.io",
+      subject: "Update on your Affirm application",
+      body: "Unfortunately we won't be moving forward at this time.",
+    },
+  ];
+  const { logRows, actions } = processEmailsLoop(emails, state, { nowIso: "x" });
+  assert.equal(logRows.length, 1);
+  assert.equal(logRows[0].type, "REJECTION");
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].newStatus, "Rejected");
 });
 
 // ---------- Orchestration ----------

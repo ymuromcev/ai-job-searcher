@@ -41,24 +41,48 @@ const PATTERNS = {
     /decided to move forward with candidates whose/i,
     /your application was not selected/i,
   ],
+  // INTERVIEW_INVITE patterns must require interview-INTENT context. Bare
+  // \binterview\b / \bavailability\b were removed 2026-05-02 after Lilia
+  // incident: Indeed digest emails embed JD body text containing "interview
+  // process" / "share your availability" as job descriptions, which produced
+  // 7+ false INTERVIEW_INVITE matches. New patterns require either an
+  // explicit invite verb (schedule/invite/like to interview) or interview-
+  // intent phrasing (interview with us/your interview).
   INTERVIEW_INVITE: [
-    /\binterview\b/i,
-    /phone screen/i,
-    /schedule a call/i,
-    /next steps in the process/i,
-    /would love to chat/i,
-    /\bmeet with\b/i,
-    /\bavailability\b/i,
-    /calendly/i,
-    /book a time/i,
+    /schedule (an? )?(interview|phone screen|call|meeting|chat)/i,
+    /(would|we'd) like to (schedule|set up|interview)/i,
+    /invite you (to|for) (an? )?(interview|phone screen|conversation|chat)/i,
+    /your interview (is|with|on)/i,
+    /interview with us/i,
+    /interview (request|invitation|invite)/i,
+    /\bphone screen\b/i,
+    /next steps in (the|our) (process|interview)/i,
+    /would love to (chat|connect|meet|talk) (with you|to discuss)/i,
+    /\bmeet with (the|our) (team|hiring|recruiting)/i,
+    /share your availability/i,
+    /(your|let me know your) availability (for|to) (an? )?(interview|call|chat|conversation)/i,
+    /book a time (on (my|the) calendar|with (me|us)|to (chat|meet|talk))/i,
+    // "calendly" is brand-specific and only ever appears in scheduling
+    // contexts — safe to keep bare.
+    /\bcalendly\b/i,
   ],
+  // INFO_REQUEST patterns must reference an action the candidate must take.
+  // Bare /assessment/ and /questionnaire/ were removed 2026-05-02 — JD body
+  // text often mentions "skills assessment" or "personality questionnaire"
+  // as part of the role description, not as a request to the candidate.
   INFO_REQUEST: [
-    /\bassessment\b/i,
-    /take.?home/i,
-    /coding challenge/i,
-    /additional information/i,
-    /complete the following/i,
-    /questionnaire/i,
+    /(complete|take|finish) (the|your|an?) (assessment|questionnaire|coding challenge|take.?home|exercise)/i,
+    /(your|the) (assessment|questionnaire|take.?home|coding challenge) (is|link|attached|below|here)/i,
+    /(assessment|questionnaire|coding challenge|take.?home) (link|invitation|invite|deadline)/i,
+    /(please|kindly) (complete|fill out|provide|share|submit)/i,
+    /\btake.?home (test|assignment|project|challenge)\b/i,
+    /(send|submit|provide) (us )?(your|the) (additional|requested) (information|details|materials)/i,
+    /(we|i) need (some )?additional (information|details) (from you|to proceed)/i,
+    /complete the following (form|questionnaire|assessment|steps)/i,
+    // "coding challenge" and "take-home" are unambiguous — they only ever
+    // refer to candidate-facing exercises in hiring contexts.
+    /\bcoding challenge\b/i,
+    /\btake.?home\b/i,
   ],
   ACKNOWLEDGMENT: [
     /received your application/i,

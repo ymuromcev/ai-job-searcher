@@ -44,6 +44,8 @@ const {
 } = require("../core/email_parsers.js");
 const {
   isATS,
+  isJobAlert,
+  isNonPipelineSender,
   matchesRecruiterSubject,
   isLevelBlocked,
   isLocationBlocked,
@@ -515,14 +517,53 @@ function processEmailsLoop(emails, state, procCtx) {
   const rejections = [];
   for (const email of emails) {
     const fromLower = (email.from || "").toLowerCase();
+
+    // 1. LinkedIn job-alerts → LinkedIn lead branch (creates To Apply rows).
     if (fromLower.includes("jobalerts-noreply@linkedin.com")) {
       logRows.push(processLinkedIn(email, procCtx, state));
       continue;
     }
+
+    // 2. Other job-alert digests (Indeed, ZipRecruiter, Glassdoor, "+ N more
+    // new jobs") → SKIP entirely. These contain raw JD body text whose words
+    // ("interview", "availability", "questionnaire", "assessment") otherwise
+    // trip the classifier, and they aren't pipeline updates by definition.
+    if (isJobAlert(email.from || "", email.subject || "")) {
+      logRows.push({
+        id: email.messageId,
+        company: "?",
+        role: "?",
+        match: "SOURCE",
+        type: "JOB_ALERT",
+        action: "skipped: job-alert digest",
+        comment: "",
+      });
+      continue;
+    }
+
+    // 3. Non-pipeline senders (banks, utilities, insurance) → SKIP. Their
+    // transactional language overlaps with our ACK/INFO patterns but they
+    // are never job emails.
+    if (isNonPipelineSender(email.from || "")) {
+      logRows.push({
+        id: email.messageId,
+        company: "?",
+        role: "?",
+        match: "SOURCE",
+        type: "NON_PIPELINE",
+        action: "skipped: non-pipeline sender",
+        comment: "",
+      });
+      continue;
+    }
+
+    // 4. Recruiter outreach (subject pattern, not from ATS).
     if (!isATS(email.from) && matchesRecruiterSubject(email.subject || "")) {
       logRows.push(processRecruiter(email, procCtx, state));
       continue;
     }
+
+    // 5. Normal pipeline.
     const { row, action, rejection } = processPipeline(email, procCtx, state);
     logRows.push(row);
     if (action) actions.push(action);

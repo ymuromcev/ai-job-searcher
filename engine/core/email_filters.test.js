@@ -3,6 +3,8 @@ const assert = require("node:assert/strict");
 
 const {
   isATS,
+  isJobAlert,
+  isNonPipelineSender,
   matchesRecruiterSubject,
   isLevelBlocked,
   isLocationBlocked,
@@ -61,4 +63,50 @@ test("isTSVDup: matches by (company, role) composite", () => {
 test("isTSVDup: supports legacy {company, role} shape", () => {
   const rows = [{ company: "Affirm", role: "PM" }];
   assert.ok(isTSVDup("Affirm", "PM", rows));
+});
+
+// Regression: Lilia incident 2026-05-02. Indeed match-alert digests
+// embed JD body text and got falsely classified. They must skip the
+// pipeline entirely.
+test("isJobAlert: Indeed match-alert digests by sender domain", () => {
+  assert.ok(isJobAlert("donotreply@match.indeed.com", "5 more new jobs for you"));
+  assert.ok(isJobAlert("noreply@match.indeed.com", "Front desk receptionist - new jobs"));
+  assert.ok(isJobAlert("alert@indeed.com", "Jobs matching your search"));
+});
+
+test("isJobAlert: LinkedIn job-alerts (consolidated source-of-truth)", () => {
+  assert.ok(isJobAlert("jobalerts-noreply@linkedin.com", "New PM jobs in Sacramento"));
+});
+
+test("isJobAlert: subject-only patterns (any sender)", () => {
+  assert.ok(isJobAlert("anyone@example.com", "Medical Assistant + 12 more new jobs"));
+  assert.ok(isJobAlert("anyone@example.com", "5 new jobs matching your search"));
+  assert.ok(isJobAlert("anyone@example.com", "New jobs for you this week"));
+});
+
+test("isJobAlert: regular emails are NOT job alerts", () => {
+  assert.ok(!isJobAlert("recruiter@kaiser.org", "Phone screen invitation"));
+  assert.ok(!isJobAlert("noreply@greenhouse-mail.io", "Thank you for applying"));
+  assert.ok(!isJobAlert("", ""));
+  // ZipRecruiter sender but a real recruiter outreach (no alert keywords) →
+  // not classified as alert. Subject is a prereq for ZR rule.
+  assert.ok(!isJobAlert("recruiter@ziprecruiter.com", "Following up on your application"));
+});
+
+// Regression: Lilia incident 2026-05-02. Wells Fargo "We received your
+// claim inquiry" reply was misread because the body language overlaps
+// with ACKNOWLEDGMENT patterns.
+test("isNonPipelineSender: banks/utilities/insurance must be skipped", () => {
+  assert.ok(isNonPipelineSender("wellsfargo@notify.wellsfargo.com"));
+  assert.ok(isNonPipelineSender("alerts@chase.com"));
+  assert.ok(isNonPipelineSender("statements@bankofamerica.com"));
+  assert.ok(isNonPipelineSender("noreply@geico.com"));
+  assert.ok(isNonPipelineSender("billing@xfinity.com"));
+});
+
+test("isNonPipelineSender: real recruiter / ATS senders are NOT skipped", () => {
+  assert.ok(!isNonPipelineSender("recruiter@kaiser.org"));
+  assert.ok(!isNonPipelineSender("noreply@greenhouse-mail.io"));
+  assert.ok(!isNonPipelineSender("hire@lever.co"));
+  assert.ok(!isNonPipelineSender(""));
 });

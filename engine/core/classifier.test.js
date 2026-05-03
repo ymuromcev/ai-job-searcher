@@ -171,3 +171,81 @@ test("classify: specific 'your application was not selected' still caught (no re
   });
   assert.equal(r.type, "REJECTION");
 });
+
+// Regression: Lilia incident 2026-05-02. Indeed match-alert digests embed
+// raw JD body text. The bare /\binterview\b/, /\bavailability\b/,
+// /\bquestionnaire\b/, /\bassessment\b/ patterns matched JD prose like
+// "competitive interview process" / "share your availability for the
+// shift" / "skills assessment included" / "personality questionnaire".
+// These produced 7+ false INTERVIEW_INVITE / INFO_REQUEST classifications
+// which then mutated Notion statuses on unrelated pipeline rows.
+//
+// After fix: patterns require explicit invite/request CONTEXT.
+// Sender-allowlist (isJobAlert) catches the digests upstream too, but the
+// classifier must be safe even on raw JD-like text that slips through.
+test("classify: JD body 'interview process' (not invite) → OTHER (Lilia incident)", () => {
+  const fixtures = [
+    "Our hiring process includes a competitive interview process and skills evaluation.",
+    "We expect successful candidates to navigate a multi-stage interview process.",
+    "About the role: collaborative team, hybrid schedule, structured interview process.",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Medical Receptionist - Roseville", body });
+    assert.equal(r.type, "OTHER", `expected OTHER for: "${body}", got ${r.type} (evidence: "${r.evidence}")`);
+  }
+});
+
+test("classify: JD body 'availability' (shift/role context, not invite) → OTHER", () => {
+  const fixtures = [
+    "Schedule: Monday-Friday. Must have weekend availability as needed.",
+    "Open availability required for evening and weekend shifts.",
+    "Position requires flexible availability across multiple clinic locations.",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Front Desk - Sutter Health", body });
+    assert.equal(r.type, "OTHER", `expected OTHER for: "${body}", got ${r.type} (evidence: "${r.evidence}")`);
+  }
+});
+
+test("classify: JD body 'assessment' / 'questionnaire' (job context) → OTHER", () => {
+  const fixtures = [
+    "Duties include patient intake assessment and benefits verification.",
+    "Conduct initial assessment of patient needs and route to appropriate provider.",
+    "Help patients complete intake questionnaire prior to their appointment.",
+    "Annual skills assessment is part of our continuing-education program.",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Medical Office Coordinator", body });
+    assert.equal(r.type, "OTHER", `expected OTHER for: "${body}", got ${r.type} (evidence: "${r.evidence}")`);
+  }
+});
+
+// Positive controls — real interview invites must STILL match after tightening.
+test("classify: real interview invites still match after tightening", () => {
+  const fixtures = [
+    "Hi Lilia, we'd like to schedule an interview with you next Tuesday.",
+    "Please share your availability for a 30-minute call this week.",
+    "Your interview is on Thursday at 2pm PT — link in calendar invite.",
+    "We invite you to a phone screen — book a time on my calendar via Calendly.",
+    "Interview invitation: Senior Medical Receptionist — Kaiser Permanente",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Next steps", body });
+    assert.equal(r.type, "INTERVIEW_INVITE", `expected INTERVIEW_INVITE for: "${body}", got ${r.type} (evidence: "${r.evidence}")`);
+  }
+});
+
+// Positive controls — real assessment requests must still match.
+test("classify: real assessment / take-home requests still match after tightening", () => {
+  const fixtures = [
+    "Please complete the assessment by end of week.",
+    "Your take-home coding challenge is attached.",
+    "Take-home assignment: please submit by Friday.",
+    "Complete the following questionnaire to move to the next round.",
+    "Please provide the additional information we requested.",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Next steps", body });
+    assert.equal(r.type, "INFO_REQUEST", `expected INFO_REQUEST for: "${body}", got ${r.type} (evidence: "${r.evidence}")`);
+  }
+});

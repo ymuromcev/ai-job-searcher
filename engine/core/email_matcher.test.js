@@ -217,3 +217,54 @@ test("archetype: strips CV_Jared_Moore_ prefix", () => {
   assert.equal(archetype(""), "—");
   assert.equal(archetype(undefined), "—");
 });
+
+// Regression: Lilia incident 2026-05-02. "Sacramento Natural Dentistry" and
+// "Sacramento Spa Dentistry" both tokenize to ["sacramento","dentistry"]
+// (length>3, not stop-words). Pre-fix matcher would return whichever was
+// iterated first → 50/50 false attribution. Tie-break requires a
+// discriminating token ("natural" / "spa") to actually appear.
+test("findCompany: tied-score collision without discriminating token → null (Lilia incident)", () => {
+  const email = {
+    from: "noreply@dentalclinic.com",
+    subject: "Update on your application — Sacramento dentistry position",
+    body: "Thanks for your interest in our Sacramento dentistry clinic.",
+  };
+  const map = {
+    "Sacramento Natural Dentistry": [{ role: "Dental Receptionist", notion_id: "p1" }],
+    "Sacramento Spa Dentistry": [{ role: "Dental Receptionist", notion_id: "p2" }],
+  };
+  // Both score 2 on tokens ["sacramento","dentistry"]. Neither "natural"
+  // nor "spa" appears in haystack → tie-break must return null.
+  assert.equal(findCompany(email, map), null);
+});
+
+test("findCompany: tied score with one discriminating token present → correct winner", () => {
+  const email = {
+    from: "noreply@dentalclinic.com",
+    subject: "Sacramento Spa Dentistry — application update",
+    body: "Thanks for applying to our spa dentistry clinic.",
+  };
+  const map = {
+    "Sacramento Natural Dentistry": [{ role: "Dental Receptionist", notion_id: "p1" }],
+    "Sacramento Spa Dentistry": [{ role: "Dental Receptionist", notion_id: "p2" }],
+  };
+  const r = findCompany(email, map);
+  assert.equal(r.company, "Sacramento Spa Dentistry");
+});
+
+test("findCompany: clear winner by score (no tie) — unaffected by tie-break", () => {
+  // "Match Group" (2 tokens both match) should still beat "IEX Group" (1
+  // token match) — same scenario as the original Match-vs-IEX fix, must
+  // not regress.
+  const email = {
+    from: "noreply@hinge.co",
+    subject: "Match Group application update",
+    body: "Update on your Match Group application.",
+  };
+  const map = {
+    "Match Group": [{ role: "PM", notion_id: "p1" }],
+    "IEX Group": [{ role: "PM", notion_id: "p2" }],
+  };
+  const r = findCompany(email, map);
+  assert.equal(r.company, "Match Group");
+});
