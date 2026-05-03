@@ -111,10 +111,11 @@ function loadProfile(id, options = {}) {
 // core/filter.js consumes. Returns the flat shape.
 //
 // Shape mapping:
-//   company_blocklist: { companies: [{name}] } | [names]   → [names]
-//   title_blocklist:   { patterns: [{pattern,reason}] } | [{...}] → [{pattern,reason}]
-//   location_blocklist:{ patterns: [strings] } | [strings] | location_rules.* → [strings]
-//   company_cap:       pass-through
+//   company_blocklist:  { companies: [{name}] } | [names]   → [names]
+//   title_blocklist:    { patterns: [{pattern,reason}] } | [{...}] → [{pattern,reason}]
+//   title_requirelist:  { patterns: [{pattern,reason}] } | [{...}] → [{pattern,reason}]
+//   location_blocklist: { patterns: [strings] } | [strings] | location_rules.* → [strings]
+//   company_cap:        pass-through
 // Everything else (domain_weak_fit, early_startup_modifier, priority_order)
 // is preserved verbatim for downstream consumers (e.g. fit_prompt).
 function normalizeFilterRules(raw) {
@@ -137,6 +138,15 @@ function normalizeFilterRules(raw) {
     out.title_blocklist = tb.patterns.filter((p) => p && p.pattern);
   } else {
     out.title_blocklist = [];
+  }
+
+  const tr = raw.title_requirelist;
+  if (Array.isArray(tr)) {
+    out.title_requirelist = tr.filter((p) => p && p.pattern);
+  } else if (tr && Array.isArray(tr.patterns)) {
+    out.title_requirelist = tr.patterns.filter((p) => p && p.pattern);
+  } else {
+    out.title_requirelist = [];
   }
 
   const lb = raw.location_blocklist;

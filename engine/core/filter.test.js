@@ -261,3 +261,87 @@ test("filterJobs throws on bad input", () => {
   assert.throws(() => filterJobs("nope", {}), /jobs must be an array/);
   assert.throws(() => filterJobs([], null), /rules must be an object/);
 });
+
+// ── title_requirelist ────────────────────────────────────────────────────────
+
+test("filterJobs title_requirelist passes a matching PM title", () => {
+  const rules = {
+    title_requirelist: [
+      { pattern: "product manager", reason: "PM role" },
+      { pattern: "PM", reason: "PM abbreviation" },
+    ],
+  };
+  const { passed, rejected } = filterJobs([BASE_JOB], rules); // BASE_JOB role = "Senior Product Manager"
+  assert.equal(passed.length, 1);
+  assert.equal(rejected.length, 0);
+});
+
+test("filterJobs title_requirelist rejects a non-PM title (SWE)", () => {
+  const swe = { ...BASE_JOB, role: "Senior Software Engineer" };
+  const rules = {
+    title_requirelist: [
+      { pattern: "product manager", reason: "PM role" },
+      { pattern: "PM", reason: "PM abbreviation" },
+    ],
+  };
+  const { passed, rejected } = filterJobs([swe], rules);
+  assert.equal(passed.length, 0);
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].reason.kind, "title_requirelist");
+});
+
+test("filterJobs title_requirelist passes PM abbreviation title", () => {
+  const srPm = { ...BASE_JOB, role: "Sr. PM, Payments" };
+  const rules = {
+    title_requirelist: [{ pattern: "PM", reason: "PM abbreviation" }],
+  };
+  const { passed } = filterJobs([srPm], rules);
+  assert.equal(passed.length, 1);
+});
+
+test("filterJobs title_requirelist — slash compound: one PM part → passes", () => {
+  // "Analyst/Product Manager" — second part is a PM, so it passes even though
+  // "Analyst" alone would fail the requirelist.
+  const hybrid = { ...BASE_JOB, role: "Analyst/Product Manager" };
+  const rules = {
+    title_requirelist: [{ pattern: "product manager", reason: "PM role" }],
+  };
+  const { passed, rejected } = filterJobs([hybrid], rules);
+  assert.equal(passed.length, 1);
+  assert.equal(rejected.length, 0);
+});
+
+test("filterJobs title_requirelist — slash compound: all non-PM parts → rejected", () => {
+  // "Software Engineer/DevOps" — neither part matches; role rejected.
+  const noMatch = { ...BASE_JOB, role: "Software Engineer/DevOps" };
+  const rules = {
+    title_requirelist: [
+      { pattern: "product manager", reason: "PM role" },
+      { pattern: "PM", reason: "PM abbreviation" },
+    ],
+  };
+  const { passed, rejected } = filterJobs([noMatch], rules);
+  assert.equal(passed.length, 0);
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].reason.kind, "title_requirelist");
+});
+
+test("filterJobs title_requirelist empty array skips the gate (pass-through)", () => {
+  // When title_requirelist is empty, no positive gate is applied.
+  const swe = { ...BASE_JOB, role: "Software Engineer" };
+  const { passed } = filterJobs([swe], { title_requirelist: [] });
+  assert.equal(passed.length, 1);
+});
+
+test("filterJobs title_requirelist is applied before title_blocklist", () => {
+  // A role that fails the requirelist should be rejected with kind=title_requirelist,
+  // not title_blocklist, even if it also matches the blocklist.
+  const swe = { ...BASE_JOB, role: "Senior Software Engineer" };
+  const rules = {
+    title_requirelist: [{ pattern: "product manager", reason: "PM role" }],
+    title_blocklist: [{ pattern: "senior", reason: "over-level" }],
+  };
+  const { rejected } = filterJobs([swe], rules);
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].reason.kind, "title_requirelist");
+});

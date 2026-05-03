@@ -65,6 +65,24 @@ function matchBlocklists(job, rules) {
       .filter(Boolean);
     const parts = titleParts.length > 0 ? titleParts : [roleLower];
 
+    // title_requirelist: positive gate — if configured, at least one title
+    // part must match at least one required pattern. Rejects non-PM roles
+    // (e.g. SWE, DevOps, Accounting) that slip through the company-level
+    // filters because ATS adapters return all open roles, not just PM ones.
+    if (Array.isArray(rules.title_requirelist) && rules.title_requirelist.length > 0) {
+      const anyPartMatches = parts.some((part) =>
+        rules.title_requirelist.some((pat) => {
+          const needle = String(pat.pattern || "").toLowerCase();
+          if (!needle) return false;
+          const re = new RegExp(`\\b${escapeRegex(needle)}\\b`, "i");
+          return re.test(part);
+        })
+      );
+      if (!anyPartMatches) {
+        return { kind: "title_requirelist", why: "title does not match any required pattern" };
+      }
+    }
+
     let firstHit = null;
     let cleanPartFound = false;
     for (const part of parts) {

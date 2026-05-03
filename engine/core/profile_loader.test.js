@@ -104,6 +104,7 @@ test("loadProfile returns normalized object with paths and loaded sub-configs", 
       company_cap: { max_active: 3 },
       company_blocklist: [],
       title_blocklist: [],
+      title_requirelist: [],
       location_blocklist: [],
     });
     assert.ok(profile.resumeVersions);
