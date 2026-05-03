@@ -1,5 +1,8 @@
 // Pure dedup: removes duplicate jobs from a list, preserving first occurrence.
-// Dedup key = (source, jobId). Company name normalization is a separate helper.
+// Primary key = (source, jobId) — exact dedup within a single platform.
+// Secondary key = (normalizedCompany, normalizedTitle) — fuzzy dedup across
+// platforms. Catches the case where the same role is posted on both Greenhouse
+// and Lever for the same company; without it, both rows enter the pipeline.
 
 function jobKey(job) {
   const source = String(job.source || "").toLowerCase().trim();
@@ -17,15 +20,38 @@ function normalizeCompanyName(name) {
     .trim();
 }
 
+function normalizeTitle(title) {
+  return String(title || "")
+    .toLowerCase()
+    .replace(/[,.()/]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function fuzzyKey(job) {
+  // Adapters emit `companyName`; tests + some legacy callers may use `company`.
+  const company = normalizeCompanyName(job.companyName || job.company);
+  const title = normalizeTitle(job.title);
+  if (!company || !title) return null;
+  return `${company}::${title}`;
+}
+
 function dedupeJobs(jobs) {
   if (!Array.isArray(jobs)) throw new Error("jobs must be an array");
-  const seen = new Map();
+  const seenExact = new Map();
+  const seenFuzzy = new Set();
+  const out = [];
   for (const job of jobs) {
     const key = jobKey(job);
     if (!key || key === ":") continue; // skip malformed
-    if (!seen.has(key)) seen.set(key, job);
+    if (seenExact.has(key)) continue;
+    const fuzzy = fuzzyKey(job);
+    if (fuzzy && seenFuzzy.has(fuzzy)) continue;
+    seenExact.set(key, job);
+    if (fuzzy) seenFuzzy.add(fuzzy);
+    out.push(job);
   }
-  return Array.from(seen.values());
+  return out;
 }
 
 function dedupeAgainst(existing, incoming) {
@@ -33,15 +59,22 @@ function dedupeAgainst(existing, incoming) {
     throw new Error("both arguments must be arrays");
   }
   const existingKeys = new Set(existing.map(jobKey));
+  const existingFuzzy = new Set();
+  for (const job of existing) {
+    const fuzzy = fuzzyKey(job);
+    if (fuzzy) existingFuzzy.add(fuzzy);
+  }
   const fresh = [];
   for (const job of incoming) {
     const key = jobKey(job);
-    if (!existingKeys.has(key)) {
-      fresh.push(job);
-      existingKeys.add(key);
-    }
+    if (existingKeys.has(key)) continue;
+    const fuzzy = fuzzyKey(job);
+    if (fuzzy && existingFuzzy.has(fuzzy)) continue;
+    fresh.push(job);
+    existingKeys.add(key);
+    if (fuzzy) existingFuzzy.add(fuzzy);
   }
   return fresh;
 }
 
-module.exports = { jobKey, normalizeCompanyName, dedupeJobs, dedupeAgainst };
+module.exports = { jobKey, normalizeCompanyName, normalizeTitle, fuzzyKey, dedupeJobs, dedupeAgainst };

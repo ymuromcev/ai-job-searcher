@@ -146,7 +146,7 @@ If memory files are missing: fall back to `profiles/<id>/resume_versions.json`.
 Read profiles/<id>/prepare_context.json
 ```
 
-Report stats: `inboxTotal` / `afterFilter` / `inBatch` / `urlAlive` / `urlDead`. Ask user to confirm before proceeding if batch is larger than 10.
+Report stats: `inboxTotal` / `afterFilter` / `inBatch` / `urlAlive` / `urlDead`. Proceed without confirmation — the CLI's `--batch N` flag already gates batch size; Claude does not re-prompt the user. Default is 30; adjust by re-running pre-phase with a different `--batch`.
 
 **Step 3 — Geo validation (per job)**
 
@@ -184,6 +184,8 @@ For each remaining job:
 
 Choose the best resume archetype from `profiles/<id>/resume_versions.json` for this specific role. Prefer the archetype whose domain keywords overlap most with the JD / job title.
 
+**Mandatory validation**: `resumeVer` MUST be a key that literally exists in `profile.resume_versions.versions`. Do NOT invent or paraphrase a key. If no archetype is a clear match, pick the closest existing key (or the profile's `default` if defined) and note the partial match in the rationale — never write a key that isn't in the file. The CLI's `sync push` will hard-fail on unknown keys, so catch the mismatch here.
+
 Record `resumeVer` = archetype key (e.g. `"fintech-pm-v3"`).
 
 **Step 8 — Cover letter generation (per job)**
@@ -205,6 +207,8 @@ Record `clKey` = filename without extension.
 **Step 9 — Notion page creation (per job)**
 
 For each job where `decision = "to_apply"`:
+
+**9.0 Skip-guard.** If the matching `applications.tsv` row already has a non-empty `notion_page_id`, the page was created in a prior run — record the existing id as `notionPageId` in results.json and skip 9a–9c (no new page, no duplicate). This makes operator-reruns of the SKILL idempotent.
 
 **9a. Resolve Company relation.** Query `profile.notion.companies_db_id` for the company by name (title match). If found — use that page id. If not — create a new Company page with `Name` = company and `Tier` from `profile.company_tiers[name]` (if known), then use the new page id.
 

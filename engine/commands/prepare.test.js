@@ -514,6 +514,81 @@ test("prepare --phase commit: missing results-file returns 1", async () => {
   assert.ok(ctx._errLines.some((l) => /results-file/.test(l)));
 });
 
+test("prepare --phase commit: unknown decision warns and falls back to skip", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+  const results = {
+    profileId: "testuser",
+    results: [{ key: "gh:1", decision: "approve" }], // typo, not in enum
+  };
+  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json", dryRun: false } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+  assert.ok(
+    ctx._errLines.some((l) => /unknown decision "approve"/.test(l)),
+    "should warn about unknown decision"
+  );
+  // App should remain unchanged (no resume_ver, no notion_page_id, status as-was)
+  const saved = deps._getSaved();
+  assert.equal(saved[0].notion_page_id || "", "");
+  assert.equal(saved[0].resume_ver || "", "");
+});
+
+test("prepare --phase commit: unknown resumeVer warns and skips when validArchetypes set is non-empty", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      { key: "gh:1", decision: "to_apply", resumeVer: "made-up-key", notionPageId: "p1" },
+    ],
+  };
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: {},
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+      resumeVersions: { versions: { "fintech-pm-v3": {}, "ai-pm-v2": {} } },
+    }),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json", dryRun: false } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+  assert.ok(
+    ctx._errLines.some((l) => /unknown resumeVer "made-up-key"/.test(l)),
+    "should warn about invalid archetype"
+  );
+  // The row should not have been mutated to to_apply
+  const saved = deps._getSaved();
+  assert.equal(saved[0].resume_ver || "", "");
+  assert.equal(saved[0].notion_page_id || "", "");
+});
+
+test("prepare --phase commit: validArchetypes empty set disables the gate (legacy profiles)", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      { key: "gh:1", decision: "to_apply", resumeVer: "anything-goes", notionPageId: "p1" },
+    ],
+  };
+  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
+  // default makeCommitDeps loadProfile has no resumeVersions → empty set → no gate
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json", dryRun: false } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+  const saved = deps._getSaved();
+  assert.equal(saved[0].resume_ver, "anything-goes");
+  assert.equal(saved[0].notion_page_id, "p1");
+});
+
 // --- unknown phase -----------------------------------------------------------
 
 test("prepare: missing phase returns 1", async () => {

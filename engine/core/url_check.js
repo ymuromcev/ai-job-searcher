@@ -17,6 +17,13 @@
 
 const ALIVE_CODES = new Set([200, 201, 202, 204, 301, 302, 303, 307, 308, 403]);
 
+// Sources that don't expose stable, ping-able job URLs. LinkedIn / Indeed
+// require a logged-in session and respond 999/403 to HEAD; "custom" covers
+// hand-entered career-page URLs that are too varied to ping reliably. Marking
+// them dead prunes 100% of these jobs at the prepare gate, so we treat them as
+// alive and let the SKILL's WebFetch step handle JD pulls.
+const SKIP_URL_CHECK_SOURCES = new Set(["linkedin", "indeed", "custom"]);
+
 // Patterns indicating a redirect landed on a generic board root page (job
 // was pulled but the ATS still returns 200 for the careers-home URL).
 const BOARD_ROOT_RE = [
@@ -101,7 +108,11 @@ function looksLikeBoardRoot(finalUrl, originalUrl) {
 
 async function checkOne(row, fetchFn, opts = {}) {
   const { timeoutMs = 12000 } = opts;
-  const { url } = row;
+  const { url, source } = row;
+
+  if (source && SKIP_URL_CHECK_SOURCES.has(String(source).toLowerCase())) {
+    return { ...row, status: 0, alive: true, skipped: true, finalUrl: url };
+  }
 
   const safe = isSafeLivenessUrl(url);
   if (!safe.ok) {
@@ -168,4 +179,4 @@ async function checkAll(rows, fetchFn, opts = {}) {
   return results;
 }
 
-module.exports = { checkOne, checkAll, isSafeLivenessUrl };
+module.exports = { checkOne, checkAll, isSafeLivenessUrl, SKIP_URL_CHECK_SOURCES };

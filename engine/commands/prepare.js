@@ -354,7 +354,25 @@ async function runCommit(ctx, deps) {
   const byKey = Object.fromEntries(apps.map((a) => [a.key, a]));
   const now = deps.now();
 
-  const updates = { toApply: 0, archive: 0, skip: 0, notFound: 0 };
+  // Canonical archetype gate (G-18 backstop): block to_apply rows whose
+  // resumeVer isn't a real key in resume_versions.json. Without this, a typo
+  // from the SKILL would silently land in TSV → propagate to Notion's select
+  // dropdown via sync push and pollute the canonical set. Empty profile set
+  // → no gate (early profiles before resume_versions.json exists).
+  const validArchetypes = new Set(
+    Object.keys((profile.resumeVersions && profile.resumeVersions.versions) || {})
+  );
+
+  const VALID_DECISIONS = new Set(["to_apply", "archive", "skip"]);
+
+  const updates = {
+    toApply: 0,
+    archive: 0,
+    skip: 0,
+    notFound: 0,
+    invalidDecision: 0,
+    invalidArchetype: 0,
+  };
   for (const r of results) {
     const app = byKey[r.key];
     if (!app) {
@@ -363,7 +381,26 @@ async function runCommit(ctx, deps) {
       continue;
     }
 
+    if (!VALID_DECISIONS.has(r.decision)) {
+      updates.invalidDecision++;
+      stderr(
+        `warn: unknown decision "${r.decision}" for key ${r.key} — treating as skip ` +
+        `(valid: ${[...VALID_DECISIONS].join(", ")})`
+      );
+      updates.skip++;
+      continue;
+    }
+
     if (r.decision === "to_apply") {
+      if (r.resumeVer && validArchetypes.size > 0 && !validArchetypes.has(r.resumeVer)) {
+        updates.invalidArchetype++;
+        stderr(
+          `warn: unknown resumeVer "${r.resumeVer}" for key ${r.key} — treating as skip ` +
+          `(valid keys: ${[...validArchetypes].join(", ")})`
+        );
+        updates.skip++;
+        continue;
+      }
       app.status = "To Apply";
       if (r.clKey) app.cl_key = r.clKey;
       if (r.resumeVer) app.resume_ver = r.resumeVer;
@@ -383,14 +420,19 @@ async function runCommit(ctx, deps) {
       app.updatedAt = now;
       updates.archive++;
     } else {
-      // "skip" or unknown → no change
+      // "skip"
       updates.skip++;
     }
   }
 
+  const extras = [];
+  if (updates.invalidDecision > 0) extras.push(`${updates.invalidDecision} invalid decision`);
+  if (updates.invalidArchetype > 0) extras.push(`${updates.invalidArchetype} invalid archetype`);
+  const extraStr = extras.length > 0 ? `, ${extras.join(", ")}` : "";
+
   stdout(
     `commit: ${updates.toApply} → To Apply, ${updates.archive} archived, ` +
-    `${updates.skip} skipped, ${updates.notFound} not found`
+    `${updates.skip} skipped, ${updates.notFound} not found${extraStr}`
   );
 
   if (flags.dryRun) {

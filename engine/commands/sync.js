@@ -48,6 +48,7 @@ const DEFAULT_DEPS = {
   createJobPage: notion.createJobPage,
   fetchJobsFromDatabase: notion.fetchJobsFromDatabase,
   resolveDataSourceId: notion.resolveDataSourceId,
+  updateCalloutBlock: notion.updateCalloutBlock,
   makeCompanyResolver,
   now: () => new Date().toISOString(),
 };
@@ -109,7 +110,9 @@ function appToNotionJob(app, companyRelationId, canonicalArchetypes) {
 // 8-status set used by both Jared and Lilia DBs:
 //   To Apply / Applied / Interview / Offer / Rejected / Closed / No Response / Archived
 // Push step skips already-archived rows (terminal state, not worth touching).
-const PUSH_SKIP_STATUSES = new Set(["Archived"]);
+// Inbox = local-only staging status (not yet through `prepare`). Notion has no
+// "Inbox" option and these rows are not ready to be tracked there yet.
+const PUSH_SKIP_STATUSES = new Set(["Archived", "Inbox"]);
 
 // Stage 16 opt-in gate: if a push manifest is present, only its keys are
 // eligible for push. Used during prototype→new-engine migration so TSV-only
@@ -142,22 +145,20 @@ function readPushManifest(profileRoot) {
   return { path: p, keys: new Set(raw.keys) };
 }
 
-// Push gate: rows without a CL or resume version are "raw" scan/check entries
-// that haven't been triaged through `prepare`. Notion is the user-facing list
-// of jobs ready to apply (CV+CL prepared); raw rows should stay in TSV only
-// until prepare assigns them a cl_key / resume_ver. The hub callout
-// (build_hub_layout) shows the count of these raw rows as "Inbox", and the
-// Notion DB shows everything that made it past prepare.
-function isPrepared(a) {
-  return Boolean(a.cl_key) || Boolean(a.resume_ver);
-}
-
+// Push gate: every non-archived row without a Notion page id is eligible.
+// Raw Inbox rows (no cl_key / resume_ver) are included so that Notion always
+// reflects the full pipeline — the Inbox counter in the hub page is the live
+// DB view, not a static callout. Prepared rows (To Apply+) carry the full
+// field set; Inbox rows carry only the base fields (title, company, URL,
+// source, status). Both are valid Notion pages.
+//
+// Prerequisite: the Notion Jobs Pipeline DB must have "Inbox" as a Status
+// option. Add it manually in the Notion UI if it is missing.
 function planPush(apps, options = {}) {
   const allowed = options.allowKeys instanceof Set ? options.allowKeys : null;
   return apps.filter((a) => {
     if (a.notion_page_id) return false;
     if (PUSH_SKIP_STATUSES.has(a.status)) return false;
-    if (!isPrepared(a)) return false;
     if (allowed && !allowed.has(a.key)) return false;
     return true;
   });
@@ -368,6 +369,43 @@ function makeSyncCommand(overrides = {}) {
       if (pushed > 0) changes.push(`${pushed} new page id(s)`);
       if (pulled.length) changes.push(`${pulled.length} updated from Notion`);
       stdout(`saved ${merged.length} applications to ${applicationsPath} (${changes.join(", ")})`);
+    }
+
+    // Update the hub callout counter if the profile has one configured.
+    // Counts rows that need an action: status="To Apply" with no Notion page
+    // yet (i.e. fresh from scan, awaiting `prepare`). After Stage 8 unified
+    // statuses, "Inbox" no longer exists — the counter tracks the same idea
+    // ("things on the operator's desk") under the new status name.
+    // The profile key stays `inbox_callout_block_id` for back-compat.
+    //
+    // Runs unconditionally on --apply (not just when rows changed) so the
+    // "Updated:" timestamp stays accurate even if nothing changed this run.
+    // Non-fatal: a missing callout or Notion error should not fail the sync.
+    const calloutBlockId =
+      profile.notion &&
+      profile.notion.hub_layout &&
+      profile.notion.hub_layout.inbox_callout_block_id;
+    if (calloutBlockId) {
+      try {
+        const toApplyCount = apps.filter(
+          (a) => a.status === "To Apply" && !a.notion_page_id
+        ).length;
+        const today = deps.now().slice(0, 10);
+        await deps.updateCalloutBlock(
+          getClient(),
+          calloutBlockId,
+          `To Apply: ${toApplyCount} | Updated: ${today}`
+        );
+        stdout(`hub callout: To Apply: ${toApplyCount}`);
+      } catch (err) {
+        ctx.stderr(`  warn: hub callout update failed: ${err.message}`);
+      }
+    } else if (!flags.noCallout) {
+      stdout(
+        `hub callout: not configured — add notion.hub_layout.inbox_callout_block_id ` +
+          `to profile.json to keep the hub counter current. ` +
+          `Pass --no-callout to skip this message for this run.`
+      );
     }
 
     return pushErrors + pullErrors > 0 ? 1 : 0;

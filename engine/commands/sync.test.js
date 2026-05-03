@@ -73,6 +73,7 @@ function makeDeps(overrides = {}) {
       calls.fetchJobsFromDatabase.push(true);
       return [];
     },
+    updateCalloutBlock: async () => {},
     now: () => "2026-04-20T00:00:00Z",
     ...overrides,
   };
@@ -86,7 +87,7 @@ function makeCtx(overrides = {}) {
     ctx: {
       command: "sync",
       profileId: "jared",
-      flags: { dryRun: false, apply: false, verbose: false },
+      flags: { dryRun: false, apply: false, verbose: false, noCallout: false },
       env: { JARED_NOTION_TOKEN: "tok" },
       stdout: out.stdout,
       stderr: out.stderr,
@@ -180,21 +181,22 @@ test("planPush skips already-pushed and Archived apps; pushes 'To Apply' rows", 
   assert.equal(out[0].jobId, "1");
 });
 
-test("planPush gates raw scan rows (no cl_key + no resume_ver) — Inbox stays TSV-only", () => {
-  // Notion is the user-facing list of jobs ready to apply. Raw scan/check
-  // rows without a CL or resume have not been triaged via `prepare` and
-  // must NOT be pushed — they're "Inbox" semantically (counted in the hub
-  // callout, but absent from the Notion DB). Once prepare commit assigns
-  // cl_key/resume_ver, they become eligible for push.
+test("planPush skips Inbox rows — Inbox is local-only, Notion has no Inbox status option", () => {
+  // "Inbox" rows have not been through `prepare` yet and must not be pushed to
+  // Notion. They are counted in the hub callout but are not pipeline pages.
   const apps = [
-    // raw — neither cl_key nor resume_ver set → gated
-    fakeApp({ jobId: "raw", cl_key: "", resume_ver: "" }),
+    // Inbox — skip (not ready for Notion)
+    fakeApp({ jobId: "raw", cl_key: "", resume_ver: "", status: "Inbox" }),
     // prepared with CL only → push
     fakeApp({ jobId: "cl-only", cl_key: "x", resume_ver: "" }),
-    // prepared with resume only → push (CL may be skipped for some sources)
+    // prepared with resume only → push
     fakeApp({ jobId: "resume-only", cl_key: "", resume_ver: "Risk_Fraud" }),
     // fully prepared → push
     fakeApp({ jobId: "full", cl_key: "x", resume_ver: "Risk_Fraud" }),
+    // already synced → skip
+    fakeApp({ jobId: "synced", cl_key: "x", resume_ver: "Risk_Fraud", notion_page_id: "p1" }),
+    // archived → skip
+    fakeApp({ jobId: "arch", cl_key: "", resume_ver: "", status: "Archived" }),
   ];
   const out = planPush(apps);
   assert.deepEqual(
@@ -455,4 +457,112 @@ test("reconcilePull matches by key and reports status changes", () => {
   assert.equal(updates.length, 1);
   assert.equal(updates[0].after.notion_page_id, "p1");
   assert.equal(updates[0].after.status, "Applied");
+});
+
+// ---------- hub callout update ----------
+
+test("sync --apply updates the hub callout block when configured", async () => {
+  const calloutCalls = [];
+  const { deps } = makeDeps({
+    loadProfile: () => ({
+      id: "jared",
+      paths: { root: "/tmp/profiles/jared" },
+      notion: {
+        jobs_pipeline_db_id: "db-123",
+        hub_layout: { inbox_callout_block_id: "callout-block-1" },
+      },
+    }),
+    loadApplications: () => ({
+      apps: [
+        // Two fresh "To Apply" rows without notion_page_id — these count.
+        fakeApp({ jobId: "1", status: "To Apply", notion_page_id: "" }),
+        fakeApp({ jobId: "2", status: "To Apply", notion_page_id: "" }),
+        // "To Apply" but already pushed to Notion — does NOT count.
+        fakeApp({ jobId: "3", status: "To Apply", notion_page_id: "p3" }),
+        // Other status — does NOT count.
+        fakeApp({ jobId: "4", status: "Applied", notion_page_id: "p4" }),
+      ],
+    }),
+    updateCalloutBlock: async (_client, blockId, text) => {
+      calloutCalls.push({ blockId, text });
+    },
+  });
+  const { ctx } = makeCtx({ flags: { dryRun: false, apply: true, verbose: false } });
+  const code = await makeSyncCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(calloutCalls.length, 1);
+  assert.equal(calloutCalls[0].blockId, "callout-block-1");
+  assert.match(calloutCalls[0].text, /^To Apply: 2 \| Updated: /);
+});
+
+test("sync --apply prints setup prompt when inbox_callout_block_id not configured", async () => {
+  const calloutCalls = [];
+  const { deps } = makeDeps({
+    updateCalloutBlock: async (_client, blockId, text) => {
+      calloutCalls.push({ blockId, text });
+    },
+  });
+  const { ctx, out } = makeCtx({ flags: { dryRun: false, apply: true, verbose: false, noCallout: false } });
+  await makeSyncCommand(deps)(ctx);
+  // updateCalloutBlock must NOT be called (no block id)
+  assert.equal(calloutCalls.length, 0);
+  // but the user must see a prompt to configure it
+  assert.match(out.all(), /hub callout: not configured/);
+  assert.match(out.all(), /inbox_callout_block_id/);
+  assert.match(out.all(), /--no-callout/);
+});
+
+test("sync --apply + --no-callout silently skips when callout not configured", async () => {
+  const calloutCalls = [];
+  const { deps } = makeDeps({
+    updateCalloutBlock: async (_client, blockId, text) => {
+      calloutCalls.push({ blockId, text });
+    },
+  });
+  const { ctx, out } = makeCtx({ flags: { dryRun: false, apply: true, verbose: false, noCallout: true } });
+  await makeSyncCommand(deps)(ctx);
+  assert.equal(calloutCalls.length, 0);
+  assert.doesNotMatch(out.all(), /hub callout/);
+});
+
+test("sync --apply callout update failure is non-fatal", async () => {
+  const { deps } = makeDeps({
+    loadProfile: () => ({
+      id: "jared",
+      paths: { root: "/tmp/profiles/jared" },
+      notion: {
+        jobs_pipeline_db_id: "db-123",
+        hub_layout: { inbox_callout_block_id: "callout-block-1" },
+      },
+    }),
+    updateCalloutBlock: async () => {
+      throw new Error("notion 403");
+    },
+  });
+  const { ctx, out } = makeCtx({ flags: { dryRun: false, apply: true, verbose: false } });
+  const code = await makeSyncCommand(deps)(ctx);
+  // sync itself should still exit 0 (push + pull both OK)
+  assert.equal(code, 0);
+  assert.match(out.all(), /hub callout update failed.*notion 403/);
+});
+
+test("sync dry-run does not update the callout block or print setup prompt", async () => {
+  const calloutCalls = [];
+  const { deps } = makeDeps({
+    loadProfile: () => ({
+      id: "jared",
+      paths: { root: "/tmp/profiles/jared" },
+      notion: {
+        jobs_pipeline_db_id: "db-123",
+        hub_layout: { inbox_callout_block_id: "callout-block-1" },
+      },
+    }),
+    updateCalloutBlock: async (_client, blockId, text) => {
+      calloutCalls.push({ blockId, text });
+    },
+  });
+  const { ctx, out } = makeCtx(); // apply: false → dry-run
+  await makeSyncCommand(deps)(ctx);
+  assert.equal(calloutCalls.length, 0);
+  assert.doesNotMatch(out.all(), /hub callout/);
 });

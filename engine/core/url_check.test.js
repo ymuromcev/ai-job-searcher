@@ -1,7 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { checkOne, checkAll, isSafeLivenessUrl } = require("./url_check.js");
+const { checkOne, checkAll, isSafeLivenessUrl, SKIP_URL_CHECK_SOURCES } = require("./url_check.js");
 
 // Builds a stub fetchFn keyed by "${METHOD}:${url}" or plain url.
 function makeFetch(map) {
@@ -203,4 +203,61 @@ test("checkAll respects concurrency — one failure does not block others", asyn
   assert.equal(results.length, 2);
   assert.equal(results[0].alive, true);
   assert.equal(results[1].alive, false);
+});
+
+// --- checkOne: early-skip for LinkedIn / Indeed / custom ---------------------
+
+test("SKIP_URL_CHECK_SOURCES contains linkedin, indeed, custom", () => {
+  assert.ok(SKIP_URL_CHECK_SOURCES.has("linkedin"));
+  assert.ok(SKIP_URL_CHECK_SOURCES.has("indeed"));
+  assert.ok(SKIP_URL_CHECK_SOURCES.has("custom"));
+});
+
+test("checkOne skips HEAD/GET for linkedin source and marks alive", async () => {
+  const fetchFn = async () => {
+    throw new Error("fetchFn must not be called for skipped sources");
+  };
+  const result = await checkOne(
+    { url: "https://linkedin.com/jobs/view/123", source: "linkedin" },
+    fetchFn,
+  );
+  assert.equal(result.alive, true);
+  assert.equal(result.skipped, true);
+  assert.equal(result.status, 0);
+});
+
+test("checkOne early-skip is case-insensitive on source", async () => {
+  const fetchFn = async () => {
+    throw new Error("fetchFn must not be called");
+  };
+  const result = await checkOne(
+    { url: "https://indeed.com/job/abc", source: "Indeed" },
+    fetchFn,
+  );
+  assert.equal(result.alive, true);
+  assert.equal(result.skipped, true);
+});
+
+test("checkOne early-skip for custom source", async () => {
+  const fetchFn = async () => {
+    throw new Error("fetchFn must not be called");
+  };
+  const result = await checkOne(
+    { url: "https://example.com/careers/role-42", source: "custom" },
+    fetchFn,
+  );
+  assert.equal(result.alive, true);
+  assert.equal(result.skipped, true);
+});
+
+test("checkOne does not skip for greenhouse/lever/ashby", async () => {
+  const fetchFn = makeFetch({
+    "HEAD:https://boards.greenhouse.io/x/jobs/1": { status: 200 },
+  });
+  const result = await checkOne(
+    { url: "https://boards.greenhouse.io/x/jobs/1", source: "greenhouse" },
+    fetchFn,
+  );
+  assert.equal(result.alive, true);
+  assert.equal(result.skipped, undefined);
 });
