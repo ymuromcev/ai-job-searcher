@@ -339,6 +339,47 @@ test("applyTargetFilters honours whitelist + blacklist", () => {
   assert.equal(bl.greenhouse[0].name, "Affirm");
 });
 
+test("scan gates companies by profile column (RFC 010 cross-profile isolation)", async () => {
+  // Regression for RFC 010 part B: shared data/companies.tsv now carries a
+  // `profile` column. The scan command must filter rows by that column
+  // BEFORE running adapters, replacing the brittle blacklist-on-Jared hack.
+  const sharedRows = [
+    { name: "PayPal", source: "workday", slug: "paypal", extra: null, profile: "jared" },
+    { name: "Capital One (WD)", source: "workday", slug: "capitalone", extra: null, profile: "jared" },
+    { name: "Sutter Health", source: "workday", slug: "sutterhealth", extra: null, profile: "lilia" },
+    { name: "SCAN Health Plan", source: "workday", slug: "scanhealthplan", extra: null, profile: "lilia" },
+    { name: "Public Co", source: "workday", slug: "publicco", extra: null, profile: "" },
+  ];
+  const seenByProfile = {};
+  function makeProfileScan(profileId) {
+    const { deps, calls } = makeDeps({
+      loadProfile: (id) => ({
+        id,
+        modules: ["discovery:workday"],
+        discovery: {},
+        paths: { root: `/tmp/profiles/${id}` },
+      }),
+      loadCompanies: () => ({ rows: sharedRows }),
+      listAdapters: () => ["workday"],
+      getAdapter: () => ({ source: "workday", discover: async () => [] }),
+      scan: async ({ targetsBySource }) => {
+        seenByProfile[profileId] = (targetsBySource.workday || []).map((t) => t.name).sort();
+        return { fresh: [], pool: [], summary: {}, errors: [] };
+      },
+    });
+    return { deps, calls };
+  }
+
+  for (const profileId of ["jared", "lilia"]) {
+    const { deps } = makeProfileScan(profileId);
+    const { ctx } = makeCtx({ profileId });
+    await makeScanCommand(deps)(ctx);
+  }
+
+  assert.deepEqual(seenByProfile.jared, ["Capital One (WD)", "PayPal", "Public Co"]);
+  assert.deepEqual(seenByProfile.lilia, ["Public Co", "SCAN Health Plan", "Sutter Health"]);
+});
+
 test("scan injects synthetic feed target for feedMode adapters with no companies", async () => {
   // Profile enables "discovery:remoteok"; companies.tsv has no remoteok entries.
   // Scan command should inject { name: 'feed', slug: '__feed__' } and invoke the adapter.

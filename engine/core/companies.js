@@ -14,7 +14,15 @@
 const fs = require("fs");
 const path = require("path");
 
-const HEADER = ["name", "ats_source", "ats_slug", "extra_json"];
+// 5-column schema (RFC 010 part B):
+//   name <TAB> ats_source <TAB> ats_slug <TAB> extra_json <TAB> profile
+// `profile` is optional. Allowed values:
+//   ""      — public / shared across all profiles (legacy 4-col rows).
+//   "both"  — explicit alias for "" (public).
+//   "<id>"  — visible only to that profile (e.g. "jared", "lilia").
+// Multi-profile rows: comma-separated ids ("jared,lilia") — each id matches.
+// Backward-compat: 4-col files load fine, every row becomes profile="".
+const HEADER = ["name", "ats_source", "ats_slug", "extra_json", "profile"];
 
 function escapeField(value) {
   if (value === undefined || value === null) return "";
@@ -38,21 +46,35 @@ function parseExtra(raw) {
   }
 }
 
+function parseProfile(raw) {
+  // Empty + "both" both mean "visible to every profile". Multi-id values
+  // are comma-separated and trimmed.
+  const v = String(raw == null ? "" : raw).trim().toLowerCase();
+  if (!v || v === "both") return "";
+  return v
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join(",");
+}
+
 function parseLine(line, lineNo) {
   const parts = line.split("\t");
   if (parts.length < 3) {
     throw new Error(`line ${lineNo}: expected ≥3 tab-separated fields, got ${parts.length}`);
   }
-  const [name, source, slug, extraRaw] = parts;
+  const [name, source, slug, extraRaw, profileRaw] = parts;
   if (!name || !source || !slug) {
     throw new Error(`line ${lineNo}: name/ats_source/ats_slug are all required`);
   }
   const extra = parseExtra(extraRaw);
+  const profile = parseProfile(profileRaw);
   return {
     name: name.trim(),
     source: source.trim().toLowerCase(),
     slug: slug.trim(),
     extra,
+    profile,
   };
 }
 
@@ -86,10 +108,15 @@ function serialize(rows) {
   const out = [HEADER.join("\t")];
   for (const r of rows) {
     const extra = r.extra ? JSON.stringify(r.extra) : "";
+    const profile = r.profile ? String(r.profile) : "";
     out.push(
-      [escapeField(r.name), escapeField(r.source).toLowerCase(), escapeField(r.slug), extra].join(
-        "\t"
-      )
+      [
+        escapeField(r.name),
+        escapeField(r.source).toLowerCase(),
+        escapeField(r.slug),
+        extra,
+        escapeField(profile),
+      ].join("\t")
     );
   }
   return out.join("\n") + "\n";
@@ -135,9 +162,37 @@ function groupBySource(rows) {
     if (!out[r.source]) out[r.source] = [];
     const target = { name: r.name, slug: r.slug };
     if (r.extra) Object.assign(target, r.extra);
+    if (r.profile) target.profile = r.profile;
     out[r.source].push(target);
   }
   return out;
 }
 
-module.exports = { load, save, serialize, merge, groupBySource, HEADER };
+// Returns rows visible to `profileId`. A row is visible when:
+//   - row.profile is empty / unset / "both"  → public, every profile sees it
+//   - row.profile === profileId               → exclusive to that profile
+//   - row.profile is comma-list containing profileId
+// Profiles unknown to the row are filtered out — this is the cross-profile
+// isolation gate (replaces the brittle blacklist-on-Jared approach).
+function rowVisibleToProfile(row, profileId) {
+  const p = row && row.profile ? String(row.profile).trim().toLowerCase() : "";
+  if (!p || p === "both") return true;
+  const ids = p.split(",").map((s) => s.trim()).filter(Boolean);
+  return ids.includes(String(profileId || "").toLowerCase());
+}
+
+function filterByProfile(rows, profileId) {
+  if (!profileId) return rows.slice();
+  return rows.filter((r) => rowVisibleToProfile(r, profileId));
+}
+
+module.exports = {
+  load,
+  save,
+  serialize,
+  merge,
+  groupBySource,
+  filterByProfile,
+  rowVisibleToProfile,
+  HEADER,
+};

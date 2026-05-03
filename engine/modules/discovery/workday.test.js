@@ -129,6 +129,106 @@ test("workday.discover drops postings without externalPath and warns", async () 
   assert.ok(logs.some((m) => m.includes("dropped 2 postings without externalPath")));
 });
 
+test("workday.discover loops over searchTexts and dedupes by externalPath", async () => {
+  // Three queries, partial overlap on JR-100, JR-200, JR-300.
+  // Expect 5 unique jobs after dedup, exactly 3 POST calls (one per query).
+  const recorded = [];
+  const responsesByQuery = {
+    "patient access": [
+      { title: "Patient Access Rep", locationsText: "Sac", externalPath: "/job/JR-100", postedOn: "2026-04-01" },
+      { title: "Patient Access Coord", locationsText: "Sac", externalPath: "/job/JR-101", postedOn: "2026-04-02" },
+    ],
+    scheduler: [
+      { title: "Patient Access Rep", locationsText: "Sac", externalPath: "/job/JR-100", postedOn: "2026-04-01" }, // dup of query 1
+      { title: "Scheduler", locationsText: "Sac", externalPath: "/job/JR-200", postedOn: "2026-04-03" },
+    ],
+    "front desk": [
+      { title: "Scheduler", locationsText: "Sac", externalPath: "/job/JR-200", postedOn: "2026-04-03" }, // dup of query 2
+      { title: "Front Desk", locationsText: "Sac", externalPath: "/job/JR-300", postedOn: "2026-04-04" },
+      { title: "Receptionist", locationsText: "Sac", externalPath: "/job/JR-301", postedOn: "2026-04-05" },
+    ],
+  };
+  const fetchFn = makeFetch(
+    {
+      "https://sutterhealth.wd1.myworkdayjobs.com/wday/cxs/sutterhealth/SH/jobs": (body) => {
+        if (body.offset !== 0) return { status: 200, body: { total: 0, jobPostings: [] } };
+        const list = responsesByQuery[body.searchText] || [];
+        return { status: 200, body: { total: list.length, jobPostings: list } };
+      },
+    },
+    recorded
+  );
+  const jobs = await workday.discover(
+    [
+      {
+        name: "Sutter Health",
+        slug: "sutterhealth",
+        dc: "wd1",
+        site: "SH",
+        searchTexts: ["patient access", "scheduler", "front desk"],
+      },
+    ],
+    { fetchFn }
+  );
+  assert.equal(recorded.length, 3, "one POST per searchText");
+  assert.equal(jobs.length, 5, "JR-100/101/200/300/301 after dedup");
+  const ids = jobs.map((j) => j.jobId).sort();
+  assert.deepEqual(ids, ["/job/JR-100", "/job/JR-101", "/job/JR-200", "/job/JR-300", "/job/JR-301"]);
+  for (const j of jobs) assertJob(j);
+});
+
+test("workday.discover drops empty/whitespace entries from searchTexts (footgun guard)", async () => {
+  // A typo/trailing-comma in extra_json must not silently burn a tenant-wide
+  // pull. With ["a", "", "  ", "b"] the adapter should make exactly 2 POSTs.
+  const recorded = [];
+  const fetchFn = makeFetch(
+    {
+      "https://acme.wd1.myworkdayjobs.com/wday/cxs/acme/jobs/jobs": () => ({
+        status: 200,
+        body: { total: 0, jobPostings: [] },
+      }),
+    },
+    recorded
+  );
+  await workday.discover(
+    [{ name: "Acme", slug: "acme", searchTexts: ["a", "", "  ", "b", null, undefined] }],
+    { fetchFn }
+  );
+  assert.equal(recorded.length, 2);
+  assert.deepEqual(recorded.map((r) => r.body.searchText).sort(), ["a", "b"]);
+});
+
+test("workday.discover prefers searchTexts over searchText when both present", async () => {
+  // Asserts the documented precedence: searchTexts wins.
+  const recorded = [];
+  const fetchFn = makeFetch(
+    {
+      "https://acme.wd1.myworkdayjobs.com/wday/cxs/acme/jobs/jobs": () => ({
+        status: 200,
+        body: { total: 0, jobPostings: [] },
+      }),
+    },
+    recorded
+  );
+  await workday.discover(
+    [
+      {
+        name: "Acme",
+        slug: "acme",
+        searchText: "ignored",
+        searchTexts: ["a", "b"],
+      },
+    ],
+    { fetchFn }
+  );
+  // 2 POSTs (one per searchTexts entry), neither carrying "ignored".
+  assert.equal(recorded.length, 2);
+  assert.deepEqual(
+    recorded.map((r) => r.body.searchText).sort(),
+    ["a", "b"]
+  );
+});
+
 test("workday.discover isolates per-tenant failures", async () => {
   const fetchFn = makeFetch({
     "https://bad.wd1.myworkdayjobs.com/wday/cxs/bad/jobs/jobs": { status: 500, body: {} },

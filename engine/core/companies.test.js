@@ -114,3 +114,75 @@ test("escape strips tabs/newlines from field values", () => {
   assert.equal(back.rows[0].name, "Bad Name With Whitespace");
   assert.equal(back.rows[0].slug, "bad slug");
 });
+
+// --- profile column (RFC 010 part B) ---
+
+test("parse + serialize: 5-col schema with profile round-trips", () => {
+  const file = tmpFile();
+  companies.save(file, [
+    { name: "Affirm", source: "greenhouse", slug: "affirm", extra: null, profile: "jared" },
+    { name: "Sutter Health", source: "workday", slug: "sutterhealth", extra: { dc: "wd1" }, profile: "lilia" },
+    { name: "Public Co", source: "lever", slug: "pub", extra: null, profile: "" },
+  ]);
+  const back = companies.load(file);
+  assert.equal(back.rows.length, 3);
+  assert.equal(back.rows[0].profile, "jared");
+  assert.equal(back.rows[1].profile, "lilia");
+  assert.equal(back.rows[2].profile, "");
+});
+
+test("parse: legacy 4-col rows load with profile=\"\" (backward-compat)", () => {
+  const file = tmpFile();
+  fs.writeFileSync(
+    file,
+    "name\tats_source\tats_slug\textra_json\nAffirm\tgreenhouse\taffirm\t\nStripe\tlever\tstripe\t\n"
+  );
+  const back = companies.load(file);
+  assert.equal(back.rows.length, 2);
+  assert.equal(back.rows[0].profile, "");
+  assert.equal(back.rows[1].profile, "");
+});
+
+test("parse: \"both\" alias normalizes to empty profile", () => {
+  const file = tmpFile();
+  fs.writeFileSync(
+    file,
+    "name\tats_source\tats_slug\textra_json\tprofile\nX\tlever\tx\t\tboth\nY\tlever\ty\t\tBOTH\n"
+  );
+  const back = companies.load(file);
+  assert.equal(back.rows[0].profile, "");
+  assert.equal(back.rows[1].profile, "");
+});
+
+test("filterByProfile: public + matching + multi-id rows visible", () => {
+  const rows = [
+    { name: "A", source: "x", slug: "a", profile: "jared" },
+    { name: "B", source: "x", slug: "b", profile: "lilia" },
+    { name: "C", source: "x", slug: "c", profile: "" },
+    { name: "D", source: "x", slug: "d", profile: "jared,lilia" },
+  ];
+  const jared = companies.filterByProfile(rows, "jared").map((r) => r.name).sort();
+  const lilia = companies.filterByProfile(rows, "lilia").map((r) => r.name).sort();
+  assert.deepEqual(jared, ["A", "C", "D"]);
+  assert.deepEqual(lilia, ["B", "C", "D"]);
+});
+
+test("filterByProfile: empty profileId returns all rows untouched", () => {
+  const rows = [
+    { name: "A", source: "x", slug: "a", profile: "jared" },
+    { name: "B", source: "x", slug: "b", profile: "lilia" },
+  ];
+  const all = companies.filterByProfile(rows, "");
+  assert.equal(all.length, 2);
+});
+
+test("groupBySource exposes profile on target", () => {
+  const rows = [
+    { name: "A", source: "lever", slug: "a", extra: null, profile: "jared" },
+    { name: "B", source: "lever", slug: "b", extra: { dc: "wd1" }, profile: "lilia" },
+  ];
+  const g = companies.groupBySource(rows);
+  assert.equal(g.lever[0].profile, "jared");
+  assert.equal(g.lever[1].profile, "lilia");
+  assert.equal(g.lever[1].dc, "wd1");
+});

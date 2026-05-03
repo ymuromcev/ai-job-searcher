@@ -22,6 +22,7 @@ const DEFAULT_DEPS = {
   loadProfile: profileLoader.loadProfile,
   loadSecrets: profileLoader.loadSecrets,
   loadCompanies: companies.load,
+  filterCompaniesByProfile: companies.filterByProfile,
   loadJobs: jobsTsv.load,
   saveJobs: jobsTsv.save,
   loadApplications: applications.load,
@@ -110,7 +111,15 @@ function makeScanCommand(overrides = {}) {
     const companiesPath = path.join(dataDir, "companies.tsv");
     const { rows: companyRows } = deps.loadCompanies(companiesPath);
 
-    const grouped = deps.groupBySource(companyRows);
+    // Per-profile visibility (RFC 010 part B). `profile` column in
+    // companies.tsv gates rows BEFORE whitelist/blacklist. Public rows
+    // (profile="" / "both") are always visible. This is the structural
+    // replacement for the cross-profile blacklist hack.
+    const visibleRows = deps.filterCompaniesByProfile
+      ? deps.filterCompaniesByProfile(companyRows, profileId)
+      : companyRows;
+
+    const grouped = deps.groupBySource(visibleRows);
     const enabledGrouped = {};
     for (const src of Object.keys(grouped)) {
       if (enabledSources.has(src)) enabledGrouped[src] = grouped[src];

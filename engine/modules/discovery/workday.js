@@ -1,15 +1,25 @@
 // Workday tenant-specific jobs API.
 //   https://{slug}.{dc}.myworkdayjobs.com/wday/cxs/{slug}/{site}/jobs
 // Each target must carry tenant-specific metadata:
-//   { name, slug, dc?, site?, searchText? }
-//   dc   — worker's data center (wd1/wd5/wd103/...), default "wd1".
-//   site — career site path (jobs, External, Careers), default "jobs".
+//   { name, slug, dc?, site?, searchText?, searchTexts? }
+//   dc          — worker's data center (wd1/wd5/wd103/...), default "wd1".
+//   site        — career site path (jobs, External, Careers), default "jobs".
+//   searchText  — single full-text query (legacy single-query mode).
+//   searchTexts — array of full-text queries; adapter loops over each, dedups
+//                 results by externalPath. Use when one tenant needs broad
+//                 coverage of multiple role families (e.g. healthcare admin:
+//                 receptionist, scheduler, patient access, intake, etc.).
+//                 If both are present, searchTexts wins.
 //
 // Response shape:
 //   { total, jobPostings: [{ title, locationsText, externalPath, postedOn, bulletFields }] }
 //
 // We iterate through the paged response with a hard page cap to avoid runaway
-// scans if a tenant returns millions of rows.
+// scans if a tenant returns millions of rows. With searchTexts[], the cap
+// applies PER-QUERY — so a tenant with N queries can return up to
+// N * MAX_JOBS_PER_TENANT before dedup. Sized this way intentionally: the
+// whole point of a multi-query setup is broader role coverage, and dedup
+// collapses the overlap in `discover()`.
 
 const { fetchJson, runTargets, makeCtx } = require("./_ats.js");
 const { assertJob } = require("./_types.js");
@@ -91,6 +101,22 @@ async function fetchAllPages(fetchFn, apiUrl, searchText, signal) {
   return all;
 }
 
+function resolveSearchTexts(target) {
+  // searchTexts (array) wins over single searchText. Empty/whitespace entries
+  // are dropped: an empty searchText triggers an unfiltered tenant-wide fetch
+  // (200-cap), which is fine for the legacy single-query mode but never the
+  // intent inside a multi-query array — a typo or trailing comma silently
+  // burning a tenant-wide pull. If filtering empties leaves the array bare,
+  // fall back to single empty-query (legacy behavior).
+  if (Array.isArray(target.searchTexts) && target.searchTexts.length > 0) {
+    const cleaned = target.searchTexts
+      .map((s) => String(s == null ? "" : s).trim())
+      .filter((s) => s.length > 0);
+    if (cleaned.length > 0) return cleaned;
+  }
+  return [target.searchText || ""];
+}
+
 async function discover(targets, ctx = {}) {
   const c = makeCtx({ ...ctx, source: SOURCE });
   // Workday tenants rate-limit aggressively — keep concurrency low.
@@ -98,15 +124,29 @@ async function discover(targets, ctx = {}) {
   return runTargets(targets, effectiveCtx, async (target) => {
     if (!target || !target.slug) return [];
     const { apiUrl, viewBase } = buildTenantUrls(target);
-    const raws = await fetchAllPages(c.fetchFn, apiUrl, target.searchText, c.signal);
-    const mapped = raws.map((r) => mapJob(target, viewBase, r));
-    const dropped = mapped.filter((j) => j === null).length;
+    const queries = resolveSearchTexts(target);
+    // Dedup by externalPath (jobId). Same posting can match multiple queries
+    // when searchTexts overlap (e.g. "scheduler" and "front desk" both pull
+    // the same admin role). First-occurrence wins.
+    const dedupedById = new Map();
+    let dropped = 0;
+    for (const searchText of queries) {
+      const raws = await fetchAllPages(c.fetchFn, apiUrl, searchText, c.signal);
+      for (const r of raws) {
+        const job = mapJob(target, viewBase, r);
+        if (!job) {
+          dropped += 1;
+          continue;
+        }
+        if (!dedupedById.has(job.jobId)) dedupedById.set(job.jobId, job);
+      }
+    }
     if (dropped > 0) {
       c.logger.warn(
         `[${SOURCE}] ${target.slug}: dropped ${dropped} postings without externalPath`
       );
     }
-    return mapped.filter(Boolean);
+    return Array.from(dedupedById.values());
   });
 }
 
