@@ -492,7 +492,7 @@ test("sync --apply updates the hub callout block when configured", async () => {
   assert.equal(code, 0);
   assert.equal(calloutCalls.length, 1);
   assert.equal(calloutCalls[0].blockId, "callout-block-1");
-  assert.match(calloutCalls[0].text, /^To Apply: 2 \| Updated: /);
+  assert.match(calloutCalls[0].text, /^Inbox: 2 \| Updated: /);
 });
 
 test("sync --apply prints setup prompt when inbox_callout_block_id not configured", async () => {

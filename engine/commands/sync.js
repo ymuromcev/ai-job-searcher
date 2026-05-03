@@ -372,11 +372,10 @@ function makeSyncCommand(overrides = {}) {
     }
 
     // Update the hub callout counter if the profile has one configured.
-    // Counts rows that need an action: status="To Apply" with no Notion page
-    // yet (i.e. fresh from scan, awaiting `prepare`). After Stage 8 unified
-    // statuses, "Inbox" no longer exists — the counter tracks the same idea
-    // ("things on the operator's desk") under the new status name.
-    // The profile key stays `inbox_callout_block_id` for back-compat.
+    // Counts the **inbox**: fresh rows that haven't been pushed to Notion yet
+    // (status="To Apply" + no notion_page_id). The label stays "Inbox" because
+    // "To Apply" is the Notion *status* of cards already in the DB, while the
+    // callout shows the pre-Notion staging queue — different concepts.
     //
     // Runs unconditionally on --apply (not just when rows changed) so the
     // "Updated:" timestamp stays accurate even if nothing changed this run.
@@ -387,16 +386,16 @@ function makeSyncCommand(overrides = {}) {
       profile.notion.hub_layout.inbox_callout_block_id;
     if (calloutBlockId) {
       try {
-        const toApplyCount = apps.filter(
+        const inboxCount = apps.filter(
           (a) => a.status === "To Apply" && !a.notion_page_id
         ).length;
         const today = deps.now().slice(0, 10);
         await deps.updateCalloutBlock(
           getClient(),
           calloutBlockId,
-          `To Apply: ${toApplyCount} | Updated: ${today}`
+          `Inbox: ${inboxCount} | Updated: ${today}`
         );
-        stdout(`hub callout: To Apply: ${toApplyCount}`);
+        stdout(`hub callout: Inbox: ${inboxCount}`);
       } catch (err) {
         ctx.stderr(`  warn: hub callout update failed: ${err.message}`);
       }
