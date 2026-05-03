@@ -185,6 +185,10 @@ function makeScanCommand(overrides = {}) {
       existing: existingJobs,
       ctx: {
         secrets,
+        // Pass the profile's discovery config so keyword-search adapters
+        // (adzuna, the_muse) can read keywords, location, and result limits
+        // without requiring companies.tsv entries.
+        discovery: profile.discovery || {},
         logger: {
           // Adapters only emit benign warnings here (missing slug, per-target
           // fetch failures). We still redact defensively in case an HTTP
