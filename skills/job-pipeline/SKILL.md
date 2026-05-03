@@ -174,11 +174,34 @@ Skip (mark `decision: "skip"`) any job where:
 
 Report skipped jobs with reason to the user before continuing.
 
+**Step 5.7 — Auto-tier unknown companies**
+
+If `prepare_context.unknownTierCompanies` is non-empty, assign each company a tier (`S` / `A` / `B` / `C`). Do **not** prompt the user — the user never tiers companies manually; this is your job.
+
+**Tier criteria** (read profile-flavor-aware):
+
+| Tier | Jared (PM / fintech-leaning) | Lilia (healthcare RN) |
+|---|---|---|
+| **S** | Public big-tech / top fintech, $10B+ market cap, top brand recognition. AI-native or strong AI investment. | Major regional health systems (Kaiser, UC Davis, Sutter, Dignity), 10K+ employees, full benefits, RN union presence. |
+| **A** | Late-stage / public mid-cap. Strong funding, well-known brand. AI presence non-trivial. | Large medical foundations / dialysis chains / managed care. 1K+ employees, multi-site. |
+| **B** | Growth-stage Series C–E, $1–5B valuation. Recognized in their sector. | Specialty clinic chains (eye, dental, dermatology). Multi-location, regional reach. |
+| **C** | Early/mid-stage Series A–B, <$1B. Less known. | Small private practices, single-clinic operations, local services. |
+
+**Sources of signal** (use freely, in this order):
+1. Company name recognition + general knowledge (size, valuation, funding round).
+2. `jdText` if present — funding mentions, employee count, "Series X", "publicly traded".
+3. WebFetch the company website / Crunchbase / LinkedIn for ambiguous cases (one extra fetch per unknown company is fine).
+
+**Output**: every name from `unknownTierCompanies` MUST appear in `results.companyTiers` with a value in `{"S","A","B","C"}`. Don't skip companies — the engine treats absence as "still unknown" and the next prepare run will re-ask.
+
+After tiering, the engine will persist the assignments to `profile.json.company_tiers` on commit (one-shot per company). It also uses them to set the Notion Companies DB `Tier` field on first push.
+
 **Step 6 — Salary (auto-fill)**
 
 For each remaining job:
 - If `prepare_context.batch[i].salary` is non-null: use it as-is.
-- If null (unknown company tier): flag to user, do NOT invent a range.
+- If `salary` is null AND the entry has `unknownTier: true`: look up the tier you just assigned in Step 5.7, then read `profiles/<id>/salary_matrix.md` (or the engine's default matrix in `engine/core/salary_calc.js` for healthcare profiles without a custom matrix) and pick the row at Tier × Level. Compute `salaryMin` / `salaryMax` from the table. Apply +5–10% adjustment for SF/NYC hybrid/onsite (matches the engine's COL multiplier).
+- If `salary` is null AND `unknownTier` is **not** true: this means the tier is known but the matrix doesn't cover the level — flag to user with the company name and title, do NOT invent a range.
 
 **Step 7 — Archetype selection (per job)**
 
@@ -242,6 +265,9 @@ Write `profiles/<id>/prepare_results_<YYYYMMDD_HHMMSS>.json`:
 {
   "profileId": "<id>",
   "generatedAt": "<ISO timestamp>",
+  "companyTiers": {
+    "<company-name>": "S|A|B|C"
+  },
   "results": [
     {
       "key": "<source>:<jobId>",
@@ -267,6 +293,8 @@ Write `profiles/<id>/prepare_results_<YYYYMMDD_HHMMSS>.json`:
 }
 ```
 
+`companyTiers` is required only when `prepare_context.unknownTierCompanies` was non-empty. List every company from that array with the tier you assigned in Step 5.7. Engine merges this into `profile.json.company_tiers` on commit and patches Notion's Companies DB Tier field on next sync push.
+
 **Step 11 — Commit phase (CLI)**
 
 ```
@@ -283,6 +311,7 @@ Summarize:
 - N jobs skipped (geo / weak fit) with list
 - N CLs written (paths)
 - N Notion pages created
+- N companies auto-tiered (with tier assignments) — only if Step 5.7 ran
 - Any warnings or anomalies
 
 ---
@@ -292,7 +321,7 @@ Summarize:
 - **`prepare_context.json` missing** — run `--phase pre` first.
 - **`jdText` is null for many jobs** — Greenhouse / Lever API may have changed; investigate `engine/core/jd_cache.js`. Geo + fit can still run from the job title + company name.
 - **Notion page creation fails** — check `JARED_NOTION_TOKEN` env var and that the DB id in `profile.json` is correct. Re-run the SKILL for the failed jobs only (skip already-created ones by key).
-- **Unknown company tier (salary = null)** — add the company to `profile.json.company_tiers` or `profiles/<id>/salary_matrix.md` and re-run `--phase pre`.
+- **Unknown company tier (salary = null AND `unknownTier: true`)** — assign the tier in Step 5.7 and put it in `results.companyTiers`. The commit phase persists it to `profile.json.company_tiers` automatically; no need to edit the file by hand.
 
 ### check
 

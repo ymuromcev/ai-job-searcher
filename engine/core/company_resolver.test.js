@@ -3,16 +3,29 @@ const assert = require("node:assert/strict");
 
 const { makeCompanyResolver } = require("./company_resolver.js");
 
-function fakeClient({ existing = {}, onCreate } = {}) {
-  const calls = { queries: [], creates: [] };
+// `existing` accepts two shapes (back-compat):
+//   - string:  Affirm: "page-affirm"          → page with no Tier prop
+//   - object:  Affirm: { id, tier: "S" }      → page with Tier.select.name = tier
+function fakeClient({ existing = {}, onCreate, supportsUpdate = true } = {}) {
+  const calls = { queries: [], creates: [], updates: [] };
   const client = {
     dataSources: {
       query: async (params) => {
         calls.queries.push(params);
         const filter = params.filter || {};
         const wanted = filter.title && filter.title.equals;
-        if (existing[wanted]) return { results: [{ id: existing[wanted] }] };
-        return { results: [] };
+        const entry = existing[wanted];
+        if (!entry) return { results: [] };
+        if (typeof entry === "string") {
+          return { results: [{ id: entry, properties: {} }] };
+        }
+        const props = {};
+        if (entry.tier) {
+          props.Tier = { select: { name: entry.tier } };
+        } else {
+          props.Tier = { select: null };
+        }
+        return { results: [{ id: entry.id, properties: props }] };
       },
     },
     pages: {
@@ -23,6 +36,12 @@ function fakeClient({ existing = {}, onCreate } = {}) {
       },
     },
   };
+  if (supportsUpdate) {
+    client.pages.update = async (params) => {
+      calls.updates.push(params);
+      return { id: params.page_id };
+    };
+  }
   return { client, calls };
 }
 
@@ -128,4 +147,86 @@ test("makeCompanyResolver: throws on missing required args", () => {
     () => makeCompanyResolver({ client: {}, companiesDbId: "x" }),
     /companiesDataSourceId is required/
   );
+});
+
+// --- syncTier (G-11/G-15) ----------------------------------------------------
+
+test("syncTier: patches existing page when Notion Tier is empty but profile knows it", async () => {
+  const { client, calls } = fakeClient({
+    existing: { Affirm: { id: "page-affirm", tier: null } },
+  });
+  const resolver = makeCompanyResolver({
+    client,
+    companiesDbId: "db",
+    companiesDataSourceId: "ds",
+    companyTiers: { Affirm: "S" },
+  });
+  const id = await resolver.resolve("Affirm");
+  assert.equal(id, "page-affirm");
+  assert.equal(calls.updates.length, 1);
+  assert.equal(calls.updates[0].page_id, "page-affirm");
+  assert.equal(calls.updates[0].properties.Tier.select.name, "S");
+});
+
+test("syncTier: does NOT overwrite an already-set tier on Notion", async () => {
+  const { client, calls } = fakeClient({
+    existing: { Affirm: { id: "page-affirm", tier: "B" } },
+  });
+  const resolver = makeCompanyResolver({
+    client,
+    companiesDbId: "db",
+    companiesDataSourceId: "ds",
+    companyTiers: { Affirm: "S" }, // profile says S, Notion already has B → leave Notion alone
+  });
+  await resolver.resolve("Affirm");
+  assert.equal(calls.updates.length, 0);
+});
+
+test("syncTier: skips when profile has no tier for company", async () => {
+  const { client, calls } = fakeClient({
+    existing: { Mystery: { id: "page-mystery", tier: null } },
+  });
+  const resolver = makeCompanyResolver({
+    client,
+    companiesDbId: "db",
+    companiesDataSourceId: "ds",
+    companyTiers: {}, // no tier known
+  });
+  await resolver.resolve("Mystery");
+  assert.equal(calls.updates.length, 0);
+});
+
+test("syncTier: idempotent within a run — repeat resolve doesn't re-patch", async () => {
+  const { client, calls } = fakeClient({
+    existing: { Affirm: { id: "page-affirm", tier: null } },
+  });
+  const resolver = makeCompanyResolver({
+    client,
+    companiesDbId: "db",
+    companiesDataSourceId: "ds",
+    companyTiers: { Affirm: "S" },
+  });
+  await resolver.resolve("Affirm");
+  await resolver.resolve("Affirm");
+  await resolver.resolve("Affirm");
+  // First call patches; subsequent calls hit the in-memory cache anyway.
+  assert.equal(calls.updates.length, 1);
+});
+
+test("syncTier: gracefully skips when client lacks pages.update", async () => {
+  const { client, calls } = fakeClient({
+    existing: { Affirm: { id: "page-affirm", tier: null } },
+    supportsUpdate: false,
+  });
+  const resolver = makeCompanyResolver({
+    client,
+    companiesDbId: "db",
+    companiesDataSourceId: "ds",
+    companyTiers: { Affirm: "S" },
+  });
+  // Should not throw — guard returns early. Validates back-compat for older
+  // Notion SDK shims that may not expose pages.update.
+  const id = await resolver.resolve("Affirm");
+  assert.equal(id, "page-affirm");
+  assert.equal(calls.updates.length, 0);
 });

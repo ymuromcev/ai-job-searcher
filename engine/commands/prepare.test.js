@@ -345,22 +345,69 @@ test("prepare --phase pre: includes salary when company_tiers known", async () =
   const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
   assert.ok(result.batch[0].salary);
   assert.equal(result.batch[0].salary.tier, "S");
+  // Known-tier company should NOT be flagged unknownTier
+  assert.equal(result.batch[0].unknownTier, undefined);
+  assert.deepEqual(result.unknownTierCompanies, []);
+});
+
+test("prepare --phase pre: flags unknown-tier companies, dedupes across batch", async () => {
+  // Stripe is in company_tiers → known. NewCo and OtherCo are not → flagged.
+  // Two NewCo jobs should produce one entry in unknownTierCompanies (deduped).
+  const apps = [
+    makeApp({ key: "gh:1", companyName: "Stripe", title: "PM", jobId: "1" }),
+    makeApp({ key: "gh:2", companyName: "NewCo", title: "PM", jobId: "2" }),
+    makeApp({ key: "gh:3", companyName: "NewCo", title: "Senior PM", jobId: "3" }),
+    makeApp({ key: "gh:4", companyName: "OtherCo", title: "PM", jobId: "4" }),
+  ];
+  const deps = makePrepDeps(apps);
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  // Stripe entry is not flagged
+  const stripeEntry = result.batch.find((e) => e.companyName === "Stripe");
+  assert.equal(stripeEntry.unknownTier, undefined);
+  // Both NewCo entries are flagged
+  const newcoEntries = result.batch.filter((e) => e.companyName === "NewCo");
+  assert.equal(newcoEntries.length, 2);
+  assert.ok(newcoEntries.every((e) => e.unknownTier === true));
+  // unknownTierCompanies has unique sorted names (no Stripe)
+  assert.deepEqual(result.unknownTierCompanies, ["NewCo", "OtherCo"]);
+  assert.equal(result.stats.unknownTierCompanies, 2);
+});
+
+test("prepare --phase pre: empty unknownTierCompanies when all companies tiered", async () => {
+  const apps = [makeApp({ companyName: "Stripe", title: "PM" })];
+  const deps = makePrepDeps(apps);
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.deepEqual(result.unknownTierCompanies, []);
+  assert.equal(result.stats.unknownTierCompanies, 0);
 });
 
 // --- prepare --phase commit --------------------------------------------------
 
 function makeCommitDeps(apps, overrides = {}) {
   let savedApps = null;
+  let savedProfile = null;
+  const profileBase = overrides.profile || {
+    id: "testuser",
+    filterRules: {},
+    company_tiers: {},
+    paths: {
+      root: "/fake/profiles/testuser",
+      applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+      jdCacheDir: "/fake/profiles/testuser/jd_cache",
+    },
+  };
   return {
-    loadProfile: () => ({
-      id: "testuser",
-      filterRules: {},
-      paths: {
-        root: "/fake/profiles/testuser",
-        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
-        jdCacheDir: "/fake/profiles/testuser/jd_cache",
-      },
-    }),
+    loadProfile: () => profileBase,
+    saveProfile: (id, patch) => {
+      savedProfile = { id, patch };
+      return { ...profileBase, ...patch };
+    },
     loadApplications: () => ({ apps }),
     saveApplications: (_, updated) => { savedApps = updated; },
     checkUrls: async () => [],
@@ -371,6 +418,7 @@ function makeCommitDeps(apps, overrides = {}) {
     writeFile: () => {},
     now: () => "2026-04-20T13:00:00.000Z",
     _getSaved: () => savedApps,
+    _getSavedProfile: () => savedProfile,
     ...overrides,
   };
 }
@@ -587,6 +635,120 @@ test("prepare --phase commit: validArchetypes empty set disables the gate (legac
   const saved = deps._getSaved();
   assert.equal(saved[0].resume_ver, "anything-goes");
   assert.equal(saved[0].notion_page_id, "p1");
+});
+
+// --- prepare --phase commit: companyTiers merge (G-11/G-15) ------------------
+
+test("prepare --phase commit: persists companyTiers from results to profile.json", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "To Apply", companyName: "NewCo" })];
+  const results = {
+    profileId: "testuser",
+    companyTiers: { NewCo: "B", OtherCo: "C" },
+    results: [
+      { key: "gh:1", decision: "to_apply", clKey: "newco_pm", resumeVer: "v1", notionPageId: "p1" },
+    ],
+  };
+  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json", dryRun: false } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+  const saved = deps._getSavedProfile();
+  assert.ok(saved, "profile should be saved");
+  assert.equal(saved.id, "testuser");
+  assert.deepEqual(saved.patch.company_tiers, { NewCo: "B", OtherCo: "C" });
+  assert.ok(ctx._lines.some((l) => /persisted 2 new tier/.test(l)));
+});
+
+test("prepare --phase commit: does NOT call saveProfile when companyTiers absent", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+  const results = {
+    profileId: "testuser",
+    results: [{ key: "gh:1", decision: "to_apply", clKey: "x", resumeVer: "v1", notionPageId: "p1" }],
+  };
+  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json", dryRun: false } });
+  await cmd(ctx);
+  assert.equal(deps._getSavedProfile(), null);
+});
+
+test("prepare --phase commit: skips already-known tiers (no spurious write)", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+  const results = {
+    profileId: "testuser",
+    companyTiers: { Stripe: "S", NewCo: "B" }, // Stripe already known
+    results: [{ key: "gh:1", decision: "to_apply", clKey: "x", resumeVer: "v1", notionPageId: "p1" }],
+  };
+  const profile = {
+    id: "testuser",
+    filterRules: {},
+    company_tiers: { Stripe: "S" },
+    paths: {
+      root: "/fake/profiles/testuser",
+      applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+      jdCacheDir: "/fake/profiles/testuser/jd_cache",
+    },
+  };
+  const deps = makeCommitDeps(apps, { profile, readFile: () => JSON.stringify(results) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json", dryRun: false } });
+  await cmd(ctx);
+  const saved = deps._getSavedProfile();
+  assert.ok(saved);
+  // Only NewCo should be in patch (Stripe was already at the same value)
+  assert.deepEqual(saved.patch.company_tiers, { Stripe: "S", NewCo: "B" });
+  assert.ok(ctx._lines.some((l) => /persisted 1 new tier/.test(l)));
+});
+
+test("prepare --phase commit: rejects invalid tier values, warns, continues", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+  const results = {
+    profileId: "testuser",
+    companyTiers: { GoodCo: "B", BadCo: "Z", AnotherBad: "" },
+    results: [{ key: "gh:1", decision: "to_apply", clKey: "x", resumeVer: "v1", notionPageId: "p1" }],
+  };
+  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json", dryRun: false } });
+  await cmd(ctx);
+  const saved = deps._getSavedProfile();
+  assert.ok(saved);
+  assert.deepEqual(saved.patch.company_tiers, { GoodCo: "B" });
+  assert.equal(
+    ctx._errLines.filter((l) => /invalid tier/.test(l)).length,
+    2
+  );
+});
+
+test("prepare --phase commit: dry-run does not call saveProfile", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+  const results = {
+    profileId: "testuser",
+    companyTiers: { NewCo: "B" },
+    results: [{ key: "gh:1", decision: "to_apply", clKey: "x", resumeVer: "v1", notionPageId: "p1" }],
+  };
+  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json", dryRun: true } });
+  await cmd(ctx);
+  assert.equal(deps._getSavedProfile(), null);
+  assert.ok(ctx._lines.some((l) => /\(dry-run\) would persist 1 new tier/.test(l)));
+});
+
+test("prepare --phase commit: lowercase tier value is normalized to uppercase", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+  const results = {
+    profileId: "testuser",
+    companyTiers: { NewCo: "b", OtherCo: "a" },
+    results: [{ key: "gh:1", decision: "to_apply", clKey: "x", resumeVer: "v1", notionPageId: "p1" }],
+  };
+  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json", dryRun: false } });
+  await cmd(ctx);
+  const saved = deps._getSavedProfile();
+  assert.deepEqual(saved.patch.company_tiers, { NewCo: "B", OtherCo: "A" });
 });
 
 // --- unknown phase -----------------------------------------------------------

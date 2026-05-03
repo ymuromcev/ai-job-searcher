@@ -161,6 +161,34 @@ function normalizeFilterRules(raw) {
   return out;
 }
 
+// Atomic write-back of a partial patch into profile.json. Reads current file,
+// shallow-merges top-level keys (deep-merge per known nested object, currently
+// only `company_tiers`), and writes via tmp-rename. Used by prepare commit
+// when SKILL auto-tiers new companies (G-11/G-15).
+function saveProfile(id, patch, options = {}) {
+  validateId(id);
+  const profilesDir = options.profilesDir || "profiles";
+  const { root } = resolveProfileRoot(id, profilesDir);
+  const profileJsonPath = path.join(root, "profile.json");
+  const current = readJsonIfExists(profileJsonPath);
+  if (!current) {
+    throw new Error(`profile.json missing at ${profileJsonPath}`);
+  }
+  const next = { ...current };
+  for (const [k, v] of Object.entries(patch || {})) {
+    if (k === "company_tiers" && v && typeof v === "object" && !Array.isArray(v)) {
+      next.company_tiers = { ...(current.company_tiers || {}), ...v };
+    } else {
+      next[k] = v;
+    }
+  }
+  const data = JSON.stringify(next, null, 2) + "\n";
+  const tmp = `${profileJsonPath}.tmp.${process.pid}.${Date.now()}`;
+  fs.writeFileSync(tmp, data);
+  fs.renameSync(tmp, profileJsonPath);
+  return next;
+}
+
 function secretPrefix(id) {
   validateId(id);
   return id.toUpperCase().replace(/-/g, "_") + "_";
@@ -181,4 +209,12 @@ function loadSecrets(id, env = process.env) {
   return out;
 }
 
-module.exports = { loadProfile, loadSecrets, secretEnvName, secretPrefix, normalizeFilterRules, ID_REGEX };
+module.exports = {
+  loadProfile,
+  saveProfile,
+  loadSecrets,
+  secretEnvName,
+  secretPrefix,
+  normalizeFilterRules,
+  ID_REGEX,
+};

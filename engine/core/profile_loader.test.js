@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
-const { loadProfile, loadSecrets, normalizeFilterRules, ID_REGEX } = require("./profile_loader.js");
+const { loadProfile, saveProfile, loadSecrets, normalizeFilterRules, ID_REGEX } = require("./profile_loader.js");
 
 function makeTempProfiles() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "aijs-profiles-"));
@@ -210,4 +210,63 @@ test("normalizeFilterRules: preserves auxiliary sections verbatim", () => {
   assert.deepEqual(out.domain_weak_fit, input.domain_weak_fit);
   assert.deepEqual(out.early_startup_modifier, input.early_startup_modifier);
   assert.deepEqual(out.priority_order, input.priority_order);
+});
+
+test("saveProfile: validates id", () => {
+  assert.throws(() => saveProfile("../etc", { x: 1 }, { profilesDir: "/tmp" }), /invalid profile id/);
+});
+
+test("saveProfile: throws when profile.json missing", () => {
+  const dir = makeTempProfiles();
+  fs.mkdirSync(path.join(dir, "bare"));
+  assert.throws(
+    () => saveProfile("bare", { x: 1 }, { profilesDir: dir }),
+    /profile\.json missing/
+  );
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("saveProfile: deep-merges company_tiers, replaces other top-level keys", () => {
+  const dir = makeTempProfiles();
+  writeProfile(dir, "p", {
+    id: "p",
+    company_tiers: { Stripe: "S", Brex: "A" },
+    notion: { jobs_db_id: "abc" },
+  });
+  const next = saveProfile(
+    "p",
+    {
+      company_tiers: { Brex: "B", NewCo: "C" }, // override Brex, add NewCo, keep Stripe
+      notion: { jobs_db_id: "xyz" }, // top-level replace (not deep-merged)
+    },
+    { profilesDir: dir }
+  );
+  assert.deepEqual(next.company_tiers, { Stripe: "S", Brex: "B", NewCo: "C" });
+  assert.deepEqual(next.notion, { jobs_db_id: "xyz" });
+
+  const onDisk = JSON.parse(fs.readFileSync(path.join(dir, "p", "profile.json"), "utf8"));
+  assert.deepEqual(onDisk.company_tiers, { Stripe: "S", Brex: "B", NewCo: "C" });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("saveProfile: writes atomically via tmp+rename (no partial file on error)", () => {
+  const dir = makeTempProfiles();
+  writeProfile(dir, "p", { id: "p", company_tiers: { A: "S" } });
+  saveProfile("p", { company_tiers: { B: "A" } }, { profilesDir: dir });
+  // No leftover .tmp.* files
+  const leftovers = fs.readdirSync(path.join(dir, "p")).filter((f) => f.includes(".tmp."));
+  assert.equal(leftovers.length, 0);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("saveProfile: handles empty current company_tiers", () => {
+  const dir = makeTempProfiles();
+  writeProfile(dir, "p", { id: "p" });
+  const next = saveProfile(
+    "p",
+    { company_tiers: { Acme: "B" } },
+    { profilesDir: dir }
+  );
+  assert.deepEqual(next.company_tiers, { Acme: "B" });
+  fs.rmSync(dir, { recursive: true, force: true });
 });

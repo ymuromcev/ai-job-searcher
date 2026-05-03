@@ -26,6 +26,8 @@ function makeCompanyResolver({
   if (!companiesDataSourceId) throw new Error("companiesDataSourceId is required");
 
   const cache = new Map();
+  // Tracks pages we patched in this run, to avoid duplicate updates.
+  const patchedTier = new Set();
 
   async function lookup(name) {
     const resp = await client.dataSources.query({
@@ -34,7 +36,14 @@ function makeCompanyResolver({
       page_size: 1,
     });
     const results = Array.isArray(resp && resp.results) ? resp.results : [];
-    return results.length ? results[0].id : null;
+    if (!results.length) return null;
+    const page = results[0];
+    const tierProp = page.properties && page.properties.Tier;
+    const currentTier =
+      tierProp && tierProp.select && tierProp.select.name
+        ? tierProp.select.name
+        : null;
+    return { id: page.id, currentTier };
   }
 
   async function create(name) {
@@ -52,6 +61,24 @@ function makeCompanyResolver({
     return page.id;
   }
 
+  // Sync Tier for an existing page when profile says we know the tier but
+  // Notion is missing it (e.g. company seeded before tier was assigned).
+  // Idempotent within a run via patchedTier set.
+  async function syncTier(name, pageId, currentTier) {
+    if (patchedTier.has(pageId)) return;
+    const desired = companyTiers[name];
+    if (!desired) return;
+    if (currentTier === desired) return;
+    if (currentTier) return; // never overwrite an already-set tier from Notion
+    if (typeof client.pages.update !== "function") return;
+    await client.pages.update({
+      page_id: pageId,
+      properties: { Tier: { select: { name: desired } } },
+    });
+    patchedTier.add(pageId);
+    log(`patched company tier: ${name} → ${desired} (${pageId})`);
+  }
+
   async function resolve(rawName) {
     if (!rawName) return null;
     const name = String(rawName).trim();
@@ -59,8 +86,14 @@ function makeCompanyResolver({
 
     if (cache.has(name)) return cache.get(name);
 
-    let id = await lookup(name);
-    if (!id) id = await create(name);
+    let id;
+    const found = await lookup(name);
+    if (found) {
+      id = found.id;
+      await syncTier(name, id, found.currentTier);
+    } else {
+      id = await create(name);
+    }
 
     cache.set(name, id);
     return id;

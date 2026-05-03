@@ -169,6 +169,7 @@ function applyPrepareFilter(apps, rules, activeCounts) {
 function makeDefaultDeps() {
   return {
     loadProfile: profileLoader.loadProfile,
+    saveProfile: profileLoader.saveProfile,
     loadApplications: applicationsTsv.load,
     saveApplications: applicationsTsv.save,
     checkUrls: checkAll,
@@ -185,6 +186,8 @@ function makeDefaultDeps() {
     now: () => new Date().toISOString(),
   };
 }
+
+const VALID_TIERS = new Set(["S", "A", "B", "C"]);
 
 // --- Phase: pre --------------------------------------------------------------
 
@@ -244,7 +247,10 @@ async function runPre(ctx, deps) {
     jdByAppKey[jdInputs[i].key] = jdResults[i];
   }
 
-  // Assemble batch entries
+  // Assemble batch entries. Track unique companies in batch whose tier is
+  // unknown — SKILL Step 5.7 will assign them and pass back via results
+  // (G-11/G-15: "Claude должен выставлять тиры самостоятельно").
+  const unknownTierSet = new Set();
   const batchOut = urlResults.map((urlRes) => {
     const entry = {
       key: urlRes.key,
@@ -267,11 +273,22 @@ async function runPre(ctx, deps) {
       entry.jdStatus = urlRes.alive ? "not_fetched" : "skipped_dead_url";
     }
 
+    const tierKnown = Object.prototype.hasOwnProperty.call(
+      companyTiers,
+      String(urlRes.companyName || "")
+    );
+    if (!tierKnown && urlRes.companyName) {
+      entry.unknownTier = true;
+      unknownTierSet.add(urlRes.companyName);
+    }
+
     const salary = deps.calcSalary(urlRes.companyName, urlRes.title, { companyTiers });
     if (salary) entry.salary = salary;
 
     return entry;
   });
+
+  const unknownTierCompanies = [...unknownTierSet].sort();
 
   const deadSkipped = dead.map((r) => ({
     key: r.key,
@@ -286,14 +303,22 @@ async function runPre(ctx, deps) {
     batchSize,
     batch: batchOut,
     skipped: [...filteredOut, ...deadSkipped],
+    unknownTierCompanies,
     stats: {
       inboxTotal: inboxApps.length,
       afterFilter: passed.length,
       inBatch: batch.length,
       urlAlive: alive.length,
       urlDead: dead.length,
+      unknownTierCompanies: unknownTierCompanies.length,
     },
   };
+
+  if (unknownTierCompanies.length > 0) {
+    stdout(
+      `unknown tiers: ${unknownTierCompanies.length} companies — SKILL Step 5.7 will auto-assign`
+    );
+  }
 
   const contextPath = path.join(profile.paths.root, "prepare_context.json");
 
@@ -353,6 +378,65 @@ async function runCommit(ctx, deps) {
 
   const byKey = Object.fromEntries(apps.map((a) => [a.key, a]));
   const now = deps.now();
+
+  // Persist tier assignments from SKILL Step 5.7 (G-11/G-15). The results
+  // file may carry a top-level `companyTiers` map. Validate values, drop
+  // tiers that already match, then write back via saveProfile so future
+  // pre-runs find the company in profile.company_tiers and don't re-prompt.
+  const tierUpdates = {};
+  const tierStats = { added: 0, invalid: 0, alreadyKnown: 0 };
+  let parsedTiers;
+  try {
+    parsedTiers = JSON.parse(resultsRaw).companyTiers;
+  } catch (_err) {
+    parsedTiers = undefined;
+  }
+  if (parsedTiers && typeof parsedTiers === "object" && !Array.isArray(parsedTiers)) {
+    const existing = (profile.company_tiers) || {};
+    for (const [name, tier] of Object.entries(parsedTiers)) {
+      const t = String(tier || "").toUpperCase();
+      if (!name || !VALID_TIERS.has(t)) {
+        tierStats.invalid++;
+        stderr(
+          `warn: invalid tier "${tier}" for company "${name}" — must be one of S/A/B/C`
+        );
+        continue;
+      }
+      if (existing[name] === t) {
+        tierStats.alreadyKnown++;
+        continue;
+      }
+      tierUpdates[name] = t;
+      tierStats.added++;
+    }
+  }
+
+  if (tierStats.added > 0 && !flags.dryRun && deps.saveProfile) {
+    try {
+      deps.saveProfile(
+        profileId,
+        { company_tiers: { ...(profile.company_tiers || {}), ...tierUpdates } },
+        { profilesDir }
+      );
+      stdout(
+        `tiers: persisted ${tierStats.added} new tier(s) → profile.json (${
+          Object.entries(tierUpdates)
+            .map(([n, t]) => `${n}=${t}`)
+            .join(", ")
+        })`
+      );
+    } catch (err) {
+      stderr(`warn: failed to persist company_tiers: ${err.message}`);
+    }
+  } else if (tierStats.added > 0 && flags.dryRun) {
+    stdout(
+      `(dry-run) would persist ${tierStats.added} new tier(s): ${
+        Object.entries(tierUpdates)
+          .map(([n, t]) => `${n}=${t}`)
+          .join(", ")
+      }`
+    );
+  }
 
   // Canonical archetype gate (G-18 backstop): block to_apply rows whose
   // resumeVer isn't a real key in resume_versions.json. Without this, a typo
@@ -428,6 +512,7 @@ async function runCommit(ctx, deps) {
   const extras = [];
   if (updates.invalidDecision > 0) extras.push(`${updates.invalidDecision} invalid decision`);
   if (updates.invalidArchetype > 0) extras.push(`${updates.invalidArchetype} invalid archetype`);
+  if (tierStats.invalid > 0) extras.push(`${tierStats.invalid} invalid tier`);
   const extraStr = extras.length > 0 ? `, ${extras.join(", ")}` : "";
 
   stdout(
