@@ -252,6 +252,53 @@ test("findCompany: tied score with one discriminating token present → correct 
   assert.equal(r.company, "Sacramento Spa Dentistry");
 });
 
+// Regression: Lilia incident 2026-05-02 follow-up. The active map contains
+// "Sacramento Spa Dentistry" but NOT "Sacramento Natural Dentistry". An
+// email about Natural Dentistry mentions only ["sacramento","dentistry"]
+// (long generic tokens) — both happen to be in Spa Dentistry's name too.
+// Without the short-discriminator guard, Spa wins by score 2 (only entry
+// scoring) and the email is mis-attributed. With the guard: Spa has a
+// short distinguishing token "spa" not present in haystack → null.
+test("findCompany: short-discriminator missing → null (Spa attributed to Natural email)", () => {
+  const email = {
+    from: "hello@send.applicantemails.com",
+    subject: "Application Follow-Up - Sacramento Natural Dentistry",
+    body: "Thank you for applying for the Dental Scheduler - Sacramento Natural Dentistry position.",
+  };
+  const map = {
+    "Sacramento Spa Dentistry": [{ role: "Dental Scheduler", notion_id: "p1" }],
+    // Note: NO "Sacramento Natural Dentistry" — it's not in active pipeline.
+  };
+  assert.equal(findCompany(email, map), null);
+});
+
+test("findCompany: short-discriminator present → match (Spa email correctly attributed)", () => {
+  const email = {
+    from: "hello@send.applicantemails.com",
+    subject: "Application update - Sacramento Spa Dentistry",
+    body: "Sacramento Spa Dentistry — Dental Scheduler position.",
+  };
+  const map = {
+    "Sacramento Spa Dentistry": [{ role: "Dental Scheduler", notion_id: "p1" }],
+  };
+  const r = findCompany(email, map);
+  assert.equal(r.company, "Sacramento Spa Dentistry");
+});
+
+test("findCompany: company without short discriminators (Bonita Aesthetics) still matches normally", () => {
+  // No short distinguishing tokens — guard passes trivially.
+  const email = {
+    from: "Bonita Aesthetics <noreply@indeed.com>",
+    subject: "An update on your application from Bonita Aesthetics",
+    body: "Thank you for applying to Bonita Aesthetics.",
+  };
+  const map = {
+    "Bonita Aesthetics": [{ role: "Patient Care Coordinator", notion_id: "p1" }],
+  };
+  const r = findCompany(email, map);
+  assert.equal(r.company, "Bonita Aesthetics");
+});
+
 test("findCompany: clear winner by score (no tie) — unaffected by tie-break", () => {
   // "Match Group" (2 tokens both match) should still beat "IEX Group" (1
   // token match) — same scenario as the original Match-vs-IEX fix, must

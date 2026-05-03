@@ -84,12 +84,44 @@ function findCompany(email, activeJobsMap, companyAliases = {}) {
   });
 
   const winner = pickBestWithTieBreak(entries, haystack, false);
-  if (winner) return { company: winner.entry.company, jobs: winner.entry.jobs };
+  if (winner && hasShortDiscriminatorMatch(winner.entry.synonyms, haystack, false)) {
+    return { company: winner.entry.company, jobs: winner.entry.jobs };
+  }
 
   const winner2 = pickBestWithTieBreak(entries, body, true);
-  if (winner2) return { company: winner2.entry.company, jobs: winner2.entry.jobs };
+  if (winner2 && hasShortDiscriminatorMatch(winner2.entry.synonyms, body, true)) {
+    return { company: winner2.entry.company, jobs: winner2.entry.jobs };
+  }
 
   return null;
+}
+
+// Short-discriminator guard (Lilia incident 2026-05-02 follow-up). If a
+// company name has SHORT distinguishing tokens that companyTokens drops
+// (length 2-3 after lowercase, e.g. "spa", "ENT", "MSO"), and those tokens
+// are the ONLY thing differentiating it from email content that mentions
+// the same long generic tokens (sacramento, dentistry), require at least
+// one short token to appear in the haystack. Otherwise the match is too
+// weak — it would attribute "Sacramento Natural Dentistry" emails to
+// "Sacramento Spa Dentistry" purely on shared generic tokens.
+//
+// For each synonym: if the synonym has no short discriminators, it
+// passes trivially (nothing extra to verify). If it has some, at least
+// one must appear in the haystack. ANY synonym passing → match accepted.
+function hasShortDiscriminatorMatch(synonyms, haystack, useWordBoundary) {
+  for (const syn of synonyms) {
+    const longTokens = new Set(companyTokens(syn));
+    const allTokens = tieBreakTokens(syn);
+    const shorts = allTokens.filter((t) => !longTokens.has(t) && t.length >= 2);
+    if (shorts.length === 0) return true;
+    const matched = shorts.some((t) =>
+      useWordBoundary
+        ? new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(haystack)
+        : haystack.includes(t)
+    );
+    if (matched) return true;
+  }
+  return false;
 }
 
 // More lenient tokenization for tie-break only. Includes short distinctive
