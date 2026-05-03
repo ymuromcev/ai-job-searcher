@@ -59,6 +59,10 @@ function parseSlugFromUrl(source, url) {
   return "";
 }
 
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // --- Filtering ---------------------------------------------------------------
 
 function buildActiveCounts(apps) {
@@ -79,8 +83,9 @@ function applyPrepareFilter(apps, rules, activeCounts) {
 
   // Blocklists arrive in the flat engine shape from profile_loader's
   // normalizeFilterRules (company_blocklist: [strings], title_blocklist:
-  // [{pattern, reason}]). Plain-string fallback is kept for tests that pass
-  // rules inline without going through the loader.
+  // [{pattern, reason}], title_requirelist: [{pattern, reason}]).
+  // Plain-string fallback is kept for tests that pass rules inline without
+  // going through the loader.
   const companyBlocklist = new Set(
     (Array.isArray(rules && rules.company_blocklist) ? rules.company_blocklist : [])
       .map((c) => (c && typeof c === "object" ? c.name : c))
@@ -90,6 +95,17 @@ function applyPrepareFilter(apps, rules, activeCounts) {
 
   const titlePatterns = (
     Array.isArray(rules && rules.title_blocklist) ? rules.title_blocklist : []
+  )
+    .map((p) => (p && typeof p === "object" ? p.pattern : p))
+    .filter((p) => typeof p === "string" && p.length > 0)
+    .map((p) => p.toLowerCase());
+
+  // Positive gate: if non-empty, at least one slash-part of the title must
+  // match a required pattern (word-boundary regex, case-insensitive).
+  // Prevents non-PM roles (SWE, DevOps, Analyst…) from reaching the batch when
+  // ATS adapters return all company openings.
+  const titleRequirelist = (
+    Array.isArray(rules && rules.title_requirelist) ? rules.title_requirelist : []
   )
     .map((p) => (p && typeof p === "object" ? p.pattern : p))
     .filter((p) => typeof p === "string" && p.length > 0)
@@ -108,6 +124,20 @@ function applyPrepareFilter(apps, rules, activeCounts) {
     }
 
     const titleLower = String(app.title || "").toLowerCase();
+
+    // title_requirelist: positive gate checked before blocklist
+    if (titleRequirelist.length > 0 && titleLower) {
+      const parts = titleLower.split("/").map((p) => p.trim()).filter(Boolean);
+      const titleParts = parts.length > 0 ? parts : [titleLower];
+      const anyMatches = titleParts.some((part) =>
+        titleRequirelist.some((pat) => new RegExp(`\\b${escapeRegex(pat)}\\b`, "i").test(part))
+      );
+      if (!anyMatches) {
+        skipped.push({ key: app.key, reason: "title_requirelist", url: app.url });
+        continue;
+      }
+    }
+
     let blocked = false;
     for (const pat of titlePatterns) {
       if (titleLower.includes(pat)) {

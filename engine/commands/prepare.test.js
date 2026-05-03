@@ -179,6 +179,45 @@ test("applyPrepareFilter: cap override per-company", () => {
   assert.equal(passed.length, 3);
 });
 
+test("applyPrepareFilter: title_requirelist blocks non-PM title", () => {
+  const apps = [
+    makeApp({ key: "gh:1", title: "Software Engineer" }),
+    makeApp({ key: "gh:2", title: "Senior Product Manager" }),
+  ];
+  const rules = {
+    title_requirelist: [{ pattern: "product manager", reason: "PM role" }],
+  };
+  const { passed, skipped } = applyPrepareFilter(apps, rules, {});
+  assert.equal(passed.length, 1);
+  assert.equal(passed[0].title, "Senior Product Manager");
+  assert.equal(skipped[0].reason, "title_requirelist");
+});
+
+test("applyPrepareFilter: title_requirelist passes PM abbreviation (word boundary)", () => {
+  const apps = [
+    makeApp({ key: "gh:1", title: "Sr. PM, Payments" }),
+  ];
+  const rules = {
+    title_requirelist: [{ pattern: "PM", reason: "PM abbreviation" }],
+  };
+  const { passed } = applyPrepareFilter(apps, rules, {});
+  assert.equal(passed.length, 1);
+});
+
+test("applyPrepareFilter: title_requirelist empty → no gate applied", () => {
+  const apps = [makeApp({ title: "DevOps Engineer" })];
+  const { passed } = applyPrepareFilter(apps, { title_requirelist: [] }, {});
+  assert.equal(passed.length, 1);
+});
+
+test("applyPrepareFilter: title_requirelist slash-compound — PM part passes whole title", () => {
+  const apps = [makeApp({ title: "Analyst/Product Manager" })];
+  const rules = { title_requirelist: [{ pattern: "product manager", reason: "PM" }] };
+  const { passed, skipped } = applyPrepareFilter(apps, rules, {});
+  assert.equal(passed.length, 1);
+  assert.equal(skipped.length, 0);
+});
+
 // --- prepare --phase pre (unit) ----------------------------------------------
 
 function makePrepDeps(apps, overrides = {}) {
