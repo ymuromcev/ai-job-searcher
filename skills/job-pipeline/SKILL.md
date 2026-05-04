@@ -211,21 +211,48 @@ Choose the best resume archetype from `profiles/<id>/resume_versions.json` for t
 
 Record `resumeVer` = archetype key (e.g. `"fintech-pm-v3"`).
 
-**Step 8 — Cover letter generation (per job)**
+**Step 8 — Cover letter generation (template-first, per job)**
 
-Apply **Humanizer Rules** from `## Humanizer Rules` below throughout.
+Per G-17: do NOT write CLs from scratch. Reuse the profile's saved cover-letter library so proof paragraphs (achievements, metrics, candidate facts) stay locked across the batch and only company-specific copy is regenerated. This keeps tone consistent across same-batch letters and cuts token cost roughly in half.
 
-Structure (3 paragraphs + optional 4th):
-1. **Hook** — Specific domain signal from the JD + candidate's most relevant achievement with a number. No "I am writing to express…" opener.
-2. **Core fit** — 2-3 concrete points showing domain/skill match. Each with a metric or outcome.
-3. **Why this company** — 1-2 genuine reasons based on the JD / company context. No hollow mission-statement praise.
-4. **(Optional) Forward bridge** — Only if something unusual or genuinely compelling can be said. Skip if forcing it.
+**8a — Load base template.**
 
-Close: brief, confident, no "excited to" or generic enthusiasm.
+Read `profiles/<id>/cover_letter_versions.json` and detect its shape:
+
+- **Template-variants shape** (Lilia and similar profiles): top-level `defaults` object with locked-down `p2`, `p3`, `p4_template`, `availability`, `sign` strings, plus a `letters` array of `{ job_id, role, company, p1 }` variants.
+- **Library shape** (Jared and similar profiles): top-level keys map to entries shaped as `{ filename, paragraphs: [p1, p2, p3, p4] }`.
+
+If `cover_letter_versions.json` is missing or empty (cold-start profile), fall back to writing all paragraphs from scratch using `profiles/<id>/cover_letter_template.md` as the structure guide. This is the only path where Step 8 generates the full letter.
+
+**8b — Pick the base entry.**
+
+Match priority, in order — stop at the first hit:
+
+1. **Same company + same role focus** — exact `company` match AND role keywords overlap (e.g. existing entry for `Affirm` + `Capital`-focused, current job is `Affirm Capital PM` → reuse).
+2. **Same company, different role** — useful when prior letter exists for the company. Replace P3 (why this company) sparingly; P2 proof stays.
+3. **Same archetype, different company** — match the chosen `resumeVer` (Step 7) to an existing entry whose role focus aligns with the archetype (e.g. `resumeVer = ConsumerLending` → look for `lendbuzz_creditcard` / `affirm_capital` / similar entries).
+4. **Closest archetype** — if no archetype-aligned entry exists, pick the most domain-adjacent one (e.g. `PaymentsInfra` → fall back to `PlatformInfra`-style entry).
+
+In template-variants shape: `defaults.{p2, p3, p4_template}` IS the base — every letter reuses them. Only P1 varies, and the `letters` array is your reference set for tone/length on past P1s.
+
+**8c — Rebuild the letter.**
+
+- **P2 (Core proof)** — copy verbatim from the base entry. Do NOT paraphrase, reorder facts, or substitute different metrics. The candidate's achievements are stable; rewriting P2 introduces drift and dilutes proof.
+- **P3 (Secondary proof / AI angle / why this company)** — copy verbatim from the base entry IF the role focus matches. If the new role is in a clearly different sub-domain (e.g. base is `growth-retention`, new role is `platform-API`), regenerate ONLY this paragraph. Apply Humanizer Rules.
+- **P1 (Hook — company-specific)** — always regenerate. Use the JD signal + company-specific challenge as anchor. Apply Humanizer Rules. Pattern: "[Company] does [X]. The harder problem is [Y]. That's exactly what I've solved at [previous role]."
+- **P4 (Close)** — for template-variants shape, fill `p4_template` placeholders (`{availability}`, etc.). For library shape, copy verbatim from base entry.
+
+Output: a 4-paragraph CL where P2 (and usually P3) are exact copies of an existing humanized letter, and only the hook (and rarely P3) is freshly written for this company.
+
+**8d — Final humanizer pass.**
+
+Apply **Humanizer Rules** from `## Humanizer Rules` below to any newly-written paragraphs (typically P1, sometimes P3). The verbatim-copied paragraphs are already humanized — do NOT re-humanize them, that introduces drift.
+
+**8e — Save.**
 
 Save the CL as `profiles/<id>/cover_letters/<company>_<role-slug>_<YYYYMMDD>.md`.
 
-Record `clKey` = filename without extension.
+Record `clKey` = filename without extension. Record `clBaseKey` = the base entry key/job_id you reused (helps audit batch consistency: if 10 letters share `clBaseKey = "affirm_capital"`, the proof paragraphs are identical across them, which is the point).
 
 **Step 9 — Notion page creation (per job)**
 
@@ -277,6 +304,7 @@ Write `profiles/<id>/prepare_results_<YYYYMMDD_HHMMSS>.json`:
       "geo": "us-compatible",
       "clKey": "<company>_<role-slug>_<YYYYMMDD>",
       "clPath": "<company>_<role-slug>_<YYYYMMDD>.md",
+      "clBaseKey": "<reused-entry-key-from-cover_letter_versions.json or null>",
       "resumeVer": "<archetype-key>",
       "notionPageId": "<uuid>",
       "salaryMin": 140000,
@@ -308,8 +336,10 @@ This updates `applications.tsv`: `to_apply` entries get `status="To Apply"`, `cl
 
 Summarize:
 - N jobs moved to "To Apply"
-- N jobs skipped (geo / weak fit) with list
-- N CLs written (paths)
+- N jobs skipped in SKILL phase (geo / weak fit) with list
+- N jobs skipped in pre-phase by reason — read from `prepare_context.stats.skipReasons` and surface the breakdown verbatim (e.g. `company_cap: 5, title_blocklist: 2, url_dead: 1`). If the value is `{}`, omit this line.
+- N jobs deferred (eligible but past target batch size — `prepare_context.stats.deferred`). These stay queued for the next pre-phase run; mention only if non-zero.
+- N CLs written (paths). Group by `clBaseKey` so the user sees how the batch reused base templates: e.g. `8 reused affirm_capital, 3 reused chime_growth, 1 written from scratch`.
 - N Notion pages created
 - N companies auto-tiered (with tier assignments) — only if Step 5.7 ran
 - Any warnings or anomalies

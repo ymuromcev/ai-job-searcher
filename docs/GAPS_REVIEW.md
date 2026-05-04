@@ -3,10 +3,10 @@
 Все 33 гэпа из SPEC, в формате «что сейчас / что станет», без техники. Для триажа перед Phase 3.
 
 Severity:
-- **High** — реальный риск регрессии или потери качества (2 шт).
-- **Medium** — поведение работает, но отклоняется от ожиданий или заложена мина (8 шт активных, 2 закрыто 2026-05-04).
-- **Low** — мелкая шероховатость в DX или edge case (12 шт).
-- **Trivial** — косметика / документационная зацепка (8 шт активных, 1 закрыт 2026-05-04).
+- **High** — реальный риск регрессии или потери качества (1 активный, 1 закрыт 2026-05-04).
+- **Medium** — поведение работает, но отклоняется от ожиданий или заложена мина (4 активных, 6 закрыто 2026-05-04).
+- **Low** — мелкая шероховатость в DX или edge case (9 активных, 3 закрыты 2026-05-04).
+- **Trivial** — косметика / документационная зацепка (7 активных, 2 закрыты 2026-05-04).
 
 Цена fix'а:
 - **XS** — несколько строк, без RFC.
@@ -23,9 +23,8 @@ Severity:
 - **Цена**: L (нужен RFC, единая модель geo, миграция конфигов).
 
 ### G-17 — Cover letter генерируется с нуля каждый раз
-- **Сейчас**: на каждую вакансию Claude пишет CL с нуля. Это дорого по токенам и письма получаются разными по тону внутри одного батча.
-- **Станет**: Claude берёт готовый шаблон-архетип (saved cover letter versions), подставляет placeholders, пропускает через humanizer. Тон стабильный, токенов меньше.
-- **Цена**: M (правка SKILL Step 8 + проверка, что архетипы покрывают все кейсы).
+- **Сейчас (закрыто 2026-05-04)**: SKILL Step 8 переписан в template-first flow. Claude находит ближайший подходящий entry в `cover_letter_versions.json` (template-variants shape для Lilia или library-of-letters shape для Jared), копирует proof-параграфы (P2 + P3) verbatim, перегенерирует только company-specific параграфы (P1 hook + при необходимости P4 close), и применяет Humanizer только к новому тексту. Tone стабильный по всему батчу (proof identical), tokens примерно вдвое меньше. `clBaseKey` записывается в results.json для аудита (видно, какие письма реюзают одну базу).
+- **Цена**: M. **Closed 2026-05-04**.
 
 ---
 
@@ -47,24 +46,20 @@ Severity:
 - **Цена**: XS (включить уже написанный нормализатор в dedup).
 
 ### G-10 — SKILL переспрашивает про размер батча
-- **Сейчас**: если в очереди >10 вакансий, Claude спрашивает «сколько обрабатывать». Прототип просто брал top-30 по fit-скору и не отвлекал пользователя.
-- **Станет**: Claude молча берёт top-N по fit-скору (управляется флагом `--batch`), без вопросов.
-- **Цена**: XS.
+- **Сейчас (закрыто 2026-05-04)**: SKILL Step 2 говорит «Proceed without confirmation — the CLI's `--batch N` flag already gates batch size; Claude does not re-prompt the user». Default 30; для другого размера — re-run pre-phase с `--batch <N>`.
+- **Цена**: XS. **Closed 2026-05-04**.
 
 ### G-11 — SKILL переспрашивает про unknown tier
-- **Сейчас**: если у компании нет tier (S/A/B/C), Claude спрашивает в чате. Это посередине pipeline. Tier'ы компаниям юзер вручную никогда не проставляет — ни в прототипе, ни в текущей базе.
-- **Станет**: Claude сам назначает tier по сигналам о компании (размер, отрасль, бренд, AI-ангажированность для Jared / специализация и сетка клиник для Lilia) — на этапе pre или при первом контакте с компанией. Прерываний пользователя нет.
-- **Цена**: M (нужен tier-prompt + запись результата в `companies.tsv`/`company_tiers`, чтобы один раз на компанию, не каждый прогон).
+- **Сейчас (закрыто 2026-05-04)**: SKILL Step 5.7 «Auto-tier unknown companies» — Claude назначает S/A/B/C сам по profile-flavor критериям (Jared: AI-native big-tech / fintech vs early-stage; Lilia: regional health systems vs single-clinic). Результаты идут в `results.companyTiers`, commit-фаза персистит в `profile.json.company_tiers` (one-shot per company). Без user prompts.
+- **Цена**: M. **Closed 2026-05-04**.
 
 ### G-15 — Unknown tier тихо проскакивает на этап SKILL
-- **Сейчас**: вакансии без tier доходят до SKILL и там вызывают prompt (см. G-11).
-- **Станет**: tier назначается автоматически (часть G-11), unknown-tier как состояние исчезает.
-- **Цена**: XS (часть G-11).
+- **Сейчас (закрыто 2026-05-04)**: часть G-11. Каждый batch entry без tier'а попадает в `prepare_context.unknownTierCompanies`; SKILL Step 5.7 обязан назначить до commit'а; commit gate (`prepare.js` validates against `VALID_TIERS = {S,A,B,C}`) персистит. Состояние «silent pass-through» больше не существует.
+- **Цена**: XS (часть G-11). **Closed 2026-05-04**.
 
 ### G-18 — Claude может выбрать несуществующий резюме-архетип
-- **Сейчас**: Claude в SKILL Step 7 может вернуть имя архетипа, которого нет в профиле. Ошибка ловится только в момент push в Notion.
-- **Станет**: ранняя валидация — если Claude промахнулся, перевыбирает сразу, не доходя до push.
-- **Цена**: XS.
+- **Сейчас (закрыто 2026-05-04)**: SKILL Step 7 имеет explicit Mandatory validation block: `resumeVer` MUST be a key in `profile.resume_versions.versions`; «Do NOT invent or paraphrase a key. If no archetype is a clear match, pick the closest existing key (or the profile's default if defined)». Backstop в `prepare --phase commit` ловит leakage (`updates.invalidArchetype` counter, downgrades to `skip` с warning'ом).
+- **Цена**: XS. **Closed 2026-05-04**.
 
 ### G-21 — Notion-страницы создаются дважды разными путями
 - **Сейчас (закрыто 2026-05-04)**: фикс пошёл по противоположному маршруту, чем планировалось. Вместо «один путь через sync push» удалили sync push целиком (commit `4f85ed2`); единственный путь создания страниц — `prepare` commit phase. SKILL вызывает CLI, MCP-side не пушит напрямую.
@@ -104,9 +99,8 @@ Severity:
 - **Цена**: XS (только пометка в BACKLOG).
 
 ### G-12 — `prepare` не добирает батч после skip'ов + summary без причин
-- **Сейчас**: prepare берёт первые N кандидатов из реестра (обычно 30), часть из них отваливается на cap/blocklist/url-check, и в Notion в итоге уезжает, скажем, 18 вместо 30. Плюс в summary не видно, по какой причине отвалились — только «passed: 18, skipped: 12».
-- **Станет**: prepare добирает из реестра до тех пор, пока не наберёт целевые 30 живых вакансий (или пока реестр не закончится). В summary — разбивка по причинам skip'а: `company_cap: 5, title_blocklist: 2, url_dead: 1`.
-- **Цена**: M (loop с добором + перерасчёт fit-сортировки на расширенном пуле + summary breakdown).
+- **Сейчас (закрыто 2026-05-04)**: `prepare --phase pre` добирает chunk'ами (size = max(remaining, 5)) из `passed` пула пока `aliveResults.length < batchSize` (или пул не исчерпан). Stats теперь содержат `skipReasons` breakdown (`company_cap: N, title_blocklist: N, url_dead: N, …`) и `deferred` counter (eligible jobs не дошли до URL-check, остаются в очереди до next pre run). SKILL Step 12 печатает breakdown verbatim из `prepare_context.stats.skipReasons`.
+- **Цена**: M. **Closed 2026-05-04**.
 
 ### G-13 — Вакансии с LinkedIn/Indeed/custom URL дохнут на URL-check
 - **Сейчас**: эти три источника не отдают живой URL для прямого пинга, поэтому 100% таких вакансий помечаются как dead.
@@ -119,14 +113,12 @@ Severity:
 - **Цена**: M.
 
 ### G-20 — Повторный запуск SKILL может создать дубль в Notion
-- **Сейчас**: если оператор перезапустит pipeline на той же записи, SKILL может попытаться создать вторую страницу.
-- **Станет**: skip-guard в начале SKILL Step 9 (если notion_page_id уже есть — пропускаем).
-- **Цена**: XS (закрывается через G-21).
+- **Сейчас (закрыто 2026-05-04)**: SKILL Step 9.0 skip-guard — «If the matching `applications.tsv` row already has a non-empty `notion_page_id`, the page was created in a prior run — record the existing id as `notionPageId` in results.json and skip 9a–9c (no new page, no duplicate). This makes operator-reruns of the SKILL idempotent.»
+- **Цена**: XS. **Closed 2026-05-04**.
 
 ### G-23 — Несуществующий архетип ловится только при создании Notion-страницы
-- **Сейчас**: см. G-18 — ошибка не блочит ранние шаги, ловится в `prepare` commit-фазе при попытке создать Notion-страницу. (До 2026-05-04 формулировка была «только при sync push» — push удалён, гейт перенёсся в prepare; смысл тот же — поздно, идеал — ранний reject в Step 7 SKILL.)
-- **Станет**: ранняя валидация в SKILL Step 7 (часть G-18).
-- **Цена**: XS (часть G-18).
+- **Сейчас (закрыто 2026-05-04)**: часть G-18. Early-reject landed: SKILL Step 7 имеет Mandatory validation block, который требует `resumeVer ∈ keys(profile.resume_versions.versions)`. Commit-phase backstop остаётся как safety net (`updates.invalidArchetype` counter).
+- **Цена**: XS (часть G-18). **Closed 2026-05-04**.
 
 ### G-24 — Удаление страницы в Notion не пуллится обратно
 - **Сейчас**: если оператор руками удалит page в Notion, в TSV запись останется. Поведение совпадает с прототипом.
@@ -158,9 +150,8 @@ Severity:
 - **Цена**: XS.
 
 ### G-19 — Неизвестный `decision` в commit-фазе тихо считается «skip»
-- **Сейчас**: если SKILL вернёт `decision: "approve"` (опечатка) — pipeline пропустит запись без warning'а.
-- **Станет**: enum-валидация, ругается на неизвестные значения.
-- **Цена**: XS.
+- **Сейчас (закрыто 2026-05-04)**: `prepare --phase commit` валидирует `decision` против `VALID_DECISIONS = {to_apply, archive, skip}`. Unknown values warn в stderr (`unknown decision "<x>" for key <key> — treating as skip`) и downgrade to `skip` с counter'ом `updates.invalidDecision`, видимым в summary.
+- **Цена**: XS. **Closed 2026-05-04**.
 
 ### G-25 — Inbox callout counter — мёртвый код
 - **Сейчас (закрыто 2026-05-04)**: код callout-апдейтера удалён вместе с sync push (commit `4f85ed2`). После Stage 8 статуса «Inbox» больше нет, callout всегда показывал 0 — теперь самого callout-апдейтера тоже нет.
@@ -197,37 +188,30 @@ Severity:
 ## Сводка по цене
 
 - **L** (требуют RFC и миграции): G-1, G-7.
-- **M** (день работы, тесты): G-3, G-6, G-11, G-12, G-14, G-15 (часть G-11), G-17, G-29. (G-5, G-21, G-22, G-26 закрыты.)
-- **XS** (несколько строк): всё остальное (~20 шт). Можно закрыть пачкой за 1-2 сессии.
+- **M** (день работы, тесты): G-3, G-6, G-14, G-29.
+- **XS** (несколько строк): остальные ~14 активных.
+- ✅ **Закрыто 2026-05-04** (15 шт): G-2, G-5, G-10, G-11, G-12, G-15, G-17, G-18, G-19, G-20, G-21, G-22, G-23, G-25, G-26.
 
 ## Рекомендация по триажу
 
-**Quick wins (XS, реальная польза)** — делать первой пачкой:
+**Активная очередь (после prepare blocker/QoL пакета 2026-05-04)**:
+
+**XS — quick wins**:
 - G-4 (cross-platform dedup) — уже написано, надо включить.
-- G-10 (убрать batch prompt из SKILL).
-- G-18 + G-23 (ранняя валидация архетипа в SKILL Step 7) — связанные.
-- G-19 (enum валидация decision).
-- G-20 (SKILL skip-guard).
-- G-13 (LinkedIn URL-check skip).
+- G-13 (LinkedIn / Indeed URL-check skip).
 
-**M, ценный поведенческий fix**:
-- G-11 + G-15 (Claude auto-tiers компании, prompt уходит) — связанные.
-- G-12 (prepare добирает до target batch + skip reasons в summary).
-- G-17 (CL из шаблонов архетипов вместо генерации с нуля).
-
-**M, не критично**:
+**M — ценный поведенческий fix**:
 - G-3 (centralized title requirelist).
 - G-14 (JD-cache для остальных платформ).
-- G-26 (LinkedIn URL resolution).
 
 **Архитектурные (L)** — обсудить отдельно, делать ли вообще:
 - G-1 (статусы — миграция в Notion).
 - G-7 (geo enforcement) — критично для Lilia, blocker для no-relocate профилей.
 
 **Документационные (Trivial)** — закрываем пачкой в одном PR:
-- G-2, G-24, G-27, G-28, G-30, G-31, G-32.
+- G-24, G-27, G-28, G-30, G-31, G-32.
 
 **Отложить (BACKLOG)**:
 - G-8 (USAJOBS) — вернёмся, когда понадобится.
 - G-29 (`--auto` activation) — ждёт OAuth setup.
-- G-5, G-6, G-33 (часть RFC 012 — TSV schema bump).
+- G-6, G-33 (часть RFC 012 — TSV schema bump).
