@@ -1,11 +1,38 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { jobKey, normalizeCompanyName, normalizeTitle, fuzzyKey, dedupeJobs, dedupeAgainst } = require("./dedup.js");
+const { jobKey, normalizeJobId, normalizeCompanyName, normalizeTitle, fuzzyKey, dedupeJobs, dedupeAgainst } = require("./dedup.js");
 
 test("jobKey combines source and jobId", () => {
   assert.equal(jobKey({ source: "greenhouse", jobId: "123" }), "greenhouse:123");
   assert.equal(jobKey({ source: "Greenhouse", jobId: "123" }), "greenhouse:123");
+});
+
+test("jobKey strips ATS prefixes from jobId so prefixed and raw forms collide", () => {
+  // Two adapter versions emit the same posting differently — must dedup.
+  assert.equal(
+    jobKey({ source: "greenhouse", jobId: "gh:7769924" }),
+    jobKey({ source: "greenhouse", jobId: "7769924" })
+  );
+  assert.equal(jobKey({ source: "lever", jobId: "lever:abcd-1234" }), "lever:abcd-1234");
+  assert.equal(jobKey({ source: "ashby", jobId: "ashby:9c68397b" }), "ashby:9c68397b");
+});
+
+test("normalizeJobId strips known ATS prefixes only", () => {
+  assert.equal(normalizeJobId("gh:7769924"), "7769924");
+  assert.equal(normalizeJobId("ashby:9c68"), "9c68");
+  assert.equal(normalizeJobId("lever:xyz"), "xyz");
+  // Unknown prefix passes through unchanged.
+  assert.equal(normalizeJobId("custom:42"), "custom:42");
+  assert.equal(normalizeJobId("7769924"), "7769924");
+  assert.equal(normalizeJobId(""), "");
+});
+
+test("dedupeAgainst catches prefixed-vs-raw jobId duplicates", () => {
+  // The 7-pair regression we found in jared/applications.tsv on 2026-05-04.
+  const existing = [{ source: "greenhouse", jobId: "gh:7769924" }];
+  const incoming = [{ source: "greenhouse", jobId: "7769924" }];
+  assert.equal(dedupeAgainst(existing, incoming).length, 0);
 });
 
 test("normalizeCompanyName strips suffixes and punctuation", () => {

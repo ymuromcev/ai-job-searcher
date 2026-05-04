@@ -4,9 +4,18 @@
 // platforms. Catches the case where the same role is posted on both Greenhouse
 // and Lever for the same company; without it, both rows enter the pipeline.
 
+// Some adapters emit jobIds with an ATS-prefix (e.g. "gh:7769924", "lever:abcd"),
+// others emit the raw id ("7769924"). Strip the prefix so two scans of the same
+// posting via different adapter versions collide on the same key.
+function normalizeJobId(id) {
+  const s = String(id || "").trim().toLowerCase();
+  const m = s.match(/^(gh|ashby|lever|workday|smart|sr):(.+)$/);
+  return m ? m[2] : s;
+}
+
 function jobKey(job) {
   const source = String(job.source || "").toLowerCase().trim();
-  const id = String(job.jobId || "").trim();
+  const id = normalizeJobId(job.jobId);
   return `${source}:${id}`;
 }
 
@@ -77,4 +86,4 @@ function dedupeAgainst(existing, incoming) {
   return fresh;
 }
 
-module.exports = { jobKey, normalizeCompanyName, normalizeTitle, fuzzyKey, dedupeJobs, dedupeAgainst };
+module.exports = { jobKey, normalizeJobId, normalizeCompanyName, normalizeTitle, fuzzyKey, dedupeJobs, dedupeAgainst };
