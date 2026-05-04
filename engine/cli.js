@@ -27,6 +27,8 @@ const PARSE_OPTIONS = {
     batch: { type: "string" },
     prepare: { type: "boolean", default: false },
     since: { type: "string" },
+    "no-sync": { type: "boolean", default: false },
+    "no-callout": { type: "boolean", default: false },
     auto: { type: "boolean", default: false },
     company: { type: "string" },
     role: { type: "string" },
@@ -43,8 +45,9 @@ Usage:
   node engine/cli.js <command> --profile <id> [flags]
 
 Commands:
-  scan       Discover new jobs across configured ATS adapters and append them
-             to the shared pool + per-profile applications.
+  scan       Discover new jobs across configured ATS adapters, append them
+             to the shared pool + per-profile applications, then auto-sync
+             with Notion. Pass --no-sync to skip the Notion sync step.
   validate   Pre-flight: URL liveness, company cap, TSV hygiene.
   sync       Reconcile per-profile applications with Notion. Default: dry-run.
   prepare    Two-phase fresh-row triage (status="To Apply" + no notion_page_id). See --phase.
@@ -177,6 +180,8 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
       batch: parsed.values.batch ? parseInt(parsed.values.batch, 10) : 30,
       prepare: Boolean(parsed.values.prepare),
       since: parsed.values.since || "",
+      noSync: Boolean(parsed.values["no-sync"]),
+      noCallout: Boolean(parsed.values["no-callout"]),
       auto: Boolean(parsed.values.auto),
       company: parsed.values.company || "",
       role: parsed.values.role || "",
@@ -194,9 +199,39 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
     return 1;
   }
 
+  // Code-first pipeline hooks: deterministic post-command steps that must
+  // always run in sequence. These never require AI — they live here so the
+  // pipeline works without a Claude skill.
+  //
+  // scan → sync: after every scan, reconcile TSV with Notion so the Inbox
+  // counter is accurate and any Notion status changes are pulled back.
+  // Skip with --no-sync or --dry-run.
+  const PIPELINE_HOOKS = {
+    scan: async (c, h) => {
+      if (c.flags.noSync || c.flags.dryRun) return 0;
+      const syncHandler = h.sync;
+      if (!syncHandler) return 0;
+      c.stdout("--- sync ---");
+      try {
+        const syncCode = await syncHandler({ ...c, flags: { ...c.flags, apply: true } });
+        return Number.isInteger(syncCode) ? syncCode : 0;
+      } catch (e) {
+        // Sync failure is non-fatal for scan: warn but don't fail the overall
+        // command. Common case: NOTION_TOKEN not configured yet.
+        c.stderr(`warn: auto-sync failed: ${e.message}`);
+        return 0;
+      }
+    },
+  };
+
   try {
     const code = await handler(ctx);
-    return Number.isInteger(code) ? code : 0;
+    const exitCode = Number.isInteger(code) ? code : 0;
+    if (exitCode === 0) {
+      const hook = PIPELINE_HOOKS[ctx.command];
+      if (hook) await hook(ctx, handlers);
+    }
+    return exitCode;
   } catch (e) {
     writeErr(`error: ${e.message}`);
     if (ctx.flags.verbose && e.stack) writeErr(e.stack);

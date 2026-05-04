@@ -14,6 +14,7 @@ const {
   updateJobPage,
   updatePageStatus,
   addPageComment,
+  updateCalloutBlock,
   fetchJobsFromDatabase,
   resolveDataSourceId,
   readQueue,
@@ -316,6 +317,40 @@ test("addPageComment with empty/whitespace mentionUserId falls back to text-only
   assert.equal(client.calls[1].params.rich_text.length, 1);
   await addPageComment(client, "p1", "x", null);
   assert.equal(client.calls[2].params.rich_text.length, 1);
+});
+
+// ---------- updateCalloutBlock ----------
+
+test("updateCalloutBlock sends correct callout rich_text to blocks.update", async () => {
+  const calls = [];
+  const client = {
+    blocks: {
+      update: async (params) => {
+        calls.push(params);
+        return { id: params.block_id };
+      },
+    },
+  };
+  await updateCalloutBlock(client, "block-abc", "Inbox: 42 | Updated: 2026-05-02");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].block_id, "block-abc");
+  assert.deepEqual(calls[0].callout.rich_text, [
+    { type: "text", text: { content: "Inbox: 42 | Updated: 2026-05-02" } },
+  ]);
+});
+
+test("updateCalloutBlock throws on missing blockId", async () => {
+  const client = { blocks: { update: async () => {} } };
+  await assert.rejects(() => updateCalloutBlock(client, "", "text"), /blockId is required/);
+  await assert.rejects(() => updateCalloutBlock(client, null, "text"), /blockId is required/);
+});
+
+test("updateCalloutBlock throws on missing text", async () => {
+  const client = { blocks: { update: async () => {} } };
+  await assert.rejects(
+    () => updateCalloutBlock(client, "block-abc", ""),
+    /text is required/
+  );
 });
 
 // ---------- resolveDataSourceId ----------

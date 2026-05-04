@@ -205,6 +205,21 @@ async function addPageComment(client, pageId, text, mentionUserId = null) {
   });
 }
 
+// Updates the text content of a callout block in a Notion hub page.
+// Used to keep the "Inbox: N | Updated: YYYY-MM-DD" counter current after sync.
+// Only the rich_text is updated — icon, color, and other callout properties
+// are left unchanged (Notion merges partial updates).
+async function updateCalloutBlock(client, blockId, text) {
+  if (!blockId || typeof blockId !== "string") throw new Error("blockId is required");
+  if (!text || typeof text !== "string") throw new Error("text is required");
+  return client.blocks.update({
+    block_id: blockId,
+    callout: {
+      rich_text: [{ type: "text", text: { content: text } }],
+    },
+  });
+}
+
 // ---------- Queue file (updates applied by Claude via MCP) ----------
 // Format: JSON array of { action, pageId?, databaseId?, job?, updates?, queuedAt }.
 
@@ -247,6 +262,7 @@ module.exports = {
   updateJobPage,
   updatePageStatus,
   addPageComment,
+  updateCalloutBlock,
   fetchJobsFromDatabase,
   resolveDataSourceId,
   readQueue,

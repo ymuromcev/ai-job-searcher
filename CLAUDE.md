@@ -59,6 +59,10 @@ code is isolated in `commands/` and `scripts/`.
 
 ## Working rules (for Claude / any AI assistant)
 
+> **Architecture and development principles belong in
+> [DEVELOPMENT.md](DEVELOPMENT.md), not here.**
+> This file is for AI assistant behaviour rules only.
+
 - **Don't invent product decisions.** If a change touches user-facing
   behaviour (pipeline steps, filters, what gets archived vs kept), ask
   before acting. Propose; don't execute.

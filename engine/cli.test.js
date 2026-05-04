@@ -180,6 +180,87 @@ test("KNOWN_COMMANDS lists exactly the supported commands", () => {
   assert.deepEqual([...KNOWN_COMMANDS].sort(), ["answer", "check", "indeed-prep", "prepare", "scan", "sync", "validate"]);
 });
 
+test("scan auto-triggers sync --apply after success (pipeline hook)", async () => {
+  const s = makeStreams();
+  const syncCalls = [];
+  const code = await runCli({
+    argv: ["scan", "--profile", "jared"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: {
+      scan: spyCommand(() => 0),
+      sync: async (ctx) => { syncCalls.push(ctx); return 0; },
+    },
+  });
+  assert.equal(code, 0);
+  assert.equal(syncCalls.length, 1);
+  assert.equal(syncCalls[0].flags.apply, true);
+  assert.match(s.out(), /--- sync ---/);
+});
+
+test("scan --no-sync skips the auto-sync hook", async () => {
+  const s = makeStreams();
+  const syncCalls = [];
+  const code = await runCli({
+    argv: ["scan", "--profile", "jared", "--no-sync"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: {
+      scan: spyCommand(() => 0),
+      sync: async (ctx) => { syncCalls.push(ctx); return 0; },
+    },
+  });
+  assert.equal(code, 0);
+  assert.equal(syncCalls.length, 0);
+});
+
+test("scan --dry-run skips the auto-sync hook", async () => {
+  const s = makeStreams();
+  const syncCalls = [];
+  const code = await runCli({
+    argv: ["scan", "--profile", "jared", "--dry-run"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: {
+      scan: spyCommand(() => 0),
+      sync: async (ctx) => { syncCalls.push(ctx); return 0; },
+    },
+  });
+  assert.equal(code, 0);
+  assert.equal(syncCalls.length, 0);
+});
+
+test("scan hook: sync failure is non-fatal — scan still exits 0", async () => {
+  const s = makeStreams();
+  const code = await runCli({
+    argv: ["scan", "--profile", "jared"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: {
+      scan: spyCommand(() => 0),
+      sync: async () => { throw new Error("no token"); },
+    },
+  });
+  assert.equal(code, 0);
+  assert.match(s.err(), /auto-sync failed/);
+});
+
+test("scan hook does not run when scan itself fails", async () => {
+  const s = makeStreams();
+  const syncCalls = [];
+  const code = await runCli({
+    argv: ["scan", "--profile", "jared"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: {
+      scan: spyCommand(() => 1),
+      sync: async (ctx) => { syncCalls.push(ctx); return 0; },
+    },
+  });
+  assert.equal(code, 1);
+  assert.equal(syncCalls.length, 0);
+});
+
 test("runCli passes prepare-specific flags to handler", async () => {
   const s = makeStreams();
   const prepare = spyCommand(() => 0);
