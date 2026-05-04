@@ -4,7 +4,15 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
-const { loadProfile, saveProfile, loadSecrets, normalizeFilterRules, ID_REGEX } = require("./profile_loader.js");
+const {
+  loadProfile,
+  saveProfile,
+  loadSecrets,
+  normalizeFilterRules,
+  loadMemory,
+  normalizeSalaryConfig,
+  ID_REGEX,
+} = require("./profile_loader.js");
 
 function makeTempProfiles() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "aijs-profiles-"));
@@ -268,5 +276,121 @@ test("saveProfile: handles empty current company_tiers", () => {
     { profilesDir: dir }
   );
   assert.deepEqual(next.company_tiers, { Acme: "B" });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- L-2: memory loading ----------------------------------------------------
+
+test("loadProfile: surfaces empty memory block when profile.memory absent", () => {
+  const dir = makeTempProfiles();
+  writeProfile(dir, "p", { id: "p", identity: { name: "x", email: "x@x" }, modules: [] });
+  const profile = loadProfile("p", { profilesDir: dir });
+  assert.deepEqual(profile.memory, { writingStyle: null, resumeKeyPoints: null, feedback: [] });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("loadProfile: loads memory files declared in profile.memory", () => {
+  const dir = makeTempProfiles();
+  const root = writeProfile(
+    dir,
+    "p",
+    {
+      id: "p",
+      identity: { name: "x", email: "x@x" },
+      modules: [],
+      memory: {
+        writing_style_file: "memory/style.md",
+        resume_key_points_file: "memory/key_points.md",
+        feedback_dir: "memory",
+      },
+    }
+  );
+  fs.mkdirSync(path.join(root, "memory"));
+  fs.writeFileSync(path.join(root, "memory/style.md"), "warm 5/10");
+  fs.writeFileSync(path.join(root, "memory/key_points.md"), "front-desk strong fit");
+  fs.writeFileSync(path.join(root, "memory/feedback_recruiter.md"), "no location");
+  fs.writeFileSync(path.join(root, "memory/feedback_humanizer.md"), "no AI tells");
+  fs.writeFileSync(path.join(root, "memory/notes.md"), "ignored — not feedback_*");
+
+  const profile = loadProfile("p", { profilesDir: dir });
+  assert.equal(profile.memory.writingStyle, "warm 5/10");
+  assert.equal(profile.memory.resumeKeyPoints, "front-desk strong fit");
+  assert.equal(profile.memory.feedback.length, 2);
+  const names = profile.memory.feedback.map((f) => path.basename(f.file)).sort();
+  assert.deepEqual(names, ["feedback_humanizer.md", "feedback_recruiter.md"]);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("loadProfile: missing memory files come back as null without throwing", () => {
+  const dir = makeTempProfiles();
+  writeProfile(dir, "p", {
+    id: "p",
+    identity: { name: "x", email: "x@x" },
+    modules: [],
+    memory: {
+      writing_style_file: "memory/style.md",
+      resume_key_points_file: "memory/key_points.md",
+    },
+  });
+  const profile = loadProfile("p", { profilesDir: dir });
+  assert.equal(profile.memory.writingStyle, null);
+  assert.equal(profile.memory.resumeKeyPoints, null);
+  assert.deepEqual(profile.memory.feedback, []);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("loadMemory: handles missing dir gracefully", () => {
+  const out = loadMemory("/no/such/path", { feedback_dir: "memory" });
+  assert.deepEqual(out.feedback, []);
+});
+
+// --- L-1: salary block normalization ---------------------------------------
+
+test("normalizeSalaryConfig: returns null when block absent", () => {
+  assert.equal(normalizeSalaryConfig(undefined), null);
+  assert.equal(normalizeSalaryConfig(null), null);
+  assert.equal(normalizeSalaryConfig("string"), null);
+});
+
+test("normalizeSalaryConfig: maps snake_case to calcSalary opts", () => {
+  const out = normalizeSalaryConfig({
+    currency: "USD",
+    level_parser: "healthcare",
+    matrix: { S: { MedAdmin: { min: 48000, max: 58000, mid: 53000 } } },
+    col_adjustment: { multiplier: 1.0, high_col_cities: [], exclude_format: ["Remote"] },
+  });
+  assert.equal(out.currency, "USD");
+  assert.equal(out.levelParser, "healthcare");
+  assert.deepEqual(out.salaryMatrix.S.MedAdmin, { min: 48000, max: 58000, mid: 53000 });
+  assert.deepEqual(out.colAdjustment, {
+    multiplier: 1.0,
+    high_col_cities: [],
+    exclude_format: ["Remote"],
+  });
+});
+
+test("loadProfile: surfaces salaryConfig=null when profile.salary absent (Jared parity)", () => {
+  const dir = makeTempProfiles();
+  writeProfile(dir, "jared", { id: "jared", identity: { name: "x", email: "x@x" }, modules: [] });
+  const profile = loadProfile("jared", { profilesDir: dir });
+  assert.equal(profile.salaryConfig, null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("loadProfile: normalises profile.salary into salaryConfig", () => {
+  const dir = makeTempProfiles();
+  writeProfile(dir, "lilia", {
+    id: "lilia",
+    identity: { name: "x", email: "x@x" },
+    modules: [],
+    salary: {
+      currency: "USD",
+      level_parser: "healthcare",
+      matrix: { S: { MedAdmin: { min: 48000, max: 58000, mid: 53000 } } },
+    },
+  });
+  const profile = loadProfile("lilia", { profilesDir: dir });
+  assert.equal(profile.salaryConfig.levelParser, "healthcare");
+  assert.equal(profile.salaryConfig.salaryMatrix.S.MedAdmin.min, 48000);
   fs.rmSync(dir, { recursive: true, force: true });
 });

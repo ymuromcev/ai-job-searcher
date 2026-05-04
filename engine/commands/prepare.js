@@ -264,6 +264,9 @@ async function runPre(ctx, deps) {
   // back to app keys by index (fetchAll preserves input order) since
   // jd_cache.fetchJd returns a cache-filename key, not the app composite key.
   const companyTiers = (profile.company_tiers) || {};
+  // L-1: per-profile salary config (parser + matrix + COL). null when block
+  // missing → calcSalary falls back to engine defaults (Jared parity).
+  const salaryOpts = profile.salaryConfig || {};
   const jdCacheDir = profile.paths.jdCacheDir;
   const jdInputs = aliveResults.map((a) => ({ ...a, slug: parseSlugFromUrl(a.source, a.url) }));
   const jdResults = jdInputs.length > 0
@@ -309,7 +312,10 @@ async function runPre(ctx, deps) {
       unknownTierSet.add(urlRes.companyName);
     }
 
-    const salary = deps.calcSalary(urlRes.companyName, urlRes.title, { companyTiers });
+    const salary = deps.calcSalary(urlRes.companyName, urlRes.title, {
+      companyTiers,
+      ...salaryOpts,
+    });
     if (salary) entry.salary = salary;
 
     return entry;
@@ -334,9 +340,16 @@ async function runPre(ctx, deps) {
     skipReasons[reason] = (skipReasons[reason] || 0) + 1;
   }
 
+  // L-2: surface profile-level memory so SKILL Step 1 / Humanizer Rules read
+  // from prepare_context instead of disk. Missing files come back as null and
+  // the SKILL falls back to resume_versions.json / cover_letter_template.md.
+  const memory = profile.memory || { writingStyle: null, resumeKeyPoints: null, feedback: [] };
+
   const context = {
     profileId,
     generatedAt: deps.now(),
+    memory,
+    salaryConfig: profile.salaryConfig || null,
     batchSize,
     batch: batchOut,
     skipped: allSkipped,

@@ -1,12 +1,13 @@
 # Gaps Review — user-facing backlog
 
-Все 33 гэпа из SPEC, в формате «что сейчас / что станет», без техники. Для триажа перед Phase 3.
+Все 33 гэпа из SPEC + 6 Lilia-profile-блокеров (L-1…L-6, добавлены 2026-05-04), в формате «что сейчас / что станет», без техники. Для триажа перед Phase 3.
 
 Severity:
 - **High** — реальный риск регрессии или потери качества (1 активный, 1 закрыт 2026-05-04).
 - **Medium** — поведение работает, но отклоняется от ожиданий или заложена мина (4 активных, 6 закрыто 2026-05-04).
 - **Low** — мелкая шероховатость в DX или edge case (9 активных, 3 закрыты 2026-05-04).
 - **Trivial** — косметика / документационная зацепка (7 активных, 2 закрыты 2026-05-04).
+- **Lilia-profile-blocker** — недо-реализованная per-profile конфигурация, из-за которой engine для Лили работает по Джаредовским дефолтам (1 будущий L-tier RFC, 4 M-tier коммита, 1 verification-only).
 
 Цена fix'а:
 - **XS** — несколько строк, без RFC.
@@ -21,6 +22,7 @@ Severity:
 - **Сейчас**: только Workday умеет фильтровать по локации, и то через per-target конфиг. Если профилю реально нужно отсечь, скажем, Европу или гибрид-с-обязательным-офисом — это сделать негде. У Jared сейчас geo-предпочтение «бери всё» (это ок), но у Lilia geo критичен (no-relocate, конкретный регион), и engine не умеет это выразить.
 - **Станет**: профиль декларирует geo-предпочтение один раз (`geo_preference: any` для Jared, конкретные правила для Lilia); все 11 адаптеров уважают его автоматически.
 - **Цена**: L (нужен RFC, единая модель geo, миграция конфигов).
+- **Полный план реализации**: см. **L-4** (Lilia profile-blockers ниже) — RFC-005 поглощает G-7 целиком.
 
 ### G-17 — Cover letter генерируется с нуля каждый раз
 - **Сейчас (закрыто 2026-05-04)**: SKILL Step 8 переписан в template-first flow. Claude находит ближайший подходящий entry в `cover_letter_versions.json` (template-variants shape для Lilia или library-of-letters shape для Jared), копирует proof-параграфы (P2 + P3) verbatim, перегенерирует только company-specific параграфы (P1 hook + при необходимости P4 close), и применяет Humanizer только к новому тексту. Tone стабильный по всему батчу (proof identical), tokens примерно вдвое меньше. `clBaseKey` записывается в results.json для аудита (видно, какие письма реюзают одну базу).
@@ -185,33 +187,132 @@ Severity:
 
 ---
 
+---
+
+## Lilia profile-level blockers (план 2026-05-04)
+
+Шесть отдельных дыр, найденных при подготовке к боевому prepare для Lilia после head-to-head Джареда. Все шесть — следствие общей архитектурной болячки: **engine читает дефолты вместо per-profile конфигов**. Фарминтех-зарплаты в `salary_calc.js`, PM-tone в Humanizer'е, US-only-no-region geo-чек в SKILL — всё это для Лили (healthcare, Sacramento metro, нерелокации) даёт системно плохой вывод.
+
+Архитектурный принцип фикса: «профиль декларирует — engine читает per-profile через `profile_loader` — SKILL потребляет уже разрешённое из `prepare_context`». Никаких Lilia-specific хардкодов в engine.
+
+### L-1 — Зарплатная матрица per-profile
+- **Сейчас**: `engine/core/salary_calc.js` имеет хардкоженную `DEFAULT_SALARY_MATRIX` (фарминтех PM/Senior/Lead, $120-330K). `parseLevel(title)` распознаёт только Lead/Senior/PM. Лиле для Medical Receptionist в Kaiser посчитает $180-230K (Tier S × «PM») — катастрофа в Notion `Salary Expectations`.
+- **Станет**: `profile.json.salary` block с собственной матрицей и режимом разбора уровней (`level_parser: "pm" | "healthcare" | "default"`). Healthcare-режим распознаёт Junior/IC vs Senior (по `Lead`/`II`/`III` в title). Engine читает per-profile, дефолт остаётся для back-compat Джареда.
+- **Цена**: M. Сабтаски: schema → salary_calc refactor → profile_loader extension → SKILL Step 6 update → тесты parity для Джареда + healthcare фикстуры.
+- **Статус**: Open. Запланировано в Commit A.
+
+### L-2 — Memory как формальная часть профиля
+- **Сейчас**: SKILL Step 1 / Humanizer Rules ссылаются на `profiles/<id>/memory/user_writing_style.md` + `user_resume_key_points.md`. У Джареда есть, у Лили нет → fallback на `resume_versions.json` не описывает тон письма. Humanizer-defaults применяет PM-калибровку (numbers in every paragraph, confident practitioner) к Лиле — overqualified-tone в её CL, ровно то, что её `cover_letter_template.md` запрещает.
+- **Станет**: `profile.json.memory` block: `{writing_style_file, resume_key_points_file, feedback_glob}`. Engine pre-phase читает все указанные файлы и складывает в `prepare_context.memory`; SKILL берёт оттуда (детерминизм + меньше токенов). Если профиль не задал — fallback цепочка как сейчас.
+- **Цена**: XS-M (schema + одна функция в `profile_loader` + SKILL Step 1 update + тесты).
+- **Статус**: Open. Запланировано в Commit A.
+
+### L-3 — Контент memory-файлов Лили из её резюме
+- **Сейчас**: оба файла отсутствуют. После L-2 engine будет их искать, но пустота → fallback PM-defaults.
+- **Станет**:
+  - `profiles/lilia/memory/user_writing_style.md` — warm, 5/10 formality, no metrics-per-paragraph rule, no «confident practitioner» дефолтов. Опирается на её `cover_letter_template.md` Tone Rules + Anti-patterns.
+  - `profiles/lilia/memory/user_resume_key_points.md` — domain criteria для Fit Score: Strong = front-desk / patient services / scheduling / authorization в Sacramento metro + bilingual roles (RU/BG) — automatic Strong; Medium = adjacent admin / dental treatment coordinator / billing clerk; Weak = required clinical cert (CMA/RN/LVN/CPC/RDA/RDH/sonographer/RT). Domain primary keypoints для P1 hook'а: pre-sonography student at Sierra College, trilingual EN/RU/BG, licensed CA Cosmetologist, immigration law case research (transferable: deadlines/databases/client communication), Starbucks 100+ customers/day under pressure.
+- **Цена**: XS (контент создаётся из её `resume_versions.json` + `cover_letter_template.md`).
+- **Статус**: Open. Запланировано в Commit A (вместе с L-2 — без файлов engine'у нечего читать).
+
+### L-4 — Гибкая geo-модель per-profile (поглощает G-7)
+- **Сейчас**: SKILL Step 3 фильтрует только non-US. Если в outputе появится Kaiser Texas или Sutter Oregon — пройдёт как `geo: "us-compatible"`, попадёт в «To Apply». `discovery.indeed.filters.location_whitelist` (Roseville/Sacramento/Folsom…) активен только в indeed-prep фазе. Greenhouse / Lever / Workday вакансии вообще не проходят geo-whitelist. Лиля не релоцируется — для неё это боевой блокер.
+- **Станет**: единая модель в `profile.json.geo` с режимами `metro` / `us-wide` / `remote-only` / `unrestricted`. `metro` принимает массив cities + max_radius_miles. Все 11 discovery adapters проходят через `engine/core/geo_enforcer.js` ДО append'а в TSV; `validate` retro-sweep тоже использует enforcer (закрывает G-33 как побочный эффект); SKILL Step 3 читает `prepare_context.geo_decision`, не делает WebFetch.
+- **Цена**: L (требует RFC-005). Сабтаски: RFC черновик → ваш approve → geo_enforcer module → миграция scan-time для 11 адаптеров → SKILL Step 3 refactor → backfill TSV location → parity тесты для Джареда (нулевая регрессия) → live retro-sweep.
+- **Статус**: Open, RFC pending. Запланировано в Commit C.
+
+### L-5 — Notion Schedule / Requirements из JD
+- **Сейчас**: property_map Лили имеет `schedule` (select) и `requirements` (rich_text). SKILL Step 9 их не пишет — карточки выходят пустые. Schedule (Mon-Fri vs ночи-выходные) и Requirements (cert preferences) — критические сигналы для healthcare-ролей перед откликом.
+- **Станет**: `engine/core/jd_extract.js` (новый) с двумя чистыми экстракторами — `extractSchedule(jdText)` и `extractRequirements(jdText)` — на regex по типичным healthcare формулировкам. `prepare.js` pre-phase складывает в `prepare_context.batch[i].{schedule, requirements}`. SKILL Step 9 пушит, если в `profile.notion.property_map` есть соответствующие поля (back-compat: для Джареда не пушит).
+- **Цена**: M.
+- **Статус**: Open. Запланировано в Commit B.
+
+### L-6 — Head-to-head verification для Лили
+- **Сейчас**: SKILL Step 8 архитектурно поддерживает template-variants shape (`defaults.{p2,p3,p4_template}` + `letters[]`), но фактический head-to-head на Лилиных вакансиях не проводился — только на Джаредовских (5 jobs, см. `prepare_head_to_head.md`).
+- **Станет**: после L-1…L-5 — взять 3-5 свежих вакансий Лили (Sutter / UC Davis / Dignity / dental клиники), прогнать SKILL Step 8, сравнить P2/P3 byte-identical с прототипным `cover_letter_config.json` (`Lilly's Job Search/`), проверить что `defaults.p4_template` корректно заполняется. Аналог `docs/prepare_head_to_head.md`, но для Лили.
+- **Цена**: ~30 минут verification, не код.
+- **Статус**: Pending — запланировано после Commit C.
+
+---
+
+## Очерёдность исполнения (план)
+
+Три коммита в указанном порядке, каждый — фокус-сессия:
+
+### Commit A (M) — L-1 + L-2 + L-3
+Profile-level конфиги для salary и memory:
+- `profile.json.salary` block + engine refactor + tests.
+- `profile.json.memory` block + engine refactor + tests.
+- Lilia memory файлы (writing_style + resume_key_points).
+- Lilia salary matrix в `profile.json`.
+- SKILL Step 1 / Step 6 обновления.
+- Jared parity тесты (никакие старые номера не сдвинулись).
+
+### Commit B (M) — L-5
+JD extractors + Notion completeness:
+- `engine/core/jd_extract.js` с extractSchedule + extractRequirements.
+- `prepare.js` pre-phase прокидывает в `prepare_context`.
+- SKILL Step 9 пушит при наличии в property_map (back-compat).
+- 5-6 фикстур на типичные healthcare JD.
+
+### Commit C (L) — L-4 (RFC-005)
+Geo-модель per-profile:
+- Сначала RFC-005 черновик → approve.
+- Потом `geo_enforcer.js` + 11 adapter-cuts + SKILL Step 3 refactor.
+- Backfill `applications.tsv` location для обоих профилей.
+- Live retro-sweep через `validate` под новой моделью.
+- Parity тесты для Джареда (нулевая регрессия).
+
+После C: **L-6** (head-to-head verification для Лили), затем боевой prepare для неё.
+
+---
+
 ## Сводка по цене
 
-- **L** (требуют RFC и миграции): G-1, G-7.
-- **M** (день работы, тесты): G-3, G-6, G-14, G-29.
-- **XS** (несколько строк): остальные ~14 активных.
+- **L** (требуют RFC и миграции): G-1, **L-4 (поглощает G-7)**.
+- **M** (день работы, тесты): G-3, G-6, G-14, G-29, **L-1, L-2, L-5**.
+- **XS** (несколько строк / файлы): остальные ~14 активных + **L-3**.
+- **Verification-only** (не код): **L-6**.
 - ✅ **Закрыто 2026-05-04** (15 шт): G-2, G-5, G-10, G-11, G-12, G-15, G-17, G-18, G-19, G-20, G-21, G-22, G-23, G-25, G-26.
 
 ## Рекомендация по триажу
 
 **Активная очередь (после prepare blocker/QoL пакета 2026-05-04)**:
 
-**XS — quick wins**:
+**Lilia-blockers (приоритет 1 — без них боевой prepare для неё даст плохой вывод)**:
+- Commit A → Commit B → RFC-005 approve → Commit C → L-6 verification. См. секцию «Очерёдность исполнения» выше.
+
+**XS — quick wins (можно делать в параллель с Lilia-batch'ем)**:
 - G-4 (cross-platform dedup) — уже написано, надо включить.
 - G-13 (LinkedIn / Indeed URL-check skip).
 
-**M — ценный поведенческий fix**:
+**M — ценный поведенческий fix (после Lilia)**:
 - G-3 (centralized title requirelist).
 - G-14 (JD-cache для остальных платформ).
 
-**Архитектурные (L)** — обсудить отдельно, делать ли вообще:
+**Архитектурные (L) — обсудить отдельно**:
 - G-1 (статусы — миграция в Notion).
-- G-7 (geo enforcement) — критично для Lilia, blocker для no-relocate профилей.
+- ~~G-7~~ → поглощено L-4 в RFC-005.
 
-**Документационные (Trivial)** — закрываем пачкой в одном PR:
+**Документационные (Trivial) — закрываем пачкой в одном PR**:
 - G-24, G-27, G-28, G-30, G-31, G-32.
 
 **Отложить (BACKLOG)**:
 - G-8 (USAJOBS) — вернёмся, когда понадобится.
 - G-29 (`--auto` activation) — ждёт OAuth setup.
 - G-6, G-33 (часть RFC 012 — TSV schema bump).
+
+---
+
+## Прогресс-трекер для Lilia-batch
+
+Этот блок ведётся вживую — фиксируем, что закрыто, дату, ссылку на коммит. После L-6 секция замораживается как archival.
+
+| ID | Статус | Commit | Дата | Заметка |
+|---|---|---|---|---|
+| L-1 (salary matrix per-profile) | **Done** | Commit A | 2026-05-04 | `profile.json.salary` block + `parseLevel(title, parser)` dispatcher (`pm` / `healthcare` / `default`). Lilia matrix S/A/B/C × MedAdmin/Coordinator/Senior. COL config per-profile (Lilia: `multiplier=1.0`). Jared без блока → engine defaults (parity подтверждён smoke + 12 новых тестов). |
+| L-2 (memory in profile config) | **Done** | Commit A | 2026-05-04 | `profile.json.memory` block (`writing_style_file` / `resume_key_points_file` / `feedback_dir`). `profile_loader.loadMemory()` подгружает контент в `profile.memory.{writingStyle,resumeKeyPoints,feedback[]}`. `prepare.js` пробрасывает в `prepare_context.memory`. SKILL Step 1 / Voice calibration / Memory files читают из контекста, не с диска. |
+| L-3 (Lilia memory files content) | **Done** | Commit A | 2026-05-04 | `profiles/lilia/memory/user_writing_style.md` (warm, 5/10, anti-AI tells, voice anchors) + `user_resume_key_points.md` (Strong/Medium/Weak fit criteria + 4 опыта по приоритету + дифференциаторы). Jared `profile.json` тоже задекларировал свой существующий memory dir. |
+| L-4 (geo model RFC-005) | RFC pending | — | — | — |
+| L-5 (Schedule / Requirements push) | Open | — | — | — |
+| L-6 (head-to-head Lilia) | Pending | — | — | После Commit C |

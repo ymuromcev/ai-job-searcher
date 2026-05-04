@@ -103,7 +103,89 @@ function loadProfile(id, options = {}) {
     );
   }
 
+  // L-2 (2026-05-04): per-profile memory block. SKILL Step 1 / Humanizer Rules
+  // consume `result.memory` instead of reading from disk directly.
+  result.memory = loadMemory(root, profile.memory);
+
+  // L-1 (2026-05-04): per-profile salary block. Engine reads
+  // `result.salaryConfig` (normalised) and feeds it into calcSalary opts.
+  result.salaryConfig = normalizeSalaryConfig(profile.salary);
+
   return result;
+}
+
+// --- Memory loading ---------------------------------------------------------
+//
+// Schema (profile.json):
+//   "memory": {
+//     "writing_style_file":     "memory/user_writing_style.md",
+//     "resume_key_points_file": "memory/user_resume_key_points.md",
+//     "feedback_dir":           "memory"   // optional; lists feedback_*.md
+//   }
+//
+// Returns:
+//   {
+//     writingStyle: string | null,
+//     resumeKeyPoints: string | null,
+//     feedback: [{ file: relPath, content: string }]
+//   }
+//
+// Missing files are tolerated — SKILL falls back to resume_versions.json /
+// cover_letter_template.md when the corresponding memory entry is null.
+function loadMemory(root, memoryConfig) {
+  const cfg = memoryConfig || {};
+  const out = { writingStyle: null, resumeKeyPoints: null, feedback: [] };
+
+  if (cfg.writing_style_file) {
+    const p = path.join(root, cfg.writing_style_file);
+    const v = readFileIfExists(p);
+    if (v !== undefined) out.writingStyle = v;
+  }
+  if (cfg.resume_key_points_file) {
+    const p = path.join(root, cfg.resume_key_points_file);
+    const v = readFileIfExists(p);
+    if (v !== undefined) out.resumeKeyPoints = v;
+  }
+  if (cfg.feedback_dir) {
+    const dir = path.join(root, cfg.feedback_dir);
+    if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+      const files = fs
+        .readdirSync(dir)
+        .filter((name) => /^feedback_.*\.md$/.test(name))
+        .sort();
+      for (const name of files) {
+        const full = path.join(dir, name);
+        const rel = path.join(cfg.feedback_dir, name);
+        out.feedback.push({ file: rel, content: fs.readFileSync(full, "utf8") });
+      }
+    }
+  }
+  return out;
+}
+
+// --- Salary block normalization --------------------------------------------
+//
+// Schema (profile.json):
+//   "salary": {
+//     "currency": "USD",
+//     "level_parser": "pm" | "healthcare" | "default",
+//     "matrix": { TIER: { LEVEL: {min,max,mid} } },
+//     "col_adjustment": { multiplier, high_col_cities, exclude_format }
+//   }
+//
+// Returns: a plain object the salary_calc module can spread directly into
+// opts. Missing top-level block → null (back-compat: callers fall back to
+// engine defaults, preserving Jared parity).
+function normalizeSalaryConfig(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const out = {};
+  if (raw.currency) out.currency = String(raw.currency);
+  if (raw.level_parser) out.levelParser = String(raw.level_parser);
+  if (raw.matrix && typeof raw.matrix === "object") out.salaryMatrix = raw.matrix;
+  if (raw.col_adjustment && typeof raw.col_adjustment === "object") {
+    out.colAdjustment = raw.col_adjustment;
+  }
+  return out;
 }
 
 // Accepts both the prototype / _example shape (nested object with
@@ -216,5 +298,7 @@ module.exports = {
   secretEnvName,
   secretPrefix,
   normalizeFilterRules,
+  loadMemory,
+  normalizeSalaryConfig,
   ID_REGEX,
 };

@@ -1,14 +1,68 @@
 // Pure salary calculator — no I/O.
 //
 // Computes total-compensation expectations from Company Tier × Role Level.
-// Company tiers are per-profile (pass via opts.companyTiers). The salary matrix
-// defaults to the ranges in DEFAULT_SALARY_MATRIX but can be overridden.
+//
+// Per-profile config (L-1, 2026-05-04):
+//   profile.salary.level_parser  ─ "pm" | "healthcare" | "default" or a custom fn
+//   profile.salary.matrix        ─ { TIER: { LEVEL: {min,max,mid} } }
+//   profile.salary.col_adjustment─ { multiplier, high_col_cities, exclude_format }
+//
+// When `salary` block is absent, defaults reproduce the previous behaviour
+// (PM-tier Jared matrix + SF/NYC +7.5% unless Remote) so existing callers
+// stay byte-identical.
 //
 // Exports:
-//   parseLevel(title)           → 'PM' | 'Senior' | 'Lead'
-//   calcSalary(company, title, opts) → SalaryResult | null
+//   parseLevel(title, parser?)         → string level
+//   calcSalary(company, title, opts)   → SalaryResult | null
 //   DEFAULT_SALARY_MATRIX
+//   PARSERS
 
+// --- PM (Jared, fintech) — default for back-compat --------------------------
+function parseLevelPm(title) {
+  const raw = String(title || "");
+  const t = raw.toLowerCase().trim();
+  if (/\blead\b/.test(t)) return "Lead";
+  if (/\bsenior\b/.test(t) || /\bsr[\.\s]/.test(t)) return "Senior";
+  // Capital One-style "Manager, Product Management" → Senior
+  if (/^manager,?\s+product/i.test(raw)) return "Senior";
+  return "PM";
+}
+
+// --- Healthcare (Lilia) — receptionist / coordinator ------------------------
+function parseLevelHealthcare(title) {
+  const t = String(title || "").toLowerCase().trim();
+  // "Lead", "Supervisor", "Senior" → senior tier (rare for Lilia: blocklist
+  // catches most managerial titles, but the level still exists in the matrix
+  // for edge cases like "Senior Patient Services Rep").
+  if (/\b(lead|supervisor|senior|sr\.?)\b/.test(t)) return "Senior";
+  // "Coordinator" / "Specialist" — middle tier; Lilia targets several
+  // (Authorization Coordinator, Care Management Coordinator, etc.)
+  if (/\b(coordinator|specialist)\b/.test(t)) return "Coordinator";
+  return "MedAdmin";
+}
+
+// --- Default — single row, useful for one-off profiles ---------------------
+function parseLevelDefault(/* title */) {
+  return "default";
+}
+
+const PARSERS = {
+  pm: parseLevelPm,
+  healthcare: parseLevelHealthcare,
+  default: parseLevelDefault,
+};
+
+function resolveParser(parser) {
+  if (typeof parser === "function") return parser;
+  if (typeof parser === "string" && PARSERS[parser]) return PARSERS[parser];
+  return PARSERS.pm; // back-compat default
+}
+
+function parseLevel(title, parser) {
+  return resolveParser(parser)(title);
+}
+
+// --- Default matrix (Jared / fintech PM) ------------------------------------
 const DEFAULT_SALARY_MATRIX = {
   // Tier S — public big-tech / top fintech, $10B+ market cap
   S: {
@@ -36,34 +90,48 @@ const DEFAULT_SALARY_MATRIX = {
   },
 };
 
-function parseLevel(title) {
-  const t = String(title || "").toLowerCase().trim();
-  if (/\blead\b/.test(t)) return "Lead";
-  if (/\bsenior\b/.test(t) || /\bsr[\.\s]/.test(t)) return "Senior";
-  // Capital One-style "Manager, Product Management" → Senior
-  if (/^manager,?\s+product/i.test(String(title || ""))) return "Senior";
-  return "PM";
-}
+const DEFAULT_COL_ADJUSTMENT = {
+  multiplier: 1.075,
+  high_col_cities: ["san francisco", "new york", "nyc"],
+  exclude_format: ["Remote"],
+};
 
-function adjustedSalary(base, workFormat, city) {
+function adjustedSalary(base, workFormat, city, colCfg) {
+  const cfg = colCfg || DEFAULT_COL_ADJUSTMENT;
+  const cities = Array.isArray(cfg.high_col_cities) ? cfg.high_col_cities : [];
+  const excludeFmt = Array.isArray(cfg.exclude_format) ? cfg.exclude_format : [];
+  const multiplier = typeof cfg.multiplier === "number" ? cfg.multiplier : 1.0;
+
   const c = String(city || "").toLowerCase();
-  const isHighCOL =
-    c.includes("san francisco") || c.includes("new york") || c.includes("nyc");
-  const multiplier =
-    isHighCOL && String(workFormat || "") !== "Remote" ? 1.075 : 1.0;
+  const isHighCOL = cities.some((needle) => c.includes(String(needle).toLowerCase()));
+  const fmt = String(workFormat || "");
+  const isExcluded = excludeFmt.includes(fmt);
+  const m = isHighCOL && !isExcluded ? multiplier : 1.0;
   return {
-    min: Math.round((base.min * multiplier) / 1000) * 1000,
-    max: Math.round((base.max * multiplier) / 1000) * 1000,
-    mid: Math.round((base.mid * multiplier) / 1000) * 1000,
+    min: Math.round((base.min * m) / 1000) * 1000,
+    max: Math.round((base.max * m) / 1000) * 1000,
+    mid: Math.round((base.mid * m) / 1000) * 1000,
   };
 }
 
 // Returns SalaryResult or null when tier is unknown.
 // SalaryResult: { tier, level, min, max, mid, expectation }
+//
+// opts:
+//   companyTiers   — { [companyName]: "S"|"A"|"B"|"C" }
+//   salaryMatrix   — overrides DEFAULT_SALARY_MATRIX (per-profile)
+//   levelParser    — "pm" | "healthcare" | "default" | fn(title)
+//   colAdjustment  — { multiplier, high_col_cities, exclude_format }
+//   currency       — "USD" by default; passed through to expectation suffix
+//   workFormat     — "Remote" | "Hybrid" | "Onsite"
+//   city           — used by COL adjustment
 function calcSalary(companyName, title, opts = {}) {
   const {
     companyTiers = {},
     salaryMatrix = DEFAULT_SALARY_MATRIX,
+    levelParser = "pm",
+    colAdjustment = DEFAULT_COL_ADJUSTMENT,
+    currency = "USD",
     workFormat = "",
     city = "",
   } = opts;
@@ -73,19 +141,29 @@ function calcSalary(companyName, title, opts = {}) {
   const tierRow = salaryMatrix[tier];
   if (!tierRow) return null;
 
-  const level = parseLevel(title);
+  const level = parseLevel(title, levelParser);
   const base = tierRow[level];
   if (!base) return null;
 
-  const { min, max, mid } = adjustedSalary(base, workFormat, city);
+  const { min, max, mid } = adjustedSalary(base, workFormat, city, colAdjustment);
+  const symbol = currency === "USD" ? "$" : "";
   return {
     tier,
     level,
     min,
     max,
     mid,
-    expectation: `$${min / 1000}-${max / 1000}K TC (midpoint $${mid / 1000}K)`,
+    expectation: `${symbol}${min / 1000}-${max / 1000}K TC (midpoint ${symbol}${mid / 1000}K)`,
   };
 }
 
-module.exports = { parseLevel, calcSalary, DEFAULT_SALARY_MATRIX };
+module.exports = {
+  parseLevel,
+  parseLevelPm,
+  parseLevelHealthcare,
+  parseLevelDefault,
+  calcSalary,
+  DEFAULT_SALARY_MATRIX,
+  DEFAULT_COL_ADJUSTMENT,
+  PARSERS,
+};

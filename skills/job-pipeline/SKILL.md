@@ -133,12 +133,12 @@ After the CLI writes `prepare_context.json`, the user invokes `/job-pipeline pre
 
 **Step 1 — Load memory**
 
-Read before anything else:
-- `profiles/<id>/memory/user_writing_style.md`
-- `profiles/<id>/memory/user_resume_key_points.md`
-- Any `profiles/<id>/memory/feedback_*.md` files
+Read `profiles/<id>/prepare_context.json` first. The `memory` block (populated by `profile_loader` from `profile.json.memory`) contains:
+- `memory.writingStyle` — content of `profiles/<id>/memory/user_writing_style.md`
+- `memory.resumeKeyPoints` — content of `profiles/<id>/memory/user_resume_key_points.md`
+- `memory.feedback` — array of `{file, content}` for each `feedback_*.md` under the configured dir
 
-If memory files are missing: fall back to `profiles/<id>/resume_versions.json`.
+Use those strings directly. If `memory.writingStyle` or `memory.resumeKeyPoints` is `null`, the per-profile file is missing — fall back to `profiles/<id>/resume_versions.json` and `profiles/<id>/cover_letter_template.md` for tone hints. Do **not** re-read the memory files from disk — the engine already loaded them.
 
 **Step 2 — Read prepare_context.json**
 
@@ -200,7 +200,7 @@ After tiering, the engine will persist the assignments to `profile.json.company_
 
 For each remaining job:
 - If `prepare_context.batch[i].salary` is non-null: use it as-is.
-- If `salary` is null AND the entry has `unknownTier: true`: look up the tier you just assigned in Step 5.7, then read `profiles/<id>/salary_matrix.md` (or the engine's default matrix in `engine/core/salary_calc.js` for healthcare profiles without a custom matrix) and pick the row at Tier × Level. Compute `salaryMin` / `salaryMax` from the table. Apply +5–10% adjustment for SF/NYC hybrid/onsite (matches the engine's COL multiplier).
+- If `salary` is null AND the entry has `unknownTier: true`: look up the tier you just assigned in Step 5.7, then use `prepare_context.salaryConfig` (per-profile matrix + level parser + COL config from `profile.json.salary`). When `salaryConfig` is null the engine's default fintech-PM matrix in `engine/core/salary_calc.js` applies. Pick the row at Tier × Level (level = engine `parseLevel(title, salaryConfig.levelParser)`). Compute `salaryMin` / `salaryMax` from the matrix and apply the COL adjustment defined in `salaryConfig.colAdjustment` (defaults: SF/NYC +7.5% unless Remote).
 - If `salary` is null AND `unknownTier` is **not** true: this means the tier is known but the matrix doesn't cover the level — flag to user with the company name and title, do NOT invent a range.
 
 **Step 7 — Archetype selection (per job)**
@@ -519,12 +519,12 @@ Prints JSON to stdout:
 - **If `partials` is non-empty** → mention them as reference ("Same role, different question: ...; Same question for Stripe: ..."), but proceed to Step 4 unless user asks to reuse one.
 - **Otherwise** → go to Step 4.
 
-**Step 4 — Load memory.** Read in this order:
-- `profiles/<id>/memory/user_writing_style.md`
-- `profiles/<id>/memory/user_resume_key_points.md`
-- Any `profiles/<id>/memory/feedback_*.md`
+**Step 4 — Load memory.** Read paths declared in `profile.json.memory`:
+- `memory.writing_style_file`
+- `memory.resume_key_points_file`
+- Files matching `feedback_*.md` under `memory.feedback_dir`
 
-If memory files are missing, fall back to `profiles/<id>/resume_versions.json`.
+If the `memory` block is absent or any file is missing, fall back to `profiles/<id>/resume_versions.json`.
 
 **Step 5 — Generate the answer.** Apply [Humanizer Rules](#humanizer-rules-prepare--answer-modes) throughout. Default character limit: see `feedback_210_char_limit.md` (210 chars unless the form specifies otherwise; for essay-type questions like Linear's, ignore the default and write a fuller answer).
 
@@ -610,15 +610,16 @@ Profile-specific domain criteria: `profiles/<id>/memory/user_resume_key_points.m
 
 Determined automatically from **Company Tier × Role Level**. No JD salary analysis needed.
 
-Level parsing rules (from title):
-- "Lead" → Lead
-- "Senior" / "Sr." / "Sr " → Senior
-- Capital One-style "Manager, Product Management" → Senior
-- Everything else → PM (mid)
+Level parsing is per-profile. Engine uses `profile.salary.level_parser` from `profile.json`:
+- `"pm"` (default — Jared / fintech): `Lead` / `Senior` / `PM`. Catches "Lead", "Senior", "Sr.", "Sr ", and Capital One-style "Manager, Product Management" → Senior.
+- `"healthcare"` (Lilia): `Senior` / `Coordinator` / `MedAdmin`. Catches "Lead" / "Supervisor" / "Senior" → Senior; "Coordinator" / "Specialist" → Coordinator; everything else → MedAdmin.
+- `"default"` (single-row matrix): always returns `default`.
 
-Tier adjustment: +7.5% if hybrid/onsite in SF/NYC.
+COL adjustment is per-profile (`profile.salary.col_adjustment`). Default for `pm`: +7.5% if hybrid/onsite in SF/NYC. For Lilia (Sacramento metro) the multiplier is 1.0 — no adjustment.
 
-Salary matrix: `profiles/<id>/salary_matrix.md`. Company Tier values are stored per-company in the profile's Notion Companies DB and in `profile.json`.
+Salary matrix is per-profile (`profile.json.salary.matrix`). When the block is omitted the engine falls back to its default fintech-PM matrix (Jared parity). Company Tier values are stored per-company in the profile's Notion Companies DB and in `profile.json.company_tiers`.
+
+The CLI surfaces the resolved config in `prepare_context.salaryConfig` — SKILL Step 6 reads it from there, never from disk.
 
 ### Notion Field Completeness
 
@@ -634,7 +635,7 @@ Apply **during** CL or answer generation — not as a separate post-pass.
 
 ### Voice calibration
 
-Match the profile's writing style from `profiles/<id>/memory/user_writing_style.md`. Defaults:
+Match the profile's writing style from `prepare_context.memory.writingStyle` (engine-loaded from `profile.json.memory.writing_style_file`). When the field is null, fall back to these defaults:
 - Confident practitioner, not humble applicant. "I built X that delivered Y" — not "I was responsible for X."
 - 7/10 formality: professional with energy and momentum.
 - Have opinions; react to facts rather than just reporting them.
@@ -642,6 +643,8 @@ Match the profile's writing style from `profiles/<id>/memory/user_writing_style.
 - Numbers in every paragraph except the close.
 - Short paragraphs (2-3 sentences). Vary rhythm: short punchy sentences mixed with longer ones.
 - Be specific: concrete details over vague claims.
+
+The defaults above describe Jared's tone. Other profiles (e.g. Lilia — warm, 5/10 formality, no metrics-per-paragraph rule) will override them entirely via their `writingStyle` memory file.
 
 ### Banned vocabulary (AI tells)
 
@@ -673,9 +676,11 @@ After writing, ask: "What makes this obviously AI-generated?" — fix any remain
 
 ### Memory files (load before generating)
 
-In every prepare / answer session:
-1. `profiles/<id>/memory/user_writing_style.md` — writing style profile
-2. `profiles/<id>/memory/user_resume_key_points.md` — skills / experience for matching
-3. Any other feedback files in `profiles/<id>/memory/` (e.g., `feedback_*.md`)
+In every prepare / answer session, read the engine-loaded memory from `prepare_context.memory`:
+1. `memory.writingStyle` — writing style profile (from `profile.json.memory.writing_style_file`)
+2. `memory.resumeKeyPoints` — skills / experience for matching (from `profile.json.memory.resume_key_points_file`)
+3. `memory.feedback[]` — array of `{file, content}` for each `feedback_*.md` under `profile.json.memory.feedback_dir`
 
-If memory files are missing: fall back to `profiles/<id>/resume_versions.json` as the source of truth for the candidate's experience. Always ask the user which archetype is most relevant rather than improvising facts.
+For the `answer` mode (no prepare_context.json available), read the same files directly from disk under the paths declared in `profile.json.memory`.
+
+If a memory entry is null / missing: fall back to `profiles/<id>/resume_versions.json` as the source of truth for the candidate's experience. Always ask the user which archetype is most relevant rather than improvising facts.
