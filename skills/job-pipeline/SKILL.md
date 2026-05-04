@@ -280,6 +280,11 @@ Create a Notion page in `profile.notion.jobs_pipeline_db_id` with ALL required f
 - **Cover Letter** — filename stem (same as `clKey`), e.g. `Affirm_analyst-ii-credit-risk-analytics_20260420`
 - **Resume Version** — select, from `resumeVer`
 
+**Profile-gated fields (L-5)** — push only when `profile.notion.property_map` declares the field. If the property is absent from the map, do NOT push (back-compat: Jared has no Schedule / Requirements columns; his pages remain unchanged):
+
+- **Schedule** — select, from `prepare_context.batch[i].schedule` (extracted by the engine from JD text — values like `"Full-time"` / `"Part-time"` / `"Per Diem"` / `"PRN"` / `"Contract"`). Skip the field when the entry has no `schedule` key (extractor returned null).
+- **Requirements** — rich_text, from `prepare_context.batch[i].requirements` (short bulleted summary of education / years experience / language / certifications). Skip when the entry has no `requirements` key.
+
 `Industry` is a **rollup** — do NOT set it. It is inherited automatically from the Company relation.
 
 Record the returned `notion_page_id`.

@@ -7,7 +7,7 @@ Severity:
 - **Medium** — поведение работает, но отклоняется от ожиданий или заложена мина (4 активных, 6 закрыто 2026-05-04).
 - **Low** — мелкая шероховатость в DX или edge case (9 активных, 3 закрыты 2026-05-04).
 - **Trivial** — косметика / документационная зацепка (7 активных, 2 закрыты 2026-05-04).
-- **Lilia-profile-blocker** — недо-реализованная per-profile конфигурация, из-за которой engine для Лили работает по Джаредовским дефолтам (1 будущий L-tier RFC, 4 M-tier коммита, 1 verification-only).
+- **Lilia-profile-blocker** — недо-реализованная per-profile конфигурация, из-за которой engine для Лили работает по Джаредовским дефолтам (1 будущий L-tier RFC, 4 закрыто 2026-05-04 — Commit A + B, 1 verification-only).
 
 Цена fix'а:
 - **XS** — несколько строк, без RFC.
@@ -222,10 +222,8 @@ Severity:
 - **Статус**: Open, RFC pending. Запланировано в Commit C.
 
 ### L-5 — Notion Schedule / Requirements из JD
-- **Сейчас**: property_map Лили имеет `schedule` (select) и `requirements` (rich_text). SKILL Step 9 их не пишет — карточки выходят пустые. Schedule (Mon-Fri vs ночи-выходные) и Requirements (cert preferences) — критические сигналы для healthcare-ролей перед откликом.
-- **Станет**: `engine/core/jd_extract.js` (новый) с двумя чистыми экстракторами — `extractSchedule(jdText)` и `extractRequirements(jdText)` — на regex по типичным healthcare формулировкам. `prepare.js` pre-phase складывает в `prepare_context.batch[i].{schedule, requirements}`. SKILL Step 9 пушит, если в `profile.notion.property_map` есть соответствующие поля (back-compat: для Джареда не пушит).
-- **Цена**: M.
-- **Статус**: Open. Запланировано в Commit B.
+- **Сейчас (закрыто 2026-05-04)**: `engine/core/jd_extract.js` ловит schedule (Full-time / Part-time / Per Diem / PRN / Contract / шифт-фолбек / hours-per-week) и requirements (education / 1-7+ years / bilingual + специфичные языки / healthcare certs — BLS / CMA / RDA / RN / etc. с required/preferred тегами / EMR — Epic / Cerner / Dentrix / etc.). Контекст-скоп — sentence/line, чтобы required/preferred не утекали между бюллетами. `prepare.js` pre-phase прокидывает в `prepare_context.batch[i].{schedule, requirements}` через DI-инъекцию `extractFromJd`. SKILL Step 9 пушит, только если `profile.notion.property_map.schedule` / `.requirements` определены (у Лили оба — `select` + `rich_text`; у Джареда нет → его карточки не меняются). Тесты: 25 на jd_extract (Kaiser / Sutter / Dignity / Sono Bello / Stonebrook + boundary cases) + 5 на prepare.js wiring (включая Jared parity — extractor может вернуть `requirements` для PM-JD по years signal, но SKILL не пушит из-за gating).
+- **Цена**: M. **Closed 2026-05-04** (Commit B).
 
 ### L-6 — Head-to-head verification для Лили
 - **Сейчас**: SKILL Step 8 архитектурно поддерживает template-variants shape (`defaults.{p2,p3,p4_template}` + `letters[]`), но фактический head-to-head на Лилиных вакансиях не проводился — только на Джаредовских (5 jobs, см. `prepare_head_to_head.md`).
@@ -314,5 +312,5 @@ Geo-модель per-profile:
 | L-2 (memory in profile config) | **Done** | Commit A | 2026-05-04 | `profile.json.memory` block (`writing_style_file` / `resume_key_points_file` / `feedback_dir`). `profile_loader.loadMemory()` подгружает контент в `profile.memory.{writingStyle,resumeKeyPoints,feedback[]}`. `prepare.js` пробрасывает в `prepare_context.memory`. SKILL Step 1 / Voice calibration / Memory files читают из контекста, не с диска. |
 | L-3 (Lilia memory files content) | **Done** | Commit A | 2026-05-04 | `profiles/lilia/memory/user_writing_style.md` (warm, 5/10, anti-AI tells, voice anchors) + `user_resume_key_points.md` (Strong/Medium/Weak fit criteria + 4 опыта по приоритету + дифференциаторы). Jared `profile.json` тоже задекларировал свой существующий memory dir. |
 | L-4 (geo model RFC-005) | RFC pending | — | — | — |
-| L-5 (Schedule / Requirements push) | Open | — | — | — |
+| L-5 (Schedule / Requirements push) | **Done** | Commit B | 2026-05-04 | `engine/core/jd_extract.js` + `prepare.js` pre-phase wiring + SKILL Step 9 profile-gated push. 30 новых тестов (25 jd_extract + 5 prepare). Healthcare JD фикстуры: Kaiser / Sutter / Dignity / Sono Bello / Stonebrook. Sentence-scoped strength tagging (required/preferred). Back-compat: Jared parity — его карточки не меняются (нет полей в property_map). |
 | L-6 (head-to-head Lilia) | Pending | — | — | После Commit C |

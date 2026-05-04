@@ -377,6 +377,114 @@ test("prepare --phase pre: flags unknown-tier companies, dedupes across batch", 
   assert.equal(result.stats.unknownTierCompanies, 2);
 });
 
+// --- L-5: schedule + requirements extraction from JD ------------------------
+
+test("prepare --phase pre (L-5): extracts schedule + requirements from jdText into batch entries", async () => {
+  const apps = [makeApp({ key: "gh:1", companyName: "Kaiser", title: "Medical Receptionist" })];
+  const jdText = "Schedule: Full-time, day shift. Requirements: HS diploma required. BLS preferred.";
+  const deps = makePrepDeps(apps, {
+    fetchJds: async () => [{ key: "gh:1", status: "fetched", text: jdText }],
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 1);
+  assert.equal(result.batch[0].schedule, "Full-time");
+  assert.ok(result.batch[0].requirements);
+  assert.match(result.batch[0].requirements, /diploma/i);
+  assert.match(result.batch[0].requirements, /BLS \(preferred\)/);
+});
+
+test("prepare --phase pre (L-5): no jdText → no schedule/requirements fields", async () => {
+  // When the JD couldn't be fetched, we don't invent fields. The SKILL falls
+  // back to writing nothing for these (profiles whose property_map doesn't
+  // declare them stay unaffected anyway).
+  const apps = [makeApp({ key: "gh:1" })];
+  const deps = makePrepDeps(apps, {
+    fetchJds: async () => [], // no JD fetched
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 1);
+  assert.equal(result.batch[0].schedule, undefined);
+  assert.equal(result.batch[0].requirements, undefined);
+});
+
+test("prepare --phase pre (L-5): jdText with no recognizable signal → no fields added", async () => {
+  const apps = [makeApp({ key: "gh:1" })];
+  const jdText = "We are seeking a dedicated team member to join our growing organization.";
+  const deps = makePrepDeps(apps, {
+    fetchJds: async () => [{ key: "gh:1", status: "fetched", text: jdText }],
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch[0].schedule, undefined);
+  assert.equal(result.batch[0].requirements, undefined);
+  // jdText itself is still preserved
+  assert.equal(result.batch[0].jdText, jdText);
+});
+
+test("prepare --phase pre (L-5): extractFromJd is injected via deps and called with jdText", async () => {
+  // Verify the dep injection contract: extractFromJd is called with the JD
+  // body and its return shape lands on the entry. This protects against a
+  // future refactor accidentally bypassing the extractor.
+  const apps = [makeApp({ key: "gh:1" })];
+  const calls = [];
+  const deps = makePrepDeps(apps, {
+    fetchJds: async () => [{ key: "gh:1", status: "fetched", text: "JD-BODY" }],
+    extractFromJd: (text) => {
+      calls.push(text);
+      return { schedule: "Custom-FT", requirements: "- Custom requirement" };
+    },
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  assert.deepEqual(calls, ["JD-BODY"]);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch[0].schedule, "Custom-FT");
+  assert.equal(result.batch[0].requirements, "- Custom requirement");
+});
+
+test("prepare --phase pre (L-5): Jared parity — batch shape unchanged when JD has no healthcare signal", async () => {
+  // Jared's JDs (PM/fintech) don't contain healthcare cert vocabulary. Without
+  // schedule/requirements, the batch entry shape is back-compat for his
+  // profile (his property_map declares no Schedule/Requirements; the SKILL
+  // simply skips writing those fields). We assert no spurious fields appear
+  // for a typical PM JD.
+  const apps = [makeApp({ key: "gh:1", companyName: "Stripe", title: "Senior PM" })];
+  const jdText = `
+    Senior Product Manager, Capital
+    You will own the full product lifecycle for Stripe Capital.
+    Requirements:
+    - 7+ years of product management experience
+    - Strong analytical skills (SQL, A/B testing)
+  `;
+  const deps = makePrepDeps(apps, {
+    fetchJds: async () => [{ key: "gh:1", status: "fetched", text: jdText }],
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  // schedule: no employment-type vocabulary in this PM JD → null → field omitted.
+  assert.equal(result.batch[0].schedule, undefined);
+  // requirements: years signal still fires (universal), so requirements is
+  // populated with "7+ years of product management experience" — not null.
+  // This is the expected behavior: for Jared, his property_map doesn't
+  // declare a Requirements field, so SKILL Step 9 will simply not push it.
+  assert.ok(result.batch[0].requirements);
+  assert.match(result.batch[0].requirements, /7\+ years/i);
+  // No invented healthcare certs for a PM JD.
+  assert.doesNotMatch(result.batch[0].requirements, /\bBLS\b/);
+  assert.doesNotMatch(result.batch[0].requirements, /\bRN\b/);
+});
+
 // --- G-12: fill-up loop + skip-reason breakdown ------------------------------
 
 test("prepare --phase pre (G-12): fills batch to target by pulling more from passed when first chunk has dead URLs", async () => {

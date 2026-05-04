@@ -32,6 +32,7 @@ const applicationsTsv = require("../core/applications_tsv.js");
 const { checkAll } = require("../core/url_check.js");
 const { fetchAll: fetchAllJds } = require("../core/jd_cache.js");
 const { calcSalary } = require("../core/salary_calc.js");
+const { extractFromJd } = require("../core/jd_extract.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 
@@ -175,6 +176,7 @@ function makeDefaultDeps() {
     checkUrls: checkAll,
     fetchJds: fetchAllJds,
     calcSalary,
+    extractFromJd,
     fetchFn: defaultFetch,
     readFile: (p) => fs.readFileSync(p, "utf8"),
     writeFile: (p, data) => {
@@ -301,6 +303,16 @@ async function runPre(ctx, deps) {
       if (jd.text) entry.jdText = jd.text;
     } else {
       entry.jdStatus = urlRes.alive ? "not_fetched" : "skipped_dead_url";
+    }
+
+    // L-5: extract Schedule + Requirements from JD text. Fields land on the
+    // entry only when extractors return non-null. Profiles whose property_map
+    // doesn't declare schedule/requirements simply ignore these in Step 9
+    // (back-compat: Jared has no Schedule field, his pages stay unchanged).
+    if (entry.jdText) {
+      const extracted = deps.extractFromJd(entry.jdText);
+      if (extracted.schedule) entry.schedule = extracted.schedule;
+      if (extracted.requirements) entry.requirements = extracted.requirements;
     }
 
     const tierKnown = Object.prototype.hasOwnProperty.call(
