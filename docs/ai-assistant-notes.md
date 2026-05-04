@@ -31,7 +31,8 @@ engine/
     filter.js            Rule-driven inclusion/exclusion.
     dedup.js             By (ats_source, job_id) → shared jobs.tsv.
     validator.js         Schema + consistency checks; retro sweeps.
-    notion_sync.js       SDK v5 client, property builders, push planner.
+    notion_sync.js       SDK v5 client, property builders, page mutations
+                         (status / comment) for the check command.
     fit_prompt.js        Assembles per-profile fit prompt for Claude.
     profile_loader.js    Loads profile.json, secrets, filter rules.
     company_resolver.js  Looks up or creates Company relation pages.
@@ -96,8 +97,10 @@ We use `@notionhq/client` v5. Relevant footguns:
 ### TSV is the ledger
 
 `profiles/<id>/applications.tsv` is the canonical per-profile pipeline.
-Notion is a view on top. The TSV has a schema version header (v2 at
-time of writing); loaders auto-upgrade v1 → v2 on read.
+Notion is a view on top. The TSV has a schema version header (v3 at
+time of writing — added `location` at column 7 between `url` and
+`status`, Stage G-5 / 2026-05-03); loaders auto-upgrade v1 / v2 → v3
+on read.
 
 ### Profile contract
 
@@ -174,10 +177,13 @@ Wait for approval before writing code.
   importing from a `stage16/` peer. `stage16/` was a one-off migration
   tool; it's excluded from the public release, so `stage18/` is
   self-contained.
-- **`sync` has a manifest gate.** `push_manifest.json` (optional, per
-  profile) whitelists which TSV rows may be pushed to Notion. This
-  exists so historical / archived TSV rows don't accidentally land in
-  a fresh Notion DB during a profile migration.
+- **`sync` is pull-only (since 2026-05-04).** Notion → TSV reconcile
+  only. The push phase, the Stage 16 `push_manifest.json` gate, and
+  the Inbox callout updater were all removed in commit `4f85ed2`.
+  New Notion pages are created exclusively by `prepare`'s commit
+  phase (which writes the page atomically with CL generation + fit
+  scoring). See the header comment of `engine/commands/sync.js` for
+  the full rationale.
 - **The check command is two-phase (prepare / apply).** Gmail reads
   happen in Claude via MCP, not via `googleapis`. Phase 1 writes a
   JSON batch plan; Claude fills the raw emails into a file; phase 2
@@ -191,9 +197,11 @@ Wait for approval before writing code.
   shipped implementation. Known test/impl drift, tracked for cleanup.
   CI is configured to run them anyway — visible as a known-failure
   signal until addressed.
-- The `check.js` → Notion Status mapping uses `"Phone Screen"`
-  historically; some pipelines have renamed that status to `Interview`.
-  If your DB uses `Interview`, update the mapping in `core/classifier.js`.
+- The `check.js` Notion Status mapping is `INTERVIEW_INVITE → "Interview"`
+  (post-Stage 8 unified set: `To Apply / Applied / Interview / Offer /
+  Rejected / Closed / No Response / Archived`). The historical
+  `"Phone Screen"` and `"Onsite"` statuses no longer exist in either
+  profile.
 - Salary calc uses a simple COL multiplier per US state. Non-US
   locations fall back to 1.0. If expanding internationally, this is
   the module to extend.
