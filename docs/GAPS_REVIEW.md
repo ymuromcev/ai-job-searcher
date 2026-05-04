@@ -86,14 +86,14 @@ Severity:
 ## Low (12)
 
 ### G-2 — Slash в названии роли разбивается на варианты
-- **Сейчас**: «PM / Sr PM» превращается в две записи. Поведение полезное, но не задокументировано.
-- **Станет**: документировано как фича в RFC.
-- **Цена**: XS (только текст).
+- **Сейчас**: при оценке фильтрами title с `/` (например, «Receptionist/Office Manager») разбивается на части — если хотя бы одна часть проходит blocklist+requirelist, вакансия не блокируется. Это **не два TSV-record'а**, а альтернативная оценка одной вакансии. Поведение полезное (multi-role posting'и) и реально документировано в `engine/core/filter.js` header + SPEC CC-3.1, но в gap-матрице висело как «engine improvement без явного источника».
+- **Станет**: явный triage-decision в SPEC и matrix — keep as-is, intent зафиксирован.
+- **Цена**: XS (только текст). **Closed 2026-05-03.**
 
 ### G-5 — В TSV нет поля location
-- **Сейчас**: локация вакансии хранится только в Notion. Локально в TSV её нет, поэтому location-фильтры на этапе validate невозможны.
-- **Станет**: location в TSV → можно фильтровать локально и пересматривать ретро.
-- **Цена**: M (миграция схемы TSV).
+- **Сейчас**: location в TSV нет → location-фильтры на этапе validate невозможны, retro-sweep его не покрывает.
+- **Станет**: location в TSV (column 7), v3 schema. Backfill из master pool. Validate retro-sweep теперь покрывает location_blocklist. Sync push: location уезжает в Notion property "Location" если профиль явно прописал в property_map (default: не пушит, обратно-совместимо).
+- **Цена**: M (миграция схемы TSV + backfill + тесты). **Closed 2026-05-03.** Backfill результаты: Jared 2186/2897 заполнено (711 orphans — старые скан-снимки), Lilia 94/425 (331 orphans — Sutter Health workday не в pool). Бэкапы `applications.tsv.pre-stage-g5` сохранены для обоих профилей.
 
 ### G-6 — В companies.tsv колонка profile — comma-list
 - **Сейчас**: одна компания, видимая обоим профилям (Jared+Lilia), хранится строкой `"jared,lilia"`. Хак.
@@ -136,9 +136,9 @@ Severity:
 - **Цена**: XS (только текст).
 
 ### G-26 — LinkedIn-вакансии создают «To Apply» с пустым URL
-- **Сейчас**: каждая такая запись потом 100% умрёт на prepare URL-check (G-13). Cross-cut: чинится либо resolution URL'а из тела письма, либо source-skip'ом.
-- **Станет**: либо корректный URL, либо запись не создаётся.
-- **Цена**: M.
+- **Сейчас (до 2026-05-03)**: каждая такая запись попадала в TSV без URL → SKILL не мог фетчить JD → Notion-карточки выходили без ссылки.
+- **Станет**: LinkedIn ingestion **disabled 2026-05-03** (per user). Прототип не имел LinkedIn-источника, engine добавил экспериментально, юзер этим почти не пользовался. Email всё ещё фетчится Gmail-батчем (`from:jobalerts-noreply@linkedin.com`) и виден в check-log как `"skipped: linkedin disabled"`, но TSV-row не создаётся. Re-enable инструкция — в комментарии над `processLinkedIn` в `engine/commands/check.js`.
+- **Цена**: XS (вместо M — заворот вместо URL-resolution). **Closed 2026-05-03.**
 
 ### G-29 — `--auto` режим check существует, но не активирован
 - **Сейчас**: код для cron-режима готов, но ни Jared, ни Lilia не используют (check сейчас через Claude+MCP).
