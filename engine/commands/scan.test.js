@@ -72,22 +72,34 @@ function makeDeps(overrides = {}) {
       calls.saveApplications.push({ file, count: apps.length });
       return { path: file, count: apps.length };
     },
-    appendNewApplications: (existing, jobs) => {
-      const fresh = jobs.map((j) => ({
-        key: `${j.source}:${j.jobId}`,
-        source: j.source,
-        jobId: j.jobId,
-        companyName: j.companyName,
-        title: j.title,
-        url: j.url,
-        status: "To Apply",
-        notion_page_id: "",
-        resume_ver: "",
-        cl_key: "",
-        createdAt: "now",
-        updatedAt: "now",
-      }));
+    appendNewApplications: (existing, jobs, opts = {}) => {
+      const status = opts.defaultStatus || "To Apply";
+      const seen = new Set(existing.map((a) => a.key));
+      const fresh = [];
+      for (const j of jobs) {
+        const key = `${j.source}:${j.jobId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        fresh.push({
+          key,
+          source: j.source,
+          jobId: j.jobId,
+          companyName: j.companyName,
+          title: j.title,
+          url: j.url,
+          status,
+          notion_page_id: "",
+          resume_ver: "",
+          cl_key: "",
+          createdAt: "now",
+          updatedAt: "now",
+        });
+      }
       return { apps: existing.concat(fresh), fresh };
+    },
+    appendRejectionsLog: (file, lines) => {
+      calls.appendRejectionsLog = calls.appendRejectionsLog || [];
+      calls.appendRejectionsLog.push({ file, lines });
     },
     scan: async ({ targetsBySource, adapters, existing, ctx }) => {
       calls.scan.push({ targetsBySource, adapters: Object.keys(adapters), existingCount: existing.length, ctx });
@@ -154,7 +166,7 @@ test("scan honours --dry-run by skipping writes", async () => {
   assert.equal(calls.saveJobs.length, 0);
   assert.equal(calls.saveApplications.length, 0);
   assert.match(out.lines.join("\n"), /\(dry-run\) would write 2 rows/);
-  assert.match(out.lines.join("\n"), /\(dry-run\) would append 2 rows/);
+  assert.match(out.lines.join("\n"), /\(dry-run\) would append 2 To Apply \+ 0 Archived rows/);
 });
 
 test("scan exits 1 when companies pool is empty", async () => {
@@ -494,4 +506,158 @@ test("scan integrates end-to-end against tmp filesystem with stub adapter", asyn
   assert.match(jobsTsvText, /Live PM/);
   const appsText = fs.readFileSync(path.join(profileDir, "applications.tsv"), "utf8");
   assert.match(appsText, /greenhouse:999/);
+});
+
+test("scan applies filter rules: passed → To Apply, rejected → Archived (incident 2026-05-04)", async () => {
+  const { deps, calls } = makeDeps({
+    loadProfile: () => ({
+      id: "jared",
+      modules: ["discovery:greenhouse", "discovery:lever"],
+      discovery: {},
+      filter_rules: {
+        title_requirelist: [{ pattern: "product manager", reason: "PM role" }],
+      },
+      paths: { root: "/tmp/profiles/jared" },
+    }),
+    scan: async () => ({
+      // 1 PM (passes), 1 SWE (rejected by requirelist)
+      fresh: [
+        fakeJob({ jobId: "1", title: "Senior Product Manager" }),
+        fakeJob({ source: "lever", jobId: "2", companyName: "Stripe", title: "Software Engineer" }),
+      ],
+      pool: [fakeJob({ jobId: "1" }), fakeJob({ source: "lever", jobId: "2" })],
+      summary: { greenhouse: { total: 1, error: null }, lever: { total: 1, error: null } },
+      errors: [],
+    }),
+  });
+  const { ctx, out } = makeCtx();
+  const code = await makeScanCommand(deps)(ctx);
+  assert.equal(code, 0);
+
+  // Total saved = 2 (one passed + one rejected, both go to TSV)
+  assert.equal(calls.saveApplications[0].count, 2);
+
+  // Output reports filter summary with reason breakdown
+  const log = out.lines.join("\n");
+  assert.match(log, /filter: 1 passed, 1 rejected/);
+  assert.match(log, /title_requirelist=1/);
+  assert.match(log, /1 To Apply \+ 1 Archived/);
+
+  // Rejection log received the SWE entry with proper kind
+  assert.equal(calls.appendRejectionsLog.length, 1);
+  assert.equal(calls.appendRejectionsLog[0].lines.length, 1);
+  assert.equal(calls.appendRejectionsLog[0].lines[0].kind, "title_requirelist");
+  assert.equal(calls.appendRejectionsLog[0].lines[0].title, "Software Engineer");
+  assert.equal(calls.appendRejectionsLog[0].lines[0].source, "lever");
+});
+
+test("scan filter: adapter shape (companyName/title/locations[]) maps to filter shape (company/role/location)", async () => {
+  // Inject a fake filterJobs that asserts the shape it receives.
+  let observed = null;
+  const { deps } = makeDeps({
+    loadProfile: () => ({
+      id: "jared",
+      modules: ["discovery:greenhouse"],
+      discovery: {},
+      filter_rules: { _description: "anything truthy" },
+      paths: { root: "/tmp/profiles/jared" },
+    }),
+    scan: async () => ({
+      fresh: [
+        fakeJob({
+          jobId: "1",
+          companyName: "AcmeCo",
+          title: "Senior PM",
+          locations: ["Remote, USA", "NYC"],
+        }),
+      ],
+      pool: [fakeJob({ jobId: "1" })],
+      summary: { greenhouse: { total: 1, error: null } },
+      errors: [],
+    }),
+    filterJobs: (inputs) => {
+      observed = inputs;
+      // Pass everything through
+      return { passed: inputs, rejected: [], finalCounts: {} };
+    },
+  });
+  const { ctx } = makeCtx();
+  await makeScanCommand(deps)(ctx);
+
+  assert.ok(observed, "filterJobs not called");
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].company, "AcmeCo");
+  assert.equal(observed[0].role, "Senior PM");
+  assert.equal(observed[0].location, "Remote, USA"); // first of locations[]
+  assert.ok(observed[0]._job, "back-ref to original adapter job missing");
+  assert.equal(observed[0]._job.companyName, "AcmeCo");
+});
+
+test("scan filter: company_cap counts active rows from existing apps (active_statuses)", async () => {
+  // Two existing apps for AcmeCo — one Applied (active), one Rejected (not active).
+  // Cap=1 → next AcmeCo job rejected with kind=company_cap.
+  const existingApps = [
+    {
+      key: "greenhouse:0",
+      source: "greenhouse",
+      jobId: "0",
+      companyName: "AcmeCo",
+      title: "PM",
+      url: "",
+      location: "",
+      status: "Applied",
+      notion_page_id: "",
+      resume_ver: "",
+      cl_key: "",
+      salary_min: "",
+      salary_max: "",
+      cl_path: "",
+      createdAt: "",
+      updatedAt: "",
+    },
+    {
+      key: "greenhouse:99",
+      source: "greenhouse",
+      jobId: "99",
+      companyName: "AcmeCo",
+      title: "Old PM",
+      url: "",
+      location: "",
+      status: "Rejected", // not in active_statuses → does not count
+      notion_page_id: "",
+      resume_ver: "",
+      cl_key: "",
+      salary_min: "",
+      salary_max: "",
+      cl_path: "",
+      createdAt: "",
+      updatedAt: "",
+    },
+  ];
+  const { deps, calls } = makeDeps({
+    loadProfile: () => ({
+      id: "jared",
+      modules: ["discovery:greenhouse"],
+      discovery: {},
+      filter_rules: {
+        company_cap: { max_active: 1 }, // active_statuses defaulted
+      },
+      paths: { root: "/tmp/profiles/jared" },
+    }),
+    loadApplications: () => ({ apps: existingApps }),
+    scan: async () => ({
+      fresh: [fakeJob({ jobId: "1", companyName: "AcmeCo", title: "New PM" })],
+      pool: [fakeJob({ jobId: "1", companyName: "AcmeCo" })],
+      summary: { greenhouse: { total: 1, error: null } },
+      errors: [],
+    }),
+  });
+  const { ctx, out } = makeCtx();
+  await makeScanCommand(deps)(ctx);
+
+  const log = out.lines.join("\n");
+  assert.match(log, /company_cap=1/);
+  // Only the Applied row counts as active; if the Rejected row had counted,
+  // the cap=1 would already be reached even without the new job.
+  assert.equal(calls.appendRejectionsLog[0].lines[0].kind, "company_cap");
 });

@@ -9,14 +9,24 @@
 // fakes for profile loading / companies / adapters / jobs+applications I/O.
 
 const path = require("path");
+const fs = require("fs");
 
 const profileLoader = require("../core/profile_loader.js");
 const companies = require("../core/companies.js");
 const jobsTsv = require("../core/jobs_tsv.js");
 const applications = require("../core/applications_tsv.js");
 const { scan } = require("../core/scan.js");
+const { filterJobs } = require("../core/filter.js");
 const adapterRegistry = require("../modules/discovery/index.js");
 const { resolveProfilesDir } = require("../core/paths.js");
+
+const DEFAULT_ACTIVE_STATUSES = ["Applied", "To Apply", "Interview", "Offer"];
+
+function appendRejectionsLogDefault(filePath, lines) {
+  // jsonl append, one rejection per line. Caller provides full lines.
+  if (!lines || lines.length === 0) return;
+  fs.appendFileSync(filePath, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+}
 
 const DEFAULT_DEPS = {
   loadProfile: profileLoader.loadProfile,
@@ -28,7 +38,9 @@ const DEFAULT_DEPS = {
   loadApplications: applications.load,
   saveApplications: applications.save,
   appendNewApplications: applications.appendNew,
+  appendRejectionsLog: appendRejectionsLogDefault,
   groupBySource: companies.groupBySource,
+  filterJobs,
   scan,
   listAdapters: adapterRegistry.listAdapters,
   getAdapter: adapterRegistry.getAdapter,
@@ -215,22 +227,120 @@ function makeScanCommand(overrides = {}) {
 
     const applicationsPath = path.join(profile.paths.root, "applications.tsv");
     const { apps: existingApps } = deps.loadApplications(applicationsPath);
-    const { apps: nextApps, fresh: freshApps } = deps.appendNewApplications(
-      existingApps,
-      result.fresh,
-      { now: deps.now() }
+
+    // Filter stage (incident 2026-05-04 fix): apply per-profile rules to fresh
+    // jobs before appending. Pool in data/jobs.tsv stays unfiltered — it's
+    // shared and a job rejected by this profile may be valid for another.
+    //
+    // Rejected jobs are still appended to applications.tsv but with
+    // status="Archived" so the user has a per-profile record (parity with
+    // prototype find_jobs.js). Reason details go to filter_rejections.log
+    // (jsonl) to avoid a TSV schema change.
+    // profile_loader normalizes rules onto `filterRules` (camelCase). Some
+     // callers/tests still pass `filter_rules` (snake_case) — accept both.
+    const filterRules = profile.filterRules || profile.filter_rules || {};
+    const cap = filterRules.company_cap || {};
+    const activeStatuses = new Set(
+      Array.isArray(cap.active_statuses) && cap.active_statuses.length > 0
+        ? cap.active_statuses
+        : DEFAULT_ACTIVE_STATUSES
     );
+    const activeCounts = {};
+    for (const app of existingApps) {
+      if (activeStatuses.has(app.status)) {
+        activeCounts[app.companyName] = (activeCounts[app.companyName] || 0) + 1;
+      }
+    }
+
+    // Adapter shape uses companyName/title/locations[]; filter expects
+    // company/role/location. Map and keep a back-ref to the original job so
+    // we can re-emit it in adapter shape after filtering.
+    const filterInputs = result.fresh.map((j) => ({
+      _job: j,
+      company: j.companyName,
+      role: j.title,
+      location:
+        Array.isArray(j.locations) && j.locations.length > 0
+          ? String(j.locations[0])
+          : "",
+    }));
+    const filterResult = deps.filterJobs(filterInputs, filterRules, activeCounts);
+    const passedJobs = filterResult.passed.map((p) => p._job);
+    const rejectedEntries = filterResult.rejected.map((r) => ({
+      job: r.job._job,
+      reason: r.reason,
+    }));
+
+    const reasonCounts = {};
+    for (const r of rejectedEntries) {
+      const k = r.reason.kind || "unknown";
+      reasonCounts[k] = (reasonCounts[k] || 0) + 1;
+    }
+    const reasonSummary = Object.entries(reasonCounts)
+      .map(([k, n]) => `${k}=${n}`)
+      .join(", ");
+    stdout(
+      `filter: ${passedJobs.length} passed, ${rejectedEntries.length} rejected${
+        reasonSummary ? ` (${reasonSummary})` : ""
+      }`
+    );
+
+    // Two-step append: passed first (To Apply), then rejected layered on top
+    // of that result (Archived). Both go into the same TSV.
+    const passedAppend = deps.appendNewApplications(
+      existingApps,
+      passedJobs,
+      { now: deps.now(), defaultStatus: "To Apply" }
+    );
+    const rejectedAppend = deps.appendNewApplications(
+      passedAppend.apps,
+      rejectedEntries.map((r) => r.job),
+      { now: deps.now(), defaultStatus: "Archived" }
+    );
+    const nextApps = rejectedAppend.apps;
+    const freshApps = passedAppend.fresh;
+    const archivedApps = rejectedAppend.fresh;
+
+    const rejectionsPath = path.join(profile.paths.root, "filter_rejections.log");
+    const rejectionLines = rejectedEntries.map((r) => ({
+      ts: deps.now(),
+      source: r.job.source,
+      jobId: r.job.jobId,
+      company: r.job.companyName,
+      title: r.job.title,
+      location:
+        Array.isArray(r.job.locations) && r.job.locations.length > 0
+          ? r.job.locations[0]
+          : "",
+      kind: r.reason.kind,
+      detail: r.reason,
+    }));
 
     if (flags.dryRun) {
       stdout(`(dry-run) would write ${result.pool.length} rows to ${jobsPath}`);
-      stdout(`(dry-run) would append ${freshApps.length} rows to ${applicationsPath}`);
+      stdout(
+        `(dry-run) would append ${freshApps.length} To Apply + ${archivedApps.length} Archived rows to ${applicationsPath}`
+      );
+      if (rejectionLines.length > 0) {
+        stdout(
+          `(dry-run) would append ${rejectionLines.length} entries to ${rejectionsPath}`
+        );
+      }
       return 0;
     }
 
     deps.saveJobs(jobsPath, result.pool, { now: deps.now() });
     deps.saveApplications(applicationsPath, nextApps);
+    if (rejectionLines.length > 0) {
+      deps.appendRejectionsLog(rejectionsPath, rejectionLines);
+    }
     stdout(`wrote ${result.pool.length} jobs to ${jobsPath}`);
-    stdout(`appended ${freshApps.length} new applications to ${applicationsPath}`);
+    stdout(
+      `appended ${freshApps.length} To Apply + ${archivedApps.length} Archived rows to ${applicationsPath}`
+    );
+    if (rejectionLines.length > 0) {
+      stdout(`appended ${rejectionLines.length} entries to ${rejectionsPath}`);
+    }
     return 0;
   };
 }
