@@ -458,6 +458,29 @@ test("processEmailsLoop: real ATS rejection still flows through to classify", ()
   assert.equal(actions[0].newStatus, "Rejected");
 });
 
+test("processEmailsLoop: LinkedIn job-alert is skipped (G-26 disabled), no TSV row created", () => {
+  const state = buildPipelineState(
+    { company_aliases: {}, filterRules: {}, notion: { user_id: "u1" } },
+    {},
+    []
+  );
+  const emails = [
+    {
+      messageId: "m1",
+      from: "jobalerts-noreply@linkedin.com",
+      subject: "Product Manager at Acme",
+      body: "...",
+    },
+  ];
+  const { logRows, actions } = processEmailsLoop(emails, state, { nowIso: "x" });
+  assert.equal(logRows.length, 1);
+  assert.equal(logRows[0].type, "LINKEDIN_LEAD");
+  assert.match(logRows[0].action, /skipped: linkedin disabled/);
+  assert.equal(actions.length, 0);
+  // critical: no TSV side-effect (root cause of G-26 — empty-URL rows)
+  assert.equal(state.newInboxRows.length, 0);
+});
+
 // ---------- Orchestration ----------
 
 test("check --prepare: writes context + prints JSON", async () => {

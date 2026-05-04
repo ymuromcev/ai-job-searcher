@@ -306,6 +306,14 @@ async function runPrepare(ctx, deps) {
 
 // ---------- Phase: --apply / dry-run ----------
 
+// DISABLED 2026-05-03 (G-26). Function is no longer invoked from
+// processEmailsLoop — the LinkedIn branch short-circuits to a skip-log entry.
+// Kept here (and exported, with tests) as a reference implementation for the
+// day someone needs to re-enable LinkedIn ingestion. Re-enable steps:
+//   1. Replace the LinkedIn skip-log branch in processEmailsLoop with
+//      `logRows.push(processLinkedIn(email, procCtx, state)); continue;`
+//   2. Resolve the missing-URL problem first (G-26 root cause): either
+//      extract job URL from email body, or accept "no URL" cards in Notion.
 function processLinkedIn(email, ctx, state) {
   const parsed = parseLinkedInSubject(email.subject || "");
   const logRow = {
@@ -518,9 +526,24 @@ function processEmailsLoop(emails, state, procCtx) {
   for (const email of emails) {
     const fromLower = (email.from || "").toLowerCase();
 
-    // 1. LinkedIn job-alerts → LinkedIn lead branch (creates To Apply rows).
+    // 1. LinkedIn job-alerts → DISABLED (G-26, 2026-05-03). Prototype не имел
+    // LinkedIn-источника; engine добавил его экспериментально, но он создавал
+    // TSV row'и без URL → SKILL не мог фетчить JD, Notion-карточки выходили
+    // без ссылки. Пользователь решил завернуть до лучших времён. Email всё
+    // ещё фетчится (Gmail batch на месте) и виден в check-log как
+    // "skipped: linkedin disabled", но TSV-row не создаётся. Re-enable =
+    // вернуть `logRows.push(processLinkedIn(...))` ниже + восстановить
+    // upstream URL-resolution из тела письма.
     if (fromLower.includes("jobalerts-noreply@linkedin.com")) {
-      logRows.push(processLinkedIn(email, procCtx, state));
+      logRows.push({
+        id: email.messageId,
+        company: "?",
+        role: "?",
+        match: "SOURCE",
+        type: "LINKEDIN_LEAD",
+        action: "skipped: linkedin disabled",
+        comment: "",
+      });
       continue;
     }
 
