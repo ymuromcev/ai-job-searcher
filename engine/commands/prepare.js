@@ -493,8 +493,9 @@ async function runCommit(ctx, deps) {
   // Canonical archetype gate (G-18 backstop): block to_apply rows whose
   // resumeVer isn't a real key in resume_versions.json. Without this, a typo
   // from the SKILL would silently land in TSV → propagate to Notion's select
-  // dropdown via sync push and pollute the canonical set. Empty profile set
-  // → no gate (early profiles before resume_versions.json exists).
+  // dropdown when the SKILL creates the page and pollute the canonical set.
+  // Empty profile set → no gate (early profiles before resume_versions.json
+  // exists).
   const validArchetypes = new Set(
     Object.keys((profile.resumeVersions && profile.resumeVersions.versions) || {})
   );

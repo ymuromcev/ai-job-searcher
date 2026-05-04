@@ -207,7 +207,7 @@ For each remaining job:
 
 Choose the best resume archetype from `profiles/<id>/resume_versions.json` for this specific role. Prefer the archetype whose domain keywords overlap most with the JD / job title.
 
-**Mandatory validation**: `resumeVer` MUST be a key that literally exists in `profile.resume_versions.versions`. Do NOT invent or paraphrase a key. If no archetype is a clear match, pick the closest existing key (or the profile's `default` if defined) and note the partial match in the rationale — never write a key that isn't in the file. The CLI's `sync push` will hard-fail on unknown keys, so catch the mismatch here.
+**Mandatory validation**: `resumeVer` MUST be a key that literally exists in `profile.resume_versions.versions`. Do NOT invent or paraphrase a key. If no archetype is a clear match, pick the closest existing key (or the profile's `default` if defined) and note the partial match in the rationale — never write a key that isn't in the file. The `prepare commit` phase will hard-fail on unknown keys, so catch the mismatch here.
 
 Record `resumeVer` = archetype key (e.g. `"fintech-pm-v3"`).
 
@@ -293,7 +293,7 @@ Write `profiles/<id>/prepare_results_<YYYYMMDD_HHMMSS>.json`:
 }
 ```
 
-`companyTiers` is required only when `prepare_context.unknownTierCompanies` was non-empty. List every company from that array with the tier you assigned in Step 5.7. Engine merges this into `profile.json.company_tiers` on commit and patches Notion's Companies DB Tier field on next sync push.
+`companyTiers` is required only when `prepare_context.unknownTierCompanies` was non-empty. List every company from that array with the tier you assigned in Step 5.7. Engine merges this into `profile.json.company_tiers` on commit; Notion's Companies DB Tier field is updated by the SKILL itself when it creates/updates the company page in Step 9.
 
 **Step 11 — Commit phase (CLI)**
 
