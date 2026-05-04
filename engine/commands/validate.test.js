@@ -390,6 +390,29 @@ test("retro_sweep: only sweeps 'To Apply', not Applied/Interview/Offer", async (
   assert.equal(code, 1);
 });
 
+test("retro_sweep: location_blocklist now exercised after schema v3 (G-5)", async () => {
+  const apps = [
+    fakeApp({ key: "greenhouse:1", jobId: "1", status: "To Apply", companyName: "Acme", title: "PM", location: "Napa, CA" }),
+    fakeApp({ key: "greenhouse:2", jobId: "2", status: "To Apply", companyName: "Acme", title: "PM", location: "Sacramento, CA" }),
+    fakeApp({ key: "greenhouse:3", jobId: "3", status: "To Apply", companyName: "Acme", title: "PM", location: "" }),
+  ];
+  const deps = makeDeps({
+    loadApplications: () => ({ apps }),
+    loadProfile: () => ({
+      paths: { root: "/tmp/profiles/lilia" },
+      filterRules: {
+        location_blocklist: ["Napa"],
+      },
+    }),
+    fetchFn: async () => ({ ok: true, status: 200 }),
+  });
+  const { ctx, out } = makeCtx();
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 1);
+  assert.match(out.all(), /retro_sweep: 1 row\(s\) now match blocklists/);
+  assert.match(out.all(), /location_blocklist: Napa/);
+});
+
 test("validate cap warning goes to stderr", async () => {
   const apps = Array.from({ length: 5 }, (_, i) =>
     fakeApp({ jobId: String(i + 1), url: `https://example.com/${i + 1}` })

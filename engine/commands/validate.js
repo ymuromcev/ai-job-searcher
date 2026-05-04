@@ -277,22 +277,24 @@ function makeValidateCommand(overrides = {}) {
       }
     }
 
-    // 4. Retro blocklist sweep: re-apply title/company blocklists to existing
-    // "To Apply" rows (the only pre-apply triage state in the 8-status set).
-    // Catches the case where a pattern was added to
-    // filter_rules.json after old rows landed — prototype parity with
-    // validate_inbox.js. TSV rows carry no `location`, so only company+title
-    // blocklists exercise here (location_blocklist applies at SCAN time only).
+    // 4. Retro blocklist sweep: re-apply title/company/location blocklists to
+    // existing "To Apply" rows (the only pre-apply triage state in the 8-status
+    // set). Catches the case where a pattern was added to filter_rules.json
+    // after old rows landed — prototype parity with validate_inbox.js. Since
+    // schema v3 (G-5, 2026-05-03) TSV rows carry `location`, so location
+    // blocklist now exercises here too (rows without a backfilled location are
+    // simply not matched against location patterns — empty string never hits).
     const filterRules = profile.filterRules || {};
     const hasBlocklistRules =
       (Array.isArray(filterRules.company_blocklist) && filterRules.company_blocklist.length > 0) ||
-      (Array.isArray(filterRules.title_blocklist) && filterRules.title_blocklist.length > 0);
+      (Array.isArray(filterRules.title_blocklist) && filterRules.title_blocklist.length > 0) ||
+      (Array.isArray(filterRules.location_blocklist) && filterRules.location_blocklist.length > 0);
     if (appsResult.apps.length > 0 && hasBlocklistRules) {
       const matches = [];
       for (const app of appsResult.apps) {
         if (!RETRO_SWEEP_STATUSES.has(app.status)) continue;
         const reason = matchBlocklists(
-          { company: app.companyName, role: app.title, location: "" },
+          { company: app.companyName, role: app.title, location: app.location || "" },
           filterRules
         );
         if (reason) matches.push({ app, reason });

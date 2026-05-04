@@ -333,6 +333,32 @@ test("appToNotionJob omits companyRelation when resolver returns null", () => {
   assert.equal(job.companyRelation, undefined);
 });
 
+test("appToNotionJob exposes location when set; buildProperties drops it without map entry (G-5)", () => {
+  const { buildProperties } = require("../core/notion_sync.js");
+
+  const app = fakeApp({ location: "San Francisco, CA" });
+  const job = appToNotionJob(app, "page-affirm");
+  assert.equal(job.location, "San Francisco, CA");
+
+  // Default property_map (no `location` entry) → location does NOT reach Notion props.
+  const propsDefault = buildProperties(job, {
+    title: { field: "Title", type: "title" },
+  });
+  assert.equal(propsDefault.Location, undefined);
+
+  // With explicit map entry → location pushes through.
+  const propsWithMap = buildProperties(job, {
+    title: { field: "Title", type: "title" },
+    location: { field: "Location", type: "rich_text" },
+  });
+  assert.ok(propsWithMap.Location);
+});
+
+test("appToNotionJob omits location when app.location is empty (G-5)", () => {
+  const job = appToNotionJob(fakeApp({ location: "" }), "page-affirm");
+  assert.equal(job.location, undefined);
+});
+
 // Regression: pre-2026-04-30 the push path wrote Salary Min/Max numbers but
 // never populated the "Salary Expectations" rich_text, leaving the user-facing
 // display string empty on hundreds of pipeline pages. The display string is

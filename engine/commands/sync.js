@@ -104,6 +104,11 @@ function appToNotionJob(app, companyRelationId, canonicalArchetypes) {
       `($${mid / 1000}K mid)`;
   }
   if (app.cl_path) out.coverLetter = app.cl_path;
+  // location (G-5, 2026-05-03): exposed unconditionally; buildProperties only
+  // pushes the field when the merged property_map contains a `location` entry.
+  // Default property_map omits it, so profiles where Notion DB lacks a
+  // "Location" property never trigger a 4xx — opt-in by adding to property_map.
+  if (app.location) out.location = app.location;
   return out;
 }
 

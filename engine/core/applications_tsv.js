@@ -1,8 +1,10 @@
 // Per-profile pipeline file: profiles/<id>/applications.tsv.
 //
-// Schema (header required), v2:
+// Schema (header required), v3 (added 2026-05-03 for G-5 — restores prototype
+// parity; prototype `job_registry.tsv` had `location` as column 10):
 //   key <TAB> source <TAB> jobId <TAB> companyName <TAB> title <TAB> url
-//             <TAB> status <TAB> notion_page_id <TAB> resume_ver <TAB> cl_key
+//             <TAB> location <TAB> status <TAB> notion_page_id
+//             <TAB> resume_ver <TAB> cl_key
 //             <TAB> salary_min <TAB> salary_max <TAB> cl_path
 //             <TAB> createdAt <TAB> updatedAt
 //
@@ -10,13 +12,37 @@
 // New entries default to status="To Apply", notion_page_id="" until sync runs.
 // (Notion DBs use the 8-status set: To Apply / Applied / Interview / Offer /
 // Rejected / Closed / No Response / Archived. There is no "Inbox" status.)
-// Backward compat: v1 files (12 cols) are auto-upgraded on load with empty
-// values for the three new columns — save() always writes v2.
+// `location` carries the first non-empty entry from the discovery `locations`
+// array; "" when the source didn't provide one.
+//
+// Backward compat:
+//   v2 (15 cols, 2026-04 — Stage 13 added salary_min/max/cl_path) → auto-upgrade
+//     with location="" on read. save() always writes v3.
+//   v1 (12 cols, original) → auto-upgrade with empty values for the 4 new cols.
 
 const fs = require("fs");
 const path = require("path");
 
 const HEADER = [
+  "key",
+  "source",
+  "jobId",
+  "companyName",
+  "title",
+  "url",
+  "location",
+  "status",
+  "notion_page_id",
+  "resume_ver",
+  "cl_key",
+  "salary_min",
+  "salary_max",
+  "cl_path",
+  "createdAt",
+  "updatedAt",
+];
+
+const HEADER_V2 = [
   "key",
   "source",
   "jobId",
@@ -66,6 +92,7 @@ function rowFor(app) {
     escapeField(app.companyName),
     escapeField(app.title),
     escapeField(app.url),
+    escapeField(app.location || ""),
     escapeField(app.status),
     escapeField(app.notion_page_id || ""),
     escapeField(app.resume_ver || ""),
@@ -78,10 +105,54 @@ function rowFor(app) {
   ].join("\t");
 }
 
-function rowToAppV2(parts, lineNo) {
+function rowToAppV3(parts, lineNo) {
   if (parts.length < HEADER.length) {
     throw new Error(
       `applications.tsv line ${lineNo}: expected ${HEADER.length} cols, got ${parts.length}`
+    );
+  }
+  const [
+    key,
+    source,
+    jobId,
+    companyName,
+    title,
+    url,
+    location,
+    status,
+    notion_page_id,
+    resume_ver,
+    cl_key,
+    salary_min,
+    salary_max,
+    cl_path,
+    createdAt,
+    updatedAt,
+  ] = parts;
+  return {
+    key,
+    source,
+    jobId,
+    companyName,
+    title,
+    url,
+    location: location || "",
+    status,
+    notion_page_id: notion_page_id || "",
+    resume_ver: resume_ver || "",
+    cl_key: cl_key || "",
+    salary_min: salary_min || "",
+    salary_max: salary_max || "",
+    cl_path: cl_path || "",
+    createdAt,
+    updatedAt,
+  };
+}
+
+function rowToAppV2(parts, lineNo) {
+  if (parts.length < HEADER_V2.length) {
+    throw new Error(
+      `applications.tsv line ${lineNo}: expected ${HEADER_V2.length} cols, got ${parts.length}`
     );
   }
   const [
@@ -108,6 +179,7 @@ function rowToAppV2(parts, lineNo) {
     companyName,
     title,
     url,
+    location: "",
     status,
     notion_page_id: notion_page_id || "",
     resume_ver: resume_ver || "",
@@ -147,6 +219,7 @@ function rowToAppV1(parts, lineNo) {
     companyName,
     title,
     url,
+    location: "",
     status,
     notion_page_id: notion_page_id || "",
     resume_ver: resume_ver || "",
@@ -173,21 +246,24 @@ function load(filePath) {
   if (!lines.length) return { apps: [], path: filePath };
   const headerCols = lines[0].split("\t");
 
-  const isV2 = matchHeader(headerCols, HEADER);
-  const isV1 = !isV2 && matchHeader(headerCols, HEADER_V1);
+  const isV3 = matchHeader(headerCols, HEADER);
+  const isV2 = !isV3 && matchHeader(headerCols, HEADER_V2);
+  const isV1 = !isV3 && !isV2 && matchHeader(headerCols, HEADER_V1);
 
-  if (!isV2 && !isV1) {
+  if (!isV3 && !isV2 && !isV1) {
     throw new Error(
-      `applications.tsv header mismatch: expected [${HEADER.join(", ")}] or v1 [${HEADER_V1.join(", ")}], got [${headerCols.join(", ")}]`
+      `applications.tsv header mismatch: expected v3 [${HEADER.join(", ")}], v2 [${HEADER_V2.join(", ")}] or v1 [${HEADER_V1.join(", ")}], got [${headerCols.join(", ")}]`
     );
   }
 
   const apps = [];
   for (let i = 1; i < lines.length; i += 1) {
     const parts = lines[i].split("\t");
-    apps.push(isV2 ? rowToAppV2(parts, i + 1) : rowToAppV1(parts, i + 1));
+    if (isV3) apps.push(rowToAppV3(parts, i + 1));
+    else if (isV2) apps.push(rowToAppV2(parts, i + 1));
+    else apps.push(rowToAppV1(parts, i + 1));
   }
-  return { apps, path: filePath, schemaVersion: isV2 ? 2 : 1 };
+  return { apps, path: filePath, schemaVersion: isV3 ? 3 : isV2 ? 2 : 1 };
 }
 
 function save(filePath, apps) {
@@ -208,6 +284,12 @@ function appendNew(existing, jobs, { now = new Date().toISOString(), defaultStat
     const key = makeKey(job.source, job.jobId);
     if (seen.has(key)) continue;
     seen.add(key);
+    // Discovery `NormalizedJob.locations` is an array; the first entry is
+    // canonical. Fall back to "" when the source didn't provide one.
+    const location =
+      Array.isArray(job.locations) && job.locations.length > 0
+        ? String(job.locations[0])
+        : "";
     fresh.push({
       key,
       source: job.source,
@@ -215,6 +297,7 @@ function appendNew(existing, jobs, { now = new Date().toISOString(), defaultStat
       companyName: job.companyName,
       title: job.title,
       url: job.url,
+      location,
       status: defaultStatus,
       notion_page_id: "",
       resume_ver: "",
@@ -229,4 +312,4 @@ function appendNew(existing, jobs, { now = new Date().toISOString(), defaultStat
   return { apps: existing.concat(fresh), fresh };
 }
 
-module.exports = { load, save, appendNew, makeKey, HEADER, HEADER_V1 };
+module.exports = { load, save, appendNew, makeKey, HEADER, HEADER_V1, HEADER_V2 };
