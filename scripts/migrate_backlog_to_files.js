@@ -13,7 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const DEFAULT_SOURCE = 'BACKLOG.md';
+const DEFAULT_SOURCE = 'private/BACKLOG.md';
 const DEFAULT_DEST = 'private/backlog/';
 const DEFAULT_CREATED = '2026-05-05';
 

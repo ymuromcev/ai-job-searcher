@@ -68,8 +68,9 @@ coverage/
 
 # Private notes and docs
 CLAUDE.local.md
-BACKLOG.md
 audit_*.md
+# Note: BACKLOG.md now lives under private/BACKLOG.md (RFC 018 §3),
+# already covered by the `private/` rule below.
 
 # Private maintainer tree (RFC 018) — backlog files, handoffs, pre-anonymization originals
 private/

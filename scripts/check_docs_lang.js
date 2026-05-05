@@ -46,14 +46,11 @@ const EXCLUDE_DIRS = new Set([
 ]);
 
 // Files exempt from the EN-only rule. Use sparingly:
-//   - BACKLOG.md is gitignored; lives at the repo root for tooling reasons
-//     until the private/BACKLOG.md migration (RFC 018 §3) lands.
 //   - rfc/009 contains classifier-signal RU strings that must remain
 //     verbatim because the matcher compares user input against them.
 //     Prose-translation regressions there are caught by code review,
 //     not the scanner.
 const EXEMPT_FILES = new Set([
-  'BACKLOG.md',
   'rfc/009-application-answers-command.md',
 ]);
 

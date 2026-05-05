@@ -218,7 +218,7 @@ Pros: zero LLM cost, deterministic, fast, runs offline. Cons: misses nuance — 
 2. **Per-profile feature flag** `profile.json.fit_prerank.enabled: true|false`, default `false`. Existing users unaffected until they opt in. Stage 18 wizard ([scripts/stage18/generators/profile_json.js](../scripts/stage18/generators/profile_json.js)) gains a default-off field for new profiles.
 3. **One-shot backfill CLI**: `node engine/cli.js fit-prerank-backfill --profile <id>`. Scores every TSV row, writes back, updates `.fit-state/last_scored.json`. Can be re-run idempotently — only empty / TTL-expired / hash-mismatched rows are touched.
 4. **Smoke on Jared first** (denser pool, more diverse JDs). Lilia second after a week of Jared data.
-5. **Status update in [BACKLOG.md](../BACKLOG.md)** + a CLAUDE.md note once shipped.
+5. **Status update in the maintainer backlog** (`private/BACKLOG.md`, gitignored) + a CLAUDE.md note once shipped.
 
 Rollback: flip `enabled: false`, ignore the `fit_cached` column. Sort falls back to FIFO. No data destruction needed.
 
