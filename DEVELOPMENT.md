@@ -34,3 +34,78 @@ This ensures the pipeline works for users who don't use Claude at all.
 If two commands should always run in sequence and neither step requires AI,
 wire them as a `PIPELINE_HOOKS` entry in `engine/cli.js` — not in the skill.
 See the `scan → sync` hook as the canonical example.
+
+For the full recipe (file layout, registration, tests) see
+[docs/runbooks/adding-pipeline-step.md](docs/runbooks/adding-pipeline-step.md).
+
+---
+
+## Task tiers
+
+The same tier scheme used in `~/.claude/skills/dev-workflow/SKILL.md`
+applies here. Pick the highest tier the task could plausibly fit.
+
+| Tier | Scope | Gates | Examples |
+|---|---|---|---|
+| **XS** | < 20 lines, single file, isolated bugfix | smoke test only | typo, off-by-one, hard-coded-string fix |
+| **M** | feature spanning 2+ files, no schema change | RFC optional, code review, tests | new flag, new adapter, new validator step |
+| **L** | architecture, security, migration, multi-profile | RFC mandatory + maintainer approve, code review, `/security-review`, tests | TSV schema bump, new pipeline phase, profile-id rename, threat-model-touching change |
+
+If unsure: pick the higher tier. Cost of unnecessary RFC ≪ cost of
+unreviewed Tier L change.
+
+---
+
+## Doc-maintenance triggers
+
+When you change code, the table below tells you which docs to update.
+Pre-commit and CI enforce link integrity (`npm run docs:check`) and
+language policy (`npm run docs:lang`); the audit script runs both
+(`npm run docs:audit`).
+
+| If you change… | …update | Why |
+|---|---|---|
+| `engine/cli.js` flags, `engine/commands/*.js` contracts | [docs/reference/cli.md](docs/reference/cli.md), [docs/reference/spec.md](docs/reference/spec.md) | reference docs lose value the moment they drift |
+| TSV columns (`engine/core/applications_tsv.js`) | [docs/reference/tsv-schema.md](docs/reference/tsv-schema.md), CHANGELOG.md | schema-change events are the spine of project history |
+| Notion property maps (`engine/core/notion_sync.js`, stage helpers) | [docs/reference/notion-schema.md](docs/reference/notion-schema.md), runbook for the affected DB | new operators reproduce setup from these |
+| New ATS adapter under `engine/modules/discovery/` | [docs/runbooks/adding-adapter.md](docs/runbooks/adding-adapter.md) (recipe), [docs/architecture/overview.md](docs/architecture/overview.md) (adapter inventory) | mental model + recipe stay in sync |
+| Profile setup (`scripts/stage18/`) | [docs/runbooks/new-profile.md](docs/runbooks/new-profile.md) | onboarding script is the source for that runbook |
+| Multi-profile invariant (anything in `engine/core/profile_loader.js`, `.env` namespacing) | [docs/architecture/multi-profile.md](docs/architecture/multi-profile.md), ADR if the rule changes | ADR pointer matters for future readers |
+| Architectural decision worth crystallizing | new ADR in [docs/architecture/adrs/](docs/architecture/adrs/) + index update | ADR is the durable artifact; RFC is the proposal |
+| User-visible behaviour change | CHANGELOG.md (Keep a Changelog format) | release notes |
+| Postmortem-worthy incident | incidents.md (root, anonymized) | blameless record |
+| Anything PII-adjacent (names, profile-ids, emails, real company tier maps) | re-run `npm run docs:audit`, check `.git-hooks/pii-patterns.txt` | catch leaks before they ship |
+
+If the change is Tier L, also: write the RFC in `rfc/`, get explicit
+maintainer approve, then update the ADR / docs above before merging.
+
+---
+
+## Documentation conventions
+
+- **English only** in the public repo. Private notes (`private/`,
+  gitignored) may use any language. See RFC 018 §15 for the full policy.
+- **Anonymized.** Real candidate names never appear in tracked files —
+  use persona aliases (PM-Pete, Healthcare-Hannah). Profile-id literals
+  on disk are accepted tech debt per
+  [ADR-005](docs/architecture/adrs/005-profile-id-convention.md);
+  newly authored docs use placeholders (`<id>`, `<PROFILE_ID>`).
+- **Diátaxis taxonomy.** Every doc fits one of: explanation (`product/`,
+  `architecture/`), how-to (`runbooks/`), reference (`reference/`),
+  audit/historical (`audits/`). Mix-genre docs split.
+- **Single source of truth.** Each fact lives in one file; others link.
+- **Relative MD links only.** No wikilinks. Pre-commit blocks the latter
+  in CI.
+- **Frontmatter.** Every doc carries `--- title status type? tags? ---`.
+  RFCs add `tier`, ADRs add `decided`.
+
+---
+
+## Workflow
+
+For day-to-day cadence (when to write an RFC, when to run smoke,
+multi-agent review pattern, security review levels) see the canonical
+skill: `~/.claude/skills/dev-workflow/SKILL.md`. Trigger via
+`/dev-workflow` or by mentioning a new feature / refactor / migration.
+
+For the documentation map see [docs/README.md](docs/README.md).

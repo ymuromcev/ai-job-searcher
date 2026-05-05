@@ -1,9 +1,15 @@
+---
+title: "Notion integration setup"
+status: stable
+type: runbook
+tags: [notion, setup, onboarding]
+---
+
 # Notion integration setup
 
 Per-profile setup. Each profile has its own Notion integration token,
 stored in repo-root `.env` under the namespaced key
-`<PROFILE_ID_UPPER>_NOTION_TOKEN` (e.g. `ME_NOTION_TOKEN`,
-`JARED_NOTION_TOKEN`). Tokens are never read by Notion through any
+`<PROFILE_ID>_NOTION_TOKEN`. Tokens are never read by Notion through any
 shared/global env var; the loader strips the prefix before handing it
 to engine code.
 
@@ -32,7 +38,7 @@ to engine code.
 In repo root, add the line for whichever profile id you'll use:
 
 ```
-ME_NOTION_TOKEN=ntn_...
+<PROFILE_ID>_NOTION_TOKEN=ntn_...
 ```
 
 `.env` is gitignored. The PII pre-commit hook (`.git-hooks/pre-commit`)
@@ -69,7 +75,7 @@ Run the deploy in dry-run first; it pre-fetches the parent page
 metadata and fails loudly if access isn't granted:
 
 ```bash
-node scripts/stage18/deploy_profile.js --profile me
+node scripts/stage18/deploy_profile.js --profile <id>
 ```
 
 Common failure modes:
@@ -88,5 +94,4 @@ provision.
 Each profile gets its own integration. Don't reuse one integration
 across profiles — token rotation, capability scoping, and access
 auditing are all per-integration in Notion. The `.env` namespacing
-matches that: `ME_NOTION_TOKEN`, `LILIA_NOTION_TOKEN`,
-`JARED_NOTION_TOKEN`, etc.
+matches that: one `<PROFILE_ID>_NOTION_TOKEN` per profile.

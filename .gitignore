@@ -69,7 +69,6 @@ coverage/
 # Private notes and docs
 CLAUDE.local.md
 BACKLOG.md
-incidents.md
 audit_*.md
 
 # Private maintainer tree (RFC 018) — backlog files, handoffs, pre-anonymization originals

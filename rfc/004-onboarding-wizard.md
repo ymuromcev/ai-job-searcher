@@ -39,7 +39,7 @@ Anyone but me (Claude + Jared) would fail at this. the second profile is next, a
 
 ## 3. Non-goals
 
-- Interactive CLI wizard (rejected by user — "Мы создаем форму в гугле, условно").
+- Interactive CLI wizard (rejected by user — "We create a form in Google, roughly speaking").
 - Full prototype migration path for generic users (Jared's Stage 16 stays one-off). A **lightweight** import branch for users who have _partial_ prototype assets (CL/resume templates + generated files) is in scope — that's the second profile's case.
 - Auto-generation of resume DOCX from LinkedIn/PDF. User provides resume archetype text in the form; wizard writes `resume_versions.json`.
 - Onboarding Notion DBs or pages that belong to other users (workspace-level sharing is out of scope — user invites the integration manually).

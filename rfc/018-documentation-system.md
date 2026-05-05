@@ -430,7 +430,7 @@ Dependencies: none. Doesn't touch engine code. Pre-commit hook patch must land b
 
 1. Public docs are EN-only. RU sentences in `docs/`, `rfc/`, `ARCHITECTURE.md`, `CHANGELOG.md`, `incidents.md`, `README.md`, `DEVELOPMENT.md`, `CLAUDE.md` are linted as warnings (Cyrillic-char regex in `scripts/check_docs_links.js`'s sister check, or a separate `scripts/check_docs_lang.js`).
 2. Existing RU content in RFCs 001–017 gets a **mechanical translation pass** during phase 3 — same meaning, EN words. No semantic edits, no restructuring. Tracked per-file (`scripts/translate_rfcs.js` produces a checklist).
-3. No bilingual mirroring (no `doc.en.md` / `doc.ru.md` siblings, no `## English / ## Русский` sections inside one file). One source per doc.
+3. No bilingual mirroring (no `doc.en.md` / `doc.ru.md` siblings, no `## English / ## Russian` sections inside one file). One source per doc.
 4. When the user reads an EN doc and needs clarification, the bridge is the chat (RU↔EN on demand) — not duplicate translated artifacts.
 5. New RFCs / ADRs / runbooks / reference / product docs are **drafted in EN from day one**.
 

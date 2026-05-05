@@ -45,7 +45,7 @@ Email/message the raw file to the user:
 scripts/stage18/intake_template.md
 ```
 
-They fill it in (any language, `yes`/`no`/`да`/`нет` both work) and send it back as e.g. `intake_filled.md`.
+They fill it in (any language; the parser accepts EN and RU yes/no values plus `+`/`-`) and send it back as e.g. `intake_filled.md`.
 
 ### Step 2 — parse intake
 

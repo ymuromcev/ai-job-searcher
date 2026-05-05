@@ -125,12 +125,12 @@ Pick a short id (e.g. `me`), then:
 
 1. **Fill in the intake form.** Copy `scripts/stage18/intake_template.md`
    somewhere outside the repo, fill sections A–K, save as e.g.
-   `~/intake_filled.md`. Any language works (yes/no/да/нет both fine).
+   `~/intake_filled.md`. The parser accepts EN and RU yes/no plus `+`/`-`.
    The first field is `profile_id` — a short slug you choose:
    lowercase letters, digits, `-`, `_`. It becomes the directory name
    (`profiles/<id>/`) and the env-var prefix (e.g. `ME_NOTION_TOKEN`).
 2. **Add your Notion token to `.env`.** See
-   [docs/notion-setup.md](docs/notion-setup.md) for how to create the
+   [docs/runbooks/notion-setup.md](docs/runbooks/notion-setup.md) for how to create the
    integration and where to grant it page access.
    ```
    ME_NOTION_TOKEN=ntn_...
@@ -227,8 +227,8 @@ npm test               # Node's built-in test runner, no framework
 - PRs welcome but please open an issue to discuss direction first —
   this is a personal tool, not an open-source product.
 
-See [CLAUDE.md](CLAUDE.md) for agent-facing rules,
-[docs/ai-assistant-notes.md](docs/ai-assistant-notes.md) for the
+See [CLAUDE.md](CLAUDE.md) for agent-facing rules and
+[docs/architecture/overview.md](docs/architecture/overview.md) for the
 longer "how this codebase thinks" note.
 
 ## License

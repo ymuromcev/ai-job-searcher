@@ -2,7 +2,8 @@
 
 Project-level instructions for Claude Code (or any AI agent) working in
 this repo. Human-facing overview lives in [README.md](README.md);
-deeper AI context lives in [docs/ai-assistant-notes.md](docs/ai-assistant-notes.md).
+architecture detail lives in [ARCHITECTURE.md](ARCHITECTURE.md) and
+[docs/architecture/](docs/architecture/).
 
 ## What this project is
 
@@ -88,6 +89,65 @@ for common leak patterns (emails, phone, real Notion UUIDs, token
 prefixes). Run it once after clone. If the hook flags a false
 positive, `git commit --no-verify` is available — but if in doubt,
 double-check rather than skip.
+
+## Mental model for AI assistants
+
+> **Profile = data. Engine = service.**
+
+Operational guidance for an agent working in this repo. Architecture
+detail lives in `ARCHITECTURE.md` and `docs/architecture/`; this
+section is just the things to keep in your head while editing code.
+
+- **Read `profile.json` first.** Every command takes `--profile <id>`
+  and the loader is the single read-point for `profiles/<id>/`. The
+  loader validates the id (`^[a-z][a-z0-9_]{1,31}$`, no path traversal,
+  no reserved names), normalizes `filter_rules.json` into the flat
+  shape, and reads namespaced secrets from `.env`. Nothing else in
+  the codebase touches `profiles/` directly.
+- **TSV is the ledger.** `profiles/<id>/applications.tsv` is canonical
+  per-profile state. Notion is a view on top. Do not write the TSV
+  directly from new code paths; go through `engine/core/applications_tsv.js`.
+- **`Inbox` is TSV-only.** Fresh `scan` rows default to `status="Inbox"`
+  with empty `notion_page_id`. The transition `Inbox → To Apply` and
+  Notion page creation happen atomically inside `prepare --phase commit`.
+  Notion never sees `Inbox`. See [RFC 014](rfc/014-status-split-new-vs-toapply.md).
+- **`prepare` is two-phase.** Phase 1 (`--phase pre`) is a
+  deterministic CLI: filter, URL-check, JD-fetch, salary-calc, write
+  `prepare_context.json`. Phase 2 is the `job-pipeline` skill (LLM)
+  reading that JSON and writing a `results.json` decision plan. Phase
+  3 (`--phase commit`) is again a deterministic CLI: read the results,
+  mutate the TSV, generate artifacts, create the Notion page.
+- **`check` writes JSON for MCP.** Gmail reads happen inside Claude
+  via the Gmail MCP, not via `googleapis`. `check --prepare` writes
+  the batch plan to `profiles/<id>/.gmail-state/check_context.json`;
+  the operator's Claude session writes `raw_emails.json` next to it;
+  `check --apply` consumes both. The `--auto` variant exists for cron
+  but needs an OAuth refresh token.
+- **`sync` is pull-only since 2026-05-04.** Notion → TSV reconcile
+  only. The push phase, the Stage 16 `push_manifest.json` gate, and
+  the Inbox callout updater were all removed in commit `4f85ed2`.
+  New Notion pages are created exclusively by `prepare`'s commit
+  phase. Do not re-add a push path without an RFC.
+- **Pure helpers, isolated side effects.** `core/*` and most of
+  `scripts/stage18/*` are pure functions over in-memory objects. The
+  filesystem, network, and `process.exit` live in `commands/*` and
+  the CLI glue. New helpers default to pure; tests assume it.
+- **Notion SDK v5 footguns.** `databases.create({properties})` silently
+  drops the properties — use `initial_data_source: { properties }`.
+  `databases.query` is gone — use `dataSources.query`. Empty-string
+  url / email / phone values fail validation in `pages.update` —
+  `buildProperties` filters them out, do not undo that.
+- **Adding things, the short version.** New adapter →
+  `engine/modules/discovery/<name>.js`, use `ctx.fetchFn` (never raw
+  `fetch`), add a test with a faked `fetchFn`, opt the profile in via
+  `modules: ["discovery:<name>"]`. New command → `engine/commands/<name>.js`,
+  register in `engine/cli.js` `KNOWN_COMMANDS`, add arg-parse + happy-path
+  tests. New profile → run `scripts/stage18/`; do not hand-copy.
+- **Behaviour change touching multiple files.** Add an RFC at
+  `rfc/NNN-title.md` first and wait for explicit approval before
+  writing code. Tier M / L gates this; see `DEVELOPMENT.md`.
+
+For architecture details see [ARCHITECTURE.md](ARCHITECTURE.md) and [docs/architecture/](docs/architecture/).
 
 ## What's out of scope
 

@@ -1,3 +1,10 @@
+---
+title: "Gmail cron — autonomous check --auto"
+status: stable
+type: runbook
+tags: [gmail, cron, fly, ops]
+---
+
 # Gmail cron — autonomous `check --auto`
 
 Runbook for the autonomous email-tracker. Two execution modes share the same
@@ -14,12 +21,12 @@ This document covers Phase 1 setup. Phase 2 (fly.io) lands in a follow-up.
 
 ## 1. One-time setup per profile
 
-You'll do this once per profile (e.g. once for `jared`, once for `lilia`).
+You'll do this once per profile.
 
 ### 1a. Create a Google Cloud OAuth client
 
 1. Go to <https://console.cloud.google.com/projectcreate> — create a new
-   project (e.g. `ai-job-searcher-jared`). One project per profile keeps
+   project (e.g. `ai-job-searcher-<id>`). One project per profile keeps
    audit trails clean. Skip if you already have one.
 2. Inside the project, go to **APIs & Services → Library**, search "Gmail
    API", click **Enable**.
@@ -36,15 +43,8 @@ You'll do this once per profile (e.g. once for `jared`, once for `lilia`).
 ### 1b. Add credentials to root `.env`
 
 ```
-JARED_GMAIL_CLIENT_ID=...apps.googleusercontent.com
-JARED_GMAIL_CLIENT_SECRET=GOCSPX-...
-```
-
-For Lilia:
-
-```
-LILIA_GMAIL_CLIENT_ID=...apps.googleusercontent.com
-LILIA_GMAIL_CLIENT_SECRET=GOCSPX-...
+<PROFILE_ID>_GMAIL_CLIENT_ID=...apps.googleusercontent.com
+<PROFILE_ID>_GMAIL_CLIENT_SECRET=GOCSPX-...
 ```
 
 The `.env` is gitignored. Pre-commit hook also blocks `GOCSPX-` strings.
@@ -52,7 +52,7 @@ The `.env` is gitignored. Pre-commit hook also blocks `GOCSPX-` strings.
 ### 1c. Run the consent flow
 
 ```
-node scripts/gmail_auth.js --profile jared
+node scripts/gmail_auth.js --profile <id>
 ```
 
 What happens:
@@ -62,9 +62,9 @@ What happens:
 3. Pick the right Gmail account, click **Allow**.
 4. Google redirects to `http://localhost:3000/oauth-callback?code=...`.
 5. The script exchanges the code for a refresh-token and writes it to
-   `profiles/jared/.gmail-tokens/credentials.json` (mode 600, gitignored).
+   `profiles/<id>/.gmail-tokens/credentials.json` (mode 600, gitignored).
 6. The script also writes a ready-to-run fly-secrets command to
-   `profiles/jared/.gmail-tokens/fly-secret-command.sh` (mode 600,
+   `profiles/<id>/.gmail-tokens/fly-secret-command.sh` (mode 600,
    gitignored). Run it once when you do Phase 2 (fly.io cron) — then
    `rm` the file. The refresh-token is never echoed to stdout or the
    shell's history.
@@ -74,7 +74,7 @@ Desktop app in Testing mode. Click **Advanced → Go to ai-job-searcher
 (unsafe)**. You're approving an app you yourself just created.
 
 If port 3000 is taken: `GMAIL_AUTH_PORT=3030 node scripts/gmail_auth.js
---profile jared` (and add `http://localhost:3030/oauth-callback` to your
+--profile <id>` (and add `http://localhost:3030/oauth-callback` to your
 OAuth client's redirect URIs in the Google Cloud console).
 
 If the script reports `no refresh_token in response`: revoke the prior
@@ -88,7 +88,7 @@ Third-party apps → ai-job-searcher → Remove access, then re-run.
 Dry-run first (no Notion writes, no TSV writes):
 
 ```
-node engine/cli.js check --profile jared --auto
+node engine/cli.js check --profile <id> --auto
 ```
 
 This:
@@ -100,7 +100,7 @@ This:
 Then commit with `--apply`:
 
 ```
-node engine/cli.js check --profile jared --auto --apply
+node engine/cli.js check --profile <id> --auto --apply
 ```
 
 This:
@@ -113,7 +113,7 @@ This:
 Override the cursor for a back-fill (e.g. re-check the past 30 days):
 
 ```
-node engine/cli.js check --profile jared --auto --since 2026-04-01T00:00:00Z --apply
+node engine/cli.js check --profile <id> --auto --since 2026-04-01T00:00:00Z --apply
 ```
 
 `--since` is clamped to 30 days ago — Gmail search has a hard floor.
@@ -150,22 +150,21 @@ shell history**: instead, use the helper file written by `gmail_auth.js`.
 
 ```
 # Refresh-token (value already saved by Phase 1):
-sh profiles/jared/.gmail-tokens/fly-secret-command.sh
+sh profiles/<id>/.gmail-tokens/fly-secret-command.sh
 
 # Other per-profile secrets (read from your local .env):
 fly secrets set \
-  JARED_NOTION_TOKEN="$(grep '^JARED_NOTION_TOKEN=' .env | cut -d= -f2-)" \
-  JARED_GMAIL_CLIENT_ID="$(grep '^JARED_GMAIL_CLIENT_ID=' .env | cut -d= -f2-)" \
-  JARED_GMAIL_CLIENT_SECRET="$(grep '^JARED_GMAIL_CLIENT_SECRET=' .env | cut -d= -f2-)" \
+  <PROFILE_ID>_NOTION_TOKEN="$(grep '^<PROFILE_ID>_NOTION_TOKEN=' .env | cut -d= -f2-)" \
+  <PROFILE_ID>_GMAIL_CLIENT_ID="$(grep '^<PROFILE_ID>_GMAIL_CLIENT_ID=' .env | cut -d= -f2-)" \
+  <PROFILE_ID>_GMAIL_CLIENT_SECRET="$(grep '^<PROFILE_ID>_GMAIL_CLIENT_SECRET=' .env | cut -d= -f2-)" \
   --app ai-job-searcher-cron
 ```
 
-Repeat for `lilia`. After the refresh-token is set on fly, **delete the
+Repeat for each profile. After the refresh-token is set on fly, **delete the
 helper file** so it doesn't linger in the repo dir:
 
 ```
-rm profiles/jared/.gmail-tokens/fly-secret-command.sh
-rm profiles/lilia/.gmail-tokens/fly-secret-command.sh
+rm profiles/<id>/.gmail-tokens/fly-secret-command.sh
 ```
 
 The local `credentials.json` stays — Mac runs need it.
@@ -186,7 +185,7 @@ Trigger one cron line manually inside the running container:
 
 ```
 fly ssh console -a ai-job-searcher-cron \
-  --command 'node /app/engine/cli.js check --profile jared --auto'
+  --command 'node /app/engine/cli.js check --profile <id> --auto'
 ```
 
 Expect a JSON plan in stdout with `emailsFound: <n>` and no errors. Then
@@ -209,7 +208,7 @@ The 1GB volume at `/data` keeps `processed_messages.json`, `applications.tsv`,
 log files, etc. — survives machine restarts and deploys. To inspect:
 
 ```
-fly ssh console -a ai-job-searcher-cron --command 'ls -la /data/profiles/jared'
+fly ssh console -a ai-job-searcher-cron --command 'ls -la /data/profiles/<id>'
 ```
 
 State on Mac and state on fly are deliberately not synced. Notion is the
@@ -246,7 +245,7 @@ If you see `invalid_grant` errors from `--auto`, re-run `gmail_auth.js`.
 
 Each profile gets its own OAuth client and its own refresh-token. Profiles
 never share credentials. The `loadCredentials` helper looks up env vars
-prefixed by the uppercased profile id (`JARED_*`, `LILIA_*`).
+prefixed by the uppercased profile id (`<PROFILE_ID>_*`).
 
 ### Read-only scope
 
@@ -278,12 +277,12 @@ ai-job-searcher-cron` or `fly ssh console`.
 
 | Error | Likely cause | Fix |
 |---|---|---|
-| `missing JARED_GMAIL_CLIENT_ID` | Env vars not set | Add to root `.env`. |
-| `gmail_oauth: missing refresh_token` | OAuth never run | Run `scripts/gmail_auth.js --profile jared`. |
+| `missing <PROFILE_ID>_GMAIL_CLIENT_ID` | Env vars not set | Add to root `.env`. |
+| `gmail_oauth: missing refresh_token` | OAuth never run | Run `scripts/gmail_auth.js --profile <id>`. |
 | `invalid_grant` during fetch | Refresh-token revoked | Re-run `gmail_auth.js`. |
 | `port 3000 already in use` | Another process on 3000 | `GMAIL_AUTH_PORT=3030 ...` and update OAuth redirect URI. |
 | `no refresh_token in response` | Prior consent without `prompt=consent` | Revoke at myaccount.google.com → re-run. |
-| Notion 401 | `JARED_NOTION_TOKEN` stale | Refresh the integration token in Notion settings. |
+| Notion 401 | `<PROFILE_ID>_NOTION_TOKEN` stale | Refresh the integration token in Notion settings. |
 | Empty `emailsFound` after long absence | `last_check` more than 30 days ago | Pass `--since <ISO>` to widen the window (clamped to 30d). |
 
 ---

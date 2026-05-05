@@ -39,6 +39,22 @@ const EXCLUDE_DIRS = new Set([
   '.gmail-tokens',
   '.indeed-state',
   'jd_cache',
+  // Agent tooling, not a public doc surface. Classifier-input strings
+  // here are intentional RU signal (phrases the matcher listens for).
+  // See RFC 018 §15 + each SKILL.md preamble.
+  'skills',
+]);
+
+// Files exempt from the EN-only rule. Use sparingly:
+//   - BACKLOG.md is gitignored; lives at the repo root for tooling reasons
+//     until the private/BACKLOG.md migration (RFC 018 §3) lands.
+//   - rfc/009 contains classifier-signal RU strings that must remain
+//     verbatim because the matcher compares user input against them.
+//     Prose-translation regressions there are caught by code review,
+//     not the scanner.
+const EXEMPT_FILES = new Set([
+  'BACKLOG.md',
+  'rfc/009-application-answers-command.md',
 ]);
 
 function shouldSkipDir(name) {
@@ -88,6 +104,8 @@ function main() {
   let filesWithHits = 0;
 
   for (const f of files) {
+    const rel0 = path.relative(ROOT, f);
+    if (EXEMPT_FILES.has(rel0)) continue;
     const hits = checkFile(f);
     if (hits.length === 0) continue;
     filesWithHits += 1;

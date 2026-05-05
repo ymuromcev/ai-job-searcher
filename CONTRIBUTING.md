@@ -17,7 +17,7 @@ and read:
 - Keep `engine/` free of personal preferences and PII.
 - New behaviour that touches multiple files goes through a short RFC
   in `rfc/NNN-title.md` first. Template in
-  [docs/ai-assistant-notes.md](docs/ai-assistant-notes.md).
+  [rfc/README.md](rfc/README.md).
 - Add a test. `npm test` runs on Node 20+ with no external services.
 - Pre-commit hook is mandatory: `npm run setup-hooks` once after clone.
 

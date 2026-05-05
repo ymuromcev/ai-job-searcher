@@ -21,13 +21,13 @@ tags: [gmail, cron, automation]
 
 `check` currently requires a Claude Code session — it's a two-phase flow: `--prepare` emits Gmail batches → human pastes them into Claude MCP → MCP fetches emails → writes `raw_emails.json` → `--apply` consumes it. Nice for control, useless for "run while user sleeps."
 
-User goal (verbatim): *"чтобы то, что работает сейчас по ручному запуску, работало самостоятельно. И пусть запускается где-то в 8 утра по PST и остается так же возможность запустить вручную, если надо."*
+User goal (verbatim): *"so that what currently works via manual run, works on its own. And let it launch around 8am PST and still leave the option to launch manually, if needed."*
 
 ## 2. Goals
 
 - **Autonomous daily run** at 8am PST, regardless of Mac state (off / asleep / closed lid).
 - **Manual run still works** locally on Mac — same code path, same end result.
-- **Per-profile isolation** — Jared's Gmail credentials never touch Lilia's runs.
+- **Per-profile isolation** — PM-Pete's Gmail credentials never touch Healthcare-Hannah's runs.
 - **Read-only access** — `gmail.readonly` scope. Never send/delete/modify mail.
 - **Fail safe**: a failed run logs and exits, doesn't corrupt state. Next day's run handles transient issues.
 - **Failure notification**: any cron failure posts a Notion comment to a per-profile ops page so the user knows the scan didn't run. Approved 2026-04-27.

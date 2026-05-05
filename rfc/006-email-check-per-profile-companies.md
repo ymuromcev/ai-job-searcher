@@ -12,66 +12,66 @@ tags: [gmail, check, companies]
 # RFC 006 — `check` company set: per-profile coverage + ATS fallback + backfill
 
 **Status**: Superseded by [RFC 008](./008-companies-as-notion-source-of-truth.md) on 2026-04-30
-**Tier**: M (изменения в `engine/commands/check.js` + миграция `Job Search/SKILL_check.md` + одноразовый backfill)
-**Author**: Claude + Jared Moore
-**Дополняет**: [RFC 002 — check command](./002-check-command.md)
-**Связан с**: [RFC 007 — industries-as-relations (planned)](./007-industries-as-relations.md) — следующая итерация архитектуры
+**Tier**: M (changes in `engine/commands/check.js` + migration of `Job Search/SKILL_check.md` + one-off backfill)
+**Author**: Claude + PM-Pete
+**Supplements**: [RFC 002 — check command](./002-check-command.md)
+**Related**: [RFC 007 — industries-as-relations (planned)](./007-industries-as-relations.md) — next architectural iteration
 
-## Проблема
+## Problem
 
-Текущая реализация `check --prepare` ([engine/commands/check.js:107-127](../engine/commands/check.js)) строит `activeJobsMap` только из строк, у которых одновременно:
+The current implementation of `check --prepare` ([engine/commands/check.js:107-127](../engine/commands/check.js)) builds `activeJobsMap` only from rows that simultaneously have:
 - `status ∈ {To Apply, Applied, Interview, Offer}`
 - `notion_page_id` set
 
-Это даёт ~88 компаний для Jared (из ~250+ tracked). Все остальные компании — невидимы. Конкретные пропуски за сегодня: Robinhood, Hippo Insurance, Marqeta, Deel, TabaPay.
+This yields ~88 companies for PM-Pete (out of ~250+ tracked). All other companies are invisible. Specific misses today: Robinhood, Hippo Insurance, Marqeta, Deel, TabaPay.
 
-Параллельные проблемы:
-- Письма от ATS-доменов (greenhouse/lever/ashby/workday), где имя компании только в body — частично теряются.
-- Легаси-прототип `Job Search/check_emails.js` всё ещё гоняется через `Job Search/skills/job-pipeline/SKILL_check.md` и держит ту же ошибку.
-- Lily вообще ни разу не запускала check через engine (нет `profiles/lilia/.gmail-state/`) → её ответы (включая dental-приглашения) обрабатываются вручную.
+Parallel problems:
+- Emails from ATS domains (greenhouse/lever/ashby/workday), where the company name appears only in the body, are partially lost.
+- The legacy prototype `Job Search/check_emails.js` is still being run via `Job Search/skills/job-pipeline/SKILL_check.md` and carries the same bug.
+- Healthcare-Hannah has never once run check through the engine (no `profiles/lilia/.gmail-state/`) → her replies (including dental invitations) are processed manually.
 
-## Зафиксированный дизайн
+## Locked-in design
 
-### Источник company set (general-purpose, оба профиля)
+### Source of the company set (general-purpose, both profiles)
 
 ```js
 function buildCompanySet(profile, apps, globalCompaniesTsv) {
-  // 1. Если whitelist непустой — это source of truth для профиля
+  // 1. If the whitelist is non-empty — it is the source of truth for the profile
   const wl = profile.discovery?.companies_whitelist;
   if (wl && wl.length > 0) {
     return uniqueCaseInsensitive([...wl, ...apps.map(a => a.companyName).filter(Boolean)]);
   }
-  // 2. Иначе — глобальный пул минус blacklist + applications
+  // 2. Otherwise — global pool minus blacklist + applications
   const bl = new Set((profile.discovery?.companies_blacklist || []).map(s => s.toLowerCase()));
   const fromGlobal = globalCompaniesTsv.map(c => c.name).filter(n => !bl.has(n.toLowerCase()));
   return uniqueCaseInsensitive([...fromGlobal, ...apps.map(a => a.companyName).filter(Boolean)]);
 }
 ```
 
-**Эффект для текущих профилей:**
-- Jared (`whitelist: null`) → 250 fintech из `data/companies.tsv` + ~250 уникальных из его applications.tsv (с дедупом ~300 штук всего).
-- Lily (`whitelist: [75 healthcare]`) → 75 whitelist + ~75 уникальных из applications.tsv (с дедупом ~80-100 штук).
+**Effect for current profiles:**
+- PM-Pete (`whitelist: null`) → 250 fintech from `data/companies.tsv` + ~250 unique from his applications.tsv (after dedup ~300 total).
+- Healthcare-Hannah (`whitelist: [75 healthcare]`) → 75 whitelist + ~75 unique from applications.tsv (after dedup ~80-100 total).
 
-**Изоляция автоматическая** (никаких per-profile веток в коде):
-- Разные Gmail-инбоксы (`ymuromcev@gmail.com` vs `liliachirova@gmail.com`).
-- Разные `applications.tsv`.
-- Разные whitelist'ы.
+**Isolation is automatic** (no per-profile branches in code):
+- Different Gmail inboxes (`ymuromcev@gmail.com` vs `liliachirova@gmail.com`).
+- Different `applications.tsv`.
+- Different whitelists.
 
-**Это временное решение**. Правильная архитектура — единый company catalog с industry-relations к профилям — описана в RFC 007.
+**This is a temporary solution**. The correct architecture — a unified company catalog with industry-relations to profiles — is described in RFC 007.
 
-### Изменения в `engine/commands/check.js`
+### Changes in `engine/commands/check.js`
 
-#### 1. Новая функция `buildCompanySet` (см. выше)
+#### 1. New function `buildCompanySet` (see above)
 
-Экспортируется отдельно для тестируемости.
+Exported separately for testability.
 
-#### 2. `buildActiveJobsMap` — без изменений
+#### 2. `buildActiveJobsMap` — unchanged
 
-Эта функция нужна для **матчинга** письма к конкретной активной заявке (Notion page id). Расширять не надо — Notion-update делается только для активных заявок.
+This function is needed for **matching** an email to a specific active application (Notion page id). No need to expand it — Notion updates are made only for active applications.
 
-#### 3. Новый ATS-fallback batch в `buildBatches`
+#### 3. New ATS-fallback batch in `buildBatches`
 
-После company-batches и LinkedIn/recruiter добавляется:
+After company-batches and LinkedIn/recruiter, the following is appended:
 
 ```js
 const ATS_DOMAINS = [
@@ -84,16 +84,16 @@ batches.push(
 );
 ```
 
-Это ловит письма, где company name есть только в теле.
+This catches emails where the company name appears only in the body.
 
-#### 4. 2-уровневый matcher в `processPipeline`
+#### 4. Two-level matcher in `processPipeline`
 
 ```js
 // 1. Active match → Notion update
 match = findCompany(email, activeJobsMap)
-if (match) { /* нормальный flow с status+comment */ }
+if (match) { /* normal flow with status+comment */ }
 
-// 2. Inactive match → лог "matched but inactive", без Notion-mutation
+// 2. Inactive match → log "matched but inactive", no Notion mutation
 else {
   const inactiveMatch = findCompanyInSet(email, allCompaniesList)
   if (inactiveMatch) {
@@ -103,9 +103,9 @@ else {
 }
 ```
 
-Даёт телеметрию "видим письмо от X, но он Closed" без шума в Notion.
+Gives telemetry "we see an email from X, but it's Closed" without noise in Notion.
 
-#### 5. Расширенный `check_context.json`
+#### 5. Extended `check_context.json`
 
 ```diff
 {
@@ -121,23 +121,23 @@ else {
 }
 ```
 
-### Подготовительные шаги до запуска
+### Preparatory steps before launch
 
-1. **Скопировать processed-state Jared** из легаси:
+1. **Copy PM-Pete's processed-state** from legacy:
    ```bash
    cp "Job Search/processed_email_ids.json" "ai-job-searcher/profiles/jared/.gmail-state/processed_messages.json"
    ```
-   (с конвертацией формата если нужно — проверить схему).
+   (with format conversion if needed — verify the schema).
 
-2. **Создать `.gmail-state/` для Lily**:
+2. **Create `.gmail-state/` for Healthcare-Hannah**:
    ```bash
    mkdir -p "ai-job-searcher/profiles/lilia/.gmail-state"
    ```
-   processed_messages.json создастся при первом `--apply`.
+   processed_messages.json will be created on the first `--apply`.
 
-3. **MCP-доступ к Лилину Gmail** — проверить через `mcp__06081052-...__list_labels` или подобное, что у Claude есть доступ к `liliachirova@gmail.com`. Если нет — пользователь подключает.
+3. **MCP access to Healthcare-Hannah's Gmail** — verify via `mcp__06081052-...__list_labels` or similar, that Claude has access to `liliachirova@gmail.com`. If not — the user connects it.
 
-### Изменения в `Job Search/skills/job-pipeline/SKILL_check.md`
+### Changes in `Job Search/skills/job-pipeline/SKILL_check.md`
 
 ```diff
 -node check_emails.js --prepare
@@ -146,80 +146,80 @@ else {
 
 Step 4 → `... check --profile jared --apply`.
 
-Step 4b (Notion MCP updates) — **удалить**. Новый engine применяет Notion напрямую через `NOTION_TOKEN` из `.env`.
+Step 4b (Notion MCP updates) — **delete**. The new engine applies Notion directly via `NOTION_TOKEN` from `.env`.
 
-Default-профиль = jared. Для Lily — явная команда `/job-pipeline check lilia` (правило пользователя).
+Default profile = jared. For Healthcare-Hannah — explicit command `/job-pipeline check lilia` (user rule).
 
-Старый `Job Search/check_emails.js` — переименовать в `check_emails.js.deprecated-2026-04-30` после первого успешного прогона.
+The old `Job Search/check_emails.js` — rename to `check_emails.js.deprecated-2026-04-30` after the first successful run.
 
-### Backfill (одноразовый скрипт для Jared)
+### Backfill (one-off script for PM-Pete)
 
-`ai-job-searcher/scripts/backfill_missed_companies_jared.js` — одноразовый, после прогона удалится:
+`ai-job-searcher/scripts/backfill_missed_companies_jared.js` — one-off, will be removed after the run:
 
-1. Загрузить старый `Job Search/email_check_context.json` (88 компаний).
-2. Загрузить новый company set через `buildCompanySet(jaredProfile, apps, globalTsv)`.
-3. Diff → список missed companies (~170-200).
-4. Сгенерировать Gmail-batches `after:30d ago` только для missed.
-5. Печатает batches в JSON для Claude → MCP search → `raw_emails_backfill.json`.
-6. Process с теми же правилами, что и обычный `--apply`.
-7. Отчёт: сколько писем нашлось, сколько rejection/interview/info, сколько Notion updates применено.
+1. Load the old `Job Search/email_check_context.json` (88 companies).
+2. Load the new company set via `buildCompanySet(jaredProfile, apps, globalTsv)`.
+3. Diff → list of missed companies (~170-200).
+4. Generate Gmail batches `after:30d ago` only for the missed companies.
+5. Prints batches as JSON for Claude → MCP search → `raw_emails_backfill.json`.
+6. Process with the same rules as a normal `--apply`.
+7. Report: how many emails were found, how many rejection/interview/info, how many Notion updates were applied.
 
-**Backfill применяет в Notion** (apply-mode, не dry-run). Принято Jared'ом — если за 30 дней пришёл отказ, который мы пропустили, лучше пометить сейчас, чем продолжать висеть в Applied.
+**The backfill applies to Notion** (apply-mode, not dry-run). Accepted by PM-Pete — if a rejection arrived in the last 30 days that we missed, it's better to mark it now than to keep it hanging in Applied.
 
-Для Lily — backfill не нужен, её первый запуск автоматически возьмёт окно 30 дней (cursor стартует с now-30d при отсутствии processed_messages.json).
+For Healthcare-Hannah — no backfill is needed; her first run will automatically take a 30-day window (the cursor starts at now-30d when processed_messages.json is absent).
 
-## Тесты
+## Tests
 
 - **`buildCompanySet`** — unit:
-  - whitelist непустой → берём whitelist + apps.
-  - whitelist пустой/null → globalTsv (минус blacklist) + apps.
-  - дедуп case-insensitive.
-  - оба источника пустые → пустой Set.
-- **`buildBatches`** — обновлённый: проверка что добавлен ATS-fallback батч.
-- **`processPipeline`** — обновлённый: inactive-match даёт row.action=`matched: inactive`, не строит action.
-- **Integration smoke**: фейковый профиль с whitelist + 3 apps → batches генерируются, mock возвращает 1 письмо от inactive company → row есть, Notion action нет.
+  - whitelist non-empty → take whitelist + apps.
+  - whitelist empty/null → globalTsv (minus blacklist) + apps.
+  - case-insensitive dedup.
+  - both sources empty → empty Set.
+- **`buildBatches`** — updated: verify that an ATS-fallback batch is added.
+- **`processPipeline`** — updated: inactive-match yields row.action=`matched: inactive`, no action built.
+- **Integration smoke**: fake profile with whitelist + 3 apps → batches are generated, mock returns 1 email from an inactive company → row is present, no Notion action.
 
 ## DOD
 
-- [ ] `buildCompanySet` написан + покрыт юнит-тестами (4 кейса).
-- [ ] `buildBatches` модифицирована, ATS-fallback батч на месте, тесты обновлены.
-- [ ] `processPipeline` 2-уровневый match, тесты обновлены.
-- [ ] Все тесты `engine/commands/check.test.js` зелёные.
-- [ ] processed_messages Jared скопирован из легаси.
-- [ ] `.gmail-state/` создан для Lily.
-- [ ] MCP-доступ к Лилину Gmail подтверждён (или подключён пользователем).
-- [ ] `SKILL_check.md` обновлён.
-- [ ] Прогон 1 цикл `--prepare → MCP search → --apply` для Jared без ошибок.
-- [ ] Прогон 1 цикл для Lily без ошибок (это её первый прогон = автоматический backfill 30d).
-- [ ] `backfill_missed_companies_jared.js` написан, прогнан, отчёт показан Jared.
-- [ ] Старый `Job Search/check_emails.js` помечен deprecated.
-- [ ] Code-reviewer subagent прошёл по диффу (обязательно для M).
-- [ ] RFC 007 stub создан, в Notion заведена задача на industry-relations refactor.
+- [ ] `buildCompanySet` written + covered by unit tests (4 cases).
+- [ ] `buildBatches` modified, ATS-fallback batch in place, tests updated.
+- [ ] `processPipeline` two-level match, tests updated.
+- [ ] All tests in `engine/commands/check.test.js` green.
+- [ ] PM-Pete's processed_messages copied from legacy.
+- [ ] `.gmail-state/` created for Healthcare-Hannah.
+- [ ] MCP access to Healthcare-Hannah's Gmail confirmed (or connected by the user).
+- [ ] `SKILL_check.md` updated.
+- [ ] Run 1 cycle `--prepare → MCP search → --apply` for PM-Pete with no errors.
+- [ ] Run 1 cycle for Healthcare-Hannah with no errors (this is her first run = automatic 30d backfill).
+- [ ] `backfill_missed_companies_jared.js` written, run, report shown to PM-Pete.
+- [ ] The old `Job Search/check_emails.js` marked deprecated.
+- [ ] Code-reviewer subagent ran the diff (mandatory for M).
+- [ ] RFC 007 stub created, task for industry-relations refactor opened in Notion.
 
-## Риски
+## Risks
 
-- **Gmail rate limits.** Для Jared 250+ компаний → ~25 batches вместо 11. MCP search_threads на 25 батчей за раз — должно ок (тестировали 11 без проблем). Если упрёмся — повысить `BATCH_SIZE` с 10 до 15.
-- **Лилины компании очень короткие** ("CHG Therapies LLC", "Anna G Uppal DDS Corp") → может ловить шум в `subject:(...)`. Митигация: tokenizer уже дропает `LLC/Inc/PC/DDS` — проверить что это работает.
-- **MCP-доступ к Лилину Gmail** — если нет, блокатор.
-- **Backfill Jared — ложные срабатывания.** Если за 30 дней попадётся newsletter/маркетинг от компании из watchlist → false positive. Митигация: классификатор должен дать OTHER → не действие.
+- **Gmail rate limits.** For PM-Pete 250+ companies → ~25 batches instead of 11. MCP search_threads against 25 batches at once — should be OK (we tested 11 without problems). If we hit a wall — raise `BATCH_SIZE` from 10 to 15.
+- **Healthcare-Hannah's companies are very short** ("CHG Therapies LLC", "Anna G Uppal DDS Corp") → may catch noise in `subject:(...)`. Mitigation: the tokenizer already drops `LLC/Inc/PC/DDS` — verify that this works.
+- **MCP access to Healthcare-Hannah's Gmail** — if absent, blocker.
+- **PM-Pete backfill — false positives.** If a newsletter/marketing email from a watchlist company arrives within 30 days → false positive. Mitigation: the classifier should return OTHER → no action.
 
-## План реализации (по шагам)
+## Implementation plan (step-by-step)
 
-1. Имплементить `buildCompanySet` + 4 unit-теста.
-2. Обновить `buildBatches` (+ ATS-fallback) + тест.
-3. Обновить `processPipeline` (2-уровневый match) + тесты.
-4. `runPrepare`: вызывает `buildCompanySet`, передаёт в `buildBatches`, кладёт `allCompaniesList` в context.
-5. `runApply`: использует `context.allCompaniesList` для inactive-match.
-6. Запустить `npm test` — всё зелёное.
-7. Code-reviewer subagent по диффу.
-8. Скопировать processed_messages Jared.
-9. Создать .gmail-state Lily.
-10. Прогнать `--prepare → MCP → --apply` для Jared dry-run, потом apply.
-11. Прогнать для Lily.
-12. Обновить `SKILL_check.md`.
-13. Написать и прогнать `backfill_missed_companies_jared.js` для Jared.
-14. Отчёт пользователю.
-15. Renaming старого скрипта.
+1. Implement `buildCompanySet` + 4 unit tests.
+2. Update `buildBatches` (+ ATS-fallback) + test.
+3. Update `processPipeline` (two-level match) + tests.
+4. `runPrepare`: calls `buildCompanySet`, passes it into `buildBatches`, puts `allCompaniesList` into context.
+5. `runApply`: uses `context.allCompaniesList` for inactive-match.
+6. Run `npm test` — all green.
+7. Code-reviewer subagent on the diff.
+8. Copy PM-Pete's processed_messages.
+9. Create .gmail-state for Healthcare-Hannah.
+10. Run `--prepare → MCP → --apply` for PM-Pete dry-run, then apply.
+11. Run for Healthcare-Hannah.
+12. Update `SKILL_check.md`.
+13. Write and run `backfill_missed_companies_jared.js` for PM-Pete.
+14. Report to the user.
+15. Rename the old script.
 
 ---
 
