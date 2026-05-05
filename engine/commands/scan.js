@@ -255,16 +255,25 @@ function makeScanCommand(overrides = {}) {
     // Adapter shape uses companyName/title/locations[]; filter expects
     // company/role/location. Map and keep a back-ref to the original job so
     // we can re-emit it in adapter shape after filtering.
+    //
+    // L-4 (RFC 013): also pass `locations` array for geo_enforcer multi-loc
+    // matching (a posting like ["Sacramento", "Remote"] should pass for
+    // someone whose policy allows either). Single-location string (`location`)
+    // kept for blocklist back-compat — historic contract.
     const filterInputs = result.fresh.map((j) => ({
       _job: j,
       company: j.companyName,
       role: j.title,
+      locations: Array.isArray(j.locations) ? j.locations.map(String) : [],
       location:
         Array.isArray(j.locations) && j.locations.length > 0
           ? String(j.locations[0])
           : "",
     }));
-    const filterResult = deps.filterJobs(filterInputs, filterRules, activeCounts);
+    // L-4: inject profile.geo into filter rules. Default unrestricted block
+    // means the geo check is a no-op for Jared (back-compat).
+    const filterRulesWithGeo = { ...filterRules, geo: profile.geo };
+    const filterResult = deps.filterJobs(filterInputs, filterRulesWithGeo, activeCounts);
     const passedJobs = filterResult.passed.map((p) => p._job);
     const rejectedEntries = filterResult.rejected.map((r) => ({
       job: r.job._job,

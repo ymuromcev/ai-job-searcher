@@ -9,6 +9,20 @@
 //                                                 skipped entirely when job location
 //                                                 contains a US marker (united states,
 //                                                 usa, ", us", "(us)", "u.s.")
+//   geo:                profile.geo block (RFC 013, L-4) — when present and
+//                                                 mode !== "unrestricted",
+//                                                 enforces positive geo policy
+//                                                 via geo_enforcer.enforceGeo.
+//                                                 Caller (scan.js / validate.js)
+//                                                 is expected to set
+//                                                 rules.geo = profile.geo before
+//                                                 calling.
+//
+// Multi-location support (RFC 013, L-4): job objects may carry either
+// `location` (single string) or `locations[]` (array). Filter prefers
+// `locations[]` when present and falls back to `[location]` otherwise. For
+// blocklist purposes the first location is checked (as before — historic
+// contract). For geo enforcer, the full array is passed.
 //
 // Title-blocklist semantics (2026-04-28 update — diverges from prototype):
 //   - Word-boundary regex (\b…\b) instead of plain substring. Avoids false
@@ -18,6 +32,8 @@
 //     title passes — caters to hybrid roles where one half is desirable.
 //     NOTE: split is "/" only — not "," (e.g. "Supervisor, Medical" stays
 //     a single part: "Medical" is a department modifier, not a co-role).
+
+const { enforceGeo } = require("./geo_enforcer.js");
 
 const US_MARKERS = ["united states", "usa", ", us", "(us)", "u.s."];
 
@@ -112,6 +128,23 @@ function matchBlocklists(job, rules) {
       if (loc.includes(String(blocked).toLowerCase())) {
         return { kind: "location_blocklist", match: blocked };
       }
+    }
+  }
+
+  // L-4 / RFC 013: profile-level geo enforcement. Active only when caller
+  // injected `rules.geo` AND mode !== "unrestricted". Multi-location aware:
+  // we pass the full locations[] array if available, else fall back to the
+  // single string. enforceGeo returns ok=true for unrestricted mode, so the
+  // explicit guard below is just an optimization (skip the call entirely).
+  if (rules.geo && rules.geo.mode && rules.geo.mode !== "unrestricted") {
+    const locsForGeo = Array.isArray(job.locations) && job.locations.length > 0
+      ? job.locations
+      : job.location
+      ? [job.location]
+      : [];
+    const geoResult = enforceGeo(locsForGeo, rules.geo);
+    if (!geoResult.ok) {
+      return { kind: geoResult.reason, mode: rules.geo.mode };
     }
   }
 

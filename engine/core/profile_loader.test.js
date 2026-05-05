@@ -11,6 +11,7 @@ const {
   normalizeFilterRules,
   loadMemory,
   normalizeSalaryConfig,
+  normalizeGeo,
   ID_REGEX,
 } = require("./profile_loader.js");
 
@@ -392,5 +393,124 @@ test("loadProfile: normalises profile.salary into salaryConfig", () => {
   const profile = loadProfile("lilia", { profilesDir: dir });
   assert.equal(profile.salaryConfig.levelParser, "healthcare");
   assert.equal(profile.salaryConfig.salaryMatrix.S.MedAdmin.min, 48000);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- normalizeGeo (L-4 / RFC 013) ------------------------------------------
+
+test("normalizeGeo: missing block defaults to unrestricted", () => {
+  assert.deepEqual(normalizeGeo(undefined), {
+    mode: "unrestricted", remote_ok: false, blocklist: [],
+  });
+  assert.deepEqual(normalizeGeo(null), {
+    mode: "unrestricted", remote_ok: false, blocklist: [],
+  });
+});
+
+test("normalizeGeo: rejects non-object input", () => {
+  assert.throws(() => normalizeGeo("string"), /must be an object/);
+  assert.throws(() => normalizeGeo(["array"]), /must be an object/);
+});
+
+test("normalizeGeo: rejects unknown mode", () => {
+  assert.throws(
+    () => normalizeGeo({ mode: "global" }),
+    /must be one of/
+  );
+});
+
+test("normalizeGeo: metro mode requires non-empty cities", () => {
+  assert.throws(
+    () => normalizeGeo({ mode: "metro", states: ["CA"] }),
+    /cities is required/
+  );
+  assert.throws(
+    () => normalizeGeo({ mode: "metro", cities: [], states: ["CA"] }),
+    /cities is required/
+  );
+});
+
+test("normalizeGeo: metro mode requires non-empty states (§8.1)", () => {
+  assert.throws(
+    () => normalizeGeo({ mode: "metro", cities: ["Sacramento"] }),
+    /states is required/
+  );
+  assert.throws(
+    () => normalizeGeo({ mode: "metro", cities: ["Sacramento"], states: [] }),
+    /states is required/
+  );
+});
+
+test("normalizeGeo: metro mode canonical shape", () => {
+  const out = normalizeGeo({
+    mode: "metro",
+    cities: ["Sacramento", "Roseville"],
+    states: ["CA"],
+    remote_ok: false,
+    blocklist: ["Napa"],
+  });
+  assert.deepEqual(out, {
+    mode: "metro",
+    cities: ["Sacramento", "Roseville"],
+    states: ["CA"],
+    countries: [],
+    remote_ok: false,
+    blocklist: ["Napa"],
+    max_radius_miles: null,
+  });
+});
+
+test("normalizeGeo: us-wide defaults countries to ['US']", () => {
+  const out = normalizeGeo({ mode: "us-wide" });
+  assert.deepEqual(out.countries, ["US"]);
+});
+
+test("normalizeGeo: unrestricted with explicit remote_ok", () => {
+  const out = normalizeGeo({ mode: "unrestricted", remote_ok: true });
+  assert.equal(out.mode, "unrestricted");
+  assert.equal(out.remote_ok, true);
+});
+
+test("normalizeGeo: max_radius_miles preserved when number, else null", () => {
+  assert.equal(normalizeGeo({ mode: "us-wide", max_radius_miles: 25 }).max_radius_miles, 25);
+  assert.equal(normalizeGeo({ mode: "us-wide", max_radius_miles: "25" }).max_radius_miles, null);
+  assert.equal(normalizeGeo({ mode: "us-wide" }).max_radius_miles, null);
+});
+
+test("loadProfile: surfaces normalized geo block (Lilia metro)", () => {
+  const dir = makeTempProfiles();
+  writeProfile(dir, "lilia", {
+    id: "lilia",
+    geo: {
+      mode: "metro",
+      cities: ["Sacramento", "Roseville"],
+      states: ["CA"],
+      remote_ok: false,
+      blocklist: ["Napa"],
+    },
+  });
+  const profile = loadProfile("lilia", { profilesDir: dir });
+  assert.equal(profile.geo.mode, "metro");
+  assert.deepEqual(profile.geo.cities, ["Sacramento", "Roseville"]);
+  assert.deepEqual(profile.geo.states, ["CA"]);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("loadProfile: profile without geo block defaults to unrestricted", () => {
+  const dir = makeTempProfiles();
+  writeProfile(dir, "jared", { id: "jared" });
+  const profile = loadProfile("jared", { profilesDir: dir });
+  assert.equal(profile.geo.mode, "unrestricted");
+  assert.equal(profile.geo.remote_ok, false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("loadProfile: invalid geo block raises clean error", () => {
+  const dir = makeTempProfiles();
+  writeProfile(dir, "broken", { id: "broken", geo: { mode: "metro", cities: ["X"] } });
+  assert.throws(
+    () => loadProfile("broken", { profilesDir: dir }),
+    /states is required/
+  );
   fs.rmSync(dir, { recursive: true, force: true });
 });

@@ -33,6 +33,7 @@ const { checkAll } = require("../core/url_check.js");
 const { fetchAll: fetchAllJds } = require("../core/jd_cache.js");
 const { calcSalary } = require("../core/salary_calc.js");
 const { extractFromJd } = require("../core/jd_extract.js");
+const { enforceGeo } = require("../core/geo_enforcer.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 
@@ -158,6 +159,24 @@ function applyPrepareFilter(apps, rules, activeCounts) {
       continue;
     }
 
+    // L-4 (RFC 013): profile-level geo enforcement at prepare time.
+    // app.location comes from TSV (schema v3, G-5). Empty location in metro
+    // mode → geo_no_location reject. The check is gated on rules.geo.mode
+    // !== "unrestricted" so Jared sees zero behavior change.
+    if (rules && rules.geo && rules.geo.mode && rules.geo.mode !== "unrestricted") {
+      const locsForGeo = app.location ? [app.location] : [];
+      const geoResult = enforceGeo(locsForGeo, rules.geo);
+      if (!geoResult.ok) {
+        skipped.push({
+          key: app.key,
+          reason: geoResult.reason,
+          mode: rules.geo.mode,
+          url: app.url,
+        });
+        continue;
+      }
+    }
+
     passed.push(app);
     counts[app.companyName] = current + 1;
   }
@@ -201,7 +220,10 @@ async function runPre(ctx, deps) {
     : DEFAULT_BATCH_SIZE;
 
   const profile = deps.loadProfile(profileId, { profilesDir });
-  const filterRules = profile.filterRules || {};
+  // L-4 (RFC 013): inject profile.geo into filter rules so applyPrepareFilter
+  // can call enforceGeo. Profiles without `profile.geo` get
+  // {mode:"unrestricted"} from normalizeGeo (no-op for Jared).
+  const filterRules = { ...(profile.filterRules || {}), geo: profile.geo };
 
   const applicationsPath = profile.paths.applicationsTsv;
   const { apps } = deps.loadApplications(applicationsPath);
@@ -313,6 +335,20 @@ async function runPre(ctx, deps) {
       const extracted = deps.extractFromJd(entry.jdText);
       if (extracted.schedule) entry.schedule = extracted.schedule;
       if (extracted.requirements) entry.requirements = extracted.requirements;
+    }
+
+    // L-4 (RFC 013): geo decision. Entries that reach the batch already
+    // passed applyPrepareFilter geo check, so geo_decision is "allowed" by
+    // construction. We still surface the field on every entry so SKILL Step 3
+    // has a deterministic source-of-truth and can drop its WebFetch fallback.
+    // matchedBy describes WHY it passed (e.g. "city:Sacramento" / "remote" /
+    // "unrestricted") — useful for audit + future retro analysis.
+    if (profile.geo) {
+      const locsForGeo = urlRes.location ? [urlRes.location] : [];
+      const geoResult = enforceGeo(locsForGeo, profile.geo);
+      entry.geo_decision = geoResult.ok ? "allowed" : "rejected";
+      if (geoResult.matchedBy) entry.geo_matched_by = geoResult.matchedBy;
+      if (geoResult.reason) entry.geo_reason = geoResult.reason;
     }
 
     const tierKnown = Object.prototype.hasOwnProperty.call(

@@ -18,11 +18,9 @@ Severity:
 
 ## High (2)
 
-### G-7 — Geo-фильтр неполный
-- **Сейчас**: только Workday умеет фильтровать по локации, и то через per-target конфиг. Если профилю реально нужно отсечь, скажем, Европу или гибрид-с-обязательным-офисом — это сделать негде. У Jared сейчас geo-предпочтение «бери всё» (это ок), но у Lilia geo критичен (no-relocate, конкретный регион), и engine не умеет это выразить.
-- **Станет**: профиль декларирует geo-предпочтение один раз (`geo_preference: any` для Jared, конкретные правила для Lilia); все 11 адаптеров уважают его автоматически.
-- **Цена**: L (нужен RFC, единая модель geo, миграция конфигов).
-- **Полный план реализации**: см. **L-4** (Lilia profile-blockers ниже) — RFC-005 поглощает G-7 целиком.
+### ~~G-7~~ — Geo-фильтр неполный (closed 2026-05-04)
+- **Закрыто**: поглощено L-4 (RFC 013). Profile-level `profile.json.geo` block с режимами `metro` / `us-wide` / `remote-only` / `unrestricted` уважается единым `engine/core/geo_enforcer.js` через `filter.js` ДО append'а в TSV. Все 11 адаптеров фильтруются автоматически. SKILL Step 3 читает `prepare_context.batch[i].geo_decision` из engine, не делает WebFetch.
+- **Цена**: L. **Closed 2026-05-04** (Commit C, RFC 013).
 
 ### G-17 — Cover letter генерируется с нуля каждый раз
 - **Сейчас (закрыто 2026-05-04)**: SKILL Step 8 переписан в template-first flow. Claude находит ближайший подходящий entry в `cover_letter_versions.json` (template-variants shape для Lilia или library-of-letters shape для Jared), копирует proof-параграфы (P2 + P3) verbatim, перегенерирует только company-specific параграфы (P1 hook + при необходимости P4 close), и применяет Humanizer только к новому тексту. Tone стабильный по всему батчу (proof identical), tokens примерно вдвое меньше. `clBaseKey` записывается в results.json для аудита (видно, какие письма реюзают одну базу).
@@ -216,10 +214,11 @@ Severity:
 - **Статус**: Open. Запланировано в Commit A (вместе с L-2 — без файлов engine'у нечего читать).
 
 ### L-4 — Гибкая geo-модель per-profile (поглощает G-7)
-- **Сейчас**: SKILL Step 3 фильтрует только non-US. Если в outputе появится Kaiser Texas или Sutter Oregon — пройдёт как `geo: "us-compatible"`, попадёт в «To Apply». `discovery.indeed.filters.location_whitelist` (Roseville/Sacramento/Folsom…) активен только в indeed-prep фазе. Greenhouse / Lever / Workday вакансии вообще не проходят geo-whitelist. Лиля не релоцируется — для неё это боевой блокер.
-- **Станет**: единая модель в `profile.json.geo` с режимами `metro` / `us-wide` / `remote-only` / `unrestricted`. `metro` принимает массив cities + max_radius_miles. Все 11 discovery adapters проходят через `engine/core/geo_enforcer.js` ДО append'а в TSV; `validate` retro-sweep тоже использует enforcer (закрывает G-33 как побочный эффект); SKILL Step 3 читает `prepare_context.geo_decision`, не делает WebFetch.
-- **Цена**: L (требует RFC-005). Сабтаски: RFC черновик → ваш approve → geo_enforcer module → миграция scan-time для 11 адаптеров → SKILL Step 3 refactor → backfill TSV location → parity тесты для Джареда (нулевая регрессия) → live retro-sweep.
-- **Статус**: Open, RFC pending. Запланировано в Commit C.
+- **Сейчас (закрыто 2026-05-04)**: единая модель `profile.json.geo` с режимами `metro` / `us-wide` / `remote-only` / `unrestricted`. `engine/core/geo_enforcer.js` — pure-function matcher; интегрирован в `filter.js` (scan/prepare/validate uniform). `profile_loader.normalizeGeo()` валидирует на загрузке (metro требует cities+states; throws иначе). Multi-location semantic: pass if ANY locations[] satisfies policy. Per-location blocklist short-circuit. US state code ↔ full name bidirectional matching. Bare-city safeguard: city-only match accepted когда location string не содержит state info вообще (preserves Auburn-AL ambiguity defense). SKILL Step 3 читает `prepare_context.batch[i].geo_decision` (allowed/rejected) — не делает WebFetch.
+- **Lilia geo**: `metro` mode с 13 городами Sacramento metro (incl. Lincoln) + states=["CA"] + remote_ok=true + blocklist=[Napa, Stockton, Lodi, Vacaville, Modesto].
+- **Jared geo**: `unrestricted` + remote_ok=true (явно задекларировано per RFC §8.6).
+- **Цена**: L. **Closed 2026-05-04** (Commit C, RFC 013).
+- **Live verification**: Jared parity — 389 To Apply rows, 389 allowed, 0 rejected (zero regression). Lilia retro-sweep: 36 архивированных rows (31 geo_no_location — TSV без location field / 5 geo_metro_miss — корректные state mismatch'и). Tests: 60 новых (28 geo_enforcer + 11 profile_loader.normalizeGeo + 10 filter geo + 6 prepare geo + 4 validate geo + 1 cleanup); 903/903 passing.
 
 ### L-5 — Notion Schedule / Requirements из JD
 - **Сейчас (закрыто 2026-05-04)**: `engine/core/jd_extract.js` ловит schedule (Full-time / Part-time / Per Diem / PRN / Contract / шифт-фолбек / hours-per-week) и requirements (education / 1-7+ years / bilingual + специфичные языки / healthcare certs — BLS / CMA / RDA / RN / etc. с required/preferred тегами / EMR — Epic / Cerner / Dentrix / etc.). Контекст-скоп — sentence/line, чтобы required/preferred не утекали между бюллетами. `prepare.js` pre-phase прокидывает в `prepare_context.batch[i].{schedule, requirements}` через DI-инъекцию `extractFromJd`. SKILL Step 9 пушит, только если `profile.notion.property_map.schedule` / `.requirements` определены (у Лили оба — `select` + `rich_text`; у Джареда нет → его карточки не меняются). Тесты: 25 на jd_extract (Kaiser / Sutter / Dignity / Sono Bello / Stonebrook + boundary cases) + 5 на prepare.js wiring (включая Jared parity — extractor может вернуть `requirements` для PM-JD по years signal, но SKILL не пушит из-за gating).
@@ -253,13 +252,14 @@ JD extractors + Notion completeness:
 - SKILL Step 9 пушит при наличии в property_map (back-compat).
 - 5-6 фикстур на типичные healthcare JD.
 
-### Commit C (L) — L-4 (RFC-005)
+### Commit C (L) — L-4 (RFC 013) — **Done 2026-05-04**
 Geo-модель per-profile:
-- Сначала RFC-005 черновик → approve.
-- Потом `geo_enforcer.js` + 11 adapter-cuts + SKILL Step 3 refactor.
-- Backfill `applications.tsv` location для обоих профилей.
-- Live retro-sweep через `validate` под новой моделью.
-- Parity тесты для Джареда (нулевая регрессия).
+- RFC 013 → approved.
+- `geo_enforcer.js` (pure matcher) + filter.js integration (uniform для scan/prepare/validate) + SKILL Step 3 refactor (читает `geo_decision` из engine).
+- `profile_loader.normalizeGeo()` валидирует geo block на загрузке.
+- Lilia/Jared geo blocks в profile.json.
+- Live retro-sweep: Jared 0 rejections (parity), Lilia 36 archived (31 no_location + 5 metro_miss).
+- 60 новых тестов; 903/903 passing.
 
 После C: **L-6** (head-to-head verification для Лили), затем боевой prepare для неё.
 
@@ -267,18 +267,18 @@ Geo-модель per-profile:
 
 ## Сводка по цене
 
-- **L** (требуют RFC и миграции): G-1, **L-4 (поглощает G-7)**.
-- **M** (день работы, тесты): G-3, G-6, G-14, G-29, **L-1, L-2, L-5**.
-- **XS** (несколько строк / файлы): остальные ~14 активных + **L-3**.
+- **L** (требуют RFC и миграции): G-1.
+- **M** (день работы, тесты): G-3, G-6, G-14, G-29.
+- **XS** (несколько строк / файлы): остальные ~14 активных.
 - **Verification-only** (не код): **L-6**.
-- ✅ **Закрыто 2026-05-04** (15 шт): G-2, G-5, G-10, G-11, G-12, G-15, G-17, G-18, G-19, G-20, G-21, G-22, G-23, G-25, G-26.
+- ✅ **Закрыто 2026-05-04** (20 шт): G-2, G-5, G-7 (absorbed by L-4), G-10, G-11, G-12, G-15, G-17, G-18, G-19, G-20, G-21, G-22, G-23, G-25, G-26, **L-1, L-2, L-3, L-4, L-5**.
 
 ## Рекомендация по триажу
 
 **Активная очередь (после prepare blocker/QoL пакета 2026-05-04)**:
 
 **Lilia-blockers (приоритет 1 — без них боевой prepare для неё даст плохой вывод)**:
-- Commit A → Commit B → RFC-005 approve → Commit C → L-6 verification. См. секцию «Очерёдность исполнения» выше.
+- Commit A → Commit B → RFC 013 approve → Commit C → L-6 verification. См. секцию «Очерёдность исполнения» выше.
 
 **XS — quick wins (можно делать в параллель с Lilia-batch'ем)**:
 - G-4 (cross-platform dedup) — уже написано, надо включить.
@@ -290,7 +290,7 @@ Geo-модель per-profile:
 
 **Архитектурные (L) — обсудить отдельно**:
 - G-1 (статусы — миграция в Notion).
-- ~~G-7~~ → поглощено L-4 в RFC-005.
+- ~~G-7~~ → поглощено L-4 в RFC 013 (closed 2026-05-04).
 
 **Документационные (Trivial) — закрываем пачкой в одном PR**:
 - G-24, G-27, G-28, G-30, G-31, G-32.
@@ -311,6 +311,6 @@ Geo-модель per-profile:
 | L-1 (salary matrix per-profile) | **Done** | Commit A | 2026-05-04 | `profile.json.salary` block + `parseLevel(title, parser)` dispatcher (`pm` / `healthcare` / `default`). Lilia matrix S/A/B/C × MedAdmin/Coordinator/Senior. COL config per-profile (Lilia: `multiplier=1.0`). Jared без блока → engine defaults (parity подтверждён smoke + 12 новых тестов). |
 | L-2 (memory in profile config) | **Done** | Commit A | 2026-05-04 | `profile.json.memory` block (`writing_style_file` / `resume_key_points_file` / `feedback_dir`). `profile_loader.loadMemory()` подгружает контент в `profile.memory.{writingStyle,resumeKeyPoints,feedback[]}`. `prepare.js` пробрасывает в `prepare_context.memory`. SKILL Step 1 / Voice calibration / Memory files читают из контекста, не с диска. |
 | L-3 (Lilia memory files content) | **Done** | Commit A | 2026-05-04 | `profiles/lilia/memory/user_writing_style.md` (warm, 5/10, anti-AI tells, voice anchors) + `user_resume_key_points.md` (Strong/Medium/Weak fit criteria + 4 опыта по приоритету + дифференциаторы). Jared `profile.json` тоже задекларировал свой существующий memory dir. |
-| L-4 (geo model RFC-005) | RFC pending | — | — | — |
+| L-4 (geo model RFC 013) | **Done** | Commit C | 2026-05-04 | `engine/core/geo_enforcer.js` (pure matcher) + filter.js integration + `profile_loader.normalizeGeo()` + SKILL Step 3 refactor (engine-resolved decision, no WebFetch). Lilia metro mode (13 cities Sacramento+Lincoln, CA, blocklist 5 cities, remote_ok=true). Jared explicit `unrestricted` + remote_ok=true. Live: Jared 389/389 allowed (parity), Lilia 36 archived (31 no_location + 5 metro_miss). 60 новых тестов. Поглощает G-7. |
 | L-5 (Schedule / Requirements push) | **Done** | Commit B | 2026-05-04 | `engine/core/jd_extract.js` + `prepare.js` pre-phase wiring + SKILL Step 9 profile-gated push. 30 новых тестов (25 jd_extract + 5 prepare). Healthcare JD фикстуры: Kaiser / Sutter / Dignity / Sono Bello / Stonebrook. Sentence-scoped strength tagging (required/preferred). Back-compat: Jared parity — его карточки не меняются (нет полей в property_map). |
 | L-6 (head-to-head Lilia) | Pending | — | — | После Commit C |

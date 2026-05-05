@@ -284,11 +284,19 @@ function makeValidateCommand(overrides = {}) {
     // schema v3 (G-5, 2026-05-03) TSV rows carry `location`, so location
     // blocklist now exercises here too (rows without a backfilled location are
     // simply not matched against location patterns — empty string never hits).
-    const filterRules = profile.filterRules || {};
+    //
+    // L-4 (RFC 013): retro-sweep also enforces profile.geo. When profile
+    // declares a metro / us-wide / remote-only mode, existing "To Apply" rows
+    // whose location violates the policy are surfaced (and archived with
+    // --apply). Closes G-33 as a side effect: positive geo policy now drives
+    // the sweep, not just deny-lists.
+    const filterRules = { ...(profile.filterRules || {}), geo: profile.geo };
+    const geoActive = profile.geo && profile.geo.mode && profile.geo.mode !== "unrestricted";
     const hasBlocklistRules =
       (Array.isArray(filterRules.company_blocklist) && filterRules.company_blocklist.length > 0) ||
       (Array.isArray(filterRules.title_blocklist) && filterRules.title_blocklist.length > 0) ||
-      (Array.isArray(filterRules.location_blocklist) && filterRules.location_blocklist.length > 0);
+      (Array.isArray(filterRules.location_blocklist) && filterRules.location_blocklist.length > 0) ||
+      geoActive;
     if (appsResult.apps.length > 0 && hasBlocklistRules) {
       const matches = [];
       for (const app of appsResult.apps) {
@@ -338,6 +346,12 @@ function formatReason(reason) {
   if (reason.kind === "company_blocklist") return `company_blocklist: ${reason.company}`;
   if (reason.kind === "title_blocklist") return `title_blocklist: "${reason.pattern}"${reason.why ? ` — ${reason.why}` : ""}`;
   if (reason.kind === "location_blocklist") return `location_blocklist: ${reason.match}`;
+  // L-4 (RFC 013): geo enforcement reasons.
+  if (reason.kind === "geo_metro_miss") return `geo_metro_miss (mode: ${reason.mode || "metro"})`;
+  if (reason.kind === "geo_country_miss") return `geo_country_miss (mode: ${reason.mode || "us-wide"})`;
+  if (reason.kind === "geo_remote_only_miss") return `geo_remote_only_miss`;
+  if (reason.kind === "geo_blocklist") return `geo_blocklist`;
+  if (reason.kind === "geo_no_location") return `geo_no_location (TSV row missing location field — backfill?)`;
   return reason.kind;
 }
 

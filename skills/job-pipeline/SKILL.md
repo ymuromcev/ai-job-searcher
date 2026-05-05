@@ -148,15 +148,14 @@ Read profiles/<id>/prepare_context.json
 
 Report stats: `inboxTotal` / `afterFilter` / `inBatch` / `urlAlive` / `urlDead`. Proceed without confirmation — the CLI's `--batch N` flag already gates batch size; Claude does not re-prompt the user. Default is 30; adjust by re-running pre-phase with a different `--batch`.
 
-**Step 3 — Geo validation (per job)**
+**Step 3 — Geo decision (now profile-driven, L-4 / RFC 013)**
 
-For each job in `batch` where `urlAlive = true`:
+The engine pre-phase already enforces `profile.geo` policy and surfaces the result on every batch entry. **Read `prepare_context.batch[i].geo_decision` — do NOT WebFetch for geo.**
 
-Use WebFetch on the job URL (or `jdText` if already fetched) to confirm the role is US-compatible:
-- Allowed: Remote / Remote USA / Worldwide / no location restriction.
-- Excluded: Europe-only, UK-only, India-only, EMEA, APAC, or any explicit non-US restriction.
-- If `jdText` is present: scan it directly (no WebFetch needed).
-- If URL is dead or JD unavailable: mark `geo = "unknown"`, proceed.
+For each job in `batch`:
+- `geo_decision === "allowed"` → proceed to Step 4. The `geo_matched_by` field describes WHY it passed (`"city:Sacramento"` / `"remote"` / `"country:US"` / `"unrestricted"`) — useful when generating the fit rationale.
+- `geo_decision === "rejected"` → already pruned by engine. You won't see it in `batch[]` (it's in `prepare_context.skipped[]` with reason `"geo_metro_miss"` / `"geo_country_miss"` / `"geo_remote_only_miss"` / `"geo_blocklist"` / `"geo_no_location"`). The `stats.skipReasons` breakdown shown in Step 12 includes geo-counters.
+- `geo_decision` field absent (legacy `prepare_context.json` from before L-4 migration, or profile without `profile.geo` block) → fallback: WebFetch JD location, apply simple US-policy as before. Engine version post-2026-05-04 always populates `geo_decision`.
 
 **Step 4 — Fit scoring (per job)**
 
@@ -166,11 +165,11 @@ Write a 1-sentence fit rationale (concrete domain overlap, not generic praise). 
 
 Early-startup modifier: if company is pre-Series B or <50 employees — downgrade one level.
 
-**Step 5 — Filter: geo + fit**
+**Step 5 — Filter: fit**
 
-Skip (mark `decision: "skip"`) any job where:
-- `geo` is confirmed non-US, OR
-- `fitScore` is `Weak`
+Geo filtering already happened in the engine pre-phase (Step 3 is read-only) — only entries with `geo_decision === "allowed"` reach the batch. The remaining gate is fit:
+
+Skip (mark `decision: "skip"`) any job where `fitScore` is `Weak`.
 
 Report skipped jobs with reason to the user before continuing.
 

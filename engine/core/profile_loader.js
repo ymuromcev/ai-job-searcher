@@ -111,6 +111,10 @@ function loadProfile(id, options = {}) {
   // `result.salaryConfig` (normalised) and feeds it into calcSalary opts.
   result.salaryConfig = normalizeSalaryConfig(profile.salary);
 
+  // L-4 (RFC 013): per-profile geo block. Canonical shape consumed by
+  // filter.js / prepare.js / validate.js via geo_enforcer.
+  result.geo = normalizeGeo(profile.geo);
+
   return result;
 }
 
@@ -291,6 +295,85 @@ function loadSecrets(id, env = process.env) {
   return out;
 }
 
+// --- Geo block (L-4 / RFC 013) ----------------------------------------------
+//
+// Schema (profile.json):
+//   "geo": {
+//     "mode": "metro" | "us-wide" | "remote-only" | "unrestricted",
+//     "cities": [string],         // required when mode === "metro"
+//     "states": [string],         // required when mode === "metro" (per §8.1)
+//     "countries": [string],      // optional; ISO codes (informational in v1)
+//     "remote_ok": bool,          // optional, default false
+//     "blocklist": [string],      // optional; substring deny-list
+//     "max_radius_miles": number  // reserved for future geocoding (v1: null)
+//   }
+//
+// Returns canonical block. Missing/null/undefined input → defaults to
+// `{ mode: "unrestricted", remote_ok: false, blocklist: [] }` (zero behavior
+// change for profiles without a geo block — Jared default).
+//
+// Throws on invalid shape:
+//   - unknown mode
+//   - mode "metro" without cities[] (non-empty) — required
+//   - mode "metro" without states[] (non-empty) — required (open question §8.1)
+//   - mode "us-wide" without countries[] (defaults to ["US"] if missing —
+//     more permissive than metro since us-wide is meant to be loose)
+
+const VALID_GEO_MODES = new Set(["metro", "us-wide", "remote-only", "unrestricted"]);
+
+function normalizeGeo(raw) {
+  if (raw === undefined || raw === null) {
+    return { mode: "unrestricted", remote_ok: false, blocklist: [] };
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(
+      `profile.geo must be an object, got ${Array.isArray(raw) ? "array" : typeof raw}`
+    );
+  }
+
+  const mode = raw.mode || "unrestricted";
+  if (!VALID_GEO_MODES.has(mode)) {
+    throw new Error(
+      `profile.geo.mode must be one of ${Array.from(VALID_GEO_MODES).join(", ")}; got ${JSON.stringify(mode)}`
+    );
+  }
+
+  const cities = Array.isArray(raw.cities)
+    ? raw.cities.map((c) => String(c)).filter(Boolean)
+    : [];
+  const states = Array.isArray(raw.states)
+    ? raw.states.map((s) => String(s)).filter(Boolean)
+    : [];
+  const countries = Array.isArray(raw.countries)
+    ? raw.countries.map((c) => String(c)).filter(Boolean)
+    : mode === "us-wide"
+    ? ["US"]
+    : [];
+  const remote_ok = raw.remote_ok === true;
+  const blocklist = Array.isArray(raw.blocklist)
+    ? raw.blocklist.map((b) => String(b)).filter(Boolean)
+    : [];
+  const max_radius_miles =
+    typeof raw.max_radius_miles === "number" && Number.isFinite(raw.max_radius_miles)
+      ? raw.max_radius_miles
+      : null;
+
+  if (mode === "metro") {
+    if (cities.length === 0) {
+      throw new Error(`profile.geo.cities is required (non-empty) when mode === "metro"`);
+    }
+    // §8.1 resolved: states are REQUIRED for metro mode (city-double safeguard).
+    if (states.length === 0) {
+      throw new Error(
+        `profile.geo.states is required (non-empty) when mode === "metro" — ` +
+          `prevents city-name collisions like Auburn (CA / AL / NY / WA)`
+      );
+    }
+  }
+
+  return { mode, cities, states, countries, remote_ok, blocklist, max_radius_miles };
+}
+
 module.exports = {
   loadProfile,
   saveProfile,
@@ -300,5 +383,7 @@ module.exports = {
   normalizeFilterRules,
   loadMemory,
   normalizeSalaryConfig,
+  normalizeGeo,
+  VALID_GEO_MODES,
   ID_REGEX,
 };

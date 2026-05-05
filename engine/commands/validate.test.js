@@ -431,3 +431,105 @@ test("validate cap warning goes to stderr", async () => {
     "cap warning must be on stderr"
   );
 });
+
+// --- L-4 / RFC 013: profile geo enforcement -------------------------------
+
+const LILIA_GEO = {
+  mode: "metro",
+  cities: ["Sacramento", "Roseville", "Folsom"],
+  states: ["CA"],
+  remote_ok: false,
+  blocklist: [],
+};
+
+test("retro_sweep (L-4): metro geo flags out-of-metro 'To Apply' rows", async () => {
+  const apps = [
+    fakeApp({ key: "greenhouse:1", jobId: "1", status: "To Apply",
+      companyName: "Kaiser", title: "Medical Receptionist", location: "Sacramento, CA" }),
+    fakeApp({ key: "greenhouse:2", jobId: "2", status: "To Apply",
+      companyName: "Kaiser", title: "Medical Receptionist", location: "Houston, TX" }),
+    fakeApp({ key: "greenhouse:3", jobId: "3", status: "Applied",
+      companyName: "Kaiser", title: "Medical Receptionist", location: "Houston, TX" }), // not swept (Applied)
+  ];
+  const deps = makeDeps({
+    loadApplications: () => ({ apps }),
+    loadProfile: () => ({
+      paths: { root: "/tmp/profiles/lilia" },
+      filterRules: {},
+      geo: LILIA_GEO,
+    }),
+    fetchFn: async () => ({ ok: true, status: 200 }),
+  });
+  const { ctx, out } = makeCtx();
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 1);
+  assert.match(out.all(), /retro_sweep: 1 row\(s\) now match blocklists/);
+  assert.match(out.all(), /MATCH Kaiser — Medical Receptionist \(geo_metro_miss/);
+});
+
+test("retro_sweep (L-4): unrestricted profile → no geo sweep activity", async () => {
+  const apps = [
+    fakeApp({ key: "greenhouse:1", jobId: "1", status: "To Apply",
+      companyName: "Stripe", title: "PM", location: "London, UK" }),
+  ];
+  const deps = makeDeps({
+    loadApplications: () => ({ apps }),
+    loadProfile: () => ({
+      paths: { root: "/tmp/profiles/jared" },
+      filterRules: {},
+      geo: { mode: "unrestricted", remote_ok: true, blocklist: [] },
+    }),
+    fetchFn: async () => ({ ok: true, status: 200 }),
+  });
+  const { ctx, out } = makeCtx();
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 0);
+  // Sweep block runs only if hasBlocklistRules → false here (no blocklists, no geo).
+  assert.doesNotMatch(out.all(), /retro_sweep:/);
+});
+
+test("retro_sweep (L-4): metro geo with --apply archives geo-violating rows", async () => {
+  const apps = [
+    fakeApp({ key: "greenhouse:1", jobId: "1", status: "To Apply",
+      companyName: "Kaiser", title: "Medical Receptionist", location: "Houston, TX" }),
+  ];
+  let savedRows;
+  const deps = makeDeps({
+    loadApplications: () => ({ apps }),
+    saveApplications: (_p, rows) => { savedRows = rows; },
+    loadProfile: () => ({
+      paths: { root: "/tmp/profiles/lilia" },
+      filterRules: {},
+      geo: LILIA_GEO,
+    }),
+    fetchFn: async () => ({ ok: true, status: 200 }),
+    now: () => "2026-05-04T00:00:00Z",
+  });
+  const { ctx, out } = makeCtx();
+  ctx.flags.apply = true;
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(savedRows.length, 1);
+  assert.equal(savedRows[0].status, "Archived");
+  assert.match(out.all(), /ARCHIVED Kaiser — Medical Receptionist \(geo_metro_miss/);
+});
+
+test("retro_sweep (L-4): geo_no_location surfaced separately for empty-location rows", async () => {
+  const apps = [
+    fakeApp({ key: "greenhouse:1", jobId: "1", status: "To Apply",
+      companyName: "Kaiser", title: "Medical Receptionist", location: "" }),
+  ];
+  const deps = makeDeps({
+    loadApplications: () => ({ apps }),
+    loadProfile: () => ({
+      paths: { root: "/tmp/profiles/lilia" },
+      filterRules: {},
+      geo: LILIA_GEO,
+    }),
+    fetchFn: async () => ({ ok: true, status: 200 }),
+  });
+  const { ctx, out } = makeCtx();
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 1);
+  assert.match(out.all(), /geo_no_location/);
+});

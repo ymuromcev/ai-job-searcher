@@ -345,3 +345,81 @@ test("filterJobs title_requirelist is applied before title_blocklist", () => {
   assert.equal(rejected.length, 1);
   assert.equal(rejected[0].reason.kind, "title_requirelist");
 });
+
+// --- L-4 / RFC 013: profile geo enforcement -------------------------------
+
+const LILIA_GEO = {
+  mode: "metro",
+  cities: ["Sacramento", "Roseville", "Folsom"],
+  states: ["CA"],
+  remote_ok: false,
+  blocklist: ["Napa", "Stockton"],
+};
+
+test("filterJobs geo: metro accepts in-metro job", () => {
+  const job = { ...BASE_JOB, location: "Sacramento, CA" };
+  const { passed, rejected } = filterJobs([job], { geo: LILIA_GEO });
+  assert.equal(passed.length, 1);
+  assert.equal(rejected.length, 0);
+});
+
+test("filterJobs geo: metro rejects out-of-metro with geo_metro_miss", () => {
+  const job = { ...BASE_JOB, location: "New York, NY" };
+  const { rejected } = filterJobs([job], { geo: LILIA_GEO });
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].reason.kind, "geo_metro_miss");
+  assert.equal(rejected[0].reason.mode, "metro");
+});
+
+test("filterJobs geo: metro rejects city-double (Auburn AL with states=['CA'])", () => {
+  const lilia = { ...LILIA_GEO, cities: [...LILIA_GEO.cities, "Auburn"] };
+  const job = { ...BASE_JOB, location: "Auburn, AL" };
+  const { rejected } = filterJobs([job], { geo: lilia });
+  assert.equal(rejected[0].reason.kind, "geo_metro_miss");
+});
+
+test("filterJobs geo: blocklist short-circuits (geo_blocklist)", () => {
+  const job = { ...BASE_JOB, location: "Napa, CA" };
+  const { rejected } = filterJobs([job], { geo: LILIA_GEO });
+  assert.equal(rejected[0].reason.kind, "geo_blocklist");
+});
+
+test("filterJobs geo: multi-location passes if any matches", () => {
+  const job = {
+    ...BASE_JOB,
+    locations: ["Munich, Germany", "Sacramento, CA", "Austin, TX"],
+  };
+  const { passed } = filterJobs([job], { geo: LILIA_GEO });
+  assert.equal(passed.length, 1);
+});
+
+test("filterJobs geo: multi-location all-miss → rejected", () => {
+  const job = { ...BASE_JOB, locations: ["Munich, Germany", "Austin, TX"] };
+  const { rejected } = filterJobs([job], { geo: LILIA_GEO });
+  assert.equal(rejected[0].reason.kind, "geo_metro_miss");
+});
+
+test("filterJobs geo: unrestricted mode skips geo check", () => {
+  const job = { ...BASE_JOB, location: "Munich, Germany" };
+  const { passed } = filterJobs([job], { geo: { mode: "unrestricted" } });
+  assert.equal(passed.length, 1);
+});
+
+test("filterJobs geo: rules.geo absent → no geo check (back-compat)", () => {
+  const job = { ...BASE_JOB, location: "Munich, Germany" };
+  const { passed } = filterJobs([job], {});
+  assert.equal(passed.length, 1);
+});
+
+test("filterJobs geo: empty location → geo_no_location in metro mode", () => {
+  const job = { ...BASE_JOB, location: "" };
+  const { rejected } = filterJobs([job], { geo: LILIA_GEO });
+  assert.equal(rejected[0].reason.kind, "geo_no_location");
+});
+
+test("filterJobs geo: remote_ok=true allows Remote in metro mode", () => {
+  const lilia = { ...LILIA_GEO, remote_ok: true };
+  const job = { ...BASE_JOB, location: "Remote" };
+  const { passed } = filterJobs([job], { geo: lilia });
+  assert.equal(passed.length, 1);
+});

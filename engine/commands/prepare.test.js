@@ -976,3 +976,121 @@ test("prepare: missing phase returns 1", async () => {
   assert.equal(code, 1);
   assert.ok(ctx._errLines.some((l) => /--phase/.test(l)));
 });
+
+// --- L-4 / RFC 013: profile geo enforcement -------------------------------
+
+const LILIA_GEO = {
+  mode: "metro",
+  cities: ["Sacramento", "Roseville", "Folsom"],
+  states: ["CA"],
+  remote_ok: false,
+  blocklist: ["Napa"],
+};
+
+function makePrepDepsWithGeo(apps, geo, overrides = {}) {
+  const base = makePrepDeps(apps, overrides);
+  const origLoadProfile = base.loadProfile;
+  base.loadProfile = () => {
+    const p = origLoadProfile();
+    p.geo = geo;
+    return p;
+  };
+  return base;
+}
+
+test("prepare --phase pre (L-4): metro geo skips out-of-metro app at applyPrepareFilter", async () => {
+  // Lilia geo + an in-metro and an out-of-metro app. The latter never reaches
+  // the batch — it's skipped with reason "geo_metro_miss".
+  const apps = [
+    makeApp({ key: "gh:1", companyName: "Kaiser", title: "Medical Receptionist" }),
+    makeApp({ key: "gh:2", companyName: "Kaiser", title: "Medical Receptionist" }),
+  ];
+  // Simulate TSV location field (G-5 schema v3) on the apps.
+  apps[0].location = "Sacramento, CA";
+  apps[1].location = "Houston, TX";
+  const deps = makePrepDepsWithGeo(apps, LILIA_GEO);
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  // Only the Sacramento app made it through.
+  assert.equal(result.batch.length, 1);
+  assert.equal(result.batch[0].key, "gh:1");
+  // Houston app appears in skipped with geo reason.
+  const houston = result.skipped.find((s) => s.key === "gh:2");
+  assert.ok(houston, "Houston app should be in skipped");
+  assert.equal(houston.reason, "geo_metro_miss");
+  // Stats breakdown surfaces the geo skip.
+  assert.equal(result.stats.skipReasons.geo_metro_miss, 1);
+});
+
+test("prepare --phase pre (L-4): unrestricted mode passes everything", async () => {
+  // Jared parity: mode unrestricted = no geo enforcement.
+  const apps = [
+    makeApp({ key: "gh:1", companyName: "Stripe", title: "Senior PM" }),
+    makeApp({ key: "gh:2", companyName: "Stripe", title: "Senior PM" }),
+  ];
+  apps[0].location = "London, UK";
+  apps[1].location = "Bangalore, India";
+  const deps = makePrepDepsWithGeo(apps, { mode: "unrestricted", remote_ok: true });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  // Both pass under unrestricted.
+  assert.equal(result.batch.length, 2);
+});
+
+test("prepare --phase pre (L-4): metro geo populates entry.geo_decision='allowed' on passing entries", async () => {
+  const apps = [makeApp({ key: "gh:1", companyName: "Kaiser" })];
+  apps[0].location = "Sacramento, CA";
+  const deps = makePrepDepsWithGeo(apps, LILIA_GEO);
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 1);
+  assert.equal(result.batch[0].geo_decision, "allowed");
+  assert.equal(result.batch[0].geo_matched_by, "city:Sacramento");
+});
+
+test("prepare --phase pre (L-4): metro geo skips empty-location apps with geo_no_location", async () => {
+  // Old TSV row from before G-5 backfill — no location field. In metro mode
+  // → geo_no_location reject.
+  const apps = [makeApp({ key: "gh:1", companyName: "Kaiser" })];
+  apps[0].location = ""; // empty location
+  const deps = makePrepDepsWithGeo(apps, LILIA_GEO);
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 0);
+  assert.equal(result.skipped[0].reason, "geo_no_location");
+});
+
+test("prepare --phase pre (L-4): metro geo blocklist short-circuits with geo_blocklist", async () => {
+  const apps = [makeApp({ key: "gh:1", companyName: "Kaiser" })];
+  apps[0].location = "Napa, CA";
+  const deps = makePrepDepsWithGeo(apps, LILIA_GEO);
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 0);
+  assert.equal(result.skipped[0].reason, "geo_blocklist");
+});
+
+test("prepare --phase pre (L-4): no geo block in profile → no geo_decision field (back-compat)", async () => {
+  // Profile without `geo` (e.g. test fixtures or legacy profiles loaded
+  // through a non-normalized path). Entries should not carry geo_decision —
+  // SKILL Step 3 falls back to its legacy WebFetch path.
+  const apps = [makeApp({ key: "gh:1", companyName: "Stripe" })];
+  apps[0].location = "Sacramento, CA";
+  const deps = makePrepDeps(apps); // no geo injection
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 1);
+  assert.equal(result.batch[0].geo_decision, undefined);
+});
