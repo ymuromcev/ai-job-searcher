@@ -73,7 +73,9 @@ function makeDeps(overrides = {}) {
       return { path: file, count: apps.length };
     },
     appendNewApplications: (existing, jobs, opts = {}) => {
-      const status = opts.defaultStatus || "To Apply";
+      // RFC 014 (2026-05-04): default flipped from "To Apply" to "Inbox" — the
+      // fake mirrors the production default so tests exercise the same shape.
+      const status = opts.defaultStatus || "Inbox";
       const seen = new Set(existing.map((a) => a.key));
       const fresh = [];
       for (const j of jobs) {
@@ -166,7 +168,7 @@ test("scan honours --dry-run by skipping writes", async () => {
   assert.equal(calls.saveJobs.length, 0);
   assert.equal(calls.saveApplications.length, 0);
   assert.match(out.lines.join("\n"), /\(dry-run\) would write 2 rows/);
-  assert.match(out.lines.join("\n"), /\(dry-run\) would append 2 To Apply \+ 0 Archived rows/);
+  assert.match(out.lines.join("\n"), /\(dry-run\) would append 2 Inbox \+ 0 Archived rows/);
 });
 
 test("scan exits 1 when companies pool is empty", async () => {
@@ -508,7 +510,7 @@ test("scan integrates end-to-end against tmp filesystem with stub adapter", asyn
   assert.match(appsText, /greenhouse:999/);
 });
 
-test("scan applies filter rules: passed → To Apply, rejected → Archived (incident 2026-05-04)", async () => {
+test("scan applies filter rules: passed → Inbox, rejected → Archived (incident 2026-05-04, RFC 014)", async () => {
   const { deps, calls } = makeDeps({
     loadProfile: () => ({
       id: "jared",
@@ -541,7 +543,7 @@ test("scan applies filter rules: passed → To Apply, rejected → Archived (inc
   const log = out.lines.join("\n");
   assert.match(log, /filter: 1 passed, 1 rejected/);
   assert.match(log, /title_requirelist=1/);
-  assert.match(log, /1 To Apply \+ 1 Archived/);
+  assert.match(log, /1 Inbox \+ 1 Archived/);
 
   // Rejection log received the SWE entry with proper kind
   assert.equal(calls.appendRejectionsLog.length, 1);

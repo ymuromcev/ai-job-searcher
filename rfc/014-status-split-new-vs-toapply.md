@@ -1,17 +1,27 @@
-# RFC 014 — Status split: `New` vs `To Apply`
+# RFC 014 — Status split: `Inbox` vs `To Apply` (TSV-only)
 
-**Status**: Draft (awaiting approve) — 2026-05-04
+**Status**: Approved 2026-05-04 (revised: TSV-only, status name `Inbox`)
 **Author**: Claude (with user direction)
-**Tier**: L (architecture + data migration across both Notion DBs)
-**Closes**: G-1 (variant A — explicit status split)
-**Supersedes**: G-1 doc-only variant (B)
-**Touches**: 8-status set → 9-status set; both profiles' Jobs DB schemas; engine code paths in `applications_tsv` / `prepare` / `validate` / `scan` / `check`; SKILL job-pipeline.
+**Tier**: M (TSV migration + engine code paths; no Notion schema change)
+**Closes**: G-1
+**Supersedes**: G-1 doc-only variant (B), and the original RFC 014 draft (Notion-visible variant A; status name `New`)
+**Touches**: TSV-level status enum (`Inbox` added local-only — Notion DBs unchanged); engine code paths in `applications_tsv` / `prepare` / `validate` / `scan` / `sync` / `check`; SKILL job-pipeline.
+
+> **Revision 2026-05-04**: User clarified during implementation that the new
+> state is **TSV-only** — Notion DBs keep their existing 8-status set
+> (`To Apply / Applied / Interview / Offer / Rejected / Closed / No Response /
+> Archived`). User also picked the name `Inbox` (over `New`) because the hub
+> callout already labels the staging queue "Inbox" and the term is in active
+> use. `Inbox` rows by definition have `notion_page_id == ""` and never reach
+> Notion. This eliminates the Notion UI step, the page-patch leg of backfill,
+> and any risk of pushing a Notion-unsupported status.
 
 ---
 
 ## 1. Problem
 
-Today the status `To Apply` carries two distinct semantic states:
+Today the status `To Apply` in `applications.tsv` carries two distinct
+semantic states:
 
 1. **Fresh-after-scan** — discovery just appended a row; URL liveness, fitScore,
    resume archetype, CL — none of those exist yet. Operator should NOT click
@@ -21,28 +31,27 @@ Today the status `To Apply` carries two distinct semantic states:
 
 The code distinguishes the two via guard logic (`notion_page_id !== ""` in
 `prepare.js`, `appendNew()` defaults to `"To Apply"` in `applications_tsv`,
-SKILL Step 9.0 idempotency check). Semantically, the operator looking at a
-Notion view sees ONE column "To Apply" and has to mentally split it by
-whether the page has a resume attached. Easy mistake → submit a
-half-prepared card without proof paragraphs / wrong archetype.
+SKILL Step 9.0 idempotency check, hub callout in `sync.js`). Every consumer
+has to remember the implicit split. The CLI summaries say `"To Apply"` for
+both states. Easy mistake → operator clicks "submit" on a half-prepared row.
 
-This is G-1 in `docs/GAPS_REVIEW.md` (Medium severity, L cost). User
-selected **variant A** (explicit split) over variant B (doc-only) on
-2026-05-04.
+This is G-1 in `docs/GAPS_REVIEW.md` (Medium severity, M cost after the
+TSV-only revision).
 
 ---
 
 ## 2. Proposed model
 
-Add one new status: **`New`**.
+Add one new TSV-level status: **`Inbox`**.
 
-Final 9-status set:
+TSV-level 9-status set (Notion DBs keep their 8-status set; `Inbox` is
+local-only):
 
 | Status | Semantics | Set by |
 |--------|-----------|--------|
-| **New** | Fresh after scan. No URL-check, no fit, no CL. Awaiting `prepare`. | `applications_tsv.appendNew` (replaces current "To Apply" default) |
+| **Inbox** | Fresh after scan. No URL-check, no fit, no CL, no Notion page. Awaiting `prepare`. **TSV-only.** | `applications_tsv.appendNew` (default — replaces previous `To Apply`) |
 | **To Apply** | Prepared and ready to submit. Notion page exists, resume + CL generated, fit scored. Operator clicks "Apply" externally. | `prepare --phase commit` for `decision: "to_apply"` rows |
-| **Applied** | Operator submitted application. | `check --apply` upon "application_received" email, OR manual transition in Notion |
+| **Applied** | Operator submitted application. | `check --apply` upon "application_received" email, OR manual transition in Notion (then synced via pull) |
 | **Interview** | Recruiter scheduled call. | `check --apply` on `INTERVIEW_INVITE`, or manual |
 | **Offer** | Offer extended. | Manual |
 | **Rejected** | Rejection received. | `check --apply` on `REJECTION`, or manual |
@@ -51,147 +60,153 @@ Final 9-status set:
 | **Archived** | Operator archived (filter mismatch, location bad, etc.). | `validate --apply` retro-sweep + `prepare --phase commit` for `decision: "archive"` |
 
 Transitions allowed:
-- `New → To Apply` — via `prepare --phase commit decision=to_apply`.
-- `New → Archived` — via `prepare --phase commit decision=archive` OR `validate --apply` retro-sweep.
-- `To Apply → Applied` — operator manual transition in Notion (post-submit) OR `check` with explicit "I applied" signal (future).
+- `Inbox → To Apply` — via `prepare --phase commit decision=to_apply`. Same step also creates the Notion page (status="To Apply" in Notion).
+- `Inbox → Archived` — via `prepare --phase commit decision=archive` OR `validate --apply` retro-sweep.
+- `To Apply → Applied` — operator manual transition in Notion (post-submit), pulled to TSV via `sync`.
 - `Applied → Interview / Rejected / No Response` — via `check --apply` or manual.
 - (rest unchanged)
 
-Rejected:
-- `New → Applied` — never (would skip prep). If operator wants to skip prep, they manually move `New → Archived → Applied` (forces awareness).
+Disallowed:
+- `Inbox → Applied` — never (would skip prep). If operator wants to skip prep, they manually move `Inbox → Archived → Applied` (forces awareness).
+
+Why `Inbox` over `New`:
+- The hub callout in Notion already says "Inbox: N | Updated: …" — naming the TSV status the same eliminates a vocabulary mismatch.
+- Operators talk about "what's in my Inbox" colloquially; matching that idiom saves cognitive load.
 
 ---
 
-## 3. Why this over variant B
+## 3. Why this over the doc-only variant
 
-**Variant B (doc-only)**: keep "To Apply" with implicit `notion_page_id` split. Pros: zero migration, zero code change. Cons: cognitive load for operator stays; no UI cue in Notion; SKILL has to keep guarding.
+**Variant B (doc-only)**: keep `To Apply` with implicit `notion_page_id` split. Pros: zero migration. Cons: every consumer (`prepare`, `sync` callout, SKILL Step 9.0, retro-sweep) has to remember the implicit guard; CLI says `"To Apply"` for both states.
 
-**Variant A (this RFC)**: explicit Notion-visible state. Pros: Notion view groups "New" rows separately from "To Apply" — operator immediately sees "this card needs prep" vs "this card is ready". CLI summaries can use status names directly. Cons: schema migration in BOTH profiles' Jobs DBs, code touches across 5+ files, SKILL update.
+**This RFC (TSV-only `Inbox`)**: explicit pre-Notion state in TSV. Pros: single-field predicates everywhere (`status === "Inbox"`); CLI summaries and logs use the precise name; no Notion change needed. Cons: small TSV migration + 5 file touches.
 
-User picked A 2026-05-04. Cost is justified — operator pain is real (mentioned by user during head-to-head).
+Cost is justified — the implicit split has burned operators several times during 2026-04 stages (Stage 16 push, Stage 7 head-to-head).
 
 ---
 
 ## 4. Migration plan
 
-### 4.1 Notion schema (manual, both profiles)
+### 4.1 Notion schema
 
-Status options can't be edited via Notion API (writes silently ignored — see Stage 16 incident). User must add **`New`** option to the `Status` property in both Jobs DBs through Notion UI (single click each):
-
-- Jared: DB `b25f0de9-af3e-427c-ad98-7667207500c5`
-- Lilia: DB `0ce9aa01-fcce-4e35-a080-6187b3e07dbf`
-
-Pick a color (suggestion: gray) — distinct from `To Apply` (suggestion: yellow).
+**No change.** `Inbox` is TSV-only. Notion DBs keep their existing 8 status
+options. There is no UI step.
 
 ### 4.2 Backfill (one-shot script)
 
-`scripts/rfc014_backfill_new_status.js --profile <id> [--apply]`:
+`scripts/rfc014_backfill_inbox_status.js --profile <id> [--apply]`:
 
-1. Load `applications.tsv`. Find rows where `status === "To Apply"` AND `notion_page_id === ""` (fresh-after-scan, never prepared). Plan: rewrite status to `"New"`.
+1. Load `applications.tsv`. Find rows where `status === "To Apply"` AND `notion_page_id === ""` (fresh-after-scan, never prepared). Plan: rewrite status to `"Inbox"`.
 2. Load `applications.tsv`. Find rows where `status === "To Apply"` AND `notion_page_id !== ""` (already prepared). Keep as-is.
-3. Pull current Notion pages for both groups, set Status = `"New"` for group 1 (skipped for group 2 since they're already correct).
-4. Default `--dry-run`. With `--apply`: writes TSV + patches Notion.
-5. Backup TSV → `applications.tsv.pre-rfc014`.
+3. Default `--dry-run`. With `--apply`: writes TSV.
+4. Backup TSV → `applications.tsv.pre-rfc014` before any write.
+5. **Notion is not touched.** This is the key simplification vs the original draft.
 
 Live counts (estimate, May 2026):
-- Jared: ~240 To Apply rows; ~80% already have notion_page_id (group 2). ~50 rows need status flip.
-- Lilia: ~45 fresh rows from healthcare scan; most no notion_page_id (group 1). All migrate to `New`.
+- Jared: ~240 `To Apply` rows; most already prepared (have `notion_page_id`). Expected migrate-to-Inbox count: tens.
+- Lilia: ~99 prototype-imported rows; most are pre-Notion seed data without `notion_page_id`. Most migrate to `Inbox`.
 
 ### 4.3 Code changes
 
 **`engine/core/applications_tsv.js`**:
-- `appendNew(..., {defaultStatus = "New", ...})` — default flips from `"To Apply"` → `"New"`. Callers passing explicit `defaultStatus` (e.g. scan with `"Archived"` for filter rejects) unchanged.
-
-**`engine/commands/prepare.js`**:
-- Pre-phase: `freshRows` filter switches from `status === "To Apply" && !notion_page_id` → `status === "New"`. Cleaner predicate (single field).
-- Commit phase for `decision: "to_apply"` rows: write `status = "To Apply"` (was already that — no change since the row was already "To Apply" before commit). Now it's a real transition (`New → To Apply`). Update commit-phase to set status explicitly.
+- `appendNew(..., {defaultStatus = "Inbox", ...})` — default flips from `"To Apply"` → `"Inbox"`. Callers passing explicit `defaultStatus` (e.g. scan with `"Archived"` for filter rejects) unchanged.
 
 **`engine/commands/scan.js`**:
-- The `appendNewApplications(... {defaultStatus: "To Apply"})` call (line 299) — flip default to omit / explicit `"New"`. Rejected jobs append still uses `"Archived"`.
+- Passed-jobs append: `defaultStatus: "Inbox"` (was `"To Apply"`). Rejected jobs append still uses `"Archived"`. Log strings: `"X Inbox + Y Archived rows"`.
+
+**`engine/commands/prepare.js`**:
+- Pre-phase: `inboxApps` filter switches from `status === "To Apply" && !notion_page_id` to `status === "Inbox" || (status === "To Apply" && !notion_page_id)`. Dual filter for back-compat with un-migrated rows.
+- Commit phase for `decision: "to_apply"` rows: writes `status = "To Apply"` (this becomes a real transition: Inbox → To Apply). Already does this; semantics now strictly correct.
+- `CAP_ACTIVE_STATUSES`: keep as `["To Apply", "Applied", "Interview", "Offer"]`. `Inbox` does NOT count toward cap.
 
 **`engine/commands/validate.js`**:
-- `RETRO_SWEEP_STATUSES` → `Set(["New", "To Apply"])` so retro-sweep covers both unprepared and prepared-but-not-submitted rows. (Currently only "To Apply" — risk of leaving newly-imported `New` rows with bad geo.)
-- `ACTIVE_STATUSES` for cap counting — keep as `["Applied", "To Apply", "Interview", "Offer"]`. `New` does NOT count toward cap (not yet committed to apply). This is a behavior change worth calling out in commit message.
+- `RETRO_SWEEP_STATUSES` → `Set(["Inbox", "To Apply"])` so retro-sweep covers both unprepared and prepared-but-not-submitted rows.
+- `ACTIVE_STATUSES` for URL liveness — keep as `["To Apply", "Applied", "Interview", "Offer"]`. `Inbox` is NOT URL-checked here (prepare's pre phase will do it as part of normal flow).
+
+**`engine/commands/sync.js`**:
+- Hub callout count: `status === "Inbox" || (status === "To Apply" && !notion_page_id)` (dual for back-compat).
+- Pull is naturally safe — `Inbox` rows don't have a `notion_page_id`, so `reconcilePull` won't match a Notion page to them. No guard needed.
 
 **`engine/commands/check.js`**:
-- `ACTIVE_STATUSES` — add `"New"`? **No** — check.js looks for email responses to applications already submitted. New rows haven't been applied yet, no email expected. Keep as `["To Apply", "Applied", "Interview", "Offer"]`.
+- `ACTIVE_STATUSES` for Gmail batches — keep as `["To Apply", "Applied", "Interview", "Offer"]`. `Inbox` excluded (no Notion page → no email thread can match).
+- LinkedIn-job-alert and recruiter-outreach paths that auto-create TSV rows: switch hardcoded `status: "To Apply"` to `status: "Inbox"`. These rows enter the same lifecycle as scan-discovered rows.
 
 **`engine/core/classifier.js` / matcher / states**:
-- No change. `INTERVIEW_INVITE → "Interview"` mapping stays.
-
-**`engine/commands/sync.js`** (pull only):
-- `reconcilePull` — accepts `New` as valid status (today: untyped — accepts any). Document.
+- No change.
 
 **`skills/job-pipeline/SKILL.md`**:
-- Step 1 / 2 / 9.0 — explicit `New` references. Step 9.0 idempotency: `if status === "To Apply" && notion_page_id` → already prepared, skip 9a–9c. After RFC 014, condition is just `status === "To Apply"` (any "To Apply" row is already prepared by definition).
+- Step 1 / 2 / 9.0: rewrite "fresh = To Apply + no notion_page_id" wording → "fresh = Inbox" (with a back-compat note for un-migrated rows).
+- Status legend: add `Inbox` row (TSV-only, never appears in Notion).
+- `check` LinkedIn-alert / recruiter-outreach branches: update status references to `Inbox`.
+
+**`engine/modules/build_hub_layout.js`**:
+- Status legend table (PM flavor + healthcare flavor): add `Inbox` row, note "TSV-only — fresh-after-scan, awaits prepare".
+- Workflow text: where it says "fresh rows in To Apply", update to "fresh rows in Inbox".
+- Callout label and predicate stay the same (the callout was already named "Inbox").
 
 **Tests**:
-- `applications_tsv.test.js` — flip expected default. Add transition test (`New → To Apply` via prepare commit).
-- `scan.test.js` — flip `"To Apply"` → `"New"` in fresh-row assertions.
-- `validate.test.js` — retro-sweep now covers `"New"` rows. Add cap-counting test (New ≠ active).
-- `prepare.test.js` — pre-phase fresh filter, commit-phase status transition.
-- New test: `rfc014_backfill_new_status.test.js` — pure planner.
+- `applications_tsv.test.js` — flip expected default from `"To Apply"` to `"Inbox"`. Add transition test (scan writes Inbox; prepare commit transitions to To Apply).
+- `scan.test.js` — flip `"To Apply"` → `"Inbox"` in fresh-row assertions and stdout-string assertions.
+- `validate.test.js` — retro-sweep now covers `"Inbox"` rows. Add cap-counting test (Inbox ≠ active).
+- `prepare.test.js` — pre-phase fresh filter accepts both `Inbox` (canonical) and back-compat `To Apply + no notion_page_id`.
+- `sync.test.js` — callout predicate test.
+- `check.test.js` — LinkedIn / recruiter row creation now writes `Inbox`.
+- New test: `rfc014_backfill_inbox_status.test.js` — pure planner.
 
-### 4.4 Hub layout
+### 4.4 Documentation
 
-`build_hub_layout.js` (PM flavor + healthcare flavor):
-- Workflow text: rename "Inbox / To Apply" callout label to "New" where it refers to the count of fresh rows.
-- Callout count predicate: `New + (To Apply with no notion_page_id)` → just `New` (cleaner).
-- Status legend table: add `New` row.
-
-### 4.5 Documentation
-
-- `docs/SPEC.md` — CC-1.a section update (status enum).
-- `docs/GAPS_REVIEW.md` — close G-1 with link here.
+- `docs/SPEC.md` — CC-1.a section update (status enum + TSV vs Notion split).
+- `docs/GAPS_REVIEW.md` — close G-1 with link here, mark "Closed via RFC 014 (TSV-only revision) 2026-05-04".
 - `BACKLOG.md` — no entry (this IS the close).
-- README — no change (high-level).
+- `README.md` — no change.
 
 ---
 
 ## 5. Rollout
 
-Sequence (must be in this order to avoid data inconsistency):
+Sequence (no Notion-side ordering constraint anymore):
 
-1. Add `New` Status option in Jared DB → Lilia DB (manual UI, 2 minutes).
-2. Land code change as one PR. Tests green.
-3. Run backfill `--dry-run` on Jared → verify counts → `--apply`.
-4. Same for Lilia.
-5. Smoke `scan + prepare` on each profile (~15 min) — confirm new rows land as `New`, prepare flips them.
-6. Update SKILL.
+1. Land code change as one PR. Tests green (target: 909+ passing — RFC adds ~10 new tests, modifies ~20 existing).
+2. Run backfill `--dry-run` on Jared → verify counts → `--apply`.
+3. Same for Lilia.
+4. Smoke `scan + prepare` on each profile (~5 min) — confirm new rows land as `Inbox`, `prepare --phase commit` flips them to `To Apply`.
 
 Rollback:
 - Revert PR.
 - Backfill restore: `cp applications.tsv.pre-rfc014 applications.tsv` per profile.
-- Notion: pages with status `New` need manual flip back to `To Apply`. Or run a reverse one-shot patcher (small script, easy).
+- No Notion cleanup needed (Notion was never touched).
 
-Risk: low. Worst case is operator confusion for a day until intuition catches up — fixable by Notion view legend.
+Risk: low. The dual filter in prepare/sync provides graceful degradation if backfill is forgotten or partial.
 
 ---
 
 ## 6. Estimate
 
-- Notion UI step (manual): 5 min.
-- Code change + tests: 4–6 hours (5 files + SKILL + 4 test files + 1 backfill script + tests for backfill).
-- Live backfill + smoke: 30 min per profile × 2 = 1 hour.
-- Total: 0.5–1 day for one focus session.
+- Code change + tests: 3–4 hours (5 engine files + SKILL + hub layout + 6 test files modified + 1 backfill script + tests for backfill).
+- Live backfill + smoke: 15 min per profile × 2 = 30 min.
+- Total: ~0.5 day for one focus session.
+
+(Original L-tier estimate of 0.5–1 day stands at the lower end — TSV-only
+revision saved the Notion UI step and the Notion patcher.)
 
 ---
 
 ## 7. Open questions
 
-1. Should `validate.RETRO_SWEEP_STATUSES` include `"New"`? — Yes (RFC §4.3). Confirm during review.
-2. Auto-archive of stale `New` rows older than X days — out of scope for this RFC. Can be a future GAP.
-3. SKILL: when operator manually creates a row in Notion (no scan), should default status be `New` or `To Apply`? — Out of scope; user can pick whatever. Recommend `New` for consistency.
+1. ~~Should `validate.RETRO_SWEEP_STATUSES` include the new state?~~ Yes (RFC §4.3). Confirmed during review.
+2. Auto-archive of stale `Inbox` rows older than X days — out of scope for this RFC. Can be a future GAP.
+3. SKILL: when operator manually creates a row in Notion (no scan), should default status be `Inbox` or `To Apply`? — Out of scope; recommend operator keep it `To Apply` since manual-create implies they already triaged.
 
 ---
 
 ## 8. Approve checklist
 
-Operator (you) approves:
-- [ ] Status name `New` (alternatives: `Discovered`, `Triaged`, `Inbox`). I prefer `New` — short and orthogonal to other 8.
-- [ ] `validate` retro-sweep extends to `New` rows.
-- [ ] `New` does NOT count toward `company_cap`.
-- [ ] Backfill creates `applications.tsv.pre-rfc014` backup automatically.
-- [ ] Notion-side migration (UI add of `New` option) — you do this manually, RFC documents the click sequence.
+Operator (you) approved:
+- [x] Status name `Inbox` (alternatives considered: `New`, `Discovered`, `Triaged`).
+- [x] TSV-only — Notion DBs not touched.
+- [x] `validate` retro-sweep extends to `Inbox` rows.
+- [x] `Inbox` does NOT count toward `company_cap`.
+- [x] Backfill creates `applications.tsv.pre-rfc014` backup automatically.
+- [x] No Notion-side migration needed.
 
-Once approved → I write the code + backfill in next session.
+Implementation in progress 2026-05-04.

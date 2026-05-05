@@ -168,10 +168,11 @@ function makeSyncCommand(overrides = {}) {
     }
 
     // Update the hub callout counter if the profile has one configured.
-    // Counts the **inbox**: fresh rows that haven't been pushed to Notion yet
-    // (status="To Apply" + no notion_page_id). The label stays "Inbox" because
-    // "To Apply" is the Notion *status* of cards already in the DB, while the
-    // callout shows the pre-Notion staging queue — different concepts.
+    // Counts the **inbox**: fresh rows that haven't been pushed to Notion yet.
+    // Post-RFC 014 (2026-05-04) the canonical predicate is `status === "Inbox"`
+    // (TSV-only state). Back-compat: pre-RFC 014 rows with `status === "To
+    // Apply" && !notion_page_id` also count — backfill normally rewrites them
+    // but the dual filter protects against partial migrations.
     //
     // Runs unconditionally on --apply (not just when rows changed) so the
     // "Updated:" timestamp stays accurate even if nothing changed this run.
@@ -183,7 +184,9 @@ function makeSyncCommand(overrides = {}) {
     if (calloutBlockId) {
       try {
         const inboxCount = apps.filter(
-          (a) => a.status === "To Apply" && !a.notion_page_id
+          (a) =>
+            a.status === "Inbox" ||
+            (a.status === "To Apply" && !a.notion_page_id)
         ).length;
         const today = deps.now().slice(0, 10);
         await deps.updateCalloutBlock(

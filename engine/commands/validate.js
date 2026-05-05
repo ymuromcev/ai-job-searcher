@@ -22,12 +22,17 @@ const { matchBlocklists } = require("../core/filter.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 
-// 8-status set: To Apply / Applied / Interview / Offer / Rejected / Closed /
-// No Response / Archived. "Active" = still in flight (worth re-validating URL).
+// RFC 014: TSV-level 9-status set — Inbox / To Apply / Applied / Interview /
+// Offer / Rejected / Closed / No Response / Archived. (Notion DBs keep the
+// 8-status set; "Inbox" is local-only.) "Active" = still in flight (worth
+// re-validating URL). "Inbox" is intentionally NOT active — fresh rows haven't
+// passed prepare's URL-check yet, so re-pinging them is wasted work; the
+// next `prepare --phase pre` will URL-check them as part of normal flow.
 const ACTIVE_STATUSES = new Set(["To Apply", "Applied", "Interview", "Offer"]);
-// Rows eligible for retro blocklist sweep. Re-screen only "not yet applied"
-// rows — Applied/Interview/Offer are kept as-is.
-const RETRO_SWEEP_STATUSES = new Set(["To Apply"]);
+// Rows eligible for retro blocklist sweep. Re-screen "not yet applied" rows
+// — both "Inbox" (just-scanned, not yet triaged) AND "To Apply" (prepared,
+// awaiting submit). Applied / Interview / Offer are kept as-is.
+const RETRO_SWEEP_STATUSES = new Set(["Inbox", "To Apply"]);
 const DEFAULT_URL_CAP = 500;
 const DEFAULT_PING_TIMEOUT_MS = 5000;
 const DEFAULT_PING_CONCURRENCY = 8;

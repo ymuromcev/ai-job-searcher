@@ -262,16 +262,20 @@ test("buildWorkflowBlocks: section headings are in Russian", () => {
   assert.ok(headings.some((h) => h.includes("Синхронизировать")), "sync heading translated");
 });
 
-test("buildWorkflowBlocks: uses unified 8-status set (no Phone Screen / Onsite / Inbox transitions)", () => {
+test("buildWorkflowBlocks: uses unified status set (no Phone Screen / Onsite transitions; RFC 014 Inbox→To Apply allowed)", () => {
   const blocks = buildWorkflowBlocks("p");
   const joined = JSON.stringify(blocks);
   assert.ok(joined.includes("Interview"), "workflow should mention Interview status");
-  assert.ok(!joined.includes("Inbox →"), "no Inbox transition");
   assert.ok(!joined.includes("→ Phone Screen"), "no transition to Phone Screen status");
   assert.ok(!joined.includes("Phone Screen →"), "no transition from Phone Screen status");
   assert.ok(!joined.includes("Onsite →"), "no transition from Onsite status");
   assert.ok(!joined.includes("→ Onsite"), "no transition to Onsite status");
-  assert.ok(!joined.includes("Inbox + To Apply"), "company cap should not include Inbox");
+  // Company cap explicitly listed as "Applied + To Apply" — Inbox MUST NOT
+  // appear in the cap list (RFC 014: Inbox is pre-triage, doesn't count).
+  assert.ok(
+    !/активные вакансии[^)]*Inbox/i.test(joined),
+    "company cap should not include Inbox"
+  );
 });
 
 test("buildWorkflowBlocks: ignores legacy flavor field — single workflow for all profiles", () => {

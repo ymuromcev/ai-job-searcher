@@ -12,7 +12,7 @@ Single engine, per-profile data. All commands take `--profile <id>`. Currently s
 - **`/job-pipeline scan`** — Discover new jobs across configured ATS adapters (greenhouse / lever / ashby / smartrecruiters / workday / calcareers / usajobs / indeed / remoteok). Append to shared pool + per-profile pipeline.
 - **`/job-pipeline validate`** — Pre-flight: TSV hygiene, company-cap check, URL liveness on active applications.
 - **`/job-pipeline sync`** — Reconcile per-profile applications with Notion. **Default = dry-run**, must pass `--apply` to commit.
-- **`/job-pipeline prepare`** — Two-phase processing of Inbox jobs: mechanical pre-phase (filter / URL check / JD fetch / salary) + Claude LLM phase (geo check / fit score / CL gen / Notion push).
+- **`/job-pipeline prepare`** — Two-phase processing of `Inbox` jobs (RFC 014): mechanical pre-phase (filter / URL check / JD fetch / salary) + Claude LLM phase (geo check / fit score / CL gen / Notion push). Commit transitions row from `Inbox` → `To Apply` (decision=to_apply) or `Inbox` → `Archived` (decision=archive).
 - **`/job-pipeline check`** — Two-phase Gmail response check: `--prepare` builds Gmail search batches for Claude MCP, `--apply` consumes Claude-written emails and updates Notion + TSV + logs.
 - **`/job-pipeline indeed-prep`** — Phase 1 of Indeed ingest. Prints scan URLs + JS extraction snippet + filter context for the Claude browser MCP session. Phase 2 (browser fetch) is manual via Chrome MCP. Phase 3 = standard `scan` (the indeed adapter ingests the file Claude wrote).
 - **`/job-pipeline answer`** — Generate or reuse application answers (Why join? / Influences? / Motivation? etc.). Three-phase: search Notion Q&A DB by dedup key → reuse if exact match else generate via Humanizer Rules → push answer back to Notion + write local `.md` backup. Per-profile DB at `profile.notion.application_qa_db_id`.
@@ -56,7 +56,7 @@ node engine/cli.js scan --profile <id> [--dry-run] [--verbose]
 3. Apply per-profile `discovery.companies_whitelist/blacklist`.
 4. Invoke each enabled adapter via `engine/core/scan.js` orchestrator (errors per source isolated, do not block the run).
 5. Dedupe new jobs against `data/jobs.tsv` master pool by `(source, jobId)`.
-6. Atomically write `data/jobs.tsv` + append fresh rows to `profiles/<id>/applications.tsv` with `status="Inbox"`.
+6. Atomically write `data/jobs.tsv` + append fresh rows to `profiles/<id>/applications.tsv` with `status="Inbox"` (RFC 014 — TSV-only state for fresh-after-scan rows; transitions to `To Apply` after `prepare --phase commit decision=to_apply`). Notion DBs never see `Inbox` — they keep the 8-status set.
 
 `--dry-run` prints planned writes without touching disk.
 
@@ -69,7 +69,7 @@ node engine/cli.js validate --profile <id> [--dry-run]
 Read-only checks. Exit 0 if clean, 1 if any issue:
 
 - **TSV hygiene** — both `data/jobs.tsv` and `profiles/<id>/applications.tsv` parse cleanly.
-- **company_cap** — counts active applications per company against `profile.filter_rules.company_cap.max_active` plus per-company overrides. Active = Inbox / To Apply / Applied / Interview / Offer.
+- **company_cap** — counts active applications per company against `profile.filter_rules.company_cap.max_active` plus per-company overrides. Active = `To Apply` / `Applied` / `Interview` / `Offer`. (`Inbox` is intentionally excluded — those rows are pre-triage and may yet be archived.)
 - **URL liveness** — HEAD-pings each active application URL with concurrency 8, falls back to GET on 405/501. Reports any 4xx/5xx/timeout. Skipped under `--dry-run`.
 
 ### sync
@@ -80,7 +80,7 @@ node engine/cli.js sync --profile <id> [--apply] [--verbose]
 
 Bidirectional reconcile with the profile's `notion.jobs_pipeline_db_id`:
 
-- **Push** — applications with empty `notion_page_id` and non-Archived status → create Notion pages, persist returned page id back to TSV.
+- **Push** — bare push from `sync` is **disabled** (legacy). Notion pages are created exclusively by `prepare --phase commit decision=to_apply`, which assembles fit + CL + salary + Notion page atomically. `sync` is pull-only.
 - **Pull** — fetch all Notion pages, match by `key` field (`<source>:<jobId>`), apply Notion's `status` and `notion_page_id` to local TSV (Notion wins on status).
 
 Default mode prints the plan and runs the read-only pull preview. **Pass `--apply` to actually mutate Notion and TSV.**
@@ -120,7 +120,7 @@ node engine/cli.js prepare --profile <id> --phase pre [--batch 30] [--dry-run]
 ```
 
 Runs automatically without Claude. Outputs `profiles/<id>/prepare_context.json` with:
-- All Inbox jobs that passed title blocklist + company cap filter.
+- All `Inbox` jobs (post-RFC 014) that passed title blocklist + company cap filter.
 - URL liveness result per job (`urlAlive`, `urlStatus`).
 - JD text from Greenhouse / Lever APIs if available (`jdText`, `jdStatus`).
 - Salary range from Company Tier × Role Level (`salary` object or null).
@@ -369,7 +369,7 @@ node engine/cli.js check --profile <id> --prepare [--since <ISO>]
 
 Builds a search plan without hitting Gmail:
 
-1. Loads `profiles/<id>/applications.tsv` → picks rows where `status ∈ {Applied, To Apply, Interview, Onsite, Offer}` AND `notion_page_id` is set → forms `activeJobsMap`.
+1. Loads `profiles/<id>/applications.tsv` → picks rows where `status ∈ {Applied, To Apply, Interview, Offer}` AND `notion_page_id` is set → forms `activeJobsMap`. (`Inbox` is excluded — those rows haven't been pushed to Notion, so no email thread can match yet.)
 2. Computes cursor epoch: `saved.last_check` or `--since` ISO, clamped to 30 days ago.
 3. Emits Gmail query batches (10 companies/batch + fixed LinkedIn batch + fixed recruiter batch).
 4. Writes `profiles/<id>/.gmail-state/check_context.json`.
@@ -406,8 +406,8 @@ Default is dry-run (plan only, no Notion writes, no TSV mutations). With `--appl
 1. Reads `raw_emails.json` + `check_context.json`.
 2. Filters out messages already in `processed_messages.json`.
 3. Branches per email:
-   - **LinkedIn job alert** (`from:jobalerts-noreply@linkedin.com`) → add to Inbox in TSV.
-   - **Recruiter outreach** (subject matches recruiter keywords): if sender's company is in pipeline → Inbox; otherwise → `recruiter_leads.md` only.
+   - **LinkedIn job alert** (`from:jobalerts-noreply@linkedin.com`) → append a new TSV row with `status="Inbox"` (enters the same fresh-discovery lifecycle as scan-derived rows; next `prepare` will triage it).
+   - **Recruiter outreach** (subject matches recruiter keywords): if sender's company is in pipeline → append TSV row with `status="Inbox"`; otherwise → `recruiter_leads.md` only.
    - **Normal pipeline** → `classifier.js` assigns one of: `REJECTION`, `INTERVIEW_INVITE`, `INFO_REQUEST`, `ACKNOWLEDGMENT`, `OTHER`. Then `email_matcher.js` resolves to a pipeline (company, role) tuple.
 4. Plans Notion actions per match:
    - `REJECTION` → `Status → Rejected` + add comment.
@@ -475,7 +475,7 @@ CAPTCHA handling: if "Security Check" / "Один момент" appears, navigat
 node engine/cli.js scan --profile <id>
 ```
 
-Standard `scan` flow: the indeed adapter (`engine/modules/discovery/indeed.js`) reads the ingest file referenced in `data/companies.tsv` (row: `Indeed (<profile>) | indeed | <slug> | {"ingestFile": "profiles/<id>/.indeed-state/raw_indeed.json"}`), normalizes entries, dedupes against `data/jobs.tsv` and `applications.tsv`, and appends fresh rows with `status="To Apply"`.
+Standard `scan` flow: the indeed adapter (`engine/modules/discovery/indeed.js`) reads the ingest file referenced in `data/companies.tsv` (row: `Indeed (<profile>) | indeed | <slug> | {"ingestFile": "profiles/<id>/.indeed-state/raw_indeed.json"}`), normalizes entries, dedupes against `data/jobs.tsv` and `applications.tsv`, and appends fresh rows with `status="Inbox"` (RFC 014).
 
 #### Failure modes (indeed-specific)
 
@@ -595,7 +595,7 @@ When a new over-level title slips into Inbox after a scan: add the pattern to `f
 
 ### Company Cap
 
-Config: `profiles/<id>/filter_rules.json → company_cap.max_active` (with optional `company_cap.overrides` per company). Active statuses: `Inbox`, `To Apply`, `Applied`, `Interview`, `Offer`.
+Config: `profiles/<id>/filter_rules.json → company_cap.max_active` (with optional `company_cap.overrides` per company). Active statuses for the cap: `To Apply`, `Applied`, `Interview`, `Offer`. (`Inbox` is intentionally excluded — those rows are pre-triage and may yet be archived.)
 
 Cap is enforced at **prepare time only** — scan always lets all jobs through. If a company already has ≥ cap active rows, excess Inbox jobs stay as Inbox (not archived); they are skipped for the current prepare run and re-evaluated next time.
 

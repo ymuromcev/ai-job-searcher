@@ -22,7 +22,6 @@ Severity:
 
 | Status | ID             | Sev     | Цена | Что улучшится                                                                                                                                                                                                       |
 | ------ | -------------- | ------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Open   | G-1            | Medium  | L    | RFC 014 готов (вариант A — split `New` / `To Apply`). Notion явно различает свежие vs готовые карточки → операторская ошибка «applied недоготовленную» исключена. Awaits approve → ~0.5–1 день кода + миграция.    |
 | Open   | G-29           | Low     | XS   | **Operations**: cron на fly.io существует для обоих профилей, но: (a) нужен `fly deploy` с `62743d8` (entrypoint chown-fix для EACCES Jared'а); (b) `fly secrets set LILIA_GMAIL_*` (LILIA_GMAIL_CLIENT_ID/SECRET/REFRESH_TOKEN — её фейл 2026-05-01). После — `fly logs` для verify. |
 | Open   | G-14           | Low     | M    | JD-кэш для всех платформ, не только GH/Lever. Сейчас Workday/SR/Ashby JD читается через WebFetch → разный fitScore при повторном prepare той же вакансии. Детерминизм. **Defer на следующую сессию.**              |
 | Open   | BL #7.2        | Low     | XS   | USAJOBS активация: 5 минут — регистрация на usajobs.gov + 2 переменные в `.env`. Получаешь federal jobs в pipeline Jared'а.                                                                                         |
@@ -36,12 +35,12 @@ Severity:
 | Open   | BL #6          | Low     | M    | Документация для контрибьюторов и тебя самого через год: ARCHITECTURE / vision / personas / 4 ADR / CHANGELOG. Сейчас понимание архитектуры — только через чтение кода.                                             |
 | Open   | RFC 012        | High    | L    | Нормальная реляционная модель (companies/jobs/profiles + join tables). Блокирует RFC 008 (Notion-as-source) и нормальную поддержку >2 профилей. Большая миграция, но снимает технический долг под все будущие фичи. |
 
-**Done** (35 шт, +7 в сессии 2026-05-04 b):
+**Done** (36 шт, +8 в сессии 2026-05-04 b):
 - **Lilia profile-blockers** (L-1…L-6) — geo / salary / memory / JD-extract / head-to-head verification.
 - **Prepare hardening** (G-10/G-11/G-12/G-15/G-17/G-18/G-19/G-20/G-21/G-22/G-23/G-25) — auto-tier, fill-up loop, CL template-first, resume-archetype validation, dedup-guard, Notion push refactor.
 - **Scan parity** (G-2/G-5/G-7→L-4/G-26/BL #7.3) — slash-title alt-eval, location в TSV, geo enforcement, LinkedIn off, 27 dead slugs обновлены.
 - **Doc trivial-pack** (G-27/G-28/G-30/G-31/G-32) — задокументированы как parity / known-limitation, фикс не нужен.
-- **Сессия b 2026-05-04** (G-4/G-33/G-13/G-24/G-8/G-9/G-16):
+- **Сессия b 2026-05-04** (G-4/G-33/G-13/G-24/G-8/G-9/G-16/G-3/G-1):
   - G-4: cross-platform fuzzy dedup в `applications_tsv.appendNew` (catches GH→Lever drift after migration). +2 теста (905/905).
   - G-33: side-effect side-effect L-4 — retro-sweep уже проверял location через v3 schema; обновлён комментарий в filter.js.
   - G-13: уже реализовано (`SKIP_URL_CHECK_SOURCES` в `engine/core/url_check.js`); статус-апдейт в SPEC.
@@ -49,6 +48,8 @@ Severity:
   - G-8: by-design — USAJOBS opt-in, активация = регистрация + `.env`. Документировано в BACKLOG.
   - G-9: help text для `--apply` clarified (noop для scan; preview через `--dry-run`).
   - G-16: `version: 1` в `prepare_context.json` для будущих миграций schema.
+  - G-3: title_requirelist через `ctx.filterRules` в the_muse + remoteok адаптерах; +4 тестов на default-fallback / regex-compile / Lilia-flavor / back-compat.
+  - **G-1: RFC 014 (TSV-only)** — добавлен TSV-only статус `Inbox` для fresh-after-scan rows. `prepare --phase commit decision=to_apply` транзитивно `Inbox → To Apply` + создаёт Notion page. Notion DB не трогается (8-status set нерушим). Backfill: `scripts/rfc014_backfill_inbox_status.js --profile <id> [--apply]`. +7 тестов backfill, ~6 модифицированных. Тесты: 916/916.
 
 Детали по каждому Done — в секциях ниже + в прогресс-трекере «Lilia-batch».
 
@@ -68,10 +69,20 @@ Severity:
 
 ## Medium (10)
 
-### G-1 — Статус «To Apply» означает две разные вещи
-- **Сейчас**: «To Apply» используется и для свежих находок после scan, и для готовых к отправке. По коду они разделены двумя guard'ами, но семантически путано.
-- **Станет**: явные раздельные состояния (например, «New» → «To Apply»). Понятно по статусу, что с записью делать.
-- **Цена**: L (миграция статусов в Notion + код).
+### G-1 — Статус «To Apply» означает две разные вещи — ✅ Closed 2026-05-04 (RFC 014)
+- **Решение**: TSV-only статус `Inbox` для fresh-after-scan rows. Notion DB остаётся 8-status (нерушим). `prepare --phase commit decision=to_apply` транзитивно переводит `Inbox → To Apply` И создаёт Notion page одновременно. Двойной смысл `"To Apply"` устранён.
+- **Изменения**:
+  - `applications_tsv.appendNew` default → `"Inbox"`.
+  - `scan.js` пишет fresh rows как `Inbox`.
+  - `check.js` LinkedIn/recruiter авто-rows тоже `Inbox`.
+  - `prepare.js` fresh-row filter: `status === "Inbox" || (status === "To Apply" && !notion_page_id)` (dual для back-compat).
+  - `validate.js` retro-sweep расширен на `Inbox`.
+  - `sync.js` callout count тот же фильтр; pull естественно безопасен (Inbox rows не имеют notion_page_id).
+  - `check.js` SKIP_STATUSES расширен на `Inbox`.
+  - SKILL.md + `build_hub_layout.js` обновлены.
+- **Backfill**: `scripts/rfc014_backfill_inbox_status.js --profile <id> [--apply]`. Default dry-run; `--apply` создаёт `applications.tsv.pre-rfc014` бэкап.
+- **Тесты**: 916/916 (+7 backfill, ~6 модифицированных).
+- **Цена**: M (вместо L — TSV-only revision сэкономил Notion UI step и Notion patcher).
 
 ### G-3 — Title requirelist не работает централизованно
 - **Сейчас**: список «обязательных слов в названии роли» поддержан в конфиге, но фактически каждый адаптер фильтрует по-своему inline. Поведение fragmented.
@@ -320,7 +331,7 @@ Geo-модель per-profile:
 - G-14 (JD-cache для остальных платформ).
 
 **Архитектурные (L) — обсудить отдельно**:
-- G-1 (статусы — миграция в Notion).
+- ~~G-1~~ → закрыт RFC 014 (TSV-only revision, 2026-05-04). Cost downgraded L → M благодаря отказу от Notion-side миграции.
 - ~~G-7~~ → поглощено L-4 в RFC 013 (closed 2026-05-04).
 
 **Документационные (Trivial) — закрываем пачкой в одном PR**:

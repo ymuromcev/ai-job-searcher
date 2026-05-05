@@ -188,18 +188,19 @@ test("processLinkedIn: unparseable → skipped", () => {
   assert.equal(row.action, "unparseable subject");
 });
 
-test("processLinkedIn: new parseable subject → 'To Apply' row pushed", () => {
+test("processLinkedIn: new parseable subject → 'Inbox' row pushed (RFC 014)", () => {
   const state = makeState();
   const row = processLinkedIn(
     { messageId: "m1", subject: "Product Manager at Acme" },
     { nowIso: "2026-04-20" },
     state
   );
-  assert.equal(row.action, "→ To Apply");
+  assert.equal(row.action, "→ Inbox");
   assert.equal(state.newInboxRows.length, 1);
   assert.equal(state.newInboxRows[0].companyName, "Acme");
-  // 8-status set: fresh rows land as "To Apply" with no notion_page_id.
-  assert.equal(state.newInboxRows[0].status, "To Apply");
+  // RFC 014 (2026-05-04): LinkedIn-derived rows enter the same fresh-discovery
+  // lifecycle as scan-derived rows; status="Inbox" means "needs prepare".
+  assert.equal(state.newInboxRows[0].status, "Inbox");
   assert.equal(state.newInboxRows[0].source, "linkedin");
 });
 
@@ -245,7 +246,7 @@ test("processRecruiter: role + no client → recruiter_leads", () => {
   assert.equal(state.recruiterLeads[0].role, "Senior PM");
 });
 
-test("processRecruiter: role + client → 'To Apply' row pushed", () => {
+test("processRecruiter: role + client → 'Inbox' row pushed (RFC 014)", () => {
   const state = makeState();
   const row = processRecruiter(
     {
@@ -257,9 +258,9 @@ test("processRecruiter: role + client → 'To Apply' row pushed", () => {
     { nowIso: "x" },
     state
   );
-  assert.equal(row.action, "→ To Apply");
+  assert.equal(row.action, "→ Inbox");
   assert.equal(state.newInboxRows[0].companyName, "BigCorp");
-  assert.equal(state.newInboxRows[0].status, "To Apply");
+  assert.equal(state.newInboxRows[0].status, "Inbox");
 });
 
 // ---------- processPipeline ----------

@@ -1,7 +1,10 @@
 // `prepare` command — two-phase processing of "fresh" pipeline rows.
 //
-// "Fresh" = status="To Apply" AND notion_page_id="" (never pushed). The 8-status
-// set has no "Inbox" — fresh rows land directly as "To Apply" via scan/check.
+// "Fresh" = status="Inbox" (RFC 014, 2026-05-04). Scan writes status="Inbox"
+// for passed jobs; prepare consumes them and transitions to "To Apply" or
+// "Archived". TSV-level 9-status set: Inbox / To Apply / Applied / Interview /
+// Offer / Rejected / Closed / No Response / Archived. (Notion DBs keep the
+// 8-status set; "Inbox" is local-only.)
 //
 // Phase `pre`:
 //   1. Load fresh apps from applications.tsv.
@@ -15,10 +18,10 @@
 // Phase `commit`:
 //   Read a results JSON file produced by the Claude SKILL (see SKILL.md) and
 //   update applications.tsv accordingly:
-//     decision "to_apply"  → status="To Apply", set cl_key / resume_ver / notion_page_id
-//                            (row keeps "To Apply" but gains notion_page_id, so
-//                             it stops appearing in fresh list on next pre run)
-//     decision "skip"      → no change (still "To Apply" with no notion_page_id)
+//     decision "to_apply"  → status="To Apply" (transition from Inbox), set
+//                            cl_key / resume_ver / notion_page_id. Card is
+//                            now ready for the operator to actually submit.
+//     decision "skip"      → no change (still "Inbox", reappears next pre run)
 //     decision "archive"   → status="Archived"
 //
 //   The factory `makePrepareCommand({ deps })` is exported so tests can inject
@@ -38,9 +41,10 @@ const { defaultFetch } = require("../modules/discovery/_http.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 
 // Active statuses that count toward the company cap. "To Apply" is included
-// because every triaged row will become Applied — counting it prevents over-
-// preparing for the same company. Archived/Rejected/Closed/No Response don't
-// block. (8-status set; there is no "Inbox" status.)
+// because every triaged-and-prepared row is committed to be applied —
+// counting it prevents over-preparing for the same company. "Inbox" is NOT
+// counted: those rows are pre-triage and may yet be archived. Also excluded:
+// Archived / Rejected / Closed / No Response. (RFC 014 / TSV 9-status set.)
 const CAP_ACTIVE_STATUSES = new Set(["To Apply", "Applied", "Interview", "Offer"]);
 
 const DEFAULT_BATCH_SIZE = 30;
@@ -228,11 +232,16 @@ async function runPre(ctx, deps) {
   const applicationsPath = profile.paths.applicationsTsv;
   const { apps } = deps.loadApplications(applicationsPath);
 
-  // 8-status set has no "Inbox". "Fresh / not triaged" now = status "To Apply"
-  // AND no notion_page_id (never pushed). After prepare commit, the row keeps
-  // status "To Apply" and gains a notion_page_id, so it stops appearing here.
+  // RFC 014 (2026-05-04): "Fresh / not triaged" = status "Inbox" (TSV-only).
+  // After commit, the row transitions to "To Apply" (decision=to_apply) or
+  // "Archived" (decision=archive) and stops appearing in this filter.
+  // Back-compat: pre-RFC014 rows with status="To Apply" + no notion_page_id
+  // are also accepted — backfill script normally rewrites them, but the dual
+  // filter protects against partial migrations / forgotten profiles.
   const inboxApps = apps.filter(
-    (a) => a.status === "To Apply" && !a.notion_page_id
+    (a) =>
+      a.status === "Inbox" ||
+      (a.status === "To Apply" && !a.notion_page_id)
   );
   stdout(`fresh-to-prepare: ${inboxApps.length} jobs`);
 

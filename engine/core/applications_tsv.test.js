@@ -31,7 +31,7 @@ test("load returns empty when file missing", () => {
   assert.deepEqual(out, []);
 });
 
-test("appendNew adds previously-unseen jobs as 'To Apply' entries (default status)", () => {
+test("appendNew adds previously-unseen jobs as 'Inbox' entries (default status, RFC 014)", () => {
   const result = apps.appendNew(
     [],
     [fixtureJob(), fixtureJob({ jobId: "2", title: "Staff PM" })],
@@ -40,8 +40,10 @@ test("appendNew adds previously-unseen jobs as 'To Apply' entries (default statu
   assert.equal(result.apps.length, 2);
   assert.equal(result.fresh.length, 2);
   assert.equal(result.apps[0].key, "greenhouse:1");
-  // 8-status set has no "Inbox"; fresh rows start as "To Apply" with no notion_page_id.
-  assert.equal(result.apps[0].status, "To Apply");
+  // RFC 014 (2026-05-04): TSV-only "Inbox" status for fresh-after-scan rows.
+  // `prepare --phase commit decision=to_apply` later transitions these to
+  // "To Apply" once URL-check / fit / CL all pass.
+  assert.equal(result.apps[0].status, "Inbox");
   assert.equal(result.apps[0].notion_page_id, "");
   assert.equal(result.apps[0].createdAt, "2026-04-20T00:00:00Z");
 });

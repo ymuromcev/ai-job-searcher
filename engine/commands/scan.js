@@ -298,12 +298,16 @@ function makeScanCommand(overrides = {}) {
       }`
     );
 
-    // Two-step append: passed first (To Apply), then rejected layered on top
-    // of that result (Archived). Both go into the same TSV.
+    // Two-step append: passed first (status="Inbox" — fresh, awaits prepare),
+    // then rejected layered on top (status="Archived"). Both go into the
+    // same TSV. (RFC 014: scan no longer writes "To Apply" — that status is
+    // now reserved for prepared-and-ready cards. `prepare --phase commit`
+    // transitions Inbox → To Apply once URL liveness / fit / CL all pass.
+    // "Inbox" is a TSV-only state — Notion DBs keep the 8-status set.)
     const passedAppend = deps.appendNewApplications(
       existingApps,
       passedJobs,
-      { now: deps.now(), defaultStatus: "To Apply" }
+      { now: deps.now(), defaultStatus: "Inbox" }
     );
     const rejectedAppend = deps.appendNewApplications(
       passedAppend.apps,
@@ -340,7 +344,7 @@ function makeScanCommand(overrides = {}) {
     if (flags.dryRun) {
       stdout(`(dry-run) would write ${result.pool.length} rows to ${jobsPath}`);
       stdout(
-        `(dry-run) would append ${freshApps.length} To Apply + ${archivedApps.length} Archived rows to ${applicationsPath}`
+        `(dry-run) would append ${freshApps.length} Inbox + ${archivedApps.length} Archived rows to ${applicationsPath}`
       );
       if (rejectionLines.length > 0) {
         stdout(
@@ -357,7 +361,7 @@ function makeScanCommand(overrides = {}) {
     }
     stdout(`wrote ${result.pool.length} jobs to ${jobsPath}`);
     stdout(
-      `appended ${freshApps.length} To Apply + ${archivedApps.length} Archived rows to ${applicationsPath}`
+      `appended ${freshApps.length} Inbox + ${archivedApps.length} Archived rows to ${applicationsPath}`
     );
     if (rejectionLines.length > 0) {
       stdout(`appended ${rejectionLines.length} entries to ${rejectionsPath}`);

@@ -55,16 +55,21 @@ const emailState = require("../core/email_state.js");
 const emailLogs = require("../core/email_logs.js");
 const gmailOauth = require("../modules/tracking/gmail_oauth.js");
 
-// 8-status set used by both Jared and Lilia DBs:
+// Notion DBs (both Jared and Lilia) use the 8-status set:
 //   To Apply / Applied / Interview / Offer / Rejected / Closed / No Response / Archived
-// "Active" = still in flight from candidate's POV (we want to listen for emails on these).
+// TSV adds a 9th local-only status `Inbox` (RFC 014, 2026-05-04) for fresh-
+// after-scan rows that don't yet have a Notion page.
+//
+// "Active" = still in flight from candidate's POV (we want to listen for
+// emails on these). `Inbox` is intentionally excluded — those rows haven't
+// been pushed to Notion, so no email thread can match them yet.
 const ACTIVE_STATUSES = new Set([
   "To Apply",
   "Applied",
   "Interview",
   "Offer",
 ]);
-const SKIP_STATUSES = new Set(["Rejected", "Closed", "Archived", "No Response"]);
+const SKIP_STATUSES = new Set(["Inbox", "Rejected", "Closed", "Archived", "No Response"]);
 
 const BATCH_SIZE = 10;
 
@@ -342,7 +347,9 @@ function processLinkedIn(email, ctx, state) {
       companyName: parsed.company,
       title: parsed.role,
       url: "",
-      status: "To Apply",
+      // RFC 014: LinkedIn-alert-derived rows enter the same fresh-discovery
+      // lifecycle as scan-derived rows; status="Inbox" means "needs prepare".
+      status: "Inbox",
       notion_page_id: "",
       resume_ver: "",
       cl_key: "",
@@ -354,7 +361,7 @@ function processLinkedIn(email, ctx, state) {
     };
     state.newInboxRows.push(newRow);
     state.tsvCache.push(newRow);
-    logRow.action = "→ To Apply";
+    logRow.action = "→ Inbox";
     logRow.comment = "✅";
   }
   return logRow;
@@ -392,7 +399,9 @@ function processRecruiter(email, ctx, state) {
           companyName: company,
           title: role,
           url: "",
-          status: "To Apply",
+          // RFC 014: recruiter-outreach-derived rows enter the same fresh-
+          // discovery lifecycle as scan-derived rows.
+          status: "Inbox",
           notion_page_id: "",
           resume_ver: "",
           cl_key: "",
@@ -405,7 +414,7 @@ function processRecruiter(email, ctx, state) {
         state.newInboxRows.push(newRow);
         state.tsvCache.push(newRow);
         logRow.company = company;
-        logRow.action = "→ To Apply";
+        logRow.action = "→ Inbox";
         logRow.comment = "✅";
       }
     } else {

@@ -373,11 +373,11 @@ function buildWorkflowBlocks(profileId, profile) {
 
     heading3("/job-pipeline prepare — Подготовить материалы"),
     paragraph("Две фазы: сначала черновики, потом подтверждение и пуш."),
-    bulletRich([{ text: `node engine/cli.js prepare --profile ${p} --phase pre --batch 20`, code: true }, " — собирает свежие строки (status=", { text: "To Apply", code: true }, " + нет Notion page id), проверяет уровень, пропускает уже подготовленные, выбирает архетип CV, набрасывает CL, считает зарплату (Tier × Level + COL), пишет ", { text: "results-<ts>.json", code: true }]),
+    bulletRich([{ text: `node engine/cli.js prepare --profile ${p} --phase pre --batch 20`, code: true }, " — собирает свежие строки (status=", { text: "Inbox", code: true }, "), проверяет уровень, пропускает уже подготовленные, выбирает архетип CV, набрасывает CL, считает зарплату (Tier × Level + COL), пишет ", { text: "results-<ts>.json", code: true }]),
     bulletRich(["Просмотреть ", { text: "results-<ts>.json", code: true }]),
-    bulletRich([{ text: `node engine/cli.js prepare --profile ${p} --phase commit --results-file results-<ts>.json`, code: true }, " — принять черновики: обновить TSV (resume_version + cl_key + salary), запушить страницу в Notion (создаётся со Status=", { text: "To Apply", code: true }, "), сохранить CL PDF"]),
+    bulletRich([{ text: `node engine/cli.js prepare --profile ${p} --phase commit --results-file results-<ts>.json`, code: true }, " — принять черновики: обновить TSV (status: Inbox→To Apply, resume_version + cl_key + salary), запушить страницу в Notion (создаётся со Status=", { text: "To Apply", code: true }, "), сохранить CL PDF"]),
     bullet("Правила CL — 4 абзаца (Hook → доказательная часть → релевантная часть → Close), уверенный голос практика, цифры обязательны. Перед показом пользователю прогнать через /humanizer."),
-    bullet("Валидация: 0 свежих строк осталось, 0 To Apply без CL / CV"),
+    bullet("Валидация: 0 Inbox-строк осталось обработанных, 0 To Apply без CL / CV"),
     bullet("Отчёт: подготовлено X, пропущено Y, заархивировано Z, ошибок N"),
 
     heading3("/job-pipeline sync — Синхронизировать статусы"),
@@ -397,7 +397,7 @@ function buildWorkflowBlocks(profileId, profile) {
     bulletRich(["Сохраняет дедуп: ", { text: "processed_messages.json", code: true }, " (автоочистка > 30 дней)"]),
 
     heading3("/job-pipeline validate — Ретро-зачистка по блоклистам + целостность TSV"),
-    bulletRich([{ text: `node engine/cli.js validate --profile ${p}`, code: true }, " — заново применяет company + title блоклисты к существующим строкам To Apply (ловит то, что прошло до обновления фильтра)"]),
+    bulletRich([{ text: `node engine/cli.js validate --profile ${p}`, code: true }, " — заново применяет company + title блоклисты к существующим строкам Inbox + To Apply (ловит то, что прошло до обновления фильтра)"]),
     bulletRich(["Сообщает совпадения → exit 1. С ", { text: "--apply", code: true }, ": проставляет ", { text: "status=Archived", code: true }]),
     bullet("Также проверяет целостность TSV (пустые Company-связи, протухшие notion_ids, pending ids)"),
 
@@ -901,11 +901,16 @@ async function main() {
       const tsvPath = path.join(REPO_ROOT, "profiles", id, "applications.tsv");
       if (fs.existsSync(tsvPath)) {
         const { apps } = load(tsvPath);
-        // "Inbox" semantics in the unified 8-status set: status="To Apply"
-        // AND not yet pushed to Notion (no notion_page_id). Once a row gets
-        // a Notion page (CV+CL prepared), it stays "To Apply" but leaves
-        // the inbox queue.
-        inboxCount = apps.filter((a) => a.status === "To Apply" && !a.notion_page_id).length;
+        // RFC 014 (2026-05-04): "Inbox" is now a TSV-only status — fresh
+        // rows from scan land directly with status="Inbox" and don't yet
+        // have a Notion page. Back-compat: pre-RFC014 rows with status="To
+        // Apply" + no notion_page_id still count (backfill normally rewrites
+        // them, but the dual filter protects against partial migrations).
+        inboxCount = apps.filter(
+          (a) =>
+            a.status === "Inbox" ||
+            (a.status === "To Apply" && !a.notion_page_id)
+        ).length;
       }
     } catch (err) {
       console.log(`    inbox count unavailable: ${err.message}`);

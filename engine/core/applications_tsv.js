@@ -9,9 +9,12 @@
 //             <TAB> createdAt <TAB> updatedAt
 //
 // `key` = "<source>:<jobId>" — primary, used for dedup against the master pool.
-// New entries default to status="To Apply", notion_page_id="" until sync runs.
-// (Notion DBs use the 8-status set: To Apply / Applied / Interview / Offer /
-// Rejected / Closed / No Response / Archived. There is no "Inbox" status.)
+// New entries default to status="Inbox" (post-RFC 014, 2026-05-04). "Inbox" =
+// fresh-after-scan, no URL liveness / fit / CL yet — TSV-only state. `prepare
+// --phase commit` transitions Inbox → To Apply (ready to submit) or Inbox →
+// Archived (filter reject). The TSV-level 9-status set: Inbox / To Apply /
+// Applied / Interview / Offer / Rejected / Closed / No Response / Archived.
+// Notion DBs keep the 8-status set (Inbox is local-only).
 // `location` carries the first non-empty entry from the discovery `locations`
 // array; "" when the source didn't provide one.
 //
@@ -287,7 +290,7 @@ function save(filePath, apps) {
 function appendNew(
   existing,
   jobs,
-  { now = new Date().toISOString(), defaultStatus = "To Apply" } = {}
+  { now = new Date().toISOString(), defaultStatus = "Inbox" } = {}
 ) {
   const seen = new Set(existing.map((a) => a.key));
   const seenFuzzy = new Set();
