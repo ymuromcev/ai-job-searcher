@@ -225,10 +225,8 @@ Severity:
 - **Цена**: M. **Closed 2026-05-04** (Commit B).
 
 ### L-6 — Head-to-head verification для Лили
-- **Сейчас**: SKILL Step 8 архитектурно поддерживает template-variants shape (`defaults.{p2,p3,p4_template}` + `letters[]`), но фактический head-to-head на Лилиных вакансиях не проводился — только на Джаредовских (5 jobs, см. `prepare_head_to_head.md`).
-- **Станет**: после L-1…L-5 — взять 3-5 свежих вакансий Лили (Sutter / UC Davis / Dignity / dental клиники), прогнать SKILL Step 8, сравнить P2/P3 byte-identical с прототипным `cover_letter_config.json` (`Lilly's Job Search/`), проверить что `defaults.p4_template` корректно заполняется. Аналог `docs/prepare_head_to_head.md`, но для Лили.
-- **Цена**: ~30 минут verification, не код.
-- **Статус**: Pending — запланировано после Commit C.
+- **Сейчас (закрыто 2026-05-04)**: см. `docs/lilia_prepare_head_to_head.md`. Engine `profiles/lilia/cover_letter_versions.json` (581 строк, 55590 bytes) **byte-identical** с прототипным `Lilly's Job Search/cover_letter_config.json` — `diff` пустой. Shape совместим с SKILL Step 8 template-variants веткой: `defaults.{p2, p3, p4_template, availability, sign}` + `letters[]` (95 entries, 11 Sutter). Контракт: P2/P3/P4 копируются из общих defaults на каждом письме (byte-identical с прототипом по построению), варьируется только P1. 45 fresh `To Apply` rows доступны для боевого batch'а. После L-4 retro-sweep архивированы 36 невалидных rows (31 no_location, 5 metro_miss — все корректные).
+- **Цена**: verification, не код. **Closed 2026-05-04**.
 
 ---
 
@@ -261,7 +259,7 @@ Geo-модель per-profile:
 - Live retro-sweep: Jared 0 rejections (parity), Lilia 36 archived (31 no_location + 5 metro_miss).
 - 60 новых тестов; 903/903 passing.
 
-После C: **L-6** (head-to-head verification для Лили), затем боевой prepare для неё.
+После C: **L-6** ✅ (head-to-head verification для Лили, closed 2026-05-04 — `docs/lilia_prepare_head_to_head.md`). Lilia-batch полностью закрыт; следующий шаг — боевой prepare для неё по запросу пользователя.
 
 ---
 
@@ -270,8 +268,7 @@ Geo-модель per-profile:
 - **L** (требуют RFC и миграции): G-1.
 - **M** (день работы, тесты): G-3, G-6, G-14, G-29.
 - **XS** (несколько строк / файлы): остальные ~14 активных.
-- **Verification-only** (не код): **L-6**.
-- ✅ **Закрыто 2026-05-04** (20 шт): G-2, G-5, G-7 (absorbed by L-4), G-10, G-11, G-12, G-15, G-17, G-18, G-19, G-20, G-21, G-22, G-23, G-25, G-26, **L-1, L-2, L-3, L-4, L-5**.
+- ✅ **Закрыто 2026-05-04** (21 шт): G-2, G-5, G-7 (absorbed by L-4), G-10, G-11, G-12, G-15, G-17, G-18, G-19, G-20, G-21, G-22, G-23, G-25, G-26, **L-1, L-2, L-3, L-4, L-5, L-6**.
 
 ## Рекомендация по триажу
 
@@ -313,4 +310,4 @@ Geo-модель per-profile:
 | L-3 (Lilia memory files content) | **Done** | Commit A | 2026-05-04 | `profiles/lilia/memory/user_writing_style.md` (warm, 5/10, anti-AI tells, voice anchors) + `user_resume_key_points.md` (Strong/Medium/Weak fit criteria + 4 опыта по приоритету + дифференциаторы). Jared `profile.json` тоже задекларировал свой существующий memory dir. |
 | L-4 (geo model RFC 013) | **Done** | Commit C | 2026-05-04 | `engine/core/geo_enforcer.js` (pure matcher) + filter.js integration + `profile_loader.normalizeGeo()` + SKILL Step 3 refactor (engine-resolved decision, no WebFetch). Lilia metro mode (13 cities Sacramento+Lincoln, CA, blocklist 5 cities, remote_ok=true). Jared explicit `unrestricted` + remote_ok=true. Live: Jared 389/389 allowed (parity), Lilia 36 archived (31 no_location + 5 metro_miss). 60 новых тестов. Поглощает G-7. |
 | L-5 (Schedule / Requirements push) | **Done** | Commit B | 2026-05-04 | `engine/core/jd_extract.js` + `prepare.js` pre-phase wiring + SKILL Step 9 profile-gated push. 30 новых тестов (25 jd_extract + 5 prepare). Healthcare JD фикстуры: Kaiser / Sutter / Dignity / Sono Bello / Stonebrook. Sentence-scoped strength tagging (required/preferred). Back-compat: Jared parity — его карточки не меняются (нет полей в property_map). |
-| L-6 (head-to-head Lilia) | Pending | — | — | После Commit C |
+| L-6 (head-to-head Lilia) | **Done** | docs/lilia_prepare_head_to_head.md | 2026-05-04 | `cover_letter_versions.json` byte-identical с прототипом (`diff` empty, 581/581 lines, 55590/55590 bytes). Template-variants shape contract verified: P2/P3/P4 копируются из общих `defaults` (byte-identical by construction), варьируется только P1. SKILL Step 8 explicit branch для template-variants есть. Lilia ready для боевого batch'а. |
