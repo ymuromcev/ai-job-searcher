@@ -20,7 +20,9 @@ personas rather than real people.
 
 ## PM-Pete
 
-- **Profile id**: `jared`
+- **Profile id**: opaque slug. Per [ADR-005](../architecture/adrs/005-profile-id-convention.md),
+  new profiles use random slugs (`p_<hex6>`); two legacy profiles
+  retain their original strings as accepted technical debt.
 - **Role target**: Senior or Principal AI Product Manager. Open to PM
   roles tagged "AI / ML", "Platform", or "GTM" depending on
   archetype, but the seniority floor is firm.
@@ -54,7 +56,7 @@ personas rather than real people.
 
 ## Healthcare-Hannah
 
-- **Profile id**: `lilia`
+- **Profile id**: opaque slug (legacy; see [ADR-005](../architecture/adrs/005-profile-id-convention.md)).
 - **Role target**: Medical assistant, front office, or receptionist
   roles in healthcare-adjacent settings. Some clinical-support roles
   in scope; no licensed-clinician roles.

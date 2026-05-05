@@ -67,7 +67,7 @@ Outputs and side effects:
 Example:
 
 ```bash
-node engine/cli.js scan --profile jared
+node engine/cli.js scan --profile <id>
 ```
 
 Common errors:
@@ -103,7 +103,7 @@ Outputs and side effects:
 Example:
 
 ```bash
-node engine/cli.js validate --profile jared --apply
+node engine/cli.js validate --profile <id> --apply
 ```
 
 Common errors:
@@ -137,8 +137,8 @@ Outputs and side effects:
 Example:
 
 ```bash
-node engine/cli.js prepare --profile lilia --phase pre --batch 20
-node engine/cli.js prepare --profile lilia --phase commit --results-file profiles/lilia/.skill-state/results.json
+node engine/cli.js prepare --profile <id> --phase pre --batch 20
+node engine/cli.js prepare --profile <id> --phase commit --results-file profiles/<id>/.skill-state/results.json
 ```
 
 Common errors:
@@ -170,7 +170,7 @@ Outputs and side effects:
 Example:
 
 ```bash
-node engine/cli.js sync --profile jared --apply
+node engine/cli.js sync --profile <id> --apply
 ```
 
 Common errors:
@@ -207,8 +207,8 @@ Outputs and side effects:
 Example:
 
 ```bash
-node engine/cli.js check --profile jared --prepare --since 2026-04-01T00:00:00Z
-node engine/cli.js check --profile jared --apply
+node engine/cli.js check --profile <id> --prepare --since 2026-04-01T00:00:00Z
+node engine/cli.js check --profile <id> --apply
 ```
 
 Common errors:
@@ -243,11 +243,11 @@ Outputs and side effects:
 Example:
 
 ```bash
-node engine/cli.js answer --profile jared --phase search \
+node engine/cli.js answer --profile <id> --phase search \
   --company "Acme" --role "Senior PM" \
   --question "Why are you interested in this role?"
 
-node engine/cli.js answer --profile jared --phase push \
+node engine/cli.js answer --profile <id> --phase push \
   --results-file /tmp/answer.json
 ```
 
@@ -279,7 +279,7 @@ Outputs and side effects:
 Example:
 
 ```bash
-node engine/cli.js indeed-prep --profile lilia
+node engine/cli.js indeed-prep --profile <id>
 ```
 
 Common errors:

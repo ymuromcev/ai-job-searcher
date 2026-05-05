@@ -11,7 +11,8 @@ PM roles) and Healthcare-Hannah (a healthcare professional searching
 for clinic-side roles). They share the same engine binary; their data
 trees, Notion workspaces, and secret keys are fully separate. The
 engine has no concept of either persona — it sees `profile_id` strings
-like `jared` and `lilia` and routes I/O accordingly.
+(opaque slugs, see [ADR-005](adrs/005-profile-id-convention.md)) and
+routes I/O accordingly.
 
 ## Per-profile directory layout
 
@@ -39,15 +40,17 @@ example directory ships a synthetic, PII-free template for new users.
 
 All secrets live in the root `.env`, namespaced by uppercase profile
 id. `engine/core/profile_loader.js` (`loadSecrets`) reads only the keys
-that match the active profile's prefix. With `--profile jared`,
-`LILIA_*` variables are never loaded into process memory.
+that match the active profile's prefix. With `--profile <id>`, only
+keys starting with `<ID>_` are loaded into process memory; other
+profiles' secrets stay invisible.
 
 ```
-JARED_NOTION_TOKEN=...
-JARED_USAJOBS_API_KEY=...
-JARED_USAJOBS_EMAIL=...
-LILIA_NOTION_TOKEN=...
+<PROFILE_ID>_NOTION_TOKEN=...
+<PROFILE_ID>_USAJOBS_API_KEY=...
+<PROFILE_ID>_USAJOBS_EMAIL=...
 ```
+
+(Uppercase the slug; underscores in slugs become underscores in keys.)
 
 The engine never prompts for secrets. Onboarding instructs the operator
 to add them to `.env` directly; the loader fails fast if a required

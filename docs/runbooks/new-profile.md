@@ -80,8 +80,9 @@ Append the token to the root `.env` using the namespaced key:
 {PROFILE_ID_UPPERCASE}_NOTION_TOKEN=secret_xxx
 ```
 
-For example, `PM-Pete`'s profile id is `jared`, so the key is
-`JARED_NOTION_TOKEN`. `Healthcare-Hannah`'s is `LILIA_NOTION_TOKEN`.
+For example, a profile with id `p_a8f2c1` uses the key
+`P_A8F2C1_NOTION_TOKEN`. New profiles use random `p_<hex6>` slugs
+(see [ADR-005](../architecture/adrs/005-profile-id-convention.md)).
 Never paste the token in chat or in the intake form. The candidate
 enters it directly into `.env` themselves.
 

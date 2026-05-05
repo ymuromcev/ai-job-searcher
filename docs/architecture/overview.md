@@ -78,9 +78,10 @@ default) classifies, matches, and emits a status-update plan plus log
 appends. Detail in [`data-flow.md`](data-flow.md) and
 [ADR-003 MCP vs OAuth](adrs/003-mcp-vs-oauth.md).
 
-**`application-answers`**. Stores and retrieves application Q&A pairs
-from a Notion-backed answer bank, deduping on question hash and
-categorizing by topic.
+**`answer`**. Stores and retrieves application Q&A pairs from a
+Notion-backed answer bank, deduping on question hash and categorizing
+by topic. (RFC 009 documented this command under the working name
+`application-answers`; the dispatcher exposes it as `answer`.)
 
 ## 3. Discovery adapters
 

@@ -19,6 +19,7 @@ In practice, most accepted RFCs spawn one ADR. Small decisions that did not need
 | [002](002-notion-as-ui.md) | Notion as the operator UI, TSV as the engine store | accepted | 2026-04-22 |
 | [003](003-mcp-vs-oauth.md) | Gmail reading via Claude MCP, not stored OAuth | accepted | 2026-04-20 |
 | [004](004-fly-vs-launchd.md) | Local-only operation under launchd, no cloud host | rejected (for now) | 2026-05-05 |
+| [005](005-profile-id-convention.md) | Profile id naming convention (random opaque slugs) | accepted | 2026-05-05 |
 
 ## Authoring
 

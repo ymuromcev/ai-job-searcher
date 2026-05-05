@@ -99,8 +99,8 @@ only.
 
 | File | Origin |
 |---|---|
-| `applications.tsv.pre-stage16` | Pre-migration snapshot before workspace cutover for `profile_id=jared`. |
-| `applications.tsv.pre-migrate-2026-04-27` | Pre-migration snapshot for `profile_id=lilia`. |
+| `applications.tsv.pre-stage16` | Pre-migration snapshot before workspace cutover for the PM-Pete profile. |
+| `applications.tsv.pre-migrate-2026-04-27` | Pre-migration snapshot for the Healthcare-Hannah profile. |
 | `applications.tsv.contaminated-fintech` | One-off cleanup after a cross-profile contamination during early wizard runs. |
 
 ## `data/jobs.tsv` (shared master pool)
