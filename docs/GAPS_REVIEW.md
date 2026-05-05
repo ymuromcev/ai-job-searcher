@@ -3,16 +3,54 @@
 Все 33 гэпа из SPEC + 6 Lilia-profile-блокеров (L-1…L-6, добавлены 2026-05-04), в формате «что сейчас / что станет», без техники. Для триажа перед Phase 3.
 
 Severity:
-- **High** — реальный риск регрессии или потери качества (1 активный, 1 закрыт 2026-05-04).
-- **Medium** — поведение работает, но отклоняется от ожиданий или заложена мина (4 активных, 6 закрыто 2026-05-04).
-- **Low** — мелкая шероховатость в DX или edge case (9 активных, 3 закрыты 2026-05-04).
-- **Trivial** — косметика / документационная зацепка (7 активных, 2 закрыты 2026-05-04).
-- **Lilia-profile-blocker** — недо-реализованная per-profile конфигурация, из-за которой engine для Лили работает по Джаредовским дефолтам (1 будущий L-tier RFC, 4 закрыто 2026-05-04 — Commit A + B, 1 verification-only).
+- **High** — реальный риск регрессии или потери качества (1 активный — RFC 012; 1 закрыт 2026-05-04).
+- **Medium** — поведение работает, но отклоняется от ожиданий или заложена мина (3 активных, 7 закрыто).
+- **Low** — мелкая шероховатость в DX или edge case (5 активных, 5 закрыты).
+- **Trivial** — косметика / документационная зацепка (5 активных в BACKLOG, 4 закрыты).
+- **Lilia-profile-blocker** — недо-реализованная per-profile конфигурация, из-за которой engine для Лили работает по Джаредовским дефолтам (6 закрыто 2026-05-04 — Commit A + B + C + L-6).
 
 Цена fix'а:
 - **XS** — несколько строк, без RFC.
 - **M** — пара файлов + тесты, в рамках дня.
 - **L** — архитектурное изменение, требует RFC.
+
+---
+
+## Сводная таблица (триаж — что брать в работу)
+
+Сортировка: Open → Done; внутри — Гэпы → Задачи развития; затем Severity High → Trivial; затем Цена XS → L. Колонка **«Что улучшится»** — pain → value, для решения «брать ли сейчас». Детальная разбивка по каждому пункту — в секциях ниже.
+
+| Status | ID             | Sev     | Цена | Что улучшится                                                                                                                                                                                                       |
+| ------ | -------------- | ------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Open   | G-1            | Medium  | L    | RFC 014 готов (вариант A — split `New` / `To Apply`). Notion явно различает свежие vs готовые карточки → операторская ошибка «applied недоготовленную» исключена. Awaits approve → ~0.5–1 день кода + миграция.    |
+| Open   | G-29           | Low     | XS   | **Operations**: cron на fly.io существует для обоих профилей, но: (a) нужен `fly deploy` с `62743d8` (entrypoint chown-fix для EACCES Jared'а); (b) `fly secrets set LILIA_GMAIL_*` (LILIA_GMAIL_CLIENT_ID/SECRET/REFRESH_TOKEN — её фейл 2026-05-01). После — `fly logs` для verify. |
+| Open   | G-14           | Low     | M    | JD-кэш для всех платформ, не только GH/Lever. Сейчас Workday/SR/Ashby JD читается через WebFetch → разный fitScore при повторном prepare той же вакансии. Детерминизм. **Defer на следующую сессию.**              |
+| Open   | BL #7.2        | Low     | XS   | USAJOBS активация: 5 минут — регистрация на usajobs.gov + 2 переменные в `.env`. Получаешь federal jobs в pipeline Jared'а.                                                                                         |
+| Open   | BL #7.5        | Low     | XS   | Восстановление Current.com row в companies.tsv когда увидишь вакансию вручную и передашь apply-host. Простая правка.                                                                                                |
+| Open   | BL #4          | Medium  | M    | Onboarding UX переписать в один из чистых треков (A — программный, B — AI-driven). Сейчас README микс «магия Claude» + «запусти скрипт», Давид застрял на одну вечернюю сессию. Блокер до твоего выбора A/B.        |
+| Open   | BL #5          | Medium  | M    | Interview Coach работает для Lilia (сейчас только под Jared'а — PM/fintech). Когда у неё начнутся интервью — будет готов параметризованный skill, не пилить под прессом.                                            |
+| Open   | BL #7.1        | Medium  | M    | CalCareers adapter возвращает ~58 госработ CA в pipeline Jared'а (был в прототипе, не портирован). Релевантный класс ролей если хочешь стабильную госплощадку.                                                      |
+| Open   | BL #7.4        | Medium  | M    | Klarna в pipeline через Deel adapter (мигрировали с Lever). Сейчас удалена из companies.tsv — не сканируется.                                                                                                       |
+| Open   | BL #8          | Medium  | M    | Lilia адресно сканирует 70 ключевых healthcare сетей (Kaiser, UC Davis, Dignity, Sacramento County и т.д.) — сейчас только косвенно через Indeed. Главный data-gap её профиля.                                      |
+| Open   | BL fit-prerank | Medium  | M    | prepare берёт топ-N по fit'у, не первые-N по дате. Сейчас Stripe Risk-PM может быть глубоко в очереди и не попадать в батч пока не проработаешь FIFO-хвост.                                                         |
+| Open   | BL #6          | Low     | M    | Документация для контрибьюторов и тебя самого через год: ARCHITECTURE / vision / personas / 4 ADR / CHANGELOG. Сейчас понимание архитектуры — только через чтение кода.                                             |
+| Open   | RFC 012        | High    | L    | Нормальная реляционная модель (companies/jobs/profiles + join tables). Блокирует RFC 008 (Notion-as-source) и нормальную поддержку >2 профилей. Большая миграция, но снимает технический долг под все будущие фичи. |
+
+**Done** (35 шт, +7 в сессии 2026-05-04 b):
+- **Lilia profile-blockers** (L-1…L-6) — geo / salary / memory / JD-extract / head-to-head verification.
+- **Prepare hardening** (G-10/G-11/G-12/G-15/G-17/G-18/G-19/G-20/G-21/G-22/G-23/G-25) — auto-tier, fill-up loop, CL template-first, resume-archetype validation, dedup-guard, Notion push refactor.
+- **Scan parity** (G-2/G-5/G-7→L-4/G-26/BL #7.3) — slash-title alt-eval, location в TSV, geo enforcement, LinkedIn off, 27 dead slugs обновлены.
+- **Doc trivial-pack** (G-27/G-28/G-30/G-31/G-32) — задокументированы как parity / known-limitation, фикс не нужен.
+- **Сессия b 2026-05-04** (G-4/G-33/G-13/G-24/G-8/G-9/G-16):
+  - G-4: cross-platform fuzzy dedup в `applications_tsv.appendNew` (catches GH→Lever drift after migration). +2 теста (905/905).
+  - G-33: side-effect side-effect L-4 — retro-sweep уже проверял location через v3 schema; обновлён комментарий в filter.js.
+  - G-13: уже реализовано (`SKIP_URL_CHECK_SOURCES` в `engine/core/url_check.js`); статус-апдейт в SPEC.
+  - G-24: задокументирован как by-design contract — TSV — source-of-truth для появления/удаления, Notion — за статусы. SPEC Sy-1 + gap table.
+  - G-8: by-design — USAJOBS opt-in, активация = регистрация + `.env`. Документировано в BACKLOG.
+  - G-9: help text для `--apply` clarified (noop для scan; preview через `--dry-run`).
+  - G-16: `version: 1` в `prepare_context.json` для будущих миграций schema.
+
+Детали по каждому Done — в секциях ниже + в прогресс-трекере «Lilia-batch».
 
 ---
 
@@ -41,9 +79,8 @@ Severity:
 - **Цена**: M.
 
 ### G-4 — Кросс-платформенные дубли проскакивают
-- **Сейчас**: одна и та же вакансия с GH и Lever может попасть в pipeline дважды, если URL отличается. Fuzzy-сравнение по нормализованному названию написано, но не используется.
-- **Станет**: одна вакансия = одна запись, независимо от платформы.
-- **Цена**: XS (включить уже написанный нормализатор в dedup).
+- **Сейчас (закрыто 2026-05-04)**: fuzzy уже работал в `dedupeJobs` / `dedupeAgainst` на уровне scan-pool, но `applications_tsv.appendNew` дедупил только по точному `source:jobId`. Drift между pool и applications.tsv (после миграции прототипа) пропускал GH→Lever дубли в applications. Расширил `appendNew`: строит `seenFuzzy` из existing apps, возвращает `fuzzyDuplicates[]`, scan command логирует counter.
+- **Цена**: XS. **Closed 2026-05-04** (+2 теста).
 
 ### G-10 — SKILL переспрашивает про размер батча
 - **Сейчас (закрыто 2026-05-04)**: SKILL Step 2 говорит «Proceed without confirmation — the CLI's `--batch N` flag already gates batch size; Claude does not re-prompt the user». Default 30; для другого размера — re-run pre-phase с `--batch <N>`.
@@ -70,9 +107,8 @@ Severity:
 - **Цена**: M. **Closed 2026-05-04** (часть G-21).
 
 ### G-33 — Retro-sweep не проверяет локацию
-- **Сейчас**: при изменении filter rules `validate` пересматривает существующие записи на title/company, но не на локацию (потому что локация не хранится в TSV).
-- **Станет**: после фикса G-5 (location в TSV) sweep пересматривает и локации тоже.
-- **Цена**: XS (зависит от G-5).
+- **Сейчас (закрыто 2026-05-04)**: фактически закрыт ранее как side-effect L-4 (RFC 013). После schema v3 (G-5) row'ы в TSV хранят `location`, и `validate` retro-sweep вызывает `matchBlocklists({location: app.location || ""})` — экспонируется и `location_blocklist`, и `geo` enforcement. Сегодня обновлён только устаревший комментарий в `engine/core/filter.js`.
+- **Цена**: XS. **Closed 2026-05-04**.
 
 ---
 
@@ -94,18 +130,16 @@ Severity:
 - **Цена**: M (миграция схемы).
 
 ### G-8 — USAJOBS adapter существует, но выключен
-- **Сейчас**: код есть, но ни в одном профиле не активирован. Висит в коде неактивно.
-- **Станет**: остаётся в коде, помечен «backlog, deferred» — вернёмся, когда будет реальная потребность в federal jobs.
-- **Цена**: XS (только пометка в BACKLOG).
+- **Сейчас (закрыто 2026-05-04, by-design)**: код есть, тесты зелёные, активация — opt-in (регистрация на usajobs.gov + 2 переменные `.env` + раскомментирование в `profile.json.modules`). Long-term disabled, активируется по потребности. SPEC-секция S-5.usajobs + BACKLOG #7.2 покрывают.
+- **Цена**: XS. **Closed 2026-05-04**.
 
 ### G-12 — `prepare` не добирает батч после skip'ов + summary без причин
 - **Сейчас (закрыто 2026-05-04)**: `prepare --phase pre` добирает chunk'ами (size = max(remaining, 5)) из `passed` пула пока `aliveResults.length < batchSize` (или пул не исчерпан). Stats теперь содержат `skipReasons` breakdown (`company_cap: N, title_blocklist: N, url_dead: N, …`) и `deferred` counter (eligible jobs не дошли до URL-check, остаются в очереди до next pre run). SKILL Step 12 печатает breakdown verbatim из `prepare_context.stats.skipReasons`.
 - **Цена**: M. **Closed 2026-05-04**.
 
 ### G-13 — Вакансии с LinkedIn/Indeed/custom URL дохнут на URL-check
-- **Сейчас**: эти три источника не отдают живой URL для прямого пинга, поэтому 100% таких вакансий помечаются как dead.
-- **Станет**: либо ранний skip URL-check'а для этих источников, либо исключение их из ingestion.
-- **Цена**: XS.
+- **Сейчас (закрыто 2026-05-04)**: уже реализовано в `engine/core/url_check.js` — `SKIP_URL_CHECK_SOURCES = {linkedin, indeed, custom}`. `checkOne` short-circuit'ит и возвращает `{alive: true, skipped: true}`, не помечая dead. JD pull остаётся за SKILL/WebFetch.
+- **Цена**: XS. **Closed 2026-05-04** (был де-факто реализован раньше — обновлён только статус в SPEC + GAPS).
 
 ### G-14 — JD-кэш только для GH+Lever
 - **Сейчас**: для остальных платформ description тянется через WebFetch, что недетерминированно (разные ответы при повторе).
@@ -121,9 +155,8 @@ Severity:
 - **Цена**: XS (часть G-18). **Closed 2026-05-04**.
 
 ### G-24 — Удаление страницы в Notion не пуллится обратно
-- **Сейчас**: если оператор руками удалит page в Notion, в TSV запись останется. Поведение совпадает с прототипом.
-- **Станет**: задокументировать в RFC (фикс не нужен, нужно только чёткое описание контракта).
-- **Цена**: XS (только текст).
+- **Сейчас (закрыто 2026-05-04, by-design)**: контракт зафиксирован — TSV — source-of-truth для появления/удаления записи в pipeline; Notion — за статусы и презентацию. Чтобы убрать запись: (1) поставь `Archived` в Notion → pull подхватит, (2) удали row из applications.tsv напрямую → следующий scan не пересоздаст её, если URL не вернулся. SPEC Sy-1 + gap table покрывают.
+- **Цена**: XS. **Closed 2026-05-04**.
 
 ### G-26 — LinkedIn-вакансии создают «To Apply» с пустым URL
 - **Сейчас (до 2026-05-03)**: каждая такая запись попадала в TSV без URL → SKILL не мог фетчить JD → Notion-карточки выходили без ссылки.
@@ -131,23 +164,24 @@ Severity:
 - **Цена**: XS (вместо M — заворот вместо URL-resolution). **Closed 2026-05-03.**
 
 ### G-29 — `--auto` режим check существует, но не активирован
-- **Сейчас**: код для cron-режима готов, но ни Jared, ни Lilia не используют (check сейчас через Claude+MCP).
-- **Станет**: активирован хотя бы для одного профиля. -- это разве мы не выносили на сервак?
-- **Цена**: M (требует OAuth setup + хостинг).
+- **Сейчас (partially)**: cron на fly.io поднят (Jared 8:00 PT + Lilia 8:01 PT) — `cron/check.cron`. Но оба упали:
+  - Jared 2026-05-02 — `EACCES /data/profiles/jared/applications.tsv.tmp.*`. Фикс в коммите `62743d8` (`cron/entrypoint.sh` chown как root → `su-exec app`). После `fly deploy` (если ещё не сделан) — должно работать.
+  - Lilia 2026-05-01 — `missing LILIA_GMAIL_CLIENT_ID`. Секреты `LILIA_GMAIL_*` на fly не выставлены. Фикс — `fly secrets set` (не код).
+- **Notion @mention'ы**: пишутся ТОЛЬКО при провале (`buildFailureComment` в `engine/commands/check.js`). Успешные раны идут только в `email_check_log.md` + fly stdout.
+- **Closure checklist**: (1) `fly deploy --app ai-job-searcher-cron` с `62743d8`; (2) `fly secrets set LILIA_GMAIL_CLIENT_ID=… LILIA_GMAIL_CLIENT_SECRET=… LILIA_GMAIL_REFRESH_TOKEN=…`; (3) `fly logs --app ai-job-searcher-cron --since 24h` — verify свежие успешные раны для обоих профилей.
+- **Цена**: XS (ops-задача, не код).
 
 ---
 
 ## Trivial (9)
 
 ### G-9 — `scan --apply` ничего не делает
-- **Сейчас**: флаг `--apply` принимается, но scan и так всегда пишет TSV. Косметический.
-- **Станет**: либо убрать флаг, либо описать как noop в help.
-- **Цена**: XS.
+- **Сейчас (закрыто 2026-05-04)**: help-текст в `engine/cli.js` уточнён: `--apply` нужен только для `sync` / `validate` / `check`; для `scan` это noop (TSV всегда пишется), preview через `--dry-run`.
+- **Цена**: XS. **Closed 2026-05-04**.
 
 ### G-16 — `prepare_context.json` без version field
-- **Сейчас**: при изменении схемы файла миграция невозможна, нужно перегенерировать.
-- **Станет**: добавить `version: 1`.
-- **Цена**: XS.
+- **Сейчас (закрыто 2026-05-04)**: `prepare --phase pre` пишет `version: 1` первым ключом контекста. Reader contract: «if absent, treat as 1». Будущие schema-breaking изменения должны бумпать major version и явно ломать старые консьюмеры.
+- **Цена**: XS. **Closed 2026-05-04**.
 
 ### G-19 — Неизвестный `decision` в commit-фазе тихо считается «skip»
 - **Сейчас (закрыто 2026-05-04)**: `prepare --phase commit` валидирует `decision` против `VALID_DECISIONS = {to_apply, archive, skip}`. Unknown values warn в stderr (`unknown decision "<x>" for key <key> — treating as skip`) и downgrade to `skip` с counter'ом `updates.invalidDecision`, видимым в summary.
@@ -267,8 +301,8 @@ Geo-модель per-profile:
 
 - **L** (требуют RFC и миграции): G-1.
 - **M** (день работы, тесты): G-3, G-6, G-14, G-29.
-- **XS** (несколько строк / файлы): остальные ~14 активных.
-- ✅ **Закрыто 2026-05-04** (21 шт): G-2, G-5, G-7 (absorbed by L-4), G-10, G-11, G-12, G-15, G-17, G-18, G-19, G-20, G-21, G-22, G-23, G-25, G-26, **L-1, L-2, L-3, L-4, L-5, L-6**.
+- **XS** (несколько строк / файлы): BL #7.2, BL #7.5.
+- ✅ **Закрыто 2026-05-04** (28 шт): G-2, G-4, G-5, G-7 (absorbed by L-4), G-8, G-9, G-10, G-11, G-12, G-13, G-15, G-16, G-17, G-18, G-19, G-20, G-21, G-22, G-23, G-24, G-25, G-26, G-33, **L-1, L-2, L-3, L-4, L-5, L-6**.
 
 ## Рекомендация по триажу
 

@@ -48,6 +48,11 @@ Thumbs.db
 *.swo
 .cursor/
 .claude/
+.obsidian/
+**/.obsidian/
+
+# Local one-off / investigation scripts (convention: leading underscore)
+scripts/_*.js
 
 # Test / coverage
 coverage/

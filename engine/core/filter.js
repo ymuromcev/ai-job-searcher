@@ -52,9 +52,11 @@ function escapeRegex(s) {
 //   - validate retro-sweep: re-screen existing "To Apply" rows after
 //     filter_rules updates, without re-counting caps.
 //
-// Note: TSV rows (applications.tsv) do not store `location`, so retro-sweep
-// only exercises company + title checks in practice. Location blocklist is
-// only applied at SCAN time when the full job object is available.
+// Note: since schema v3 (G-5, 2026-05-03), TSV rows DO carry `location`, so
+// retro-sweep exercises location_blocklist + geo enforcement on the row's
+// stored location. Backfilled rows from the master pool have it; older rows
+// without a backfill stay with location="" and never hit a substring match.
+// (G-33 closed 2026-05-04 — covered together with G-5 + L-4.)
 function matchBlocklists(job, rules) {
   const company = String(job.company || "");
   const companyLower = company.toLowerCase();

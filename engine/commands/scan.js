@@ -201,6 +201,10 @@ function makeScanCommand(overrides = {}) {
         // (adzuna, the_muse) can read keywords, location, and result limits
         // without requiring companies.tsv entries.
         discovery: profile.discovery || {},
+        // G-3 (2026-05-04): expose normalized filter rules so feed adapters
+        // (remoteok) can build their pre-filter from `title_requirelist`
+        // instead of hardcoding a profile-specific regex inline.
+        filterRules: profile.filterRules || profile.filter_rules || {},
         logger: {
           // Adapters only emit benign warnings here (missing slug, per-target
           // fetch failures). We still redact defensively in case an HTTP
@@ -309,6 +313,14 @@ function makeScanCommand(overrides = {}) {
     const nextApps = rejectedAppend.apps;
     const freshApps = passedAppend.fresh;
     const archivedApps = rejectedAppend.fresh;
+    const fuzzyDupCount =
+      (passedAppend.fuzzyDuplicates ? passedAppend.fuzzyDuplicates.length : 0) +
+      (rejectedAppend.fuzzyDuplicates ? rejectedAppend.fuzzyDuplicates.length : 0);
+    if (fuzzyDupCount > 0) {
+      stdout(
+        `cross-platform dedup: skipped ${fuzzyDupCount} job(s) already in applications.tsv under a different source`
+      );
+    }
 
     const rejectionsPath = path.join(profile.paths.root, "filter_rejections.log");
     const rejectionLines = rejectedEntries.map((r) => ({

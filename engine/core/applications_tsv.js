@@ -23,6 +23,8 @@
 const fs = require("fs");
 const path = require("path");
 
+const { fuzzyKey } = require("./dedup.js");
+
 const HEADER = [
   "key",
   "source",
@@ -277,13 +279,34 @@ function save(filePath, apps) {
   return { path: filePath, count: apps.length };
 }
 
-function appendNew(existing, jobs, { now = new Date().toISOString(), defaultStatus = "To Apply" } = {}) {
+// G-4: fuzzy-dedup against existing apps catches the same role posted on a
+// different ATS than the prior scan picked up (e.g. company migrated GH→Lever,
+// or the pool/applications drifted post-migration). Without this, `appendNew`
+// only deduped on exact `source:jobId` and a Lever variant of an already-tracked
+// Greenhouse role would silently land as a duplicate row in applications.tsv.
+function appendNew(
+  existing,
+  jobs,
+  { now = new Date().toISOString(), defaultStatus = "To Apply" } = {}
+) {
   const seen = new Set(existing.map((a) => a.key));
+  const seenFuzzy = new Set();
+  for (const a of existing) {
+    const fk = fuzzyKey(a);
+    if (fk) seenFuzzy.add(fk);
+  }
   const fresh = [];
+  const fuzzyDuplicates = [];
   for (const job of jobs) {
     const key = makeKey(job.source, job.jobId);
     if (seen.has(key)) continue;
+    const fk = fuzzyKey(job);
+    if (fk && seenFuzzy.has(fk)) {
+      fuzzyDuplicates.push({ key, fuzzyKey: fk });
+      continue;
+    }
     seen.add(key);
+    if (fk) seenFuzzy.add(fk);
     // Discovery `NormalizedJob.locations` is an array; the first entry is
     // canonical. Fall back to "" when the source didn't provide one.
     const location =
@@ -309,7 +332,7 @@ function appendNew(existing, jobs, { now = new Date().toISOString(), defaultStat
       updatedAt: now,
     });
   }
-  return { apps: existing.concat(fresh), fresh };
+  return { apps: existing.concat(fresh), fresh, fuzzyDuplicates };
 }
 
 module.exports = { load, save, appendNew, makeKey, HEADER, HEADER_V1, HEADER_V2 };

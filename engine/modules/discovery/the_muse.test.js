@@ -55,7 +55,11 @@ test("the_muse: exports correct source and feedMode", () => {
   assert.equal(feedMode, true);
 });
 
-test("the_muse: filters out designer and analyst, keeps PM/SPM", async () => {
+// G-3 (2026-05-04): adapter no longer applies an inline PM_RE filter — it
+// passes ALL "Product" category results through. Non-PM titles get archived
+// at the central scan-time gate via filter.matchBlocklists +
+// title_requirelist (profile-driven). Test reflects new contract.
+test("the_muse: passes ALL Product-category items through (no adapter-level title filter)", async () => {
   const fetchFn = async () =>
     makeRes({
       results: [PM_ITEM, SPM_ITEM, DESIGNER_ITEM, ANALYST_ITEM],
@@ -64,12 +68,14 @@ test("the_muse: filters out designer and analyst, keeps PM/SPM", async () => {
 
   const jobs = await discover([], { fetchFn, logger: { warn: () => {} } });
 
-  assert.equal(jobs.length, 2);
+  // All 4 items returned — central scan-time filter (title_requirelist) will
+  // archive Designer / Analyst rows downstream.
+  assert.equal(jobs.length, 4);
   const companies = jobs.map((j) => j.companyName);
   assert.ok(companies.includes("Plaid"));
   assert.ok(companies.includes("Marqeta"));
-  assert.ok(!companies.includes("Airbnb"));
-  assert.ok(!companies.includes("SoFi"));
+  assert.ok(companies.includes("Airbnb"));
+  assert.ok(companies.includes("SoFi"));
 });
 
 test("the_muse: normalises job fields correctly", async () => {
@@ -136,7 +142,7 @@ test("the_muse: handles HTTP error gracefully, returns accumulated jobs", async 
   assert.equal(jobs.length, 1);
 });
 
-test("the_muse: PM_RE matches product lead and product owner", async () => {
+test("the_muse: keeps adjacent PM titles (product lead, product owner) — passthrough", async () => {
   const leadItem = { ...PM_ITEM, id: 501, name: "Product Lead, Growth" };
   const ownerItem = { ...PM_ITEM, id: 502, name: "Product Owner" };
   const fetchFn = async () =>

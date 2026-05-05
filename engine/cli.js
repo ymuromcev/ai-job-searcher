@@ -61,8 +61,10 @@ Commands:
 Flags:
   --profile <id>       Profile id (required for all commands). Lowercase, alphanum + - _.
   --dry-run            Print planned changes without writing.
-  --apply              Required for sync to actually mutate Notion. Default behaviour
-                       is dry-run; pass --apply to commit changes.
+  --apply              Required for sync (commits Notion mutations) and validate
+                       (commits retro-sweep archives). For check, --apply switches
+                       phase 1 → phase 3. No-op for scan (scan always writes TSV;
+                       use --dry-run to preview).
   --verbose            Verbose logging.
   -h, --help           Show this help.
 

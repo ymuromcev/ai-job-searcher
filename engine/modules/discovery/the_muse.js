@@ -11,9 +11,14 @@
 //              refs: { landing_page }, publication_date, levels: [{name}] }],
 //             total, page_count }
 //
-// Title filter: only keep listings matching PM_RE (product manager / product
-// lead / product owner / senior PM). The scan dedup + prepare title_requirelist
-// together eliminate stray Product Designer / UX roles that slip through.
+// Title filter: NONE at adapter level (G-3, 2026-05-04). The Muse `?category=Product`
+// already narrows the API result; non-PM titles ("Product Designer", "Product
+// Marketing Lead", etc.) flow through to the central scan-time gate
+// (`filter.matchBlocklists` reads `title_requirelist` + `title_blocklist` from
+// profile filter_rules.json) and are archived there. This keeps the adapter
+// profile-agnostic — Lilia or any future profile with a non-PM requirelist
+// can enable `the_muse` without first touching adapter code. Cap is 80 raw
+// results / 4 pages, so over-pull risk is bounded.
 
 const { assertJob } = require("./_types.js");
 const { defaultFetch } = require("./_http.js");
@@ -22,7 +27,6 @@ const { sanitizeText, parseIsoDate, dedupeLocations } = require("./_normalize.js
 const SOURCE = "the_muse";
 const BASE = "https://www.themuse.com/api/public/jobs";
 const MAX_PAGES = 4; // 20 results/page × 4 pages = up to 80 raw results
-const PM_RE = /product\s+manag|product\s+lead|product\s+owner|\bsenior\s+pm\b|\bai\s+pm\b/i;
 
 function companySlug(name) {
   return String(name || "")
@@ -90,11 +94,8 @@ async function discover(targets, ctx = {}) {
 
     for (const item of results) {
       if (!item || !item.id) continue;
-      // Title-level PM filter: keep only PM / product lead / product owner titles.
-      // The prepare-phase title_requirelist provides a second pass, but filtering
-      // here keeps the shared pool clean of UX Designer / analyst noise.
-      const title = String(item.name || "");
-      if (!PM_RE.test(title)) continue;
+      // No adapter-level title filter (G-3): central scan-time
+      // `title_requirelist` handles non-matching roles for any profile.
       if (seenIds.has(String(item.id))) continue;
       seenIds.add(String(item.id));
       try {

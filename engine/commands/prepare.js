@@ -393,7 +393,12 @@ async function runPre(ctx, deps) {
   // the SKILL falls back to resume_versions.json / cover_letter_template.md.
   const memory = profile.memory || { writingStyle: null, resumeKeyPoints: null, feedback: [] };
 
+  // G-16: explicit schema version on the context file so future schema bumps
+  // can migrate (or fail loudly) instead of silently re-using stale fields.
+  // Bump only when shape changes break consumers; the SKILL must handle
+  // unknown major versions defensively. Reader contract: "if absent, treat as 1".
   const context = {
+    version: 1,
     profileId,
     generatedAt: deps.now(),
     memory,

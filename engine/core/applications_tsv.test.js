@@ -32,9 +32,11 @@ test("load returns empty when file missing", () => {
 });
 
 test("appendNew adds previously-unseen jobs as 'To Apply' entries (default status)", () => {
-  const result = apps.appendNew([], [fixtureJob(), fixtureJob({ jobId: "2" })], {
-    now: "2026-04-20T00:00:00Z",
-  });
+  const result = apps.appendNew(
+    [],
+    [fixtureJob(), fixtureJob({ jobId: "2", title: "Staff PM" })],
+    { now: "2026-04-20T00:00:00Z" }
+  );
   assert.equal(result.apps.length, 2);
   assert.equal(result.fresh.length, 2);
   assert.equal(result.apps[0].key, "greenhouse:1");
@@ -157,16 +159,78 @@ test("load auto-upgrades v2 files (15 cols) with empty location", () => {
 });
 
 test("appendNew copies first locations entry to row.location, falls back to ''", () => {
+  // Distinct titles so the post-G-4 fuzzy-dedup doesn't collapse them.
   const r = apps.appendNew(
     [],
     [
-      fixtureJob({ jobId: "10", locations: ["Remote", "NYC"] }),
-      fixtureJob({ jobId: "11", locations: [] }),
-      fixtureJob({ jobId: "12", locations: undefined }),
+      fixtureJob({ jobId: "10", title: "Senior PM", locations: ["Remote", "NYC"] }),
+      fixtureJob({ jobId: "11", title: "Staff PM", locations: [] }),
+      fixtureJob({ jobId: "12", title: "Lead PM", locations: undefined }),
     ],
     { now: "2026-04-20T00:00:00Z" }
   );
   assert.equal(r.apps[0].location, "Remote");
   assert.equal(r.apps[1].location, "");
   assert.equal(r.apps[2].location, "");
+});
+
+// G-4: cross-platform fuzzy dedup. Same role posted on a different ATS than the
+// row already in applications.tsv must be skipped, even with a different
+// source:jobId. Catches post-migration drift between pool and applications.
+test("appendNew skips fuzzy duplicates of existing apps (cross-platform GH→Lever)", () => {
+  const existing = [
+    {
+      key: "greenhouse:gh-1",
+      source: "greenhouse",
+      jobId: "gh-1",
+      companyName: "Stripe",
+      title: "Senior PM",
+      url: "https://boards.greenhouse.io/stripe/gh-1",
+      status: "Applied",
+      notion_page_id: "abc",
+      resume_ver: "v1",
+      cl_key: "k1",
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-02",
+    },
+  ];
+  const incoming = [
+    fixtureJob({ source: "lever", jobId: "lv-9", companyName: "Stripe, Inc.", title: "Senior PM", url: "https://jobs.lever.co/stripe/lv-9" }),
+    fixtureJob({ source: "lever", jobId: "lv-10", companyName: "Stripe", title: "Staff PM", url: "https://jobs.lever.co/stripe/lv-10" }),
+  ];
+  const r = apps.appendNew(existing, incoming, { now: "2026-04-20T00:00:00Z" });
+  assert.equal(r.fresh.length, 1, "Senior PM cross-platform dup must be skipped");
+  assert.equal(r.fresh[0].jobId, "lv-10");
+  assert.equal(r.fuzzyDuplicates.length, 1);
+  assert.equal(r.fuzzyDuplicates[0].key, "lever:lv-9");
+});
+
+test("appendNew fuzzy-dedup does not over-match when company or title is missing", () => {
+  // Feed adapters (remoteok) sometimes lack companyName — must not collide on
+  // empty fuzzyKey.
+  const existing = [
+    {
+      key: "remoteok:1",
+      source: "remoteok",
+      jobId: "1",
+      companyName: "",
+      title: "",
+      url: "x",
+      status: "To Apply",
+      notion_page_id: "",
+      resume_ver: "",
+      cl_key: "",
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-01",
+    },
+  ];
+  const r = apps.appendNew(
+    existing,
+    [
+      fixtureJob({ source: "remoteok", jobId: "2", companyName: "", title: "" }),
+    ],
+    { now: "2026-04-20T00:00:00Z" }
+  );
+  assert.equal(r.fresh.length, 1);
+  assert.equal(r.fuzzyDuplicates.length, 0);
 });

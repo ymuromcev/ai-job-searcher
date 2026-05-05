@@ -150,6 +150,78 @@ test("discover handles empty feed array", async () => {
   assert.deepEqual(jobs, []);
 });
 
+// --- G-3: profile-aware title filter ----------------------------------------
+
+test("buildTitleFilter falls back to DEFAULT_PM_RE when filterRules empty", () => {
+  const re = adapter.buildTitleFilter({});
+  assert.equal(re, adapter.DEFAULT_PM_RE);
+  assert.ok(re.test("Senior Product Manager"));
+  assert.ok(!re.test("Software Engineer"));
+});
+
+test("buildTitleFilter compiles word-boundary regex from title_requirelist patterns", () => {
+  const rules = {
+    title_requirelist: {
+      patterns: [
+        { pattern: "receptionist" },
+        { pattern: "patient services" },
+        { pattern: "scheduling coordinator" },
+      ],
+    },
+  };
+  const re = adapter.buildTitleFilter(rules);
+  assert.ok(re.test("Medical Receptionist"));
+  assert.ok(re.test("Patient Services Representative"));
+  assert.ok(re.test("Scheduling Coordinator II"));
+  assert.ok(!re.test("Software Engineer"));
+  assert.ok(!re.test("Product Manager")); // no PM patterns in this profile
+});
+
+test("discover uses ctx.filterRules.title_requirelist when provided (Lilia-flavor profile)", async () => {
+  const feed = [
+    { legal: "true" },
+    {
+      id: 1,
+      company: "Sutter",
+      position: "Medical Receptionist",
+      location: "Sacramento, CA",
+      url: "https://remoteok.com/jobs/1",
+      slug: "sutter-receptionist",
+      date: null,
+      tags: [],
+    },
+    {
+      id: 2,
+      company: "Acme",
+      position: "Senior Product Manager",
+      location: "Remote",
+      url: "https://remoteok.com/jobs/2",
+      slug: "acme-pm",
+      date: null,
+      tags: [],
+    },
+  ];
+  const filterRules = {
+    title_requirelist: {
+      patterns: [{ pattern: "receptionist" }, { pattern: "coordinator" }],
+    },
+  };
+  const jobs = await adapter.discover([], { fetchFn: makeFetch(feed), filterRules });
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].jobId, "1");
+});
+
+test("discover stays back-compat (DEFAULT_PM_RE) when no filterRules in ctx", async () => {
+  // Pre-G-3 behavior preserved for callers that don't plumb filterRules.
+  const fetchFn = makeFetch(FIXTURE);
+  const jobs = await adapter.discover([], { fetchFn });
+  // Same result as the existing "discover keeps PM" assertion above.
+  const ids = jobs.map((j) => j.jobId);
+  assert.ok(ids.includes("111111"));
+  assert.ok(ids.includes("222222"));
+  assert.ok(!ids.includes("444444")); // SWE excluded by default PM regex
+});
+
 test("discover skips meta block (no id)", async () => {
   const feed = [
     { legal: "true" }, // meta block — no id
