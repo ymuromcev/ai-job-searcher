@@ -1,3 +1,12 @@
+---
+id: RFC-017
+title: Deel job-board adapter
+status: draft
+tier: M
+created: 2026-05-05
+tags: [discovery, ats, deel]
+---
+
 # RFC 017 — Deel job-board adapter
 
 - **Status:** Proposed

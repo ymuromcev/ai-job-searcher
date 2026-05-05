@@ -1,3 +1,12 @@
+---
+id: RFC-011
+title: Keyword-Search Discovery Adapter
+status: draft
+tier: M
+created: 2026-05-05
+tags: [discovery, ats, keyword-search]
+---
+
 # RFC 011 — Keyword-Search Discovery Adapter
 
 **Status**: Draft

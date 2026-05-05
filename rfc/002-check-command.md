@@ -1,3 +1,13 @@
+---
+id: RFC-002
+title: check command (Gmail response polling, MCP-driven)
+status: implemented
+tier: L
+created: 2026-04-20
+decided: 2026-04-20
+tags: [gmail, check, mcp]
+---
+
 # RFC 002 — `check` command (Gmail response polling, MCP-driven)
 
 **Status**: Draft 2026-04-20

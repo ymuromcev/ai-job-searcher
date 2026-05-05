@@ -1,3 +1,12 @@
+---
+id: RFC-015
+title: Fit-prerank at scan time
+status: draft
+tier: M
+created: 2026-05-05
+tags: [scan, fit, prepare]
+---
+
 # RFC 015: Fit-prerank at scan time
 
 | Field | Value |

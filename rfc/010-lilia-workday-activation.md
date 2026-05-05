@@ -1,3 +1,13 @@
+---
+id: RFC-010
+title: Workday tenants for Lilia (healthcare)
+status: implemented
+tier: M
+created: 2026-05-02
+decided: 2026-05-02
+tags: [discovery, workday, healthcare]
+---
+
 # RFC 010 — Workday tenants для Лилии (healthcare)
 
 **Status**: Approved 2026-05-02 (юзер подтвердил A-вариант)

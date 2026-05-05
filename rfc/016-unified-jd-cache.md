@@ -1,3 +1,12 @@
+---
+id: RFC-016
+title: Unified JD Cache Across All ATS Adapters
+status: draft
+tier: M
+created: 2026-05-05
+tags: [jd-cache, discovery, prepare]
+---
+
 # RFC 016: Unified JD Cache Across All ATS Adapters
 
 - **Status**: Proposed

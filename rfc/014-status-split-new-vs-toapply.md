@@ -1,3 +1,13 @@
+---
+id: RFC-014
+title: Status split — Inbox vs To Apply (TSV-only)
+status: implemented
+tier: M
+created: 2026-05-04
+decided: 2026-05-04
+tags: [tsv, status, schema]
+---
+
 # RFC 014 — Status split: `Inbox` vs `To Apply` (TSV-only)
 
 **Status**: Approved 2026-05-04 (revised: TSV-only, status name `Inbox`)

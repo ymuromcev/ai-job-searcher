@@ -1,3 +1,13 @@
+---
+id: RFC-001
+title: Multi-profile Job Search Pipeline
+status: implemented
+tier: L
+created: 2026-04-19
+decided: 2026-04-19
+tags: [architecture, multi-profile]
+---
+
 # RFC 001 — Multi-profile Job Search Pipeline
 
 **Status**: Approved 2026-04-19

@@ -1,3 +1,14 @@
+---
+id: RFC-006
+title: check company set — per-profile coverage + ATS fallback + backfill
+status: superseded
+tier: M
+created: 2026-04-30
+decided: 2026-04-30
+superseded-by: RFC-008
+tags: [gmail, check, companies]
+---
+
 # RFC 006 — `check` company set: per-profile coverage + ATS fallback + backfill
 
 **Status**: Superseded by [RFC 008](./008-companies-as-notion-source-of-truth.md) on 2026-04-30

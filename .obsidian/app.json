@@ -1,0 +1,12 @@
+{
+  "useMarkdownLinks": true,
+  "newLinkFormat": "relative",
+  "alwaysUpdateLinks": true,
+  "showLineNumber": true,
+  "promptDelete": true,
+  "attachmentFolderPath": "private/attachments",
+  "useTab": false,
+  "tabSize": 2,
+  "newFileLocation": "current",
+  "trashOption": "system"
+}

@@ -1,3 +1,14 @@
+---
+id: RFC-007
+title: Industries as relations between Companies and Profiles
+status: superseded
+tier: L
+created: 2026-04-30
+decided: 2026-04-30
+superseded-by: RFC-008
+tags: [companies, industries, schema]
+---
+
 # RFC 007 — Industries as relations between Companies and Profiles
 
 **Status**: Superseded by [RFC 008](./008-companies-as-notion-source-of-truth.md) on 2026-04-30

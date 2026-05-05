@@ -1,3 +1,14 @@
+---
+id: RFC-008
+title: Companies as Notion source of truth + per-profile check
+status: implemented
+tier: L
+created: 2026-04-30
+decided: 2026-04-30
+supersedes: RFC-006
+tags: [notion, companies, schema]
+---
+
 # RFC 008 — Companies as Notion source of truth + per-profile check
 
 **Status**: Draft 2026-04-30 (требует approve пользователя)

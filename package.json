@@ -6,7 +6,10 @@
   "main": "engine/cli.js",
   "scripts": {
     "test": "node --test 'engine/**/*.test.js' 'skills/**/*.test.js' 'scripts/**/*.test.js'",
-    "setup-hooks": "node scripts/setup-hooks.js"
+    "setup-hooks": "node scripts/setup-hooks.js",
+    "docs:check": "node scripts/check_docs_links.js",
+    "docs:lang": "node scripts/check_docs_lang.js",
+    "docs:audit": "node scripts/check_docs_links.js && node scripts/check_docs_lang.js"
   },
   "author": {
     "name": "Jared Moore",

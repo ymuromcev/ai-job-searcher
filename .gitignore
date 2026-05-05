@@ -48,8 +48,16 @@ Thumbs.db
 *.swo
 .cursor/
 .claude/
-.obsidian/
-**/.obsidian/
+
+# Obsidian: commit baseline config, ignore volatile per-user state
+.obsidian/workspace*.json
+.obsidian/graph.json
+.obsidian/cache
+.obsidian/plugins/*/data.json
+**/.obsidian/workspace*.json
+**/.obsidian/graph.json
+**/.obsidian/cache
+**/.obsidian/plugins/*/data.json
 
 # Local one-off / investigation scripts (convention: leading underscore)
 scripts/_*.js
@@ -63,6 +71,9 @@ CLAUDE.local.md
 BACKLOG.md
 incidents.md
 audit_*.md
+
+# Private maintainer tree (RFC 018) — backlog files, handoffs, pre-anonymization originals
+private/
 
 # Build artifacts
 dist/

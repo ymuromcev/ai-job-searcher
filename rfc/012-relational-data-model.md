@@ -1,3 +1,12 @@
+---
+id: RFC-012
+title: Relational data model — companies / ATS targets / jobs / profiles
+status: draft
+tier: L
+created: 2026-05-05
+tags: [data-model, migration, schema]
+---
+
 # RFC 012 — Relational data model: companies / ATS targets / jobs / profiles
 
 **Status**: Draft (stub — to be expanded in fresh session)

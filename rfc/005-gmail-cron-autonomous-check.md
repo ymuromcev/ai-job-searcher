@@ -1,3 +1,13 @@
+---
+id: RFC-005
+title: Autonomous Gmail Check (cron via fly.io)
+status: accepted
+tier: L
+created: 2026-04-27
+decided: 2026-04-27
+tags: [gmail, cron, automation]
+---
+
 # RFC 005 — Autonomous Gmail Check (cron via fly.io)
 
 **Status**: Draft — awaiting approval

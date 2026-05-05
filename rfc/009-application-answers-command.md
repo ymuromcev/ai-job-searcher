@@ -1,3 +1,13 @@
+---
+id: RFC-009
+title: /job-pipeline answer command + Notion Q&A integration
+status: implemented
+tier: L
+created: 2026-04-30
+decided: 2026-04-30
+tags: [notion, application-answers, qa]
+---
+
 # RFC 009 — `/job-pipeline answer` command + Notion Q&A integration
 
 **Status**: Draft 2026-04-30 (pending user approval)

@@ -1,3 +1,12 @@
+---
+id: RFC-013
+title: Profile-level geo enforcement across all ATS adapters
+status: draft
+tier: L
+created: 2026-05-04
+tags: [discovery, geo, filter]
+---
+
 # RFC 013 — Profile-level geo enforcement across all ATS adapters
 
 **Status**: Draft v2 — awaiting approval to start implementation

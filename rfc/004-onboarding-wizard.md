@@ -1,3 +1,13 @@
+---
+id: RFC-004
+title: Onboarding Wizard (Stage 18)
+status: implemented
+tier: L
+created: 2026-04-22
+decided: 2026-04-22
+tags: [onboarding, wizard, multi-profile]
+---
+
 # RFC 004 — Onboarding Wizard (Stage 18)
 
 **Status**: Draft v2 — open questions resolved 2026-04-22; awaiting final approval to start implementation
