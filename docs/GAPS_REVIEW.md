@@ -20,20 +20,25 @@ Severity:
 
 Сортировка: Open → Done; внутри — Гэпы → Задачи развития; затем Severity High → Trivial; затем Цена XS → L. Колонка **«Что улучшится»** — pain → value, для решения «брать ли сейчас». Детальная разбивка по каждому пункту — в секциях ниже.
 
-| Status | ID             | Sev     | Цена | Что улучшится                                                                                                                                                                                                       |
-| ------ | -------------- | ------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Open   | G-29           | Low     | XS   | **Operations**: cron на fly.io существует для обоих профилей, но: (a) нужен `fly deploy` с `62743d8` (entrypoint chown-fix для EACCES Jared'а); (b) `fly secrets set LILIA_GMAIL_*` (LILIA_GMAIL_CLIENT_ID/SECRET/REFRESH_TOKEN — её фейл 2026-05-01). После — `fly logs` для verify. |
-| Open   | G-14           | Low     | M    | JD-кэш для всех платформ, не только GH/Lever. Сейчас Workday/SR/Ashby JD читается через WebFetch → разный fitScore при повторном prepare той же вакансии. Детерминизм. **Defer на следующую сессию.**              |
-| Open   | BL #7.2        | Low     | XS   | USAJOBS активация: 5 минут — регистрация на usajobs.gov + 2 переменные в `.env`. Получаешь federal jobs в pipeline Jared'а.                                                                                         |
-| Open   | BL #7.5        | Low     | XS   | Восстановление Current.com row в companies.tsv когда увидишь вакансию вручную и передашь apply-host. Простая правка.                                                                                                |
-| Open   | BL #4          | Medium  | M    | Onboarding UX переписать в один из чистых треков (A — программный, B — AI-driven). Сейчас README микс «магия Claude» + «запусти скрипт», Давид застрял на одну вечернюю сессию. Блокер до твоего выбора A/B.        |
-| Open   | BL #5          | Medium  | M    | Interview Coach работает для Lilia (сейчас только под Jared'а — PM/fintech). Когда у неё начнутся интервью — будет готов параметризованный skill, не пилить под прессом.                                            |
-| Open   | BL #7.1        | Medium  | M    | CalCareers adapter возвращает ~58 госработ CA в pipeline Jared'а (был в прототипе, не портирован). Релевантный класс ролей если хочешь стабильную госплощадку.                                                      |
-| Open   | BL #7.4        | Medium  | M    | Klarna в pipeline через Deel adapter (мигрировали с Lever). Сейчас удалена из companies.tsv — не сканируется.                                                                                                       |
-| Open   | BL #8          | Medium  | M    | Lilia адресно сканирует 70 ключевых healthcare сетей (Kaiser, UC Davis, Dignity, Sacramento County и т.д.) — сейчас только косвенно через Indeed. Главный data-gap её профиля.                                      |
-| Open   | BL fit-prerank | Medium  | M    | prepare берёт топ-N по fit'у, не первые-N по дате. Сейчас Stripe Risk-PM может быть глубоко в очереди и не попадать в батч пока не проработаешь FIFO-хвост.                                                         |
-| Open   | BL #6          | Low     | M    | Документация для контрибьюторов и тебя самого через год: ARCHITECTURE / vision / personas / 4 ADR / CHANGELOG. Сейчас понимание архитектуры — только через чтение кода.                                             |
-| Open   | RFC 012        | High    | L    | Нормальная реляционная модель (companies/jobs/profiles + join tables). Блокирует RFC 008 (Notion-as-source) и нормальную поддержку >2 профилей. Большая миграция, но снимает технический долг под все будущие фичи. |
+| Status | ID             | Sev    | Цена | Что улучшится                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------ | -------------- | ------ | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Open   | BL #5          | Hign   | M    | Interview Coach работает для Lilia (сейчас только под Jared'а — PM/fintech). Когда у неё начнутся интервью — будет готов параметризованный skill, не пилить под прессом.                                                                                                                                                                                                                                                               |
+| Open   | G-29           | Low    | XS   | **Operations**: cron на fly.io существует для обоих профилей, но: (a) нужен `fly deploy` с `62743d8` (entrypoint chown-fix для EACCES Jared'а); (b) `fly secrets set LILIA_GMAIL_*` (LILIA_GMAIL_CLIENT_ID/SECRET/REFRESH_TOKEN — её фейл 2026-05-01). После — `fly logs` для verify.                                                                                                                                                  |
+| Open   | G-14           | Low    | M    | JD-кэш для всех платформ, не только GH/Lever. Сейчас Workday/SR/Ashby JD читается через WebFetch → разный fitScore при повторном prepare той же вакансии. Детерминизм. **RFC 016 drafted 2026-05-05** (per-platform fetchers — Workday `jobInfo`, Ashby GraphQL+fallback, SR REST, RemoteOK/Indeed/USAJOBS pass-through из `rawExtra`, CalCareers cheerio scrape; cache `_index.json` + TTL 14d/5d feature-flagged); awaiting approve. |
+| Open   | BL #7.2        | Low    | XS   | USAJOBS активация: 5 минут — регистрация на usajobs.gov + 2 переменные в `.env`. Получаешь federal jobs в pipeline Jared'а.                                                                                                                                                                                                                                                                                                            |
+| Open   | BL #7.5        | Low    | XS   | Восстановление Current.com row в companies.tsv когда увидишь вакансию вручную и передашь apply-host. Простая правка.                                                                                                                                                                                                                                                                                                                   |
+| Open   | BL #4          | Medium | M    | Onboarding UX переписать в один из чистых треков (A — программный, B — AI-driven). Сейчас README микс «магия Claude» + «запусти скрипт», Давид застрял на одну вечернюю сессию. Блокер до твоего выбора A/B.                                                                                                                                                                                                                           |
+| Open   | BL #7.1        | Medium | M    | CalCareers adapter возвращает ~58 госработ CA в pipeline Jared'а (был в прототипе, не портирован). Релевантный класс ролей если хочешь стабильную госплощадку.                                                                                                                                                                                                                                                                         |
+| Open   | BL #7.4        | Medium | M    | Klarna в pipeline через Deel adapter (мигрировали с Lever). Сейчас удалена из companies.tsv — не сканируется. **RFC 017 drafted 2026-05-05** (recon pending — `__NEXT_DATA__` probe + Deel ToS); awaiting approve before code.                                                                                                                                                                                                         |
+| Open   | BL fit-prerank | Medium | M    | prepare берёт топ-N по fit'у, не первые-N по дате. Сейчас Stripe Risk-PM может быть глубоко в очереди и не попадать в батч пока не проработаешь FIFO-хвост. **RFC 015 drafted 2026-05-05** (TSV `fit_cached` колонка v2→v3, LLM scorer + heuristic fallback, sort `fit_cached DESC` в pre-phase, cost ~$0.08/scan для Jared'а); awaiting approve.                                                                                      |
+| Open   | BL #8.1 (new)  | Medium | M    | **iCIMS adapter** (RFC 018) — выявлено в research'е BL #8 2026-05-05. Public job-board pages, HTML scraping. Покрывает 9–12 компаний whitelist'а Lilia: CommonSpirit family ×3 (Dignity Health, Mercy San Juan, DHMF), Sonrava (DSO ×560 локаций), Demant family ×3 (HearingLife, Birdsong, CQ Partners), NVISION, Dialysis Clinic, Shriners. Highest ROI на healthcare ATS gap. Детали в `BACKLOG.md` под #8.                         |
+| Open   | BL #8.2 (new)  | Low    | M    | **NeoGov / GovernmentJobs adapter** (RFC 019) — выявлено в research'е BL #8 2026-05-05. Public RSS / JSON. Покрывает Sacramento County (Tier A) + потенциально замена нестабильного CalCareers (BL #7.1). Детали в `BACKLOG.md` под #8.                                                                                                                                                                                                |
+| Open   | BL #6          | Low    | M    | Документация для контрибьюторов и тебя самого через год: ARCHITECTURE / vision / personas / 4 ADR / CHANGELOG. Сейчас понимание архитектуры — только через чтение кода.                                                                                                                                                                                                                                                                |
+| Open   | RFC 012        | Low    | L    | Нормальная реляционная модель (companies/jobs/profiles + join tables). Блокирует RFC 008 (Notion-as-source) и нормальную поддержку >2 профилей. Большая миграция, но снимает технический долг под все будущие фичи.                                                                                                                                                                                                                    |
+
+**Done** (37 шт, +1 в сессии 2026-05-05):
+
+- **BL #8 → moved to BACKLOG 2026-05-05** as research-complete. Lilia 70-healthcare-ATS-slugs research прогнан полностью: 1 supported row добавлен в `data/companies.tsv` (WelbeHealth → greenhouse), 22 компании на не-поддерживаемых платформах task'нуты как два follow-up'а (BL #8.1 iCIMS adapter + BL #8.2 NeoGov adapter), 47 покрыты Indeed catch-all, 4 ambiguous. Original goal (scan 70 компаний адресно) — 48/70 уже работает; iCIMS + NeoGov поднимут до 58/70; остаток (12 — Kaiser Taleo, UC Davis PageUp, custom sites) — explicit defer / drop. Полные результаты research'а в `BACKLOG.md` секция #8.
 
 **Done** (36 шт, +8 в сессии 2026-05-04 b):
 - **Lilia profile-blockers** (L-1…L-6) — geo / salary / memory / JD-extract / head-to-head verification.
@@ -155,7 +160,8 @@ Severity:
 ### G-14 — JD-кэш только для GH+Lever
 - **Сейчас**: для остальных платформ description тянется через WebFetch, что недетерминированно (разные ответы при повторе).
 - **Станет**: единый JD-кэш для всех платформ. Не критично, но детерминизм улучшится.
-- **Цена**: M.
+- **RFC**: [016-unified-jd-cache.md](../rfc/016-unified-jd-cache.md) drafted 2026-05-05. Per-platform fetchers (Workday `cxs/jobInfo`, Ashby GraphQL `ApiJobBoardWithTeams` + WebFetch fallback, SR REST `v1/companies/{slug}/postings`, RemoteOK/Indeed/USAJOBS pass-through из `rawExtra.descriptionHtml`, CalCareers cheerio scrape). Cache + sidecar `_index.json` (source_method, url_hash, fetched_at, content_length, schema). TTL 14d default / 5d для `webfetch_scrape`. Feature flag `JD_CACHE_UNIFIED`. Backward-compat: missing index entry → schema 0 fallback.
+- **Цена**: M. Awaiting approve.
 
 ### G-20 — Повторный запуск SKILL может создать дубль в Notion
 - **Сейчас (закрыто 2026-05-04)**: SKILL Step 9.0 skip-guard — «If the matching `applications.tsv` row already has a non-empty `notion_page_id`, the page was created in a prior run — record the existing id as `notionPageId` in results.json and skip 9a–9c (no new page, no duplicate). This makes operator-reruns of the SKILL idempotent.»
@@ -311,9 +317,11 @@ Geo-модель per-profile:
 ## Сводка по цене
 
 - **L** (требуют RFC и миграции): G-1.
-- **M** (день работы, тесты): G-3, G-6, G-14, G-29.
+- **M** (день работы, тесты): G-3, G-6, G-14 (RFC 016 drafted), G-29, BL #7.4 (RFC 017 drafted), BL fit-prerank (RFC 015 drafted).
 - **XS** (несколько строк / файлы): BL #7.2, BL #7.5.
+- 📋 **RFC drafted, awaiting approve (3 шт, 2026-05-05)**: RFC 015 (fit-prerank), RFC 016 (unified JD-cache), RFC 017 (Deel adapter).
 - ✅ **Закрыто 2026-05-04** (28 шт): G-2, G-4, G-5, G-7 (absorbed by L-4), G-8, G-9, G-10, G-11, G-12, G-13, G-15, G-16, G-17, G-18, G-19, G-20, G-21, G-22, G-23, G-24, G-25, G-26, G-33, **L-1, L-2, L-3, L-4, L-5, L-6**.
+- ✅ **Закрыто 2026-05-05** (1 шт, moved to BACKLOG): **BL #8** — research complete; 1 supported ATS row добавлен (WelbeHealth/greenhouse), follow-up adapter tasks BL #8.1 (iCIMS) + BL #8.2 (NeoGov) перенесены в BACKLOG секция #8 с полным research dump'ом. См. рекомендацию ниже.
 
 ## Рекомендация по триажу
 
@@ -328,7 +336,13 @@ Geo-модель per-profile:
 
 **M — ценный поведенческий fix (после Lilia)**:
 - G-3 (centralized title requirelist).
-- G-14 (JD-cache для остальных платформ).
+- G-14 (JD-cache для остальных платформ) — RFC 016 drafted 2026-05-05, awaiting approve.
+- BL #7.4 (Deel adapter for Klarna) — RFC 017 drafted 2026-05-05, recon + approve pending.
+- BL fit-prerank (AI scoring at scan time) — RFC 015 drafted 2026-05-05, awaiting approve.
+
+**M — новые кандидаты (выявлены при BL #8 research, 2026-05-05; trackedются как BL #8.1 / #8.2 в `BACKLOG.md`)**:
+- **iCIMS adapter** (BL #8.1, RFC 018) — 9–12 компаний из whitelist Lilia: CommonSpirit family ×3 (Dignity Health, Mercy San Juan, DH Medical Foundation), Sonrava (DSO ×560 локаций), Demant family ×3 (HearingLife, Birdsong, CQ Partners), NVISION, Dialysis Clinic Inc., Shriners. Highest ROI на неподдерживаемых ATS.
+- **NeoGov / GovernmentJobs adapter** (BL #8.2, RFC 019) — Sacramento County (Tier A) + future CA government job replacement для CalCareers (RSS / JSON public).
 
 **Архитектурные (L) — обсудить отдельно**:
 - ~~G-1~~ → закрыт RFC 014 (TSV-only revision, 2026-05-04). Cost downgraded L → M благодаря отказу от Notion-side миграции.
