@@ -79,7 +79,7 @@ Common errors:
 
 ### validate
 
-Synopsis: `node engine/cli.js validate --profile <id> [--dry-run] [--apply]`
+Synopsis: `node engine/cli.js validate --profile <id> [--dry-run] [--apply] [--dedup]`
 
 Pre-flight pipeline checks. Default mode is dry-run; `--apply` is required to commit retro-sweep archives. Steps:
 
@@ -88,22 +88,28 @@ Pre-flight pipeline checks. Default mode is dry-run; `--apply` is required to co
 3. `url_liveness`: HEAD-ping each active row's `url` with bounded concurrency. SSRF-hardened: requires http(s), rejects loopback / link-local / private IPv4 and IPv6, no redirect follow, no GET fallback.
 4. `retro_sweep`: re-apply `company_blocklist`, `title_blocklist`, `location_blocklist`, and `geo` policy to rows in `Inbox` or `To Apply`. Reports matches by default; with `--apply`, sets `status: Archived` and writes `updatedAt`.
 
+`--dedup` is a standalone subtask (skips steps 2-4): collapse rows in `applications.tsv` that resolve to the same canonical key after stripping ATS prefixes recursively. Catches the legacy `lever:abc` ↔ `lever:lever:abc` collision pattern produced by the discovery key-prefix migration. Winner per group: row with `notion_page_id` → higher status (`Offer > Interview > Applied > To Apply > Inbox > No Response > Rejected > Closed > Archived`) → newer `updatedAt` → shorter key. Loser fields (`fit_score`, `cl_path`, `location`, etc.) are merged into the winner only when the winner's field is empty. Groups whose rows disagree on company or url path are flagged as **suspicious** and never auto-collapsed. Default: dry-run report. With `--apply`: rewrites TSV after backing up to `applications.tsv.pre-dedup-<timestamp>`.
+
 Flags:
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | `--profile <id>` | string | — | Required. |
 | `--dry-run` | boolean | true (implicit) | Default mode. URL liveness is skipped under dry-run; retro-sweep matches are reported only. |
-| `--apply` | boolean | false | Run URL liveness against the network and commit retro-sweep archival. |
+| `--apply` | boolean | false | Run URL liveness against the network and commit retro-sweep archival. With `--dedup`: rewrite TSV. |
+| `--dedup` | boolean | false | Standalone: collapse legacy-prefix collisions in `applications.tsv`. Default report-only; with `--apply`, rewrites TSV after backup. |
 
 Outputs and side effects:
 
-- With `--apply`: rewrites `profiles/<id>/applications.tsv` for any row archived by retro-sweep.
+- With `--apply` (no `--dedup`): rewrites `profiles/<id>/applications.tsv` for any row archived by retro-sweep.
+- With `--dedup --apply`: rewrites `profiles/<id>/applications.tsv` (deduped) and writes `applications.tsv.pre-dedup-<timestamp>` backup beside it.
 
 Example:
 
 ```bash
 node engine/cli.js validate --profile <id> --apply
+node engine/cli.js validate --profile <id> --dedup            # dry-run report
+node engine/cli.js validate --profile <id> --dedup --apply    # rewrite TSV
 ```
 
 Common errors:

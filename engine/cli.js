@@ -35,6 +35,7 @@ const PARSE_OPTIONS = {
     company: { type: "string" },
     role: { type: "string" },
     question: { type: "string" },
+    dedup: { type: "boolean", default: false },
   },
   allowPositionals: true,
   strict: true,
@@ -69,6 +70,13 @@ Flags:
                        use --dry-run to preview).
   --verbose            Verbose logging.
   -h, --help           Show this help.
+
+validate flags:
+  --dedup                Detect rows in applications.tsv that resolve to the same
+                         canonical key after stripping ATS prefixes (legacy
+                         "lever:abc" ↔ "lever:lever:abc" collisions). Default:
+                         report dry-run. With --apply: rewrite TSV (after
+                         backing up to applications.tsv.pre-dedup-<timestamp>).
 
 prepare flags:
   --phase <pre|commit>   Required for prepare. "pre" runs filter/URL/JD/salary and
@@ -203,6 +211,7 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
       company: parsed.values.company || "",
       role: parsed.values.role || "",
       question: parsed.values.question || "",
+      dedup: Boolean(parsed.values.dedup),
     },
     env,
     stdout: writeOut,

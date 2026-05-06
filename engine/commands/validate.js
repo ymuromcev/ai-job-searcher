@@ -15,12 +15,15 @@
 
 const path = require("path");
 
+const fs = require("fs");
+
 const profileLoader = require("../core/profile_loader.js");
 const jobsTsv = require("../core/jobs_tsv.js");
 const applications = require("../core/applications_tsv.js");
 const { matchBlocklists } = require("../core/filter.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
+const { planDedup } = require("../core/tsv_dedup.js");
 
 // RFC 014: TSV-level 9-status set — Inbox / To Apply / Applied / Interview /
 // Offer / Rejected / Closed / No Response / Archived. (Notion DBs keep the
@@ -44,6 +47,7 @@ const DEFAULT_DEPS = {
   saveApplications: applications.save,
   fetchFn: defaultFetch,
   now: () => new Date().toISOString(),
+  copyFileSync: (src, dst) => fs.copyFileSync(src, dst),
 };
 
 // --- SSRF guard -------------------------------------------------------------
@@ -185,6 +189,103 @@ function checkCompanyCap(apps, filterRules) {
   return { counts, violations };
 }
 
+// BL-9 Step 6: collapse rows with the same canonical key (after stripping
+// ATS prefixes recursively). Read-only by default; --apply rewrites the TSV
+// after backing up to applications.tsv.pre-dedup-<timestamp>. Suspicious
+// groups (rows disagreeing on company or url path) are surfaced for human
+// review and never auto-collapsed.
+function tsvBackupPath(tsvPath, nowIso) {
+  const stamp = String(nowIso).replace(/[:.]/g, "-");
+  return `${tsvPath}.pre-dedup-${stamp}`;
+}
+
+async function runDedup(ctx, deps, profile) {
+  const { flags, stdout, stderr } = ctx;
+  const tsvPath = path.join(profile.paths.root, "applications.tsv");
+
+  let appsResult;
+  try {
+    appsResult = deps.loadApplications(tsvPath);
+  } catch (err) {
+    stderr(`applications.tsv: PARSE ERROR — ${err.message}`);
+    return 1;
+  }
+
+  const plan = planDedup(appsResult.apps);
+  const dryRun = !flags.apply;
+  const header = dryRun ? "TSV dedup report (dry-run)" : "TSV dedup (--apply)";
+  stdout(header);
+
+  if (plan.pairs === 0 && plan.suspicious.length === 0) {
+    stdout(`  no duplicates found, nothing to do (${appsResult.apps.length} rows scanned)`);
+    return 0;
+  }
+
+  if (plan.pairs > 0) {
+    const dropCount = plan.dropped.length;
+    stdout(`  found: ${plan.pairs} duplicate group(s)`);
+    stdout(`  → keep ${plan.kept.length} rows, drop ${dropCount} row(s)`);
+    stdout(`  by reason:`);
+    for (const [reason, n] of Object.entries(plan.byReason)) {
+      stdout(`    ${reason}: ${n}`);
+    }
+    stdout(`  examples:`);
+    for (const g of plan.pairsByGroup.slice(0, 3)) {
+      const win = g.winner;
+      stdout(
+        `    ${win.key.padEnd(36)} → keep (${win.status}${win.notion_page_id ? ", has notion_page_id" : ""}, updatedAt ${win.updatedAt})`
+      );
+      for (const l of g.losers) {
+        stdout(
+          `    ${String(l.key).padEnd(36)} → drop (${l.status}${l.notion_page_id ? ", has notion_page_id" : ""}, updatedAt ${l.updatedAt})`
+        );
+      }
+    }
+    if (plan.pairsByGroup.length > 3) {
+      stdout(`    … and ${plan.pairsByGroup.length - 3} more group(s)`);
+    }
+  }
+
+  if (plan.suspicious.length > 0) {
+    stdout(``);
+    stdout(`  suspicious (not deduped — same canonical key, different company or url):`);
+    for (const s of plan.suspicious.slice(0, 10)) {
+      stdout(`    canonical=${s.canonical} (${s.reason})`);
+      for (const r of s.rows) {
+        stdout(`      ${r.key}  status=${r.status}  company="${r.companyName}"  url=${r.url || "(none)"}`);
+      }
+    }
+    if (plan.suspicious.length > 10) {
+      stdout(`    … and ${plan.suspicious.length - 10} more group(s)`);
+    }
+    stdout(`  → no automatic action; review manually`);
+  }
+
+  if (dryRun) {
+    if (plan.pairs > 0) {
+      stdout(``);
+      stdout(`  rerun with --apply to write changes`);
+    }
+    // Dry-run with only suspicious findings still exits 0; suspicious is
+    // an advisory, not a failure.
+    return 0;
+  }
+
+  // --apply path
+  if (plan.pairs === 0) {
+    stdout(`  no auto-collapsable duplicates; suspicious groups left as-is`);
+    return 0;
+  }
+  const backupPath = tsvBackupPath(tsvPath, deps.now());
+  if (fs.existsSync(tsvPath)) {
+    deps.copyFileSync(tsvPath, backupPath);
+    stdout(`  backup written: ${path.basename(backupPath)}`);
+  }
+  deps.saveApplications(tsvPath, plan.kept);
+  stdout(`  TSV rewritten: ${plan.kept.length} rows (was ${appsResult.apps.length})`);
+  return 0;
+}
+
 function makeValidateCommand(overrides = {}) {
   const deps = { ...DEFAULT_DEPS, ...overrides };
 
@@ -199,6 +300,13 @@ function makeValidateCommand(overrides = {}) {
     } catch (err) {
       ctx.stderr(`error: ${err.message}`);
       return 1;
+    }
+
+    // --dedup is a standalone task: just run the dedup planner + writer and
+    // exit. We don't gate it behind the rest of validate (URL pings etc.) so
+    // users can collapse rows without paying for a full validation pass.
+    if (flags.dedup) {
+      return runDedup(ctx, deps, profile);
     }
 
     let issues = 0;
@@ -366,6 +474,8 @@ module.exports.checkCompanyCap = checkCompanyCap;
 module.exports.pingUrl = pingUrl;
 module.exports.pingAll = pingAll;
 module.exports.isSafeLivenessUrl = isSafeLivenessUrl;
+module.exports.runDedup = runDedup;
+module.exports.tsvBackupPath = tsvBackupPath;
 module.exports.ACTIVE_STATUSES = ACTIVE_STATUSES;
 module.exports.RETRO_SWEEP_STATUSES = RETRO_SWEEP_STATUSES;
 module.exports.DEFAULT_URL_CAP = DEFAULT_URL_CAP;

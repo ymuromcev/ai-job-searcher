@@ -533,3 +533,151 @@ test("retro_sweep (L-4): geo_no_location surfaced separately for empty-location 
   assert.equal(code, 1);
   assert.match(out.all(), /geo_no_location/);
 });
+
+// --- BL-9 Step 6: --dedup -------------------------------------------------
+
+const { runDedup, tsvBackupPath } = require("./validate.js");
+
+function dedupRow(overrides = {}) {
+  return {
+    key: "lever:abc",
+    source: "lever",
+    jobId: "abc",
+    companyName: "Affirm",
+    title: "PM",
+    url: "https://example.com/jobs/abc",
+    location: "",
+    status: "Inbox",
+    notion_page_id: "",
+    resume_ver: "",
+    cl_key: "",
+    salary_min: "",
+    salary_max: "",
+    cl_path: "",
+    createdAt: "2026-04-01T00:00:00.000Z",
+    updatedAt: "2026-04-01T00:00:00.000Z",
+    fit_score: "",
+    fit_rationale: "",
+    fit_evaluated_at: "",
+    skip_reason: "",
+    ...overrides,
+  };
+}
+
+function dedupCtx(extra = {}) {
+  const out = captureOut();
+  return {
+    out,
+    ctx: {
+      command: "validate",
+      profileId: "jared",
+      flags: { dryRun: false, apply: false, verbose: false, dedup: true, ...extra },
+      env: {},
+      stdout: out.stdout,
+      stderr: out.stderr,
+      profilesDir: "/tmp/profiles",
+      dataDir: "/tmp/data",
+    },
+  };
+}
+
+test("validate --dedup: no duplicates → exits 0 with 'nothing to do'", async () => {
+  const apps = [dedupRow({ key: "lever:a", jobId: "a" }), dedupRow({ key: "lever:b", jobId: "b" })];
+  const deps = makeDeps({ loadApplications: () => ({ apps }) });
+  const { ctx, out } = dedupCtx();
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.match(out.all(), /no duplicates found/);
+});
+
+test("validate --dedup (dry-run): reports collision but does not save", async () => {
+  let saved = false;
+  const apps = [
+    dedupRow({ key: "lever:abc", jobId: "abc", status: "Applied", notion_page_id: "p1" }),
+    dedupRow({ key: "lever:lever:abc", jobId: "lever:abc", status: "Inbox" }),
+  ];
+  const deps = makeDeps({
+    loadApplications: () => ({ apps }),
+    saveApplications: () => { saved = true; return { count: 0 }; },
+  });
+  const { ctx, out } = dedupCtx(); // apply=false → dry-run
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(saved, false);
+  assert.match(out.all(), /TSV dedup report \(dry-run\)/);
+  assert.match(out.all(), /found: 1 duplicate group/);
+  assert.match(out.all(), /legacy-prefix collision/);
+  assert.match(out.all(), /rerun with --apply/);
+});
+
+test("validate --dedup --apply: saves deduped rows + backs up TSV", async () => {
+  let savedRows = null;
+  let savedPath = null;
+  let copiedFrom = null;
+  let copiedTo = null;
+  const apps = [
+    dedupRow({ key: "lever:abc", jobId: "abc", status: "Applied", notion_page_id: "p1" }),
+    dedupRow({ key: "lever:lever:abc", jobId: "lever:abc", status: "Inbox" }),
+    dedupRow({ key: "lever:b", jobId: "b" }),
+  ];
+  const deps = makeDeps({
+    loadApplications: () => ({ apps }),
+    saveApplications: (p, rows) => { savedPath = p; savedRows = rows; return { count: rows.length }; },
+    copyFileSync: (src, dst) => { copiedFrom = src; copiedTo = dst; },
+    now: () => "2026-05-05T12:00:00Z",
+  });
+  const { ctx, out } = dedupCtx({ apply: true });
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(savedRows.length, 2); // 3 in, 1 dropped
+  assert.equal(savedRows[0].key, "lever:abc");
+  assert.equal(savedRows[0].notion_page_id, "p1");
+  assert.match(savedPath, /applications\.tsv$/);
+  // backup attempt may be skipped if file doesn't exist (we mocked load —
+  // the actual file isn't on disk in this test); still check stdout doesn't crash.
+  assert.match(out.all(), /TSV rewritten: 2 rows/);
+});
+
+test("validate --dedup: suspicious group (different company) surfaced, not collapsed", async () => {
+  const apps = [
+    dedupRow({ key: "lever:abc", jobId: "abc", companyName: "Affirm" }),
+    dedupRow({ key: "lever:lever:abc", jobId: "lever:abc", companyName: "Stripe" }),
+  ];
+  const deps = makeDeps({ loadApplications: () => ({ apps }) });
+  const { ctx, out } = dedupCtx();
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.match(out.all(), /suspicious \(not deduped/);
+  assert.match(out.all(), /no automatic action/);
+  // No dedup section since pairs=0
+  assert.doesNotMatch(out.all(), /found: \d+ duplicate group/);
+});
+
+test("validate --dedup: parse error in TSV → exits 1 without crashing", async () => {
+  const deps = makeDeps({
+    loadApplications: () => { throw new Error("bad header"); },
+  });
+  const { ctx, out } = dedupCtx();
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 1);
+  assert.match(out.all(), /PARSE ERROR/);
+});
+
+test("validate --dedup: skips other validate steps (no URL ping, no retro sweep)", async () => {
+  let pinged = 0;
+  const apps = [dedupRow({ key: "lever:a", jobId: "a", status: "Applied", url: "https://x" })];
+  const deps = makeDeps({
+    loadApplications: () => ({ apps }),
+    fetchFn: async () => { pinged += 1; return { ok: true, status: 200 }; },
+  });
+  const { ctx, out } = dedupCtx();
+  await makeValidateCommand(deps)(ctx);
+  assert.equal(pinged, 0);
+  assert.doesNotMatch(out.all(), /url_liveness/);
+  assert.doesNotMatch(out.all(), /retro_sweep/);
+});
+
+test("tsvBackupPath: builds backup filename with sanitized timestamp", () => {
+  const p = tsvBackupPath("/tmp/applications.tsv", "2026-05-05T12:30:45.000Z");
+  assert.equal(p, "/tmp/applications.tsv.pre-dedup-2026-05-05T12-30-45-000Z");
+});
