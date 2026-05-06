@@ -125,11 +125,22 @@ frontmatter (`id`, `title`, `status`, `priority`, `tier`, `created`,
 frontmatter fields, editable inline by double-click.
 
 **Add a new task** (operator):
-1. Open `private/backlog.base` in Obsidian → click `+ New` (top right).
-2. Fill cells: Title, Priority (P0–P3), Tier (XS/M/L), Tags.
-3. Status defaults to `planned`. Save (`Cmd-S`).
-4. The new file appears under `private/backlog/` — Claude can read it
-   immediately.
+1. Press `Cmd-Shift-B` anywhere in Obsidian. Templater creates the
+   next `BL-N.md` in `private/backlog/` with frontmatter pre-filled
+   (`id: BL-N`, `status: planned`, `priority: P2`, `tier: M`,
+   `created: today`).
+2. Type the Title. Adjust Priority / Tier / Tags if defaults don't fit.
+3. Save (`Cmd-S`). The new row appears in the Bases table automatically.
+
+**Why hotkey, not `+ New` in Bases**: Bases' `+ New` button bypasses
+Templater's folder-template hook (known bug,
+[Templater issue #1674](https://github.com/SilentVoid13/Templater/issues/1674)),
+so the auto-id script never runs. Hotkey-triggered create works 100%.
+
+**Templater setup** (one-time): install the **Templater** plugin → the
+config is committed under `.obsidian/plugins/templater-obsidian/data.json`
+(template folder = `private/templates`, hotkeyed template =
+`new_backlog_task.md`). The hotkey binding is in `.obsidian/hotkeys.json`.
 
 **Work a task** (Claude):
 1. Read `private/backlog/<id>.md` for full context.
@@ -143,8 +154,8 @@ frontmatter fields, editable inline by double-click.
 **Title doubles as summary** — keep it short and self-explanatory; the
 operator scans the table by Title alone.
 
-**Template:** `private/backlog/_template.md` (excluded from views via
-`file.name != "_template"`). Copy when starting from outside Bases.
+**Template:** `private/templates/new_backlog_task.md` (Templater script
+that auto-assigns next `BL-N`, renames file, fills frontmatter).
 
 **Original wall-of-text source archived** at
 `private/audit-internal/BACKLOG-source-2026-05-05.md` (kept verbatim,
