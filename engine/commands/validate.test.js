@@ -681,3 +681,70 @@ test("tsvBackupPath: builds backup filename with sanitized timestamp", () => {
   const p = tsvBackupPath("/tmp/applications.tsv", "2026-05-05T12:30:45.000Z");
   assert.equal(p, "/tmp/applications.tsv.pre-dedup-2026-05-05T12-30-45-000Z");
 });
+
+// --- BL-13: read-only dedup detect in plain `validate` (no --dedup flag) ----
+
+test("validate (no --dedup): reports duplicate count + hint that prepare will collapse them", async () => {
+  const apps = [
+    dedupRow({ key: "lever:abc", jobId: "abc", status: "Applied", notion_page_id: "p1" }),
+    dedupRow({ key: "lever:lever:abc", jobId: "lever:abc", status: "Inbox" }),
+    dedupRow({ key: "lever:b", jobId: "b" }),
+  ];
+  const deps = makeDeps({ loadApplications: () => ({ apps }) });
+  const { ctx, out } = makeCtx(); // plain validate, no --dedup
+  await makeValidateCommand(deps)(ctx);
+  assert.match(out.all(), /tsv_dedup: 1 duplicate group\(s\) detected/);
+  assert.match(out.all(), /will be auto-collapsed on the next/);
+});
+
+test("validate (no --dedup): reports suspicious groups separately on stderr", async () => {
+  const apps = [
+    dedupRow({
+      key: "lever:xyz",
+      jobId: "xyz",
+      companyName: "Stripe",
+      url: "https://jobs.lever.co/stripe/xyz",
+    }),
+    dedupRow({
+      key: "lever:lever:xyz",
+      jobId: "lever:xyz",
+      companyName: "Different Co",
+      url: "https://jobs.lever.co/other/xyz",
+    }),
+  ];
+  const deps = makeDeps({ loadApplications: () => ({ apps }) });
+  const { ctx, out } = makeCtx();
+  await makeValidateCommand(deps)(ctx);
+  assert.match(out.all(), /tsv_dedup: 1 suspicious group/);
+  assert.match(out.all(), /manual review required/);
+});
+
+test("validate (no --dedup): clean TSV → 'tsv_dedup: ok' on stdout", async () => {
+  const apps = [dedupRow({ key: "lever:a", jobId: "a" }), dedupRow({ key: "lever:b", jobId: "b" })];
+  const deps = makeDeps({ loadApplications: () => ({ apps }) });
+  const { ctx, out } = makeCtx();
+  await makeValidateCommand(deps)(ctx);
+  assert.match(out.all(), /tsv_dedup: ok/);
+});
+
+test("validate --dedup --apply: BL-13 path remains unchanged (backwards-compat)", async () => {
+  // Same shape as the existing --dedup --apply test, just confirming we
+  // didn't accidentally break the manual collapse path while wiring up the
+  // new read-only step.
+  let savedRows = null;
+  const apps = [
+    dedupRow({ key: "lever:abc", jobId: "abc", status: "Applied", notion_page_id: "p1" }),
+    dedupRow({ key: "lever:lever:abc", jobId: "lever:abc", status: "Inbox" }),
+  ];
+  const deps = makeDeps({
+    loadApplications: () => ({ apps }),
+    saveApplications: (_p, rows) => { savedRows = rows; return { count: rows.length }; },
+    copyFileSync: () => {},
+    now: () => "2026-05-06T12:00:00Z",
+  });
+  const { ctx, out } = dedupCtx({ apply: true });
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(savedRows.length, 1);
+  assert.match(out.all(), /TSV rewritten: 1 rows/);
+});

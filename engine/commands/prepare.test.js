@@ -8,15 +8,29 @@ const {
   buildActiveCounts,
   computeInboxExhausted,
   isFreshInboxApp,
+  runAutoDedup,
 } = require("./prepare.js");
 
 // --- Helpers -----------------------------------------------------------------
 
 function makeApp(overrides = {}) {
+  // Derive source/jobId from `key` when only `key` is overridden — keeps
+  // existing tests stable after BL-13 (auto-dedup at runPre start) since
+  // multiple rows with the same canonical (source, jobId) would otherwise
+  // collapse into a single "duplicate group" before any test assertion runs.
+  let source = overrides.source;
+  let jobId = overrides.jobId;
+  if (overrides.key && (!source || !jobId)) {
+    const m = String(overrides.key).match(/^([^:]+):(.+)$/);
+    if (m) {
+      if (!source) source = m[1];
+      if (!jobId) jobId = m[2];
+    }
+  }
   return {
     key: overrides.key || "greenhouse:1001",
-    source: overrides.source || "greenhouse",
-    jobId: overrides.jobId || "1001",
+    source: source || "greenhouse",
+    jobId: jobId || "1001",
     companyName: overrides.companyName || "Stripe",
     title: overrides.title || "Senior Product Manager",
     url: overrides.url || "https://boards.greenhouse.io/stripe/jobs/1001",
@@ -2322,4 +2336,294 @@ test("prepare --phase pre topup (BL-9 Step 5): writes inboxExhausted to stats", 
   const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
   assert.equal(result.batch.length, 3);
   assert.equal(result.stats.inboxExhausted, true);
+});
+
+// --- BL-13: auto-dedup at prepare --phase pre --------------------------------
+
+function makeDedupDeps(savedRowsRef, opts = {}) {
+  const writes = { backups: [], saved: [], copied: false };
+  return {
+    now: () => "2026-05-06T10:00:00.000Z",
+    fileExists: () => opts.tsvExists !== false,
+    copyFileSync: (src, dst) => {
+      writes.copied = true;
+      writes.backups.push({ src, dst });
+    },
+    saveApplications: (p, rows) => {
+      writes.saved.push({ path: p, rows });
+      savedRowsRef.value = rows;
+    },
+    _writes: writes,
+  };
+}
+
+function makeDedupCtx(overrides = {}) {
+  const lines = [];
+  const errLines = [];
+  return {
+    stdout: (s) => lines.push(s),
+    stderr: (s) => errLines.push(s),
+    flags: { dryRun: false, ...overrides.flags },
+    _lines: lines,
+    _errLines: errLines,
+  };
+}
+
+test("runAutoDedup: silent when no duplicates exist", () => {
+  const apps = [makeApp({ key: "gh:1" }), makeApp({ key: "gh:2" })];
+  const saved = { value: null };
+  const deps = makeDedupDeps(saved);
+  const ctx = makeDedupCtx();
+  const out = runAutoDedup(apps, "/tmp/applications.tsv", ctx, deps);
+  assert.equal(out, apps); // returns input unchanged
+  assert.equal(ctx._lines.length, 0);
+  assert.equal(ctx._errLines.length, 0);
+  assert.equal(deps._writes.saved.length, 0);
+  assert.equal(deps._writes.copied, false);
+});
+
+test("runAutoDedup: collapses non-suspicious duplicates with backup + explicit found+fixed message", () => {
+  // Two rows with the same canonical key (lever:abc ↔ lever:lever:abc) but
+  // identical company + url → safe to auto-collapse.
+  const winner = makeApp({
+    key: "lever:abc",
+    source: "lever",
+    jobId: "abc",
+    companyName: "Stripe",
+    url: "https://jobs.lever.co/stripe/abc",
+    status: "Applied",
+    notion_page_id: "n1",
+  });
+  const loser = makeApp({
+    key: "lever:lever:abc",
+    source: "lever",
+    jobId: "lever:abc",
+    companyName: "Stripe",
+    url: "https://jobs.lever.co/stripe/abc",
+    status: "Inbox",
+    notion_page_id: "",
+  });
+  const apps = [winner, loser];
+  const saved = { value: null };
+  const deps = makeDedupDeps(saved);
+  const ctx = makeDedupCtx();
+  const out = runAutoDedup(apps, "/tmp/p/applications.tsv", ctx, deps);
+
+  // 1. Returns the deduped list, not the original.
+  assert.equal(out.length, 1);
+  assert.equal(out[0].key, "lever:abc");
+
+  // 2. Backup was taken from the original TSV path, suffixed with timestamp.
+  assert.equal(deps._writes.copied, true);
+  assert.equal(deps._writes.backups[0].src, "/tmp/p/applications.tsv");
+  assert.match(
+    deps._writes.backups[0].dst,
+    /\/tmp\/p\/applications\.tsv\.pre-dedup-2026-05-06T10-00-00-000Z$/
+  );
+
+  // 3. Saved the deduped rows to the same path.
+  assert.equal(deps._writes.saved.length, 1);
+  assert.equal(deps._writes.saved[0].path, "/tmp/p/applications.tsv");
+  assert.equal(deps._writes.saved[0].rows.length, 1);
+
+  // 4. Stdout explicitly mentions BOTH detection AND fix.
+  const line = ctx._lines.join("\n");
+  assert.match(line, /found 1 duplicate group\(s\)/);
+  assert.match(line, /auto-collapsed/);
+  assert.match(line, /kept 1 row\(s\)/);
+  assert.match(line, /removed 1 row\(s\)/);
+  assert.match(line, /backup: applications\.tsv\.pre-dedup-/);
+});
+
+test("runAutoDedup: suspicious groups stay untouched + stderr warning", () => {
+  // Same canonical key but different company → suspicious. Engine must NOT
+  // collapse — could be data corruption or an ATS recycling an id.
+  const a = makeApp({
+    key: "lever:xyz",
+    source: "lever",
+    jobId: "xyz",
+    companyName: "Stripe",
+    url: "https://jobs.lever.co/stripe/xyz",
+  });
+  const b = makeApp({
+    key: "lever:lever:xyz",
+    source: "lever",
+    jobId: "lever:xyz",
+    companyName: "Different Company",
+    url: "https://jobs.lever.co/other/xyz",
+  });
+  const apps = [a, b];
+  const saved = { value: null };
+  const deps = makeDedupDeps(saved);
+  const ctx = makeDedupCtx();
+  const out = runAutoDedup(apps, "/tmp/p/applications.tsv", ctx, deps);
+
+  // No write — suspicious is never auto-collapsed.
+  assert.equal(deps._writes.saved.length, 0);
+  assert.equal(deps._writes.copied, false);
+  // Both rows passed through.
+  assert.equal(out.length, 2);
+  // stderr warning surfaces the count + manual review.
+  const err = ctx._errLines.join("\n");
+  assert.match(err, /1 suspicious group/);
+  assert.match(err, /manual review required/);
+});
+
+test("runAutoDedup: dry-run plans without writing", () => {
+  const winner = makeApp({
+    key: "lever:abc",
+    source: "lever",
+    jobId: "abc",
+    companyName: "Stripe",
+    url: "https://jobs.lever.co/stripe/abc",
+    status: "Applied",
+    notion_page_id: "n1",
+  });
+  const loser = makeApp({
+    key: "lever:lever:abc",
+    source: "lever",
+    jobId: "lever:abc",
+    companyName: "Stripe",
+    url: "https://jobs.lever.co/stripe/abc",
+    status: "Inbox",
+  });
+  const apps = [winner, loser];
+  const saved = { value: null };
+  const deps = makeDedupDeps(saved);
+  const ctx = makeDedupCtx({ flags: { dryRun: true } });
+  const out = runAutoDedup(apps, "/tmp/p/applications.tsv", ctx, deps);
+
+  // Dry-run returns the *original* apps unchanged so downstream reflects
+  // exactly what the user would see if --apply were re-run.
+  assert.equal(out.length, 2);
+  assert.equal(deps._writes.saved.length, 0);
+  assert.equal(deps._writes.copied, false);
+  // Stdout still announces what WOULD happen.
+  const line = ctx._lines.join("\n");
+  assert.match(line, /would auto-collapse 1 duplicate group/);
+  assert.match(line, /dry-run, no write/);
+});
+
+test("runAutoDedup: backup is skipped when applications.tsv does not yet exist", () => {
+  const winner = makeApp({
+    key: "lever:abc",
+    source: "lever",
+    jobId: "abc",
+    companyName: "Stripe",
+    url: "https://jobs.lever.co/stripe/abc",
+  });
+  const loser = makeApp({
+    key: "lever:lever:abc",
+    source: "lever",
+    jobId: "lever:abc",
+    companyName: "Stripe",
+    url: "https://jobs.lever.co/stripe/abc",
+  });
+  const apps = [winner, loser];
+  const saved = { value: null };
+  const deps = makeDedupDeps(saved, { tsvExists: false });
+  const ctx = makeDedupCtx();
+  runAutoDedup(apps, "/tmp/p/applications.tsv", ctx, deps);
+
+  assert.equal(deps._writes.copied, false);
+  // …but still writes the deduped rows.
+  assert.equal(deps._writes.saved.length, 1);
+});
+
+test("prepare --phase pre: auto-dedups before filtering (BL-13 end-to-end)", async () => {
+  // TSV contains a legacy-prefix collision plus one fresh Inbox row. After
+  // BL-13 the duplicate group collapses to one row, then the fresh row goes
+  // through URL-check + ends up in the batch as expected. Without BL-13 the
+  // batch would carry two rows (one of them stale).
+  const apps = [
+    makeApp({
+      key: "lever:abc",
+      source: "lever",
+      jobId: "abc",
+      companyName: "Stripe",
+      url: "https://jobs.lever.co/stripe/abc",
+      status: "Inbox",
+      notion_page_id: "",
+    }),
+    makeApp({
+      key: "lever:lever:abc",
+      source: "lever",
+      jobId: "lever:abc",
+      companyName: "Stripe",
+      url: "https://jobs.lever.co/stripe/abc",
+      status: "Inbox",
+      notion_page_id: "",
+    }),
+    makeApp({
+      key: "gh:42",
+      source: "greenhouse",
+      jobId: "42",
+      companyName: "Stripe",
+      url: "https://boards.greenhouse.io/stripe/jobs/42",
+      status: "Inbox",
+      notion_page_id: "",
+    }),
+  ];
+  const savedRows = [];
+  const deps = makePrepDeps(apps, {
+    saveApplications: (_p, rows) => savedRows.push(rows),
+    fileExists: () => true,
+    copyFileSync: () => {},
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+
+  // 1. saveApplications was called once (the dedup write) — runPre itself
+  //    doesn't write TSV in pre phase.
+  assert.equal(savedRows.length, 1);
+  // After collapse: 2 rows remain (one canonical lever + one greenhouse).
+  assert.equal(savedRows[0].length, 2);
+
+  // 2. Stdout carries the explicit found+fixed message.
+  const line = ctx._lines.join("\n");
+  assert.match(line, /found 1 duplicate group\(s\) in TSV/);
+  assert.match(line, /auto-collapsed/);
+
+  // 3. Batch carries 2 unique entries (canonical lever + greenhouse).
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 2);
+  const keys = result.batch.map((b) => b.key).sort();
+  assert.deepEqual(keys, ["gh:42", "lever:abc"]);
+});
+
+test("prepare --phase pre --dry-run: detects duplicates but does NOT write TSV (BL-13)", async () => {
+  const apps = [
+    makeApp({
+      key: "lever:abc",
+      source: "lever",
+      jobId: "abc",
+      companyName: "Stripe",
+      url: "https://jobs.lever.co/stripe/abc",
+      status: "Inbox",
+    }),
+    makeApp({
+      key: "lever:lever:abc",
+      source: "lever",
+      jobId: "lever:abc",
+      companyName: "Stripe",
+      url: "https://jobs.lever.co/stripe/abc",
+      status: "Inbox",
+    }),
+  ];
+  const savedRows = [];
+  const deps = makePrepDeps(apps, {
+    saveApplications: (_p, rows) => savedRows.push(rows),
+    fileExists: () => true,
+    copyFileSync: () => {},
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { dryRun: true, phase: "pre", batch: 30 } });
+  await cmd(ctx);
+
+  // Read-only: no TSV write, no prepare_context write.
+  assert.equal(savedRows.length, 0);
+  const line = ctx._lines.join("\n");
+  assert.match(line, /would auto-collapse 1 duplicate group/);
+  assert.match(line, /dry-run/);
 });

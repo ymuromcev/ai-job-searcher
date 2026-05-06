@@ -288,3 +288,65 @@ test("appendNew fuzzy-dedup does not over-match when company or title is missing
   assert.equal(r.fresh.length, 1);
   assert.equal(r.fuzzyDuplicates.length, 0);
 });
+
+// BL-12 (2026-05-06): makeKey strips ATS prefixes recursively so the legacy
+// `lever:abc` ↔ `lever:lever:abc` collision can never land in TSV. Without
+// this, a discovery-time prefix-migration bug or a re-scan against a partially
+// migrated jobs.tsv could insert the same posting twice — once under the
+// "raw" key and once under the doubly-prefixed key — and the only way to fix
+// it was a manual `validate --dedup --apply`.
+test("makeKey is idempotent against doubled ATS prefix (lever:abc vs lever:lever:abc)", () => {
+  const k1 = apps.makeKey("lever", "abc");
+  const k2 = apps.makeKey("lever", "lever:abc");
+  const k3 = apps.makeKey("lever", "lever:lever:abc");
+  assert.equal(k1, "lever:abc");
+  assert.equal(k2, "lever:abc");
+  assert.equal(k3, "lever:abc");
+});
+
+test("makeKey strips gh and ashby prefixes too (recognized ATS shortnames)", () => {
+  assert.equal(apps.makeKey("greenhouse", "gh:42"), "greenhouse:42");
+  assert.equal(apps.makeKey("ashby", "ashby:xyz-123"), "ashby:xyz-123");
+});
+
+test("makeKey preserves case of the surviving jobId (workday REQ-9991)", () => {
+  // workday IDs are case-sensitive in the source ATS — must round-trip.
+  assert.equal(apps.makeKey("workday", "REQ-9991"), "workday:REQ-9991");
+  assert.equal(apps.makeKey("workday", "workday:REQ-9991"), "workday:REQ-9991");
+  assert.equal(apps.makeKey("usajobs", "12345678"), "usajobs:12345678");
+});
+
+test("appendNew dedups when adapter returns the same id with and without prefix", () => {
+  // Existing row was inserted under the canonical (stripped) key.
+  const existing = [
+    {
+      key: "lever:abc",
+      source: "lever",
+      jobId: "abc",
+      companyName: "Stripe",
+      title: "PM",
+      url: "https://jobs.lever.co/stripe/abc",
+      status: "Applied",
+      notion_page_id: "n1",
+      resume_ver: "",
+      cl_key: "",
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-02",
+    },
+  ];
+  // Same posting, but the discovery adapter handed back the prefixed jobId.
+  // Without BL-12 this would insert a "lever:lever:abc" duplicate row.
+  const incoming = [
+    {
+      source: "lever",
+      jobId: "lever:abc",
+      companyName: "Stripe",
+      title: "PM",
+      url: "https://jobs.lever.co/stripe/abc",
+      locations: ["Remote"],
+    },
+  ];
+  const r = apps.appendNew(existing, incoming, { now: "2026-04-20T00:00:00Z" });
+  assert.equal(r.fresh.length, 0, "prefixed jobId must collapse onto the canonical key");
+  assert.equal(r.apps.length, 1);
+});

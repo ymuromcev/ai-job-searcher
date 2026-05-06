@@ -46,6 +46,21 @@ const path = require("path");
 
 const { fuzzyKey } = require("./dedup.js");
 
+// BL-12 (2026-05-06): peel ATS prefixes from a jobId, preserving the case of
+// the remainder. Mirrors the prefix list in `engine/core/dedup.js` /
+// `tsv_dedup.js` (gh / ashby / lever / workday / smart / sr) but does NOT
+// lowercase the surviving id — workday IDs like `REQ-9991` are case-sensitive
+// in the source ATS and must round-trip unchanged.
+const ATS_PREFIX_RE = /^(gh|ashby|lever|workday|smart|sr):(.+)$/i;
+function stripAtsPrefixes(id) {
+  let prev = String(id || "").trim();
+  while (true) {
+    const m = prev.match(ATS_PREFIX_RE);
+    if (!m) return prev;
+    prev = m[2];
+  }
+}
+
 const HEADER = [
   "key",
   "source",
@@ -126,8 +141,14 @@ function escapeField(v) {
   return String(v).replace(/[\t\r\n]/g, " ");
 }
 
+// BL-12 (2026-05-06): idempotent — strip any leading ATS prefixes from `jobId`
+// before joining. Catches the legacy-prefix collision `lever:abc` ↔
+// `lever:lever:abc` at write time so it never lands in TSV in the first place
+// (was previously detectable only post-hoc via `validate --dedup`). Case of
+// the surviving id is preserved so workday IDs like `REQ-9991` round-trip
+// unchanged — only the recognized ATS prefix is consumed.
 function makeKey(source, jobId) {
-  return `${String(source).toLowerCase()}:${jobId}`;
+  return `${String(source).toLowerCase()}:${stripAtsPrefixes(jobId)}`;
 }
 
 function rowFor(app) {

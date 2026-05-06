@@ -41,6 +41,7 @@ const { defaultFetch } = require("../modules/discovery/_http.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 const { slugifyCompany } = require("../core/company_slug.js");
 const { generateCoverLetterPdf } = require("../modules/generators/cover_letter_pdf.js");
+const { planDedup } = require("../core/tsv_dedup.js");
 
 // Active statuses that count toward the company cap. "To Apply" is included
 // because every triaged-and-prepared row is committed to be applied —
@@ -422,10 +423,70 @@ function makeDefaultDeps() {
     },
     fileExists: (p) => fs.existsSync(p),
     mkdirp: (dir) => fs.mkdirSync(dir, { recursive: true }),
+    copyFileSync: (src, dst) => fs.copyFileSync(src, dst),
     generateCoverLetterPdf,
     slugifyCompany,
     now: () => new Date().toISOString(),
   };
+}
+
+// BL-13 (2026-05-06): auto-dedup TSV at the start of `prepare --phase pre`.
+// Code-first: the user never reaches for `validate --dedup --apply` to clean
+// up legacy-prefix collisions or BL-12-era residue — the engine collapses
+// non-suspicious duplicate groups (with a backup) before any other prepare
+// work runs. Suspicious groups (rows whose company or url path disagree on
+// the same canonical key) are NEVER auto-collapsed; they're surfaced as a
+// stderr warning so the user can review manually.
+//
+//   apps              — array of apps loaded from applications.tsv
+//   applicationsPath  — path to applications.tsv (for backup + save)
+//   ctx               — { stdout, stderr, flags } (flags.dryRun gates writes)
+//   deps              — { now, copyFileSync, saveApplications, fileExists }
+// Returns the (possibly mutated) apps list. When pairs > 0 and --dry-run is
+// set, returns the original apps unchanged but prints what WOULD happen.
+function runAutoDedup(apps, applicationsPath, ctx, deps) {
+  const plan = planDedup(apps);
+  const dryRun = !!ctx.flags && ctx.flags.dryRun;
+
+  if (plan.pairs === 0 && plan.suspicious.length === 0) {
+    return apps; // silent: no duplicates, no work
+  }
+
+  if (plan.pairs > 0) {
+    const removed = plan.dropped.length;
+    const kept = plan.kept.length;
+    if (dryRun) {
+      ctx.stdout(
+        `dedup: would auto-collapse ${plan.pairs} duplicate group(s) — ` +
+        `would keep ${kept} row(s), would remove ${removed} row(s) (dry-run, no write)`
+      );
+    } else {
+      const stamp = String(deps.now()).replace(/[:.]/g, "-");
+      const backupPath = `${applicationsPath}.pre-dedup-${stamp}`;
+      if (deps.fileExists(applicationsPath)) {
+        deps.copyFileSync(applicationsPath, backupPath);
+      }
+      deps.saveApplications(applicationsPath, plan.kept);
+      ctx.stdout(
+        `dedup: found ${plan.pairs} duplicate group(s) in TSV — ` +
+        `auto-collapsed, kept ${kept} row(s), removed ${removed} row(s) ` +
+        `(backup: ${path.basename(backupPath)})`
+      );
+    }
+  }
+
+  if (plan.suspicious.length > 0) {
+    ctx.stderr(
+      `dedup: ${plan.suspicious.length} suspicious group(s) NOT auto-collapsed ` +
+      `(rows disagree on company or url) — manual review required, ` +
+      `run \`validate --dedup\` for details`
+    );
+  }
+
+  // After collapse, the rest of runPre uses the deduped apps. On dry-run we
+  // return the original apps so downstream filtering matches what the actual
+  // pre-phase would see if --apply were given.
+  return dryRun ? apps : plan.kept;
 }
 
 const VALID_TIERS = new Set(["S", "A", "B", "C"]);
@@ -446,7 +507,13 @@ async function runPre(ctx, deps) {
   const filterRules = { ...(profile.filterRules || {}), geo: profile.geo };
 
   const applicationsPath = profile.paths.applicationsTsv;
-  const { apps } = deps.loadApplications(applicationsPath);
+  const loaded = deps.loadApplications(applicationsPath);
+
+  // BL-13: collapse non-suspicious duplicate groups before any filtering.
+  // Silent when there's nothing to do; emits an explicit "found N + collapsed
+  // M, removed K (backup: …)" line otherwise so the user sees in Claude's
+  // final report that the engine touched the TSV.
+  const apps = runAutoDedup(loaded.apps, applicationsPath, ctx, deps);
 
   // RFC 014 (2026-05-04): "Fresh / not triaged" = status "Inbox" (TSV-only).
   // After commit, the row transitions to "To Apply" (decision=to_apply) or
@@ -1499,3 +1566,4 @@ module.exports.buildActiveCounts = buildActiveCounts;
 module.exports.fillUpAliveBatch = fillUpAliveBatch;
 module.exports.computeInboxExhausted = computeInboxExhausted;
 module.exports.isFreshInboxApp = isFreshInboxApp;
+module.exports.runAutoDedup = runAutoDedup;

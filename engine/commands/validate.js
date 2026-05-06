@@ -321,6 +321,31 @@ function makeValidateCommand(overrides = {}) {
       issues += 1;
       appsResult = { apps: [] };
     }
+
+    // BL-13 (2026-05-06): read-only dedup detect. We do NOT collapse here —
+    // `prepare --phase pre` auto-collapses non-suspicious groups on its next
+    // run, so this is purely an advisory so the user knows the engine sees
+    // duplicates. Suspicious groups are surfaced too; they're never auto-
+    // collapsed and need manual review via `validate --dedup`.
+    if (appsResult.apps.length > 0) {
+      const dedupPlan = planDedup(appsResult.apps);
+      if (dedupPlan.pairs > 0) {
+        stdout(
+          `tsv_dedup: ${dedupPlan.pairs} duplicate group(s) detected ` +
+          `(will be auto-collapsed on the next \`prepare --phase pre\` run)`
+        );
+      }
+      if (dedupPlan.suspicious.length > 0) {
+        ctx.stderr(
+          `tsv_dedup: ${dedupPlan.suspicious.length} suspicious group(s) ` +
+          `(rows disagree on company or url) — manual review required, ` +
+          `run \`validate --dedup\` for details`
+        );
+      }
+      if (dedupPlan.pairs === 0 && dedupPlan.suspicious.length === 0) {
+        stdout(`tsv_dedup: ok (no duplicates)`);
+      }
+    }
     try {
       jobsResult = deps.loadJobs(path.join(dataDir, "jobs.tsv"));
       stdout(`jobs.tsv: ${jobsResult.jobs.length} rows, ok`);
