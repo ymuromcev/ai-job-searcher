@@ -109,3 +109,43 @@ skill: `~/.claude/skills/dev-workflow/SKILL.md`. Trigger via
 `/dev-workflow` or by mentioning a new feature / refactor / migration.
 
 For the documentation map see [docs/README.md](docs/README.md).
+
+---
+
+## Backlog (private/, gitignored)
+
+**Source of truth: `private/backlog/*.md`** — one file per task, with
+frontmatter (`id`, `title`, `status`, `priority`, `tier`, `created`,
+`refs`, `tags`, optional `closed`, `blocked_by`). Body = `## Context`,
+`## Plan`, `## Notes`.
+
+**Hub: `private/backlog.base`** — Obsidian Bases file with 4 table views
+(Active / Blocked / Archived / All) + a Cards view. The first column
+**Open** is `file.name` — click to open the task. Other columns are
+frontmatter fields, editable inline by double-click.
+
+**Add a new task** (operator):
+1. Open `private/backlog.base` in Obsidian → click `+ New` (top right).
+2. Fill cells: Title, Priority (P0–P3), Tier (XS/M/L), Tags.
+3. Status defaults to `planned`. Save (`Cmd-S`).
+4. The new file appears under `private/backlog/` — Claude can read it
+   immediately.
+
+**Work a task** (Claude):
+1. Read `private/backlog/<id>.md` for full context.
+2. Update frontmatter as work progresses:
+   - `planned → in_progress` when starting
+   - add `blocked_by: <reason>` + `status: blocked` if waiting
+   - `status: done` + `closed: YYYY-MM-DD` when finished
+3. Append progress notes to `## Notes` section.
+4. Don't delete archived tasks — they're history.
+
+**Title doubles as summary** — keep it short and self-explanatory; the
+operator scans the table by Title alone.
+
+**Template:** `private/backlog/_template.md` (excluded from views via
+`file.name != "_template"`). Copy when starting from outside Bases.
+
+**Original wall-of-text source archived** at
+`private/audit-internal/BACKLOG-source-2026-05-05.md` (kept verbatim,
+not maintained — only for recovering content lost in the migration).
