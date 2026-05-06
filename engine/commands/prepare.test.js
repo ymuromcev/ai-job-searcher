@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   makePrepareCommand,
   applyPrepareFilter,
+  filterAlreadyEvaluated,
   buildActiveCounts,
 } = require("./prepare.js");
 
@@ -23,6 +24,9 @@ function makeApp(overrides = {}) {
     cl_key: overrides.cl_key || "",
     createdAt: overrides.createdAt || "2026-04-20T00:00:00.000Z",
     updatedAt: overrides.updatedAt || "2026-04-20T00:00:00.000Z",
+    // Pass arbitrary extras (fit_score, skip_reason, location, etc.) through
+    // — the helper enumerated only a v1 subset before BL-9.
+    ...overrides,
   };
 }
 
@@ -218,6 +222,56 @@ test("applyPrepareFilter: title_requirelist slash-compound — PM part passes wh
   assert.equal(skipped.length, 0);
 });
 
+// --- filterAlreadyEvaluated (BL-9, TSV v4) -----------------------------------
+
+test("filterAlreadyEvaluated: drops fit_score=Weak rows with reason already_evaluated_weak", () => {
+  const apps = [
+    makeApp({ key: "gh:1", fit_score: "Strong" }),
+    makeApp({ key: "gh:2", fit_score: "Medium" }),
+    makeApp({ key: "gh:3", fit_score: "Weak" }),
+    makeApp({ key: "gh:4" }), // never evaluated → empty
+  ];
+  const { passed, skipped } = filterAlreadyEvaluated(apps);
+  assert.equal(passed.length, 3);
+  assert.deepEqual(passed.map((a) => a.key), ["gh:1", "gh:2", "gh:4"]);
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].key, "gh:3");
+  assert.equal(skipped[0].reason, "already_evaluated_weak");
+});
+
+test("filterAlreadyEvaluated: drops skip_reason=weak_fit (legacy alias for fit_score=Weak)", () => {
+  // SKILL writes both fit_score=Weak AND skip_reason=weak_fit; either signal
+  // alone must produce the same skip outcome (defensive against partial writes).
+  const apps = [
+    makeApp({ key: "gh:1", fit_score: "", skip_reason: "weak_fit" }),
+  ];
+  const { passed, skipped } = filterAlreadyEvaluated(apps);
+  assert.equal(passed.length, 0);
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].reason, "already_evaluated_weak");
+});
+
+test("filterAlreadyEvaluated: drops skip_reason=duplicate with reason already_evaluated_duplicate", () => {
+  const apps = [
+    makeApp({ key: "gh:1", skip_reason: "duplicate" }),
+    makeApp({ key: "gh:2" }),
+  ];
+  const { passed, skipped } = filterAlreadyEvaluated(apps);
+  assert.equal(passed.length, 1);
+  assert.equal(passed[0].key, "gh:2");
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].reason, "already_evaluated_duplicate");
+});
+
+test("filterAlreadyEvaluated: empty fit fields → all pass through unchanged", () => {
+  // Pre-v4 rows (or fresh post-scan rows that never reached the SKILL)
+  // must traverse the filter as a no-op.
+  const apps = [makeApp({ key: "gh:1" }), makeApp({ key: "gh:2" })];
+  const { passed, skipped } = filterAlreadyEvaluated(apps);
+  assert.equal(passed.length, 2);
+  assert.equal(skipped.length, 0);
+});
+
 // --- prepare --phase pre (unit) ----------------------------------------------
 
 function makePrepDeps(apps, overrides = {}) {
@@ -295,6 +349,42 @@ test("prepare --phase pre: only picks fresh apps (status='To Apply' AND no notio
   assert.equal(written.stats.inboxTotal, 1);
   assert.equal(written.batch.length, 1);
   assert.equal(written.batch[0].key, "gh:2");
+});
+
+test("prepare --phase pre (BL-9): already-evaluated rows skip URL-check and do not enter batch", async () => {
+  // Three Inbox rows — one Weak (already evaluated), one duplicate, one fresh.
+  // Only the fresh row should reach checkUrls and the resulting batch.
+  const apps = [
+    makeApp({ key: "gh:1", fit_score: "Weak", skip_reason: "weak_fit" }),
+    makeApp({ key: "gh:2", skip_reason: "duplicate" }),
+    makeApp({ key: "gh:3" }), // fresh
+  ];
+  const checkedKeys = [];
+  const deps = makePrepDeps(apps, {
+    checkUrls: async (rows) => {
+      for (const r of rows) checkedKeys.push(r.key);
+      return rows.map((r) => makeAliveUrl(r));
+    },
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+
+  // Engine never URL-checks already-evaluated rows.
+  assert.deepEqual(checkedKeys, ["gh:3"]);
+  // Batch carries only the fresh row.
+  assert.equal(result.batch.length, 1);
+  assert.equal(result.batch[0].key, "gh:3");
+  // Both already-evaluated rows show up in skipped[] with distinct reasons.
+  const reasons = result.skipped.map((s) => s.reason).sort();
+  assert.deepEqual(
+    reasons,
+    ["already_evaluated_duplicate", "already_evaluated_weak"]
+  );
+  assert.equal(result.stats.alreadyEvaluated, 2);
+  assert.equal(result.stats.skipReasons.already_evaluated_weak, 1);
+  assert.equal(result.stats.skipReasons.already_evaluated_duplicate, 1);
 });
 
 test("prepare --phase pre: dead URLs go to skipped, NOT batch (G-12: alive-only batch)", async () => {

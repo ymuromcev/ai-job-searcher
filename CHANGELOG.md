@@ -9,6 +9,7 @@ All notable changes to this project are documented here. The format is based on 
 ### Changed
 
 - **`applications.tsv` schema v3 → v4** (BL-9, 2026-05-05). Added four columns to persist Claude's fit verdict per row: `fit_score` (`Strong` / `Medium` / `Weak`), `fit_rationale`, `fit_evaluated_at`, `skip_reason` (SKILL-level only: `weak_fit` / `duplicate`). Subsequent `prepare` runs will skip already-evaluated rows instead of re-paying the SKILL cost. Auto-upgrade on read from v1 / v2 / v3 with empty fit columns; writes always emit v4. Engine-level skips (company cap, blocklists, geo) continue to be recomputed each run and are not persisted. See [docs/reference/tsv-schema.md](docs/reference/tsv-schema.md).
+- **`prepare --phase pre` skips already-evaluated rows** (BL-9, 2026-05-05). New filter step runs before `applyPrepareFilter`: rows with `fit_score=Weak` or `skip_reason ∈ {weak_fit, duplicate}` no longer reach URL-check / JD-fetch / SKILL judgement. They appear in `prepare_context.json` `skipped[]` with reasons `already_evaluated_weak` / `already_evaluated_duplicate` and a new `stats.alreadyEvaluated` counter. Dramatically reduces token cost on repeat runs once fit verdicts have been persisted.
 
 ### Added
 

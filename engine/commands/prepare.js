@@ -81,6 +81,37 @@ function buildActiveCounts(apps) {
   return counts;
 }
 
+// BL-9 (TSV schema v4): drop rows the SKILL has already judged in a previous
+// run before they hit `applyPrepareFilter` / URL-check / JD-fetch. Two cases:
+//
+//   * `fit_score === "Weak"` (or legacy `skip_reason === "weak_fit"`)
+//     → Claude already decided this isn't a fit. Re-asking just burns tokens.
+//
+//   * `skip_reason === "duplicate"`
+//     → Claude flagged the row as a SKILL-level dupe (same posting under a
+//       different key, e.g. post-prefix-migration). Engine-level fuzzy dedup
+//       happens at scan; this catches the residue Claude found at SKILL time.
+//
+// Engine-level skips (company_cap / blocklists / geo) are NOT persisted on
+// the row and continue to be recomputed each run by `applyPrepareFilter` —
+// rule changes must take effect immediately. Only SKILL verdicts persist.
+function filterAlreadyEvaluated(apps) {
+  const passed = [];
+  const skipped = [];
+  for (const app of apps) {
+    if (app.fit_score === "Weak" || app.skip_reason === "weak_fit") {
+      skipped.push({ key: app.key, reason: "already_evaluated_weak", url: app.url });
+      continue;
+    }
+    if (app.skip_reason === "duplicate") {
+      skipped.push({ key: app.key, reason: "already_evaluated_duplicate", url: app.url });
+      continue;
+    }
+    passed.push(app);
+  }
+  return { passed, skipped };
+}
+
 function applyPrepareFilter(apps, rules, activeCounts) {
   const companyCap = (rules && rules.company_cap) || {};
   const maxActive =
@@ -245,9 +276,22 @@ async function runPre(ctx, deps) {
   );
   stdout(`fresh-to-prepare: ${inboxApps.length} jobs`);
 
+  // BL-9: pre-filter rows the SKILL has already evaluated in an earlier run.
+  // These never reach URL-check / JD-fetch / SKILL judgement, so we don't
+  // re-pay the token cost on every run.
+  const { passed: notYetEvaluated, skipped: alreadyEvaluatedSkips } =
+    filterAlreadyEvaluated(inboxApps);
+  if (alreadyEvaluatedSkips.length > 0) {
+    stdout(
+      `already-evaluated: ${alreadyEvaluatedSkips.length} skipped (` +
+      `${alreadyEvaluatedSkips.filter((s) => s.reason === "already_evaluated_weak").length} weak, ` +
+      `${alreadyEvaluatedSkips.filter((s) => s.reason === "already_evaluated_duplicate").length} duplicate)`
+    );
+  }
+
   const activeCounts = buildActiveCounts(apps);
   const { passed, skipped: filteredOut } = applyPrepareFilter(
-    inboxApps,
+    notYetEvaluated,
     filterRules,
     activeCounts
   );
@@ -387,7 +431,7 @@ async function runPre(ctx, deps) {
     urlStatus: r.status,
   }));
 
-  const allSkipped = [...filteredOut, ...deadSkipped];
+  const allSkipped = [...alreadyEvaluatedSkips, ...filteredOut, ...deadSkipped];
   // G-12: skip-reason breakdown so the user sees WHY 12 jobs got skipped
   // (company_cap: 5, title_blocklist: 2, url_dead: 1, …) instead of just
   // a total count.
@@ -418,6 +462,7 @@ async function runPre(ctx, deps) {
     unknownTierCompanies,
     stats: {
       inboxTotal: inboxApps.length,
+      alreadyEvaluated: alreadyEvaluatedSkips.length,
       afterFilter: passed.length,
       inBatch: batchOut.length,
       urlChecked: allUrlResults.length,
@@ -679,4 +724,5 @@ function makePrepareCommand(overrides = {}) {
 module.exports = makePrepareCommand();
 module.exports.makePrepareCommand = makePrepareCommand;
 module.exports.applyPrepareFilter = applyPrepareFilter;
+module.exports.filterAlreadyEvaluated = filterAlreadyEvaluated;
 module.exports.buildActiveCounts = buildActiveCounts;
