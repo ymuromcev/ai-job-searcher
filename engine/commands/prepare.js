@@ -219,6 +219,138 @@ function applyPrepareFilter(apps, rules, activeCounts) {
   return { passed, skipped };
 }
 
+// --- Shared helpers (used by both fresh and topup modes) --------------------
+
+// G-12 fill-up loop: consume `passed` in chunks, URL-check each, stop when we
+// have `target` alive entries (or the pool is exhausted). Returns the alive
+// results (capped at target), all URL-check results in chunk order
+// (alive+dead, unbounded — caller may exclude beyond-target alive overshoot),
+// and how many input rows were consumed from `passed`.
+//
+// BL-9 Step 4: extracted from runPre so runPreTopup can re-use the same
+// invariants (chunked URL-checks, alive-only target, dead reporting). Caller
+// constructs the batch entries from `aliveResults`; `passed[consumed:]` is
+// the remaining queue.
+async function fillUpAliveBatch(passed, target, deps) {
+  const aliveResults = [];
+  const allUrlResults = [];
+  let consumed = 0;
+  while (aliveResults.length < target && consumed < passed.length) {
+    const remaining = target - aliveResults.length;
+    // Chunk size: ask for what's still needed, with a small floor so we don't
+    // chip away one-at-a-time on a string of dead URLs.
+    const chunkSize = Math.max(remaining, 5);
+    const chunk = passed.slice(consumed, consumed + chunkSize);
+    consumed += chunk.length;
+    const checked = await deps.checkUrls(
+      chunk.map((a) => ({ ...a, url: a.url })),
+      deps.fetchFn,
+      { concurrency: 12 }
+    );
+    allUrlResults.push(...checked);
+    for (const r of checked) {
+      if (r.alive && aliveResults.length < target) {
+        aliveResults.push(r);
+      }
+    }
+  }
+  return { aliveResults, allUrlResults, consumed };
+}
+
+// Build a single batch entry (the SKILL-facing JSON shape) from a URL-check
+// result + matching JD result + profile context. Mutates `unknownTierSet` to
+// accumulate companies whose tier hasn't been assigned yet (G-11/G-15).
+//
+// BL-9 Step 4: extracted so both fresh and topup modes produce identical
+// entry shape. No behavior change vs the inline block runPre had before.
+function buildBatchEntry(urlRes, jd, profile, deps, companyTiers, salaryOpts, unknownTierSet) {
+  const entry = {
+    key: urlRes.key,
+    source: urlRes.source,
+    jobId: urlRes.jobId,
+    companyName: urlRes.companyName,
+    title: urlRes.title,
+    url: urlRes.url,
+    urlAlive: urlRes.alive,
+    urlStatus: urlRes.status,
+  };
+
+  if (urlRes.boardRoot) entry.urlBoardRoot = true;
+
+  if (jd) {
+    entry.jdStatus = jd.status;
+    if (jd.text) entry.jdText = jd.text;
+  } else {
+    entry.jdStatus = urlRes.alive ? "not_fetched" : "skipped_dead_url";
+  }
+
+  // L-5: extract Schedule + Requirements from JD text. Fields land on the
+  // entry only when extractors return non-null. Profiles whose property_map
+  // doesn't declare schedule/requirements simply ignore these in Step 9
+  // (back-compat: Jared has no Schedule field, his pages stay unchanged).
+  if (entry.jdText) {
+    const extracted = deps.extractFromJd(entry.jdText);
+    if (extracted.schedule) entry.schedule = extracted.schedule;
+    if (extracted.requirements) entry.requirements = extracted.requirements;
+  }
+
+  // L-4 (RFC 013): geo decision. Entries that reach the batch already passed
+  // applyPrepareFilter geo check, so geo_decision is "allowed" by construction.
+  // We still surface the field on every entry so SKILL Step 3 has a
+  // deterministic source-of-truth. matchedBy describes WHY it passed.
+  if (profile.geo) {
+    const locsForGeo = urlRes.location ? [urlRes.location] : [];
+    const geoResult = enforceGeo(locsForGeo, profile.geo);
+    entry.geo_decision = geoResult.ok ? "allowed" : "rejected";
+    if (geoResult.matchedBy) entry.geo_matched_by = geoResult.matchedBy;
+    if (geoResult.reason) entry.geo_reason = geoResult.reason;
+  }
+
+  const tierKnown = Object.prototype.hasOwnProperty.call(
+    companyTiers,
+    String(urlRes.companyName || "")
+  );
+  if (!tierKnown && urlRes.companyName) {
+    entry.unknownTier = true;
+    unknownTierSet.add(urlRes.companyName);
+  }
+
+  const salary = deps.calcSalary(urlRes.companyName, urlRes.title, {
+    companyTiers,
+    ...salaryOpts,
+  });
+  if (salary) entry.salary = salary;
+
+  return entry;
+}
+
+// JD-fetch + index by app key. Wraps fetchJds so callers don't have to
+// re-derive the slug parsing or empty-input branch.
+async function fetchJdsByKey(aliveResults, jdCacheDir, deps) {
+  const jdInputs = aliveResults.map((a) => ({
+    ...a,
+    slug: parseSlugFromUrl(a.source, a.url),
+  }));
+  const jdResults = jdInputs.length > 0
+    ? await deps.fetchJds(jdInputs, jdCacheDir, { fetchFn: deps.fetchFn }, { concurrency: 8 })
+    : [];
+  const jdByAppKey = {};
+  for (let i = 0; i < jdInputs.length; i++) {
+    jdByAppKey[jdInputs[i].key] = jdResults[i];
+  }
+  return jdByAppKey;
+}
+
+// Compute skip-reason breakdown from a flat list of skip records.
+function computeSkipReasons(skipped) {
+  const skipReasons = {};
+  for (const s of skipped) {
+    const reason = s.reason || "unknown";
+    skipReasons[reason] = (skipReasons[reason] || 0) + 1;
+  }
+  return skipReasons;
+}
+
 // --- Deps & defaults ---------------------------------------------------------
 
 function makeDefaultDeps() {
@@ -302,125 +434,43 @@ async function runPre(ctx, deps) {
   // (e.g. 30 → 18 alive). Now we keep pulling from `passed` in chunks until
   // we have batchSize alive entries (or the pool is exhausted). Dead entries
   // from consumed chunks are reported in `skipped` with reason "url_dead";
-  // unconsumed `passed` entries stay queued (status="To Apply", no
-  // notion_page_id), so they reappear next pre run.
+  // BL-9 Step 4: unconsumed `passed` entries are persisted as `deferredQueue`
+  // (array of TSV keys) on the context so a follow-up `--mode topup` run can
+  // pull more without rebuilding the filter pipeline from scratch.
   stdout(`checking URLs (target: ${batchSize} alive)…`);
-  const aliveResults = [];
-  const allUrlResults = [];
-  let consumed = 0;
-  while (aliveResults.length < batchSize && consumed < passed.length) {
-    const remaining = batchSize - aliveResults.length;
-    // Chunk size: ask for what's still needed, with a small floor so we don't
-    // chip away one-at-a-time on a string of dead URLs.
-    const chunkSize = Math.max(remaining, 5);
-    const chunk = passed.slice(consumed, consumed + chunkSize);
-    consumed += chunk.length;
-    const checked = await deps.checkUrls(
-      chunk.map((a) => ({ ...a, url: a.url })),
-      deps.fetchFn,
-      { concurrency: 12 }
-    );
-    allUrlResults.push(...checked);
-    for (const r of checked) {
-      if (r.alive && aliveResults.length < batchSize) {
-        aliveResults.push(r);
-      }
-    }
-  }
-
+  const { aliveResults, allUrlResults, consumed } = await fillUpAliveBatch(
+    passed,
+    batchSize,
+    deps
+  );
   const dead = allUrlResults.filter((r) => !r.alive);
-  // batch is alive-only and capped at batchSize. Anything past batchSize
-  // alive (rare: chunk overshoot) was already excluded above.
-  const urlResults = aliveResults;
   stdout(
     `URLs: checked ${allUrlResults.length}, ${aliveResults.length} alive (target ${batchSize}), ${dead.length} dead, ${passed.length - consumed} deferred`
   );
 
-  // JD fetch for alive URLs only. Enrich each alive row with a `slug` parsed
-  // from the public job URL so the ATS API endpoint is resolvable; map results
-  // back to app keys by index (fetchAll preserves input order) since
-  // jd_cache.fetchJd returns a cache-filename key, not the app composite key.
+  // JD fetch for alive URLs only.
   const companyTiers = (profile.company_tiers) || {};
   // L-1: per-profile salary config (parser + matrix + COL). null when block
   // missing → calcSalary falls back to engine defaults (Jared parity).
   const salaryOpts = profile.salaryConfig || {};
   const jdCacheDir = profile.paths.jdCacheDir;
-  const jdInputs = aliveResults.map((a) => ({ ...a, slug: parseSlugFromUrl(a.source, a.url) }));
-  const jdResults = jdInputs.length > 0
-    ? await deps.fetchJds(jdInputs, jdCacheDir, { fetchFn: deps.fetchFn }, { concurrency: 8 })
-    : [];
-  const jdByAppKey = {};
-  for (let i = 0; i < jdInputs.length; i++) {
-    jdByAppKey[jdInputs[i].key] = jdResults[i];
-  }
+  const jdByAppKey = await fetchJdsByKey(aliveResults, jdCacheDir, deps);
 
   // Assemble batch entries. Track unique companies in batch whose tier is
   // unknown — SKILL Step 5.7 will assign them and pass back via results
   // (G-11/G-15: "Claude должен выставлять тиры самостоятельно").
   const unknownTierSet = new Set();
-  const batchOut = urlResults.map((urlRes) => {
-    const entry = {
-      key: urlRes.key,
-      source: urlRes.source,
-      jobId: urlRes.jobId,
-      companyName: urlRes.companyName,
-      title: urlRes.title,
-      url: urlRes.url,
-      urlAlive: urlRes.alive,
-      urlStatus: urlRes.status,
-    };
-
-    if (urlRes.boardRoot) entry.urlBoardRoot = true;
-
-    const jd = jdByAppKey[urlRes.key];
-    if (jd) {
-      entry.jdStatus = jd.status;
-      if (jd.text) entry.jdText = jd.text;
-    } else {
-      entry.jdStatus = urlRes.alive ? "not_fetched" : "skipped_dead_url";
-    }
-
-    // L-5: extract Schedule + Requirements from JD text. Fields land on the
-    // entry only when extractors return non-null. Profiles whose property_map
-    // doesn't declare schedule/requirements simply ignore these in Step 9
-    // (back-compat: Jared has no Schedule field, his pages stay unchanged).
-    if (entry.jdText) {
-      const extracted = deps.extractFromJd(entry.jdText);
-      if (extracted.schedule) entry.schedule = extracted.schedule;
-      if (extracted.requirements) entry.requirements = extracted.requirements;
-    }
-
-    // L-4 (RFC 013): geo decision. Entries that reach the batch already
-    // passed applyPrepareFilter geo check, so geo_decision is "allowed" by
-    // construction. We still surface the field on every entry so SKILL Step 3
-    // has a deterministic source-of-truth and can drop its WebFetch fallback.
-    // matchedBy describes WHY it passed (e.g. "city:Sacramento" / "remote" /
-    // "unrestricted") — useful for audit + future retro analysis.
-    if (profile.geo) {
-      const locsForGeo = urlRes.location ? [urlRes.location] : [];
-      const geoResult = enforceGeo(locsForGeo, profile.geo);
-      entry.geo_decision = geoResult.ok ? "allowed" : "rejected";
-      if (geoResult.matchedBy) entry.geo_matched_by = geoResult.matchedBy;
-      if (geoResult.reason) entry.geo_reason = geoResult.reason;
-    }
-
-    const tierKnown = Object.prototype.hasOwnProperty.call(
+  const batchOut = aliveResults.map((urlRes) =>
+    buildBatchEntry(
+      urlRes,
+      jdByAppKey[urlRes.key],
+      profile,
+      deps,
       companyTiers,
-      String(urlRes.companyName || "")
-    );
-    if (!tierKnown && urlRes.companyName) {
-      entry.unknownTier = true;
-      unknownTierSet.add(urlRes.companyName);
-    }
-
-    const salary = deps.calcSalary(urlRes.companyName, urlRes.title, {
-      companyTiers,
-      ...salaryOpts,
-    });
-    if (salary) entry.salary = salary;
-
-    return entry;
-  });
+      salaryOpts,
+      unknownTierSet
+    )
+  );
 
   const unknownTierCompanies = [...unknownTierSet].sort();
 
@@ -435,11 +485,13 @@ async function runPre(ctx, deps) {
   // G-12: skip-reason breakdown so the user sees WHY 12 jobs got skipped
   // (company_cap: 5, title_blocklist: 2, url_dead: 1, …) instead of just
   // a total count.
-  const skipReasons = {};
-  for (const s of allSkipped) {
-    const reason = s.reason || "unknown";
-    skipReasons[reason] = (skipReasons[reason] || 0) + 1;
-  }
+  const skipReasons = computeSkipReasons(allSkipped);
+
+  // BL-9 Step 4: unconsumed (deferred) keys persisted on the context so a
+  // follow-up topup run can pull from them without re-running the engine
+  // filter. Topup re-validates each key against TSV (status / fit_score) and
+  // applyPrepareFilter (rules may have changed) before URL-checking.
+  const deferredQueue = passed.slice(consumed).map((a) => a.key);
 
   // L-2: surface profile-level memory so SKILL Step 1 / Humanizer Rules read
   // from prepare_context instead of disk. Missing files come back as null and
@@ -454,11 +506,13 @@ async function runPre(ctx, deps) {
     version: 1,
     profileId,
     generatedAt: deps.now(),
+    mode: "fresh",
     memory,
     salaryConfig: profile.salaryConfig || null,
     batchSize,
     batch: batchOut,
     skipped: allSkipped,
+    deferredQueue,
     unknownTierCompanies,
     stats: {
       inboxTotal: inboxApps.length,
@@ -468,7 +522,7 @@ async function runPre(ctx, deps) {
       urlChecked: allUrlResults.length,
       urlAlive: aliveResults.length,
       urlDead: dead.length,
-      deferred: passed.length - consumed,
+      deferred: deferredQueue.length,
       unknownTierCompanies: unknownTierCompanies.length,
       skipReasons,
     },
@@ -504,6 +558,224 @@ async function runPre(ctx, deps) {
   stdout(`wrote prepare_context.json (${batchOut.length} jobs → ${contextPath})`);
   stdout(
     `next: run the SKILL prepare mode with --profile ${profileId} to generate CLs and push to Notion`
+  );
+  return 0;
+}
+
+// --- Phase: pre, mode topup --------------------------------------------------
+//
+// BL-9 Step 4: two-pass prepare. After a fresh `--phase pre` writes the first
+// `batchSize` jobs to prepare_context.json, the SKILL may judge several of
+// them as Weak / duplicate / archive and the resulting `to_apply` count drops
+// below batch capacity. Instead of waiting for the next scan to refill the
+// queue, the operator can run:
+//
+//     prepare --phase pre --mode topup --need K
+//
+// This pulls K next entries from `context.deferredQueue` (the unconsumed tail
+// from the fresh run), URL-checks + JD-fetches them, builds new batch entries,
+// appends to `context.batch[]`, and rewrites the context file.
+//
+// Re-validation: between fresh and topup the operator may have:
+//   * committed some keys (status moves out of Inbox → drop from queue).
+//   * received a SKILL verdict that flipped earlier rows to Weak (now in
+//     fit_score=Weak → filterAlreadyEvaluated drops them).
+//   * edited filter_rules.json (blocklists tightened → applyPrepareFilter
+//     drops them).
+// Topup re-applies all three checks so the new batch entries are always
+// fresh-by-construction.
+async function runPreTopup(ctx, deps) {
+  const { profileId, flags, stdout, stderr } = ctx;
+  const profilesDir = resolveProfilesDir(ctx, ctx.env || process.env);
+
+  const profile = deps.loadProfile(profileId, { profilesDir });
+  const filterRules = { ...(profile.filterRules || {}), geo: profile.geo };
+  const contextPath = path.join(profile.paths.root, "prepare_context.json");
+
+  // 1) Load existing context.
+  let prev;
+  try {
+    prev = JSON.parse(deps.readFile(contextPath));
+  } catch (err) {
+    stderr(`error: cannot read prepare_context.json at ${contextPath}: ${err.message}`);
+    stderr(`hint: run --mode fresh first (default mode) to create the context file`);
+    return 1;
+  }
+  if (!Array.isArray(prev.batch)) {
+    stderr(`error: prepare_context.json missing 'batch' array`);
+    return 1;
+  }
+  const prevQueue = Array.isArray(prev.deferredQueue) ? prev.deferredQueue : [];
+  const prevSkipped = Array.isArray(prev.skipped) ? prev.skipped : [];
+  const prevBatch = prev.batch;
+  const prevStats = prev.stats || {};
+  const prevUnknownTiers = Array.isArray(prev.unknownTierCompanies)
+    ? prev.unknownTierCompanies
+    : [];
+  const batchSize = Number.isFinite(prev.batchSize) ? prev.batchSize : DEFAULT_BATCH_SIZE;
+
+  // 2) Compute need: explicit flag, else fill the deficit (batchSize - current).
+  const explicitNeed = Number.isFinite(flags.need) && flags.need > 0 ? flags.need : null;
+  const need = explicitNeed != null
+    ? explicitNeed
+    : Math.max(0, batchSize - prevBatch.length);
+  if (need === 0) {
+    stdout(`topup: nothing to add (current batch ${prevBatch.length} already at batchSize ${batchSize})`);
+    stdout(`hint: pass --need <K> to force pulling more entries`);
+    return 0;
+  }
+  stdout(`topup: need ${need} more entries (current batch ${prevBatch.length}, queue ${prevQueue.length})`);
+
+  if (prevQueue.length === 0) {
+    stdout(`topup: deferredQueue is empty — nothing to top up from. Run --mode fresh after a new scan.`);
+    return 0;
+  }
+
+  // 3) Re-load TSV and re-validate queued keys.
+  const applicationsPath = profile.paths.applicationsTsv;
+  const { apps } = deps.loadApplications(applicationsPath);
+  const byKey = Object.fromEntries(apps.map((a) => [a.key, a]));
+  // Drop committed keys (status moved out of Inbox / has notion_page_id).
+  const inBatchKeys = new Set(prevBatch.map((e) => e.key));
+  const liveQueueApps = [];
+  const droppedFromQueue = [];
+  for (const key of prevQueue) {
+    if (inBatchKeys.has(key)) continue; // shouldn't happen, but defensive
+    const app = byKey[key];
+    if (!app) {
+      droppedFromQueue.push({ key, reason: "not_in_tsv" });
+      continue;
+    }
+    const isFresh = app.status === "Inbox" ||
+      (app.status === "To Apply" && !app.notion_page_id);
+    if (!isFresh) {
+      droppedFromQueue.push({ key, reason: "no_longer_fresh", url: app.url });
+      continue;
+    }
+    liveQueueApps.push(app);
+  }
+  if (droppedFromQueue.length > 0) {
+    stdout(`topup: dropped ${droppedFromQueue.length} stale queue entries (committed or removed)`);
+  }
+
+  // 4) filterAlreadyEvaluated (commit may have written new Weak / duplicate verdicts).
+  const { passed: notYetEvaluated, skipped: alreadyEvaluatedSkips } =
+    filterAlreadyEvaluated(liveQueueApps);
+  if (alreadyEvaluatedSkips.length > 0) {
+    stdout(
+      `topup: ${alreadyEvaluatedSkips.length} already-evaluated dropped (` +
+      `${alreadyEvaluatedSkips.filter((s) => s.reason === "already_evaluated_weak").length} weak, ` +
+      `${alreadyEvaluatedSkips.filter((s) => s.reason === "already_evaluated_duplicate").length} duplicate)`
+    );
+  }
+
+  // 5) applyPrepareFilter (rules may have changed; cap counts include the
+  //    fresh batch entries that are now To Apply / about to be).
+  const activeCounts = buildActiveCounts(apps);
+  // Pre-account for prevBatch entries: they're going to become To Apply, so
+  // count them toward the cap. Without this, topup could push past the cap.
+  for (const e of prevBatch) {
+    const co = e.companyName;
+    if (co) activeCounts[co] = (activeCounts[co] || 0) + 1;
+  }
+  const { passed, skipped: filteredOut } = applyPrepareFilter(
+    notYetEvaluated,
+    filterRules,
+    activeCounts
+  );
+  stdout(`topup: after filter ${passed.length} passed, ${filteredOut.length} skipped`);
+
+  // 6) Fill-up loop on the residue.
+  stdout(`topup: checking URLs (target: ${need} alive)…`);
+  const { aliveResults, allUrlResults, consumed } = await fillUpAliveBatch(
+    passed,
+    need,
+    deps
+  );
+  const dead = allUrlResults.filter((r) => !r.alive);
+  stdout(
+    `topup: URLs checked ${allUrlResults.length}, ${aliveResults.length} alive (target ${need}), ${dead.length} dead, ${passed.length - consumed} still queued`
+  );
+
+  // 7) JD fetch + entry construction.
+  const companyTiers = (profile.company_tiers) || {};
+  const salaryOpts = profile.salaryConfig || {};
+  const jdCacheDir = profile.paths.jdCacheDir;
+  const jdByAppKey = await fetchJdsByKey(aliveResults, jdCacheDir, deps);
+
+  const unknownTierSet = new Set(prevUnknownTiers);
+  const newEntries = aliveResults.map((urlRes) =>
+    buildBatchEntry(
+      urlRes,
+      jdByAppKey[urlRes.key],
+      profile,
+      deps,
+      companyTiers,
+      salaryOpts,
+      unknownTierSet
+    )
+  );
+
+  // 8) Build new skip records and rebuild the queue.
+  const deadSkipped = dead.map((r) => ({
+    key: r.key,
+    reason: "url_dead",
+    url: r.url,
+    urlStatus: r.status,
+  }));
+  // Stale queue drops carry their own reasons but are still skips.
+  const newSkipped = [
+    ...alreadyEvaluatedSkips,
+    ...filteredOut,
+    ...deadSkipped,
+    ...droppedFromQueue,
+  ];
+
+  // Remaining queue: apps that were eligible but not URL-checked yet, plus any
+  // alive overshoot that didn't fit into `need` (rare with chunk-floor=5).
+  // We rebuild from `passed.slice(consumed)` — everything still pending — and
+  // exclude keys we just URL-checked.
+  const checkedKeys = new Set(allUrlResults.map((r) => r.key));
+  const stillQueuedKeys = [];
+  for (const a of passed.slice(consumed)) {
+    if (!checkedKeys.has(a.key)) stillQueuedKeys.push(a.key);
+  }
+
+  // 9) Merge into context.
+  const merged = {
+    ...prev,
+    mode: "topup",
+    generatedAt: deps.now(),
+    batch: [...prevBatch, ...newEntries],
+    skipped: [...prevSkipped, ...newSkipped],
+    deferredQueue: stillQueuedKeys,
+    unknownTierCompanies: [...unknownTierSet].sort(),
+    stats: {
+      ...prevStats,
+      alreadyEvaluated: (prevStats.alreadyEvaluated || 0) + alreadyEvaluatedSkips.length,
+      inBatch: prevBatch.length + newEntries.length,
+      urlChecked: (prevStats.urlChecked || 0) + allUrlResults.length,
+      urlAlive: (prevStats.urlAlive || 0) + aliveResults.length,
+      urlDead: (prevStats.urlDead || 0) + dead.length,
+      deferred: stillQueuedKeys.length,
+      unknownTierCompanies: unknownTierSet.size,
+      topupRuns: (prevStats.topupRuns || 0) + 1,
+      skipReasons: computeSkipReasons([...prevSkipped, ...newSkipped]),
+    },
+  };
+
+  if (flags.dryRun) {
+    stdout(`(dry-run) would append ${newEntries.length} entries → batch=${merged.batch.length}`);
+    stdout(`(dry-run) stats: ${JSON.stringify(merged.stats)}`);
+    return 0;
+  }
+
+  deps.writeFile(contextPath, JSON.stringify(merged, null, 2));
+  stdout(
+    `topup: appended ${newEntries.length} entries → batch=${merged.batch.length} (${contextPath})`
+  );
+  stdout(
+    `next: re-run the SKILL prepare mode for the new keys: ${newEntries.map((e) => e.key).join(", ")}`
   );
   return 0;
 }
@@ -777,8 +1049,16 @@ function makePrepareCommand(overrides = {}) {
 
   return async function prepareCommand(ctx) {
     const phase = (ctx.flags && ctx.flags.phase) || "";
+    const mode = (ctx.flags && ctx.flags.mode) || "fresh";
 
-    if (phase === "pre") return runPre(ctx, deps);
+    if (phase === "pre") {
+      if (mode === "topup") return runPreTopup(ctx, deps);
+      if (mode === "fresh" || mode === "") return runPre(ctx, deps);
+      ctx.stderr(
+        `error: unknown --mode "${mode}" (valid: fresh, topup)`
+      );
+      return 1;
+    }
     if (phase === "commit") return runCommit(ctx, deps);
 
     ctx.stderr(
@@ -793,3 +1073,4 @@ module.exports.makePrepareCommand = makePrepareCommand;
 module.exports.applyPrepareFilter = applyPrepareFilter;
 module.exports.filterAlreadyEvaluated = filterAlreadyEvaluated;
 module.exports.buildActiveCounts = buildActiveCounts;
+module.exports.fillUpAliveBatch = fillUpAliveBatch;

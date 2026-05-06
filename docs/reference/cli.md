@@ -115,9 +115,14 @@ Common errors:
 
 ### prepare
 
-Synopsis: `node engine/cli.js prepare --profile <id> --phase <pre|commit> [--batch <n>] [--results-file <path>] [--dry-run]`
+Synopsis: `node engine/cli.js prepare --profile <id> --phase <pre|commit> [--mode <fresh|topup>] [--batch <n>] [--need <k>] [--results-file <path>] [--dry-run]`
 
 Two-phase fresh-row triage. `--phase pre` enriches every fresh row (status `Inbox` or `To Apply` without `notion_page_id`) with URL-liveness, JD fetch, salary calc, and writes `prepare_context.json` for the `job-pipeline` skill to consume. `--phase commit` reads a SKILL-produced results file and applies decisions: `to_apply` flips status to `To Apply`, generates the cover letter, picks resume archetype, pushes the Notion page, and back-fills `notion_page_id` / `salaryMin` / `salaryMax` / `clPath`. `archive` flips status to `Archived`. `skip` is a no-op.
+
+`--phase pre` runs in one of two modes (BL-9 Step 4):
+
+- `--mode fresh` (default) — runs the full filter / URL / JD / salary pipeline, persists the unconsumed (still-eligible) tail as `deferredQueue[]` keys on the context, and rewrites `prepare_context.json`.
+- `--mode topup` — reads the existing `prepare_context.json`, pulls the next `--need K` keys from `deferredQueue`, re-validates them against the current TSV (drops committed / Weak / duplicate rows), URL-checks + JD-fetches, and **appends** new entries to `batch[]`. Use this after a SKILL run where Strong + Medium fell below `batchSize` so the next operator turn picks up where the last one left off without a fresh scan. Default `--need` is `batchSize - currentBatch.length` (the deficit). Errors out if `prepare_context.json` is missing.
 
 Flags:
 
@@ -125,7 +130,9 @@ Flags:
 | --- | --- | --- | --- |
 | `--profile <id>` | string | — | Required. |
 | `--phase <pre\|commit>` | string | — | Required. Anything else exits 1. |
-| `--batch <n>` | int | 30 | Used by `--phase pre`. Target alive rows after URL-check. The pre phase keeps pulling from the filter-passed pool until `--batch` rows are alive or the pool is exhausted. |
+| `--mode <fresh\|topup>` | string | `fresh` | Used by `--phase pre`. `topup` appends to an existing context instead of rewriting it. |
+| `--batch <n>` | int | 30 | Used by `--phase pre --mode fresh`. Target alive rows after URL-check. The pre phase keeps pulling from the filter-passed pool until `--batch` rows are alive or the pool is exhausted. |
+| `--need <k>` | int | deficit | Used by `--phase pre --mode topup`. Number of new alive entries to append. Default fills the deficit (`batchSize - len(currentBatch)`). |
 | `--results-file <path>` | string | — | Required for `--phase commit`. JSON produced by the SKILL. |
 | `--dry-run` | boolean | false | `pre`: skip writing `prepare_context.json`. `commit`: skip TSV write. |
 
@@ -138,6 +145,8 @@ Example:
 
 ```bash
 node engine/cli.js prepare --profile <id> --phase pre --batch 20
+# After SKILL run: 12 strong + medium, 8 short. Top up:
+node engine/cli.js prepare --profile <id> --phase pre --mode topup --need 8
 node engine/cli.js prepare --profile <id> --phase commit --results-file profiles/<id>/.skill-state/results.json
 ```
 

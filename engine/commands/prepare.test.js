@@ -1393,3 +1393,251 @@ test("prepare --phase pre (L-4): no geo block in profile → no geo_decision fie
   assert.equal(result.batch.length, 1);
   assert.equal(result.batch[0].geo_decision, undefined);
 });
+
+// --- BL-9 Step 4: deferredQueue + topup mode ---------------------------------
+
+test("prepare --phase pre fresh (BL-9 Step 4): writes deferredQueue + mode=fresh", async () => {
+  // 10 apps, batchSize=5, all alive. Iter 1: chunk=max(5,5)=5, consumed=5,
+  // 5 alive → aliveResults=5 (target met). deferredQueue = passed.slice(5) =
+  // 5 remaining keys, in order.
+  const apps = Array.from({ length: 10 }, (_, i) =>
+    makeApp({ key: `gh:${i}`, jobId: String(i) })
+  );
+  const deps = makePrepDeps(apps);
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", batch: 5, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 5);
+  assert.equal(result.mode, "fresh");
+  assert.deepEqual(result.deferredQueue, ["gh:5", "gh:6", "gh:7", "gh:8", "gh:9"]);
+  assert.equal(result.stats.deferred, 5);
+});
+
+test("prepare --phase pre topup (BL-9 Step 4): appends new entries to existing batch", async () => {
+  // TSV: 4 fresh apps. Pre-context: 2 in batch (gh:0/1), 2 in queue (gh:2/3).
+  // --need 2. Topup pulls both queue entries → batch grows to 4, queue empties.
+  const apps = [
+    makeApp({ key: "gh:0", jobId: "0" }),
+    makeApp({ key: "gh:1", jobId: "1" }),
+    makeApp({ key: "gh:2", jobId: "2" }),
+    makeApp({ key: "gh:3", jobId: "3" }),
+  ];
+  const prevContext = {
+    version: 1,
+    profileId: "testuser",
+    mode: "fresh",
+    batchSize: 4,
+    batch: [
+      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+      { key: "gh:1", source: "greenhouse", jobId: "1", companyName: "Stripe", title: "PM", url: "https://example.com/1", urlAlive: true, urlStatus: 200 },
+    ],
+    skipped: [],
+    deferredQueue: ["gh:2", "gh:3"],
+    unknownTierCompanies: [],
+    stats: { urlChecked: 2, urlAlive: 2, urlDead: 0, deferred: 2, skipReasons: {} },
+  };
+  const deps = makePrepDeps(apps, {
+    readFile: () => JSON.stringify(prevContext),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "topup", need: 2, batch: 4, dryRun: false } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.mode, "topup");
+  assert.equal(result.batch.length, 4);
+  assert.equal(result.batch[0].key, "gh:0");
+  assert.equal(result.batch[1].key, "gh:1");
+  assert.equal(result.batch[2].key, "gh:2");
+  assert.equal(result.batch[3].key, "gh:3");
+  assert.equal(result.deferredQueue.length, 0);
+  assert.equal(result.stats.topupRuns, 1);
+  // urlChecked is cumulative (2 from fresh + 2 from topup).
+  assert.equal(result.stats.urlChecked, 4);
+  assert.equal(result.stats.inBatch, 4);
+});
+
+test("prepare --phase pre topup (BL-9 Step 4): drops keys that have moved out of Inbox", async () => {
+  // gh:2 has been committed (status=Applied) since the fresh run wrote queue.
+  // Topup must drop it with reason no_longer_fresh.
+  const apps = [
+    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
+    makeApp({ key: "gh:1", status: "To Apply", notion_page_id: "p1" }),
+    makeApp({ key: "gh:2", status: "Applied", notion_page_id: "p2", jobId: "2" }),
+    makeApp({ key: "gh:3", status: "To Apply", notion_page_id: "", jobId: "3" }),
+  ];
+  const prevContext = {
+    version: 1,
+    profileId: "testuser",
+    mode: "fresh",
+    batchSize: 4,
+    batch: [
+      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+      { key: "gh:1", source: "greenhouse", jobId: "1", companyName: "Stripe", title: "PM", url: "https://example.com/1", urlAlive: true, urlStatus: 200 },
+    ],
+    skipped: [],
+    deferredQueue: ["gh:2", "gh:3"],
+    unknownTierCompanies: [],
+    stats: {},
+  };
+  const deps = makePrepDeps(apps, {
+    readFile: () => JSON.stringify(prevContext),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "topup", need: 2, batch: 4, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  // Only gh:3 added. gh:2 is in skipped[] with no_longer_fresh.
+  assert.equal(result.batch.length, 3);
+  assert.equal(result.batch[2].key, "gh:3");
+  const drop = result.skipped.find((s) => s.key === "gh:2");
+  assert.ok(drop);
+  assert.equal(drop.reason, "no_longer_fresh");
+});
+
+test("prepare --phase pre topup (BL-9 Step 4): drops keys whose commit added fit_score=Weak", async () => {
+  // Between fresh and topup, the SKILL committed a Weak verdict on gh:2.
+  // filterAlreadyEvaluated must drop it with already_evaluated_weak.
+  const apps = [
+    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
+    makeApp({ key: "gh:1", status: "To Apply", notion_page_id: "p1" }),
+    makeApp({ key: "gh:2", fit_score: "Weak", skip_reason: "weak_fit", jobId: "2" }),
+    makeApp({ key: "gh:3", jobId: "3" }),
+  ];
+  const prevContext = {
+    version: 1,
+    profileId: "testuser",
+    mode: "fresh",
+    batchSize: 4,
+    batch: [
+      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+      { key: "gh:1", source: "greenhouse", jobId: "1", companyName: "Stripe", title: "PM", url: "https://example.com/1", urlAlive: true, urlStatus: 200 },
+    ],
+    skipped: [],
+    deferredQueue: ["gh:2", "gh:3"],
+    unknownTierCompanies: [],
+    stats: {},
+  };
+  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "topup", need: 2, batch: 4, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 3);
+  assert.equal(result.batch[2].key, "gh:3");
+  const drop = result.skipped.find((s) => s.key === "gh:2");
+  assert.ok(drop);
+  assert.equal(drop.reason, "already_evaluated_weak");
+  assert.equal(result.stats.alreadyEvaluated, 1);
+});
+
+test("prepare --phase pre topup (BL-9 Step 4): empty deferredQueue is a no-op (no write)", async () => {
+  const apps = [makeApp()];
+  const prevContext = {
+    version: 1,
+    profileId: "testuser",
+    mode: "fresh",
+    batchSize: 30,
+    batch: [{ key: "greenhouse:1001", companyName: "Stripe", title: "PM" }],
+    skipped: [],
+    deferredQueue: [],
+    unknownTierCompanies: [],
+    stats: {},
+  };
+  let writeCalls = 0;
+  const deps = makePrepDeps(apps, {
+    readFile: () => JSON.stringify(prevContext),
+    writeFile: () => { writeCalls++; },
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "topup", need: 5, batch: 30, dryRun: false } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+  assert.equal(writeCalls, 0);
+});
+
+test("prepare --phase pre topup (BL-9 Step 4): default --need is batchSize - currentBatch (deficit)", async () => {
+  // batchSize=30, currentBatch=20 → default need=10. Queue has 15 alive.
+  // Topup adds 10, queue becomes 5.
+  const apps = Array.from({ length: 35 }, (_, i) =>
+    makeApp({ key: `gh:${i}`, jobId: String(i) })
+  );
+  const batchEntries = Array.from({ length: 20 }, (_, i) => ({
+    key: `gh:${i}`,
+    source: "greenhouse",
+    jobId: String(i),
+    companyName: "Stripe",
+    title: "PM",
+    url: `https://example.com/${i}`,
+    urlAlive: true,
+    urlStatus: 200,
+  }));
+  const queueKeys = Array.from({ length: 15 }, (_, i) => `gh:${i + 20}`);
+  const prevContext = {
+    version: 1,
+    profileId: "testuser",
+    mode: "fresh",
+    batchSize: 30,
+    batch: batchEntries,
+    skipped: [],
+    deferredQueue: queueKeys,
+    unknownTierCompanies: [],
+    stats: {},
+  };
+  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
+  const cmd = makePrepareCommand(deps);
+  // No --need flag passed → defaults to batchSize - currentBatch = 10.
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "topup", batch: 30, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 30);
+  assert.equal(result.deferredQueue.length, 5);
+});
+
+test("prepare --phase pre topup (BL-9 Step 4): missing prepare_context.json returns 1", async () => {
+  const apps = [makeApp()];
+  const deps = makePrepDeps(apps, {
+    readFile: () => { throw new Error("ENOENT"); },
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "topup", need: 5, batch: 30, dryRun: false } });
+  const code = await cmd(ctx);
+  assert.equal(code, 1);
+  assert.ok(ctx._errLines.some((l) => /cannot read prepare_context/.test(l)));
+});
+
+test("prepare --phase pre topup (BL-9 Step 4): dry-run does not write file", async () => {
+  const apps = [
+    makeApp({ key: "gh:0" }),
+    makeApp({ key: "gh:1", jobId: "1" }),
+    makeApp({ key: "gh:2", jobId: "2" }),
+  ];
+  const prevContext = {
+    version: 1,
+    profileId: "testuser",
+    mode: "fresh",
+    batchSize: 30,
+    batch: [{ key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 }],
+    skipped: [],
+    deferredQueue: ["gh:1", "gh:2"],
+    unknownTierCompanies: [],
+    stats: {},
+  };
+  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "topup", need: 2, batch: 30, dryRun: true } });
+  await cmd(ctx);
+  assert.equal(Object.keys(deps._written).length, 0);
+  assert.ok(ctx._lines.some((l) => /dry-run/.test(l)));
+});
+
+test("prepare --phase pre (BL-9 Step 4): unknown --mode returns 1", async () => {
+  const apps = [makeApp()];
+  const deps = makePrepDeps(apps);
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "weird", batch: 30, dryRun: false } });
+  const code = await cmd(ctx);
+  assert.equal(code, 1);
+  assert.ok(ctx._errLines.some((l) => /unknown --mode/.test(l)));
+});

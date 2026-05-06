@@ -25,6 +25,8 @@ const PARSE_OPTIONS = {
     phase: { type: "string" },
     "results-file": { type: "string" },
     batch: { type: "string" },
+    mode: { type: "string" },
+    need: { type: "string" },
     prepare: { type: "boolean", default: false },
     since: { type: "string" },
     "no-sync": { type: "boolean", default: false },
@@ -73,6 +75,12 @@ prepare flags:
                          writes prepare_context.json. "commit" applies SKILL results.
   --results-file <path>  Required for --phase commit. Path to SKILL results JSON.
   --batch <n>            Max jobs per prepare run (default: 30). Used with --phase pre.
+  --mode <fresh|topup>   Used with --phase pre. "fresh" (default) runs the full pipeline
+                         and rewrites prepare_context.json. "topup" reads the existing
+                         context, pulls more entries from deferredQueue, URL-checks /
+                         JD-fetches them, and appends to batch[].
+  --need <K>             Used with --mode topup. Number of new alive entries to add.
+                         Default: batchSize - current batch length (fills the deficit).
 
 check flags:
   --prepare              Phase 1: build Gmail batches, write check_context.json.
@@ -180,6 +188,8 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
       phase: parsed.values.phase || "",
       resultsFile: parsed.values["results-file"] || "",
       batch: parsed.values.batch ? parseInt(parsed.values.batch, 10) : 30,
+      mode: parsed.values.mode || "",
+      need: parsed.values.need ? parseInt(parsed.values.need, 10) : null,
       prepare: Boolean(parsed.values.prepare),
       since: parsed.values.since || "",
       noSync: Boolean(parsed.values["no-sync"]),
