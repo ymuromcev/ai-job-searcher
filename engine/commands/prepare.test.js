@@ -1268,6 +1268,302 @@ test("prepare --phase commit: lowercase tier value is normalized to uppercase", 
   assert.deepEqual(saved.patch.company_tiers, { NewCo: "B", OtherCo: "A" });
 });
 
+// --- BL-14 / RFC 019: engine-owned CL file writes ---------------------------
+
+// Helper that captures all CL-related side effects (MD writes, PDF generates,
+// fileExists probes, mkdir calls). Each test instantiates one and asserts
+// against the recorded log instead of touching the real filesystem.
+function makeClRecorder({ existing = new Set() } = {}) {
+  const writes = [];
+  const pdfs = [];
+  const mkdirs = [];
+  return {
+    writes,
+    pdfs,
+    mkdirs,
+    deps: {
+      writeFile: (p, data) => writes.push({ path: p, data }),
+      generateCoverLetterPdf: async ({ paragraphs }, p) => {
+        pdfs.push({ path: p, paragraphs });
+      },
+      fileExists: (p) => existing.has(p),
+      mkdirp: (d) => mkdirs.push(d),
+      slugifyCompany: (n) =>
+        // Intentionally use the real implementation so tests verify the
+        // contract the engine relies on (not a fake that drifts).
+        require("../core/company_slug.js").slugifyCompany(n),
+    },
+  };
+}
+
+test("prepare --phase commit (BL-14): to_apply with clParagraphs writes MD + PDF, sets canonical cl_path", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "Affirm_Senior_PM_20260505",
+        resumeVer: "Risk_Fraud",
+        clParagraphs: [
+          "Dear Affirm hiring team,",
+          "I'm excited about the Senior PM role.",
+          "My background in fintech maps well to risk and underwriting work.",
+          "Best, Jared",
+        ],
+      },
+    ],
+  };
+  const rec = makeClRecorder();
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+
+  // MD written into cover_letters_md/<slug>/
+  assert.equal(rec.writes.length, 1);
+  assert.equal(
+    rec.writes[0].path,
+    "/fake/profiles/testuser/cover_letters_md/Affirm/Affirm_Senior_PM_20260505.md"
+  );
+  // Paragraphs joined by blank lines + trailing newline.
+  assert.equal(
+    rec.writes[0].data,
+    [
+      "Dear Affirm hiring team,",
+      "I'm excited about the Senior PM role.",
+      "My background in fintech maps well to risk and underwriting work.",
+      "Best, Jared",
+    ].join("\n\n") + "\n"
+  );
+
+  // PDF written into cover_letters/<slug>/
+  assert.equal(rec.pdfs.length, 1);
+  assert.equal(
+    rec.pdfs[0].path,
+    "/fake/profiles/testuser/cover_letters/Affirm/Affirm_Senior_PM_20260505.pdf"
+  );
+  assert.deepEqual(rec.pdfs[0].paragraphs, results.results[0].clParagraphs);
+
+  // PDF dir was mkdir'd before generation.
+  assert.ok(
+    rec.mkdirs.includes("/fake/profiles/testuser/cover_letters/Affirm")
+  );
+
+  // TSV cl_path = canonical relative PDF path.
+  const saved = deps._getSaved();
+  assert.equal(saved[0].cl_path, "cover_letters/Affirm/Affirm_Senior_PM_20260505.pdf");
+});
+
+test("prepare --phase commit (BL-14): existing PDF is preserved (idempotent)", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox", companyName: "Stripe" })];
+  const pdfPath = "/fake/profiles/testuser/cover_letters/Stripe/Stripe_PM_20260505.pdf";
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "Stripe_PM_20260505",
+        resumeVer: "v1",
+        clParagraphs: ["P1", "P2"],
+      },
+    ],
+  };
+  const rec = makeClRecorder({ existing: new Set([pdfPath]) });
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+
+  // MD still overwritten.
+  assert.equal(rec.writes.length, 1);
+  // PDF NOT regenerated.
+  assert.equal(rec.pdfs.length, 0);
+  // No PDF mkdir either (we don't touch the dir if we won't write to it).
+  assert.equal(rec.mkdirs.length, 0);
+  // cl_path still points at the canonical PDF (the existing one).
+  const saved = deps._getSaved();
+  assert.equal(saved[0].cl_path, "cover_letters/Stripe/Stripe_PM_20260505.pdf");
+});
+
+test("prepare --phase commit (BL-14): slugifies company with ampersand into folder name", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox", companyName: "Procter & Gamble" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "PG_PM_20260505",
+        resumeVer: "v1",
+        clParagraphs: ["only para"],
+      },
+    ],
+  };
+  const rec = makeClRecorder();
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+
+  assert.match(rec.writes[0].path, /cover_letters_md\/Procter_and_Gamble\//);
+  assert.match(rec.pdfs[0].path, /cover_letters\/Procter_and_Gamble\//);
+  const saved = deps._getSaved();
+  assert.equal(
+    saved[0].cl_path,
+    "cover_letters/Procter_and_Gamble/PG_PM_20260505.pdf"
+  );
+});
+
+test("prepare --phase commit (BL-14): dry-run does not write files but plans cl_path", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "Affirm_PM_20260505",
+        resumeVer: "v1",
+        clParagraphs: ["P1", "P2"],
+      },
+    ],
+  };
+  const rec = makeClRecorder();
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json", dryRun: true } });
+  await cmd(ctx);
+
+  assert.equal(rec.writes.length, 0);
+  assert.equal(rec.pdfs.length, 0);
+  // dry-run prints the plan + announces the canonical path; saveApplications
+  // is not called, but the in-memory app object reflects the planned cl_path.
+  // (Useful for callers that observe ctx output.)
+  assert.ok(ctx._lines.some((l) => /\(dry-run\) would write/.test(l)));
+});
+
+test("prepare --phase commit (BL-14): PDF generation failure warns but does not abort", async () => {
+  const apps = [
+    makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm" }),
+    makeApp({ key: "gh:2", status: "Inbox", companyName: "Stripe" }),
+  ];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "Affirm_PM_20260505",
+        resumeVer: "v1",
+        clParagraphs: ["P1"],
+      },
+      {
+        key: "gh:2",
+        decision: "to_apply",
+        clKey: "Stripe_PM_20260505",
+        resumeVer: "v1",
+        clParagraphs: ["P1"],
+      },
+    ],
+  };
+  const rec = makeClRecorder();
+  // First PDF call fails, second succeeds.
+  let calls = 0;
+  rec.deps.generateCoverLetterPdf = async ({ paragraphs }, p) => {
+    calls++;
+    if (calls === 1) throw new Error("disk full");
+    rec.pdfs.push({ path: p, paragraphs });
+  };
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0); // overall commit still succeeds
+  assert.ok(ctx._errLines.some((l) => /failed to write PDF for gh:1/.test(l)));
+  // Second row was still processed.
+  assert.equal(rec.pdfs.length, 1);
+  assert.match(rec.pdfs[0].path, /Stripe_PM_20260505\.pdf$/);
+});
+
+test("prepare --phase commit (BL-14): clParagraphs without clKey warns + skips file write", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        // clKey intentionally missing
+        resumeVer: "v1",
+        clParagraphs: ["P1"],
+      },
+    ],
+  };
+  const rec = makeClRecorder();
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  assert.equal(rec.writes.length, 0);
+  assert.equal(rec.pdfs.length, 0);
+  assert.ok(ctx._errLines.some((l) => /clParagraphs present but clKey missing/.test(l)));
+});
+
+test("prepare --phase commit (BL-14): to_apply WITHOUT clParagraphs warns (regression guard)", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm" })];
+  const results = {
+    profileId: "testuser",
+    // No clParagraphs — old SKILL behavior. Engine should flag this.
+    results: [
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "Affirm_PM_20260505",
+        resumeVer: "v1",
+      },
+    ],
+  };
+  const rec = makeClRecorder();
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  // Engine wrote nothing (legacy path) but warned.
+  assert.equal(rec.writes.length, 0);
+  assert.equal(rec.pdfs.length, 0);
+  assert.ok(
+    ctx._errLines.some((l) =>
+      /to_apply row\(s\) missing clParagraphs/.test(l)
+    ),
+    `expected legacy-row warning, got: ${ctx._errLines.join(" | ")}`
+  );
+});
+
 // --- unknown phase -----------------------------------------------------------
 
 test("prepare: missing phase returns 1", async () => {

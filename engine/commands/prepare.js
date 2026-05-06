@@ -39,6 +39,8 @@ const { extractFromJd } = require("../core/jd_extract.js");
 const { enforceGeo } = require("../core/geo_enforcer.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 const { resolveProfilesDir } = require("../core/paths.js");
+const { slugifyCompany } = require("../core/company_slug.js");
+const { generateCoverLetterPdf } = require("../modules/generators/cover_letter_pdf.js");
 
 // Active statuses that count toward the company cap. "To Apply" is included
 // because every triaged-and-prepared row is committed to be applied —
@@ -418,6 +420,10 @@ function makeDefaultDeps() {
       fs.writeFileSync(tmp, data);
       fs.renameSync(tmp, p);
     },
+    fileExists: (p) => fs.existsSync(p),
+    mkdirp: (dir) => fs.mkdirSync(dir, { recursive: true }),
+    generateCoverLetterPdf,
+    slugifyCompany,
     now: () => new Date().toISOString(),
   };
 }
@@ -1322,6 +1328,110 @@ async function runCommit(ctx, deps) {
       applyFitFields(app, r);
       if (app.fit_score && app.fit_score !== fitBeforeWrite) updates.fitWritten++;
       updates.skip++;
+    }
+  }
+
+  // BL-14 / RFC 019 — engine-owned CL file writes.
+  //
+  // For every `to_apply` result that includes `clParagraphs: string[]`, write
+  // the cover letter into both layouts:
+  //   - MD:  profiles/<id>/cover_letters_md/<CompanySlug>/<clKey>.md
+  //   - PDF: profiles/<id>/cover_letters/<CompanySlug>/<clKey>.pdf
+  // and override `app.cl_path` with the canonical relative PDF path. The
+  // SKILL no longer writes the .md file itself (Step 8e change). PDF writes
+  // are idempotent: if the file already exists we keep it (manual edits, or
+  // re-runs against unchanged content). MD is overwritten — fresh prepare
+  // run = fresh content. Failures are warned and skipped per row, never abort
+  // the whole commit; TSV save still runs so the rest of the batch lands.
+  const clResults = results.filter(
+    (r) =>
+      r.decision === "to_apply" &&
+      Array.isArray(r.clParagraphs) &&
+      r.clParagraphs.length > 0 &&
+      byKey[r.key] // already warned above for missing keys
+  );
+  const clStats = {
+    mdWritten: 0,
+    pdfWritten: 0,
+    pdfSkipped: 0,
+    skipped: 0,
+    failed: 0,
+  };
+  if (clResults.length > 0) {
+    const profileRoot = profile.paths.root;
+    for (const r of clResults) {
+      const app = byKey[r.key];
+      if (!r.clKey) {
+        stderr(
+          `warn: clParagraphs present but clKey missing for key ${r.key} — skipping CL file write`
+        );
+        clStats.skipped++;
+        continue;
+      }
+      const slug = deps.slugifyCompany(app.companyName);
+      const mdRel = `cover_letters_md/${slug}/${r.clKey}.md`;
+      const pdfRel = `cover_letters/${slug}/${r.clKey}.pdf`;
+      const mdAbs = path.join(profileRoot, mdRel);
+      const pdfAbs = path.join(profileRoot, pdfRel);
+
+      if (flags.dryRun) {
+        stdout(`(dry-run) would write ${mdRel} + ${pdfRel}`);
+        app.cl_path = pdfRel;
+        continue;
+      }
+
+      // MD: overwrite with fresh paragraphs (engine writes deterministic
+      // content; previous run's MD is stale by definition).
+      try {
+        deps.writeFile(mdAbs, r.clParagraphs.join("\n\n") + "\n");
+        clStats.mdWritten++;
+      } catch (err) {
+        stderr(`warn: failed to write MD for ${r.key} (${mdRel}): ${err.message}`);
+        clStats.failed++;
+        continue;
+      }
+
+      // PDF: idempotent. Existing PDF wins so manual edits / hand-tuned
+      // versions survive a re-run.
+      if (deps.fileExists(pdfAbs)) {
+        clStats.pdfSkipped++;
+      } else {
+        try {
+          deps.mkdirp(path.dirname(pdfAbs));
+          await deps.generateCoverLetterPdf({ paragraphs: r.clParagraphs }, pdfAbs);
+          clStats.pdfWritten++;
+        } catch (err) {
+          stderr(`warn: failed to write PDF for ${r.key} (${pdfRel}): ${err.message}`);
+          clStats.failed++;
+          continue;
+        }
+      }
+
+      // Canonical relative PDF path — overrides any `r.clPath` from older
+      // SKILL versions (they may still send the legacy filename).
+      app.cl_path = pdfRel;
+    }
+
+    const clMsg =
+      `cover letters: ${clStats.mdWritten} MD written, ` +
+      `${clStats.pdfWritten} PDF written, ${clStats.pdfSkipped} PDF skipped` +
+      (clStats.skipped > 0 ? `, ${clStats.skipped} skipped` : "") +
+      (clStats.failed > 0 ? `, ${clStats.failed} failed` : "");
+    stdout(clMsg);
+  } else {
+    // Engine warns when SKILL forgot the new field on a to_apply row, so a
+    // silent regression to "no PDF written" gets caught immediately.
+    const toApplyMissingParagraphs = results.filter(
+      (r) =>
+        r.decision === "to_apply" &&
+        byKey[r.key] &&
+        (!Array.isArray(r.clParagraphs) || r.clParagraphs.length === 0)
+    );
+    if (toApplyMissingParagraphs.length > 0) {
+      stderr(
+        `warn: ${toApplyMissingParagraphs.length} to_apply row(s) missing clParagraphs — ` +
+        `engine cannot generate MD/PDF (likely an old SKILL version; see RFC 019)`
+      );
     }
   }
 

@@ -359,11 +359,22 @@ Output: a 4-paragraph CL where P2 (and usually P3) are exact copies of an existi
 
 Apply **Humanizer Rules** from `## Humanizer Rules` below to any newly-written paragraphs (typically P1, sometimes P3). The verbatim-copied paragraphs are already humanized — do NOT re-humanize them, that introduces drift.
 
-**8e — Save.**
+**8e — Emit paragraphs (engine writes the files).**
 
-Save the CL as `profiles/<id>/cover_letters/<company>_<role-slug>_<YYYYMMDD>.md`.
+Do **NOT** write the CL file yourself. Per RFC 019 / BL-14, the SKILL produces paragraphs and the engine writes both `.md` and `.pdf` in the commit phase.
 
-Record `clKey` = filename without extension. Record `clBaseKey` = the base entry key/job_id you reused (helps audit batch consistency: if 10 letters share `clBaseKey = "affirm_capital"`, the proof paragraphs are identical across them, which is the point).
+In the results.json entry for this job (Step 10) include:
+
+- `clParagraphs: string[]` — exactly the 4 finalized paragraphs (P1, P2, P3, P4) in order, no headers, no blank-line padding inside the strings. Engine joins them with `\n\n` for the MD file and feeds them to `pdfkit` for the PDF.
+- `clKey` — filename stem only, no extension and no path. Convention: `<Company>_<role-slug>_<YYYYMMDD>` (e.g. `Affirm_senior-ai-pm_20260505`). Engine derives the company sub-folder by slugifying `applications.tsv.companyName` — you do not need to slugify yourself.
+- `clBaseKey` — the base entry key / job_id you reused for proof paragraphs (helps audit batch consistency: if 10 letters share `clBaseKey = "affirm_capital"`, P2 is identical across them, which is the point).
+
+Do **NOT** set `clPath` — the engine computes the canonical relative path (`cover_letters/<CompanySlug>/<clKey>.pdf`) and writes it into TSV `cl_path` itself. Sending `clPath` is harmless (it gets overridden), but it's no longer the SKILL's responsibility.
+
+Files the engine produces on commit:
+
+- `profiles/<id>/cover_letters_md/<CompanySlug>/<clKey>.md` — overwritten on every commit run with the fresh content from this batch.
+- `profiles/<id>/cover_letters/<CompanySlug>/<clKey>.pdf` — generated via `pdfkit` if it doesn't already exist; existing PDFs are preserved (idempotent).
 
 **Step 9 — Notion page creation (per job in the final top-N)**
 
@@ -390,7 +401,7 @@ Create a Notion page in `profile.notion.jobs_pipeline_db_id` with ALL required f
 - **Salary Expectations** — display string like `"$140-190K ($165K mid)"`
 - **Salary Min** — numeric dollar amount (e.g., 140000)
 - **Salary Max** — numeric dollar amount (e.g., 190000)
-- **Cover Letter** — filename stem (same as `clKey`), e.g. `Affirm_analyst-ii-credit-risk-analytics_20260420`
+- **Cover Letter** — full PDF filename **including the `.pdf` extension**, e.g. `Affirm_analyst-ii-credit-risk-analytics_20260420.pdf` (i.e. `<clKey>.pdf`). This is the value users search by in Finder / Drive to locate the actual file. Per BL-14: rich_text field, not file-attachment.
 - **Resume Version** — select, from `resumeVer`
 
 **Profile-gated fields (L-5)** — push only when `profile.notion.property_map` declares the field. If the property is absent from the map, do NOT push (back-compat: Jared has no Schedule / Requirements columns; his pages remain unchanged):
@@ -407,7 +418,7 @@ Record the returned `notion_page_id`.
 Write `profiles/<id>/prepare_results_<YYYYMMDD_HHMMSS>.json` ONCE at the end of the run, covering every job evaluated across all loop iterations (not just the final top-N).
 
 Result entries:
-- `decision: "to_apply"` — the top-N pushed to Notion in Step 9. Carries `clKey`, `clPath`, `resumeVer`, `notionPageId`, `salaryMin`, `salaryMax`, plus `fitScore` / `fitRationale`.
+- `decision: "to_apply"` — the top-N pushed to Notion in Step 9. Carries `clKey`, `clParagraphs`, `clBaseKey`, `resumeVer`, `notionPageId`, `salaryMin`, `salaryMax`, plus `fitScore` / `fitRationale`. Engine writes the MD + PDF files from `clParagraphs` on commit (BL-14 / RFC 019); do **not** include `clPath` — engine derives it from the company slug + `clKey`.
 - `decision: "skip"` — every other judged row from the loop. Carries `fitScore: "Weak"` (or rarely Strong/Medium that didn't make the cut) + `fitRationale` so the engine commit phase persists the verdict and `filterAlreadyEvaluated` skips them on the next prepare run. (Strong/Medium that didn't make top-30 still get persisted; if they pass filter next time, they'll be picked up again.)
 
 Format:
@@ -426,8 +437,13 @@ Format:
       "fitScore": "Strong",
       "fitRationale": "...",
       "geo": "us-compatible",
-      "clKey": "<company>_<role-slug>_<YYYYMMDD>",
-      "clPath": "<company>_<role-slug>_<YYYYMMDD>.md",
+      "clKey": "<Company>_<role-slug>_<YYYYMMDD>",
+      "clParagraphs": [
+        "P1 — company-specific hook ...",
+        "P2 — core proof, verbatim from base entry ...",
+        "P3 — secondary proof / why this company ...",
+        "P4 — close ..."
+      ],
       "clBaseKey": "<reused-entry-key-from-cover_letter_versions.json or null>",
       "resumeVer": "<archetype-key>",
       "notionPageId": "<uuid>",
@@ -444,6 +460,11 @@ Format:
   ]
 }
 ```
+
+**`clParagraphs` schema notes**:
+- Required for `decision: "to_apply"`. If absent, the engine logs a warning and falls back to legacy behavior (no MD/PDF written this batch); the row still becomes "To Apply" in TSV/Notion but has no file. Always include it.
+- Absent for `decision: "skip"` and `decision: "archive"` — no CL needed.
+- Must be exactly 4 strings (P1/P2/P3/P4). Each string is one paragraph; no embedded blank lines, no markdown headers, no `\n\n` inside individual strings (engine inserts the spacing).
 
 `companyTiers` is required only when `prepare_context.unknownTierCompanies` was non-empty. List every company from that array with the tier you assigned in Step 5.7. Engine merges this into `profile.json.company_tiers` on commit; Notion's Companies DB Tier field is updated by the SKILL itself when it creates/updates the company page in Step 9.
 
