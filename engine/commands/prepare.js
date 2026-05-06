@@ -621,6 +621,46 @@ async function runCommit(ctx, deps) {
   );
 
   const VALID_DECISIONS = new Set(["to_apply", "archive", "skip"]);
+  // BL-9 (TSV v4): persist Claude's fit verdict on every result so future
+  // prepare runs can short-circuit already-evaluated rows. Validators reject
+  // typos rather than silently corrupting the column; the rest of the row
+  // still gets the decision-specific updates below.
+  const VALID_FIT_SCORES = new Set(["Strong", "Medium", "Weak"]);
+  const VALID_SKIP_REASONS = new Set(["weak_fit", "duplicate"]);
+
+  // BL-9: applies fit_score / fit_rationale / fit_evaluated_at / skip_reason
+  // from a SKILL result onto a TSV row. Mutates `app` in place. Stamps
+  // fit_evaluated_at = now whenever a fit_score is written, so the engine has
+  // a definitive "this row was judged on date X" signal independent of
+  // updatedAt (which moves for any reason).
+  function applyFitFields(app, r) {
+    if (r.fitScore !== undefined && r.fitScore !== "" && r.fitScore !== null) {
+      if (VALID_FIT_SCORES.has(r.fitScore)) {
+        app.fit_score = r.fitScore;
+        app.fit_evaluated_at = now;
+      } else {
+        stderr(
+          `warn: invalid fitScore "${r.fitScore}" for key ${r.key} — must be one of ` +
+          `${[...VALID_FIT_SCORES].join("/")}; not persisted`
+        );
+        updates.invalidFitScore++;
+      }
+    }
+    if (r.fitRationale !== undefined && r.fitRationale !== null) {
+      app.fit_rationale = String(r.fitRationale);
+    }
+    if (r.skipReason !== undefined && r.skipReason !== "" && r.skipReason !== null) {
+      if (VALID_SKIP_REASONS.has(r.skipReason)) {
+        app.skip_reason = r.skipReason;
+      } else {
+        stderr(
+          `warn: invalid skipReason "${r.skipReason}" for key ${r.key} — must be one of ` +
+          `${[...VALID_SKIP_REASONS].join("/")}; not persisted`
+        );
+        updates.invalidSkipReason++;
+      }
+    }
+  }
 
   const updates = {
     toApply: 0,
@@ -629,6 +669,9 @@ async function runCommit(ctx, deps) {
     notFound: 0,
     invalidDecision: 0,
     invalidArchetype: 0,
+    invalidFitScore: 0,
+    invalidSkipReason: 0,
+    fitWritten: 0,
   };
   for (const r of results) {
     const app = byKey[r.key];
@@ -648,6 +691,12 @@ async function runCommit(ctx, deps) {
       continue;
     }
 
+    // BL-9: write fit verdict regardless of decision (to_apply / skip /
+    // archive). Only invalid-archetype to_apply rows are downgraded to skip
+    // BEFORE this point; for them we still want the verdict captured so the
+    // user doesn't see the row re-evaluated next run.
+    const fitBeforeWrite = app.fit_score;
+
     if (r.decision === "to_apply") {
       if (r.resumeVer && validArchetypes.size > 0 && !validArchetypes.has(r.resumeVer)) {
         updates.invalidArchetype++;
@@ -655,6 +704,9 @@ async function runCommit(ctx, deps) {
           `warn: unknown resumeVer "${r.resumeVer}" for key ${r.key} — treating as skip ` +
           `(valid keys: ${[...validArchetypes].join(", ")})`
         );
+        // Capture the verdict even on the downgraded path.
+        applyFitFields(app, r);
+        if (app.fit_score && app.fit_score !== fitBeforeWrite) updates.fitWritten++;
         updates.skip++;
         continue;
       }
@@ -671,13 +723,20 @@ async function runCommit(ctx, deps) {
       if (r.clPath) app.cl_path = r.clPath;
       else if (r.clKey && !app.cl_path) app.cl_path = r.clKey;
       app.updatedAt = now;
+      applyFitFields(app, r);
+      if (app.fit_score && app.fit_score !== fitBeforeWrite) updates.fitWritten++;
       updates.toApply++;
     } else if (r.decision === "archive") {
       app.status = "Archived";
       app.updatedAt = now;
+      applyFitFields(app, r);
+      if (app.fit_score && app.fit_score !== fitBeforeWrite) updates.fitWritten++;
       updates.archive++;
     } else {
-      // "skip"
+      // "skip" — no status change, but persist the verdict so the row gets
+      // filtered out on next prepare run (filterAlreadyEvaluated, Step 2).
+      applyFitFields(app, r);
+      if (app.fit_score && app.fit_score !== fitBeforeWrite) updates.fitWritten++;
       updates.skip++;
     }
   }
@@ -685,6 +744,8 @@ async function runCommit(ctx, deps) {
   const extras = [];
   if (updates.invalidDecision > 0) extras.push(`${updates.invalidDecision} invalid decision`);
   if (updates.invalidArchetype > 0) extras.push(`${updates.invalidArchetype} invalid archetype`);
+  if (updates.invalidFitScore > 0) extras.push(`${updates.invalidFitScore} invalid fit_score`);
+  if (updates.invalidSkipReason > 0) extras.push(`${updates.invalidSkipReason} invalid skip_reason`);
   if (tierStats.invalid > 0) extras.push(`${tierStats.invalid} invalid tier`);
   const extraStr = extras.length > 0 ? `, ${extras.join(", ")}` : "";
 
@@ -692,6 +753,12 @@ async function runCommit(ctx, deps) {
     `commit: ${updates.toApply} → To Apply, ${updates.archive} archived, ` +
     `${updates.skip} skipped, ${updates.notFound} not found${extraStr}`
   );
+  if (updates.fitWritten > 0) {
+    stdout(
+      `fit verdicts: ${updates.fitWritten} new fit_score values persisted to TSV ` +
+      `(future prepare runs will skip these rows)`
+    );
+  }
 
   if (flags.dryRun) {
     stdout(`(dry-run) would write ${apps.length} rows to ${applicationsPath}`);

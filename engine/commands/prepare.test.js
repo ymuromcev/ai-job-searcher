@@ -829,6 +829,215 @@ test("prepare --phase commit: skip leaves app unchanged", async () => {
   assert.equal(saved[0].status, "To Apply");
 });
 
+// --- BL-9: fit verdict persistence on commit --------------------------------
+
+test("prepare --phase commit (BL-9): to_apply persists fit_score=Strong + rationale + timestamp", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "stripe_spm_cl",
+        notionPageId: "p1",
+        fitScore: "Strong",
+        fitRationale: "Direct PM/fintech match — Capital portfolio overlap",
+      },
+    ],
+  };
+  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  const app = deps._getSaved()[0];
+  assert.equal(app.status, "To Apply");
+  assert.equal(app.fit_score, "Strong");
+  assert.equal(app.fit_rationale, "Direct PM/fintech match — Capital portfolio overlap");
+  assert.equal(app.fit_evaluated_at, "2026-04-20T13:00:00.000Z");
+  assert.equal(app.skip_reason || "", "");
+});
+
+test("prepare --phase commit (BL-9): skip persists fit_score=Weak + skip_reason=weak_fit", async () => {
+  // The whole point of Step 2 + Step 3: a Weak verdict on this run must be
+  // re-readable next run so filterAlreadyEvaluated drops it without paying
+  // SKILL cost again.
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        decision: "skip",
+        fitScore: "Weak",
+        fitRationale: "Energy domain — outside PM core",
+        skipReason: "weak_fit",
+      },
+    ],
+  };
+  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  const app = deps._getSaved()[0];
+  // skip leaves status untouched but fit fields ARE written.
+  assert.equal(app.status, "To Apply");
+  assert.equal(app.fit_score, "Weak");
+  assert.equal(app.skip_reason, "weak_fit");
+  assert.equal(app.fit_rationale, "Energy domain — outside PM core");
+  assert.equal(app.fit_evaluated_at, "2026-04-20T13:00:00.000Z");
+});
+
+test("prepare --phase commit (BL-9): skip with skip_reason=duplicate persists for next-run filter", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        decision: "skip",
+        fitRationale: "Duplicate of greenhouse:1234 — same posting different ATS",
+        skipReason: "duplicate",
+      },
+    ],
+  };
+  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  const app = deps._getSaved()[0];
+  assert.equal(app.skip_reason, "duplicate");
+  assert.equal(app.fit_rationale, "Duplicate of greenhouse:1234 — same posting different ATS");
+});
+
+test("prepare --phase commit (BL-9): archive persists fit verdict alongside status change", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        decision: "archive",
+        fitScore: "Weak",
+        fitRationale: "Hard blocker — non-PM role mis-classified at scan",
+        skipReason: "weak_fit",
+      },
+    ],
+  };
+  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  const app = deps._getSaved()[0];
+  assert.equal(app.status, "Archived");
+  assert.equal(app.fit_score, "Weak");
+  assert.equal(app.skip_reason, "weak_fit");
+});
+
+test("prepare --phase commit (BL-9): invalid fitScore warns and is not persisted", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "To Apply", fit_score: "" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      { key: "gh:1", decision: "skip", fitScore: "MaybeStrong", skipReason: "weak_fit" },
+    ],
+  };
+  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  const app = deps._getSaved()[0];
+  // Bad fit_score not persisted, but skip_reason still written (independent).
+  assert.equal(app.fit_score || "", "");
+  assert.equal(app.fit_evaluated_at || "", "");
+  assert.equal(app.skip_reason, "weak_fit");
+  assert.ok(ctx._errLines.some((l) => /invalid fitScore "MaybeStrong"/.test(l)));
+});
+
+test("prepare --phase commit (BL-9): invalid skipReason warns and is not persisted", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      { key: "gh:1", decision: "skip", fitScore: "Weak", skipReason: "not_a_pm_role" },
+    ],
+  };
+  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  const app = deps._getSaved()[0];
+  // fit_score still written, skip_reason rejected.
+  assert.equal(app.fit_score, "Weak");
+  assert.equal(app.skip_reason || "", "");
+  assert.ok(ctx._errLines.some((l) => /invalid skipReason "not_a_pm_role"/.test(l)));
+});
+
+test("prepare --phase commit (BL-9): result without fit fields leaves existing TSV values untouched", async () => {
+  // Back-compat: SKILL versions that don't yet emit fit fields must not wipe
+  // the column. This protects against partial migrations / older tooling.
+  const apps = [
+    makeApp({
+      key: "gh:1",
+      status: "To Apply",
+      fit_score: "Strong",
+      fit_rationale: "earlier rationale",
+      fit_evaluated_at: "2026-05-01T00:00:00Z",
+    }),
+  ];
+  const results = {
+    profileId: "testuser",
+    results: [{ key: "gh:1", decision: "to_apply", clKey: "k", notionPageId: "p1" }],
+  };
+  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  const app = deps._getSaved()[0];
+  assert.equal(app.fit_score, "Strong");
+  assert.equal(app.fit_rationale, "earlier rationale");
+  assert.equal(app.fit_evaluated_at, "2026-05-01T00:00:00Z");
+});
+
+test("prepare --phase commit (BL-9): downgraded-to-skip path (invalid resumeVer) still captures verdict", async () => {
+  // When commit downgrades a to_apply to skip due to invalid resumeVer, the
+  // fit verdict should still be written so the user doesn't see this row
+  // re-evaluated next run.
+  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+  const profile = {
+    id: "testuser",
+    filterRules: {},
+    company_tiers: {},
+    resumeVersions: { versions: { real_key: { name: "Real" } } },
+    paths: {
+      root: "/fake/profiles/testuser",
+      applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+      jdCacheDir: "/fake/profiles/testuser/jd_cache",
+    },
+  };
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        resumeVer: "typo_key",
+        fitScore: "Strong",
+        fitRationale: "Good fit, but typo will downgrade",
+      },
+    ],
+  };
+  const deps = makeCommitDeps(apps, { profile, readFile: () => JSON.stringify(results) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  const app = deps._getSaved()[0];
+  assert.ok(ctx._errLines.some((l) => /unknown resumeVer/.test(l)));
+  // Status not promoted (skip), but fit STILL captured.
+  assert.equal(app.fit_score, "Strong");
+  assert.equal(app.fit_evaluated_at, "2026-04-20T13:00:00.000Z");
+});
+
 test("prepare --phase commit: dry-run does not save", async () => {
   const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
   const results = {
