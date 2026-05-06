@@ -6,6 +6,8 @@ const {
   applyPrepareFilter,
   filterAlreadyEvaluated,
   buildActiveCounts,
+  computeInboxExhausted,
+  isFreshInboxApp,
 } = require("./prepare.js");
 
 // --- Helpers -----------------------------------------------------------------
@@ -1640,4 +1642,388 @@ test("prepare --phase pre (BL-9 Step 4): unknown --mode returns 1", async () => 
   const code = await cmd(ctx);
   assert.equal(code, 1);
   assert.ok(ctx._errLines.some((l) => /unknown --mode/.test(l)));
+});
+
+// --- BL-9 Step 5: weak-fallback + inboxExhausted -----------------------------
+
+test("filterAlreadyEvaluated weak-fallback mode: keeps Weak rows, still drops duplicates", () => {
+  const apps = [
+    makeApp({ key: "a", fit_score: "Weak" }),
+    makeApp({ key: "b", skip_reason: "weak_fit" }),
+    makeApp({ key: "c", skip_reason: "duplicate" }),
+    makeApp({ key: "d" }),
+  ];
+  const { passed, skipped } = filterAlreadyEvaluated(apps, { mode: "weak-fallback" });
+  // a + b + d pass; c drops as duplicate.
+  assert.deepEqual(passed.map((a) => a.key).sort(), ["a", "b", "d"]);
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].key, "c");
+  assert.equal(skipped[0].reason, "already_evaluated_duplicate");
+});
+
+test("isFreshInboxApp: true for status=Inbox", () => {
+  assert.equal(isFreshInboxApp(makeApp({ status: "Inbox" })), true);
+});
+
+test("isFreshInboxApp: true for legacy 'To Apply' without notion_page_id", () => {
+  assert.equal(isFreshInboxApp(makeApp({ status: "To Apply", notion_page_id: "" })), true);
+});
+
+test("isFreshInboxApp: false for committed To Apply (has notion_page_id)", () => {
+  assert.equal(
+    isFreshInboxApp(makeApp({ status: "To Apply", notion_page_id: "p1" })),
+    false
+  );
+});
+
+test("isFreshInboxApp: false for Applied / Rejected / Archived", () => {
+  for (const status of ["Applied", "Rejected", "Archived", "Closed"]) {
+    assert.equal(isFreshInboxApp(makeApp({ status })), false, `status=${status}`);
+  }
+});
+
+test("computeInboxExhausted: false when fresh-Inbox row exists outside batch", () => {
+  const apps = [
+    makeApp({ key: "a", status: "Inbox" }),
+    makeApp({ key: "b", status: "Inbox" }),
+  ];
+  assert.equal(computeInboxExhausted(apps, new Set(["a"])), false);
+});
+
+test("computeInboxExhausted: true when all fresh rows are in batch", () => {
+  const apps = [
+    makeApp({ key: "a", status: "Inbox" }),
+    makeApp({ key: "b", status: "Inbox" }),
+  ];
+  assert.equal(computeInboxExhausted(apps, new Set(["a", "b"])), true);
+});
+
+test("computeInboxExhausted: ignores duplicate-flagged rows", () => {
+  // Only fresh-Inbox row left is duplicate-flagged → still exhausted.
+  const apps = [
+    makeApp({ key: "a", status: "Inbox" }),
+    makeApp({ key: "b", status: "Inbox", skip_reason: "duplicate" }),
+  ];
+  assert.equal(computeInboxExhausted(apps, new Set(["a"])), true);
+});
+
+test("computeInboxExhausted: counts already-Weak rows as not-exhausted", () => {
+  // Weak rows are still pull-able by weak-fallback → don't count as exhausted.
+  const apps = [
+    makeApp({ key: "a", status: "Inbox" }),
+    makeApp({ key: "b", status: "Inbox", fit_score: "Weak" }),
+  ];
+  assert.equal(computeInboxExhausted(apps, new Set(["a"])), false);
+});
+
+test("prepare --phase pre fresh (BL-9 Step 5): writes inboxExhausted=true when batch consumes all fresh", async () => {
+  // 2 fresh apps, both fit in batch=2. After fresh run, no more queued, no more
+  // weak rows → exhausted.
+  const apps = [
+    makeApp({ key: "gh:0", jobId: "0", status: "Inbox" }),
+    makeApp({ key: "gh:1", jobId: "1", status: "Inbox" }),
+  ];
+  const deps = makePrepDeps(apps);
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", batch: 5, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.stats.inboxExhausted, true);
+});
+
+test("prepare --phase pre fresh (BL-9 Step 5): inboxExhausted=false when already-Weak rows remain", async () => {
+  // Fresh run consumes the 1 fresh row. The Weak row was filtered by
+  // filterAlreadyEvaluated and never reached the batch — but it's still
+  // available for weak-fallback. Inbox NOT exhausted yet.
+  const apps = [
+    makeApp({ key: "gh:0", jobId: "0", status: "Inbox" }),
+    makeApp({ key: "gh:1", jobId: "1", status: "Inbox", fit_score: "Weak" }),
+  ];
+  const deps = makePrepDeps(apps);
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", batch: 5, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 1);
+  assert.equal(result.batch[0].key, "gh:0");
+  assert.equal(result.stats.inboxExhausted, false);
+});
+
+test("prepare --phase pre weak-fallback (BL-9 Step 5): pulls already-Weak rows into batch with wasAlreadyWeak=true", async () => {
+  // gh:0 is in batch (already from a prior pass). gh:1 has been judged Weak.
+  // weak-fallback should pull gh:1 in with wasAlreadyWeak=true.
+  const apps = [
+    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
+    makeApp({
+      key: "gh:1",
+      jobId: "1",
+      status: "Inbox",
+      fit_score: "Weak",
+      fit_rationale: "no fintech overlap",
+    }),
+  ];
+  const prevContext = {
+    version: 1,
+    profileId: "testuser",
+    mode: "topup",
+    batchSize: 4,
+    batch: [
+      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+    ],
+    skipped: [],
+    deferredQueue: [],
+    unknownTierCompanies: [],
+    stats: {},
+  };
+  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: false } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.mode, "weak-fallback");
+  assert.equal(result.batch.length, 2);
+  const newEntry = result.batch[1];
+  assert.equal(newEntry.key, "gh:1");
+  assert.equal(newEntry.wasAlreadyWeak, true);
+  assert.equal(newEntry.priorFitScore, "Weak");
+  assert.equal(newEntry.priorFitRationale, "no fintech overlap");
+  assert.equal(result.stats.weakFallbackRuns, 1);
+});
+
+test("prepare --phase pre weak-fallback (BL-9 Step 5): combines deferredQueue + already-Weak (dedupes)", async () => {
+  // gh:1 is in queue (passed filter, not URL-checked yet, no verdict).
+  // gh:2 is already-Weak.
+  // gh:3 is in BOTH queue AND already-Weak in TSV — must appear once.
+  const apps = [
+    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
+    makeApp({ key: "gh:1", jobId: "1", status: "Inbox" }),
+    makeApp({ key: "gh:2", jobId: "2", status: "Inbox", fit_score: "Weak" }),
+    makeApp({ key: "gh:3", jobId: "3", status: "Inbox", fit_score: "Weak" }),
+  ];
+  const prevContext = {
+    version: 1,
+    profileId: "testuser",
+    mode: "topup",
+    batchSize: 5,
+    batch: [
+      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+    ],
+    skipped: [],
+    deferredQueue: ["gh:1", "gh:3"],
+    unknownTierCompanies: [],
+    stats: {},
+  };
+  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 5, batch: 5, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  // Should pull all 3 distinct keys (gh:1, gh:2, gh:3).
+  const newKeys = result.batch.slice(1).map((e) => e.key).sort();
+  assert.deepEqual(newKeys, ["gh:1", "gh:2", "gh:3"]);
+  // gh:1 came from queue, NOT marked weak. gh:2 and gh:3 are weak.
+  const e1 = result.batch.find((e) => e.key === "gh:1");
+  const e2 = result.batch.find((e) => e.key === "gh:2");
+  const e3 = result.batch.find((e) => e.key === "gh:3");
+  assert.ok(!e1.wasAlreadyWeak);
+  assert.equal(e2.wasAlreadyWeak, true);
+  assert.equal(e3.wasAlreadyWeak, true);
+});
+
+test("prepare --phase pre weak-fallback (BL-9 Step 5): drops duplicate-flagged rows even in this mode", async () => {
+  const apps = [
+    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
+    makeApp({ key: "gh:1", jobId: "1", status: "Inbox", fit_score: "Weak" }),
+    makeApp({ key: "gh:2", jobId: "2", status: "Inbox", skip_reason: "duplicate" }),
+  ];
+  const prevContext = {
+    version: 1,
+    profileId: "testuser",
+    mode: "topup",
+    batchSize: 4,
+    batch: [
+      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+    ],
+    skipped: [],
+    deferredQueue: ["gh:2"],
+    unknownTierCompanies: [],
+    stats: {},
+  };
+  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  // Only gh:1 added; gh:2 dropped as duplicate.
+  assert.equal(result.batch.length, 2);
+  assert.equal(result.batch[1].key, "gh:1");
+  assert.ok(result.skipped.some((s) => s.key === "gh:2" && s.reason === "already_evaluated_duplicate"));
+});
+
+test("prepare --phase pre weak-fallback (BL-9 Step 5): empty pool — writes mode + stats, no batch growth", async () => {
+  const apps = [
+    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
+  ];
+  const prevContext = {
+    version: 1,
+    profileId: "testuser",
+    mode: "topup",
+    batchSize: 4,
+    batch: [
+      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+    ],
+    skipped: [],
+    deferredQueue: [],
+    unknownTierCompanies: [],
+    stats: {},
+  };
+  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.mode, "weak-fallback");
+  assert.equal(result.batch.length, 1);
+  assert.equal(result.stats.weakFallbackRuns, 1);
+  assert.equal(result.stats.inboxExhausted, true);
+});
+
+test("prepare --phase pre weak-fallback (BL-9 Step 5): inboxExhausted=true after consuming all weak rows", async () => {
+  // 1 already-Weak row in TSV. weak-fallback pulls it into batch. After that,
+  // no fresh rows remain.
+  const apps = [
+    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
+    makeApp({ key: "gh:1", jobId: "1", status: "Inbox", fit_score: "Weak" }),
+  ];
+  const prevContext = {
+    version: 1,
+    profileId: "testuser",
+    mode: "topup",
+    batchSize: 4,
+    batch: [
+      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+    ],
+    skipped: [],
+    deferredQueue: [],
+    unknownTierCompanies: [],
+    stats: {},
+  };
+  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.stats.inboxExhausted, true);
+});
+
+test("prepare --phase pre weak-fallback (BL-9 Step 5): respects company cap (pre-accounts prevBatch)", async () => {
+  // Company cap = 2 active for Stripe. prevBatch already has 2 Stripe entries.
+  // Cap pre-account → topup must NOT add more Stripe rows.
+  const apps = [
+    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
+    makeApp({ key: "gh:1", status: "To Apply", notion_page_id: "p1" }),
+    makeApp({ key: "gh:2", jobId: "2", status: "Inbox", fit_score: "Weak", companyName: "Stripe" }),
+  ];
+  const prevContext = {
+    version: 1,
+    profileId: "testuser",
+    mode: "topup",
+    batchSize: 5,
+    batch: [
+      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+      { key: "gh:1", source: "greenhouse", jobId: "1", companyName: "Stripe", title: "PM", url: "https://example.com/1", urlAlive: true, urlStatus: 200 },
+    ],
+    skipped: [],
+    deferredQueue: [],
+    unknownTierCompanies: [],
+    stats: {},
+  };
+  const deps = makePrepDeps(apps, {
+    readFile: () => JSON.stringify(prevContext),
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: { company_cap: { max_active: 2 } },
+      company_tiers: { Stripe: "S" },
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+    }),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 5, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  // gh:2 must be skipped with company_cap.
+  assert.equal(result.batch.length, 2);
+  assert.ok(result.skipped.some((s) => s.key === "gh:2" && s.reason === "company_cap"));
+});
+
+test("prepare --phase pre weak-fallback (BL-9 Step 5): missing prepare_context.json returns 1", async () => {
+  const apps = [makeApp()];
+  const deps = makePrepDeps(apps, {
+    readFile: () => { throw new Error("ENOENT"); },
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 5, dryRun: false } });
+  const code = await cmd(ctx);
+  assert.equal(code, 1);
+  assert.ok(ctx._errLines.some((l) => /cannot read prepare_context/.test(l)));
+});
+
+test("prepare --phase pre weak-fallback (BL-9 Step 5): dry-run does not write file", async () => {
+  const apps = [
+    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
+    makeApp({ key: "gh:1", jobId: "1", status: "Inbox", fit_score: "Weak" }),
+  ];
+  const prevContext = {
+    version: 1,
+    profileId: "testuser",
+    mode: "topup",
+    batchSize: 4,
+    batch: [
+      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+    ],
+    skipped: [],
+    deferredQueue: [],
+    unknownTierCompanies: [],
+    stats: {},
+  };
+  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: true } });
+  await cmd(ctx);
+  assert.equal(Object.keys(deps._written).length, 0);
+  assert.ok(ctx._lines.some((l) => /dry-run/.test(l)));
+});
+
+test("prepare --phase pre topup (BL-9 Step 5): writes inboxExhausted to stats", async () => {
+  // After topup, batch consumes both queue keys. No fresh rows remain.
+  const apps = [
+    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
+    makeApp({ key: "gh:1", jobId: "1", status: "Inbox" }),
+    makeApp({ key: "gh:2", jobId: "2", status: "Inbox" }),
+  ];
+  const prevContext = {
+    version: 1,
+    profileId: "testuser",
+    mode: "fresh",
+    batchSize: 5,
+    batch: [
+      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+    ],
+    skipped: [],
+    deferredQueue: ["gh:1", "gh:2"],
+    unknownTierCompanies: [],
+    stats: {},
+  };
+  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "topup", need: 2, batch: 5, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 3);
+  assert.equal(result.stats.inboxExhausted, true);
 });

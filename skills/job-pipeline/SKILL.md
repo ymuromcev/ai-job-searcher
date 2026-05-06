@@ -111,25 +111,131 @@ Default mode prints the plan and runs the read-only pull preview. **Pass `--appl
 
 ### prepare
 
-The `prepare` command is split into two phases: **pre** (mechanical, runs CLI) and the **SKILL phase** (LLM-heavy, Claude executes).
+`prepare` is **autonomous** (BL-9 Step 5, 2026-05-05). The user invokes `/job-pipeline prepare` once. Claude orchestrates a multi-iteration loop that calls the CLI repeatedly and judges batches, until either the target (30 jobs in Notion) is met or the Inbox is exhausted. Then a single push to Notion finalizes the result.
 
-#### Phase 1 — pre (CLI)
+The loop has three phases of CLI invocation, all using the same `prepare_context.json` file:
+
+| Mode | Source pool | When |
+|---|---|---|
+| `--mode fresh` | Inbox rows that pass blocklist / cap / URL-check (the standard pipeline) | First iteration of every run |
+| `--mode topup` | `deferredQueue` (rows that passed filter but didn't fit the previous batch) | Iterations 2–3 if Strong+Medium < 30 |
+| `--mode weak-fallback` | `deferredQueue` + already-Weak Inbox rows in TSV | After 3 iterations if Strong+Medium still < 30 |
+
+#### Phase 1 — pre (CLI, called by Claude)
 
 ```
-node engine/cli.js prepare --profile <id> --phase pre [--batch 30] [--dry-run]
+node engine/cli.js prepare --profile <id> --phase pre --mode <fresh|topup|weak-fallback> [--batch 30] [--need K] [--dry-run]
 ```
 
-Runs automatically without Claude. Outputs `profiles/<id>/prepare_context.json` with:
-- All `Inbox` jobs (post-RFC 014) that passed title blocklist + company cap filter.
-- URL liveness result per job (`urlAlive`, `urlStatus`).
-- JD text from Greenhouse / Lever APIs if available (`jdText`, `jdStatus`).
-- Salary range from Company Tier × Role Level (`salary` object or null).
-- `skipped` list with reasons (filter blocked / URL dead).
-- `stats` summary.
+Runs without LLM cost. Outputs `profiles/<id>/prepare_context.json`:
+- `batch[]` — jobs ready for SKILL judgement (URL-checked, JD-fetched, salary computed). Topup / weak-fallback APPEND to this array.
+- `batch[i].wasAlreadyWeak: true` (weak-fallback only) — row was judged Weak in a prior run; carry over `priorFitScore` / `priorFitRationale` instead of re-judging.
+- `deferredQueue[]` — TSV keys that passed the filter pipeline but weren't URL-checked yet (used by the next topup / weak-fallback call).
+- `skipped[]` — engine-level skip reasons (`company_cap` / `title_blocklist` / `url_dead` / `already_evaluated_weak` / etc.).
+- `stats.inboxExhausted: bool` — true when no more fresh rows remain in TSV outside the current batch (excluding `duplicate`-flagged rows). The loop must stop iterating when this flips true.
+- `stats.skipReasons` / `stats.deferred` / `stats.weakFallbackRuns` etc.
 
-#### Phase 2 — SKILL (Claude executes)
+#### Phase 2 — autonomous loop (Claude orchestrates)
 
-After the CLI writes `prepare_context.json`, the user invokes `/job-pipeline prepare`. Claude then:
+When the user invokes `/job-pipeline prepare`, Claude runs the following loop. **Loop logic lives in the SKILL; the engine is stateless.**
+
+```text
+Step A — initialize
+  iteration = 0
+  verdicts = { strong: [], medium: [], weak: [] }    # per-job evaluation buckets
+  Run: prepare --phase pre --mode fresh --batch 30
+  Read: profiles/<id>/prepare_context.json
+
+Step B — per-iteration evaluation loop
+  while True:
+    iteration += 1
+    new_entries = batch entries we haven't judged yet
+    For each entry in new_entries:
+      run Steps 1, 3, 4, 5, 5.7, 6, 7, 8 (fit + CL gen, NOT Notion push)
+      append to verdicts[<fitScore-bucket>]
+
+    strongMedium = len(verdicts.strong) + len(verdicts.medium)
+
+    # Stop conditions
+    if strongMedium >= 30: break
+    if stats.inboxExhausted: break
+    if iteration >= 3: break
+
+    # Topup
+    Run: prepare --phase pre --mode topup --need (30 - strongMedium)
+    Re-read prepare_context.json → continue
+
+Step C — weak fallback (only if needed)
+  if (len(verdicts.strong) + len(verdicts.medium) < 30) AND NOT stats.inboxExhausted:
+    Run: prepare --phase pre --mode weak-fallback --need (30 - strongMedium)
+    Re-read prepare_context.json
+    new_entries = batch entries not yet judged
+    For each entry:
+      if entry.wasAlreadyWeak:
+        # Reuse saved verdict, do NOT spend tokens re-judging
+        fitScore = entry.priorFitScore  (always "Weak")
+        fitRationale = entry.priorFitRationale
+        skip Step 4
+        run Steps 7, 8 (CL gen) so the row is push-ready
+        append to verdicts.weak
+      else:
+        run Steps 1, 3, 4, 5, 5.7, 6, 7, 8 as usual
+
+Step D — pick top 30 by priority
+  candidates = verdicts.strong + verdicts.medium + verdicts.weak  (in that order)
+  final = candidates[:30]
+  if len(final) < 30:
+    warn user: "only N candidates found, push N instead of 30"
+
+Step E — push final to Notion
+  For each job in `final`: run Step 9 (Notion page creation)
+
+Step F — write results + commit
+  Step 10: write prepare_results_<timestamp>.json
+    decision = "to_apply" for each job in `final`
+    decision = "skip" for everything else evaluated this run (carries fitScore so the
+               row gets persisted to TSV and won't be re-judged next prepare run)
+  Step 11: prepare --phase commit --results-file <path>
+  Step 12: report to user
+```
+
+**Stdout per iteration** (mirror this format so the user sees progress):
+
+```
+prepare loop iteration 1/3: 30 candidates → 8 Strong, 12 Medium, 10 Weak
+prepare loop iteration 2/3: 27 new candidates → 5 Strong, 9 Medium, 13 Weak
+prepare loop iteration 3/3: 21 new candidates → 2 Strong, 9 Medium, 10 Weak
+loop done: 15 Strong, 30 Medium, 33 Weak (target 30)
+selecting top 30: 15 Strong + 15 Medium → push to Notion
+```
+
+If `weak-fallback` runs:
+
+```
+strong+medium below target (8+5=13 of 30); falling back to weak…
+weak-fallback: pulled 17 entries (12 already-Weak, 5 fresh)
+final: 8 Strong + 5 Medium + 17 Weak = 30 → push to Notion
+```
+
+If `inboxExhausted`:
+
+```
+loop done: 4 Strong, 7 Medium (Inbox exhausted)
+warn: only 11 candidates found, push 11 instead of 30
+selecting all 11 (4 Strong + 7 Medium) → push to Notion
+```
+
+#### Anti-patterns — do NOT
+
+- **Do not** push to Notion (Step 9) inside the iteration loop. Push happens ONCE on the top-30 final list (Step E above). Otherwise we'd create 60–90 Notion pages and only some would be marked final.
+- **Do not** re-judge `entry.wasAlreadyWeak === true` rows in Step 4. The verdict is already in TSV; re-asking burns tokens. Carry `priorFitScore` / `priorFitRationale` straight into the verdict bucket.
+- **Do not** keep iterating past 3 even if Strong+Medium < 30 and Inbox isn't exhausted. The cap is by design — token budget protection. After 3, the SKILL falls back to weak.
+- **Do not** terminate the loop early just because iteration N had 0 Strong. Mediums and the weak-fallback can still hit the target; keep going until one of the three stop conditions is true.
+- **Do not** invoke `--mode topup` or `--mode weak-fallback` directly without first running `--mode fresh` (or another mode) to seed `prepare_context.json`. Topup / weak-fallback exit 1 if the context file is missing.
+
+The reference for each Step (1, 3, 4, 5, 5.7, 6, 7, 8, 9, 10, 11, 12) is below — these describe the per-job evaluation logic that the loop above orchestrates.
+
+After the CLI writes `prepare_context.json`, Claude then:
 
 **Step 1 — Load memory**
 
@@ -165,13 +271,15 @@ Write a 1-sentence fit rationale (concrete domain overlap, not generic praise). 
 
 Early-startup modifier: if company is pre-Series B or <50 employees — downgrade one level.
 
-**Step 5 — Filter: fit**
+**Step 5 — Bucket: fit (loop-aware)**
 
-Geo filtering already happened in the engine pre-phase (Step 3 is read-only) — only entries with `geo_decision === "allowed"` reach the batch. The remaining gate is fit:
+Geo filtering already happened in the engine pre-phase (Step 3 is read-only) — only entries with `geo_decision === "allowed"` reach the batch. The remaining gate is fit.
 
-Skip (mark `decision: "skip"`) any job where `fitScore` is `Weak`.
+In the autonomous loop (Step B above), assign every judged job to one of three in-memory buckets — `verdicts.strong` / `verdicts.medium` / `verdicts.weak` — based on `fitScore`. **Do NOT mark anything `decision="skip"` yet.** The final skip / to_apply call is made in Step E once the top-30 is picked.
 
-Report skipped jobs with reason to the user before continuing.
+If the entry has `wasAlreadyWeak: true`, it goes straight to `verdicts.weak` with `fitScore="Weak"` carried over from `entry.priorFitScore`. No Step 4 re-judging.
+
+Report iteration counts to the user (per the stdout format in Phase 2 above): how many landed in each bucket per iteration, what the running total is.
 
 **Step 5.7 — Auto-tier unknown companies**
 
@@ -253,9 +361,11 @@ Save the CL as `profiles/<id>/cover_letters/<company>_<role-slug>_<YYYYMMDD>.md`
 
 Record `clKey` = filename without extension. Record `clBaseKey` = the base entry key/job_id you reused (helps audit batch consistency: if 10 letters share `clBaseKey = "affirm_capital"`, the proof paragraphs are identical across them, which is the point).
 
-**Step 9 — Notion page creation (per job)**
+**Step 9 — Notion page creation (per job in the final top-N)**
 
-For each job where `decision = "to_apply"`:
+This step runs ONCE per `prepare` invocation, after the autonomous loop (Step B) and weak-fallback (Step C) have settled the verdict buckets. Iterate over the top-30 sorted list (Step D above) — these are the jobs marked `decision = "to_apply"`. Do NOT push during loop iterations; that would create duplicate / over-pushed pages.
+
+For each job in the final top-N:
 
 **9.0 Skip-guard.** If the matching `applications.tsv` row already has a non-empty `notion_page_id`, the page was created in a prior run — record the existing id as `notionPageId` in results.json and skip 9a–9c (no new page, no duplicate). This makes operator-reruns of the SKILL idempotent.
 
@@ -290,7 +400,13 @@ Record the returned `notion_page_id`.
 
 **Step 10 — Write results file**
 
-Write `profiles/<id>/prepare_results_<YYYYMMDD_HHMMSS>.json`:
+Write `profiles/<id>/prepare_results_<YYYYMMDD_HHMMSS>.json` ONCE at the end of the run, covering every job evaluated across all loop iterations (not just the final top-N).
+
+Result entries:
+- `decision: "to_apply"` — the top-N pushed to Notion in Step 9. Carries `clKey`, `clPath`, `resumeVer`, `notionPageId`, `salaryMin`, `salaryMax`, plus `fitScore` / `fitRationale`.
+- `decision: "skip"` — every other judged row from the loop. Carries `fitScore: "Weak"` (or rarely Strong/Medium that didn't make the cut) + `fitRationale` so the engine commit phase persists the verdict and `filterAlreadyEvaluated` skips them on the next prepare run. (Strong/Medium that didn't make top-30 still get persisted; if they pass filter next time, they'll be picked up again.)
+
+Format:
 
 ```json
 {
@@ -338,15 +454,15 @@ This updates `applications.tsv`: `to_apply` entries get `status="To Apply"`, `cl
 
 **Step 12 — Report to user**
 
-Summarize:
-- N jobs moved to "To Apply"
-- N jobs skipped in SKILL phase (geo / weak fit) with list
-- N jobs skipped in pre-phase by reason — read from `prepare_context.stats.skipReasons` and surface the breakdown verbatim (e.g. `company_cap: 5, title_blocklist: 2, url_dead: 1`). If the value is `{}`, omit this line.
-- N jobs deferred (eligible but past target batch size — `prepare_context.stats.deferred`). These stay queued for the next pre-phase run; mention only if non-zero.
-- N CLs written (paths). Group by `clBaseKey` so the user sees how the batch reused base templates: e.g. `8 reused affirm_capital, 3 reused chime_growth, 1 written from scratch`.
-- N Notion pages created
-- N companies auto-tiered (with tier assignments) — only if Step 5.7 ran
-- Any warnings or anomalies
+Summarize at the user level (BL-11 — what the user sees, not engine internals):
+
+- **Headline**: `pushed N jobs to Notion (Strong: A, Medium: B, Weak: C)`. If N < 30, lead with `only N candidates found` and the reason (`Inbox exhausted` or `loop hit 3-iteration limit`).
+- **Loop summary**: how many iterations ran, whether weak-fallback triggered. Example: `loop: 2 iterations + weak-fallback (15 already-Weak rows reused)`.
+- **CL reuse breakdown**: group by `clBaseKey` — `8 reused affirm_capital, 3 reused chime_growth, 1 written from scratch`.
+- **Pre-phase skips**: read from `prepare_context.stats.skipReasons` and surface the breakdown verbatim (e.g. `company_cap: 5, title_blocklist: 2, url_dead: 1`). Omit if `{}`.
+- **Auto-tier assignments**: only if Step 5.7 ran — list the company → tier mapping.
+- **Deferred queue**: `prepare_context.stats.deferred` — number of fresh rows that didn't make it into the batch. Mention only if non-zero AND inboxExhausted is false (otherwise queue's empty).
+- **Warnings / anomalies**: any invalid resumeVer, invalid tier, fit-validation warnings the engine logged.
 
 ---
 

@@ -95,11 +95,17 @@ function buildActiveCounts(apps) {
 // Engine-level skips (company_cap / blocklists / geo) are NOT persisted on
 // the row and continue to be recomputed each run by `applyPrepareFilter` —
 // rule changes must take effect immediately. Only SKILL verdicts persist.
-function filterAlreadyEvaluated(apps) {
+//
+// BL-9 Step 5: `mode = "weak-fallback"` opts INTO including already-Weak rows
+// in the passed pool (the autonomous prepare loop pulls them as fallback when
+// Strong+Medium can't fill the batch). `duplicate` rows are still always
+// dropped — they're noise regardless of mode.
+function filterAlreadyEvaluated(apps, { mode = "default" } = {}) {
   const passed = [];
   const skipped = [];
+  const includeWeak = mode === "weak-fallback";
   for (const app of apps) {
-    if (app.fit_score === "Weak" || app.skip_reason === "weak_fit") {
+    if (!includeWeak && (app.fit_score === "Weak" || app.skip_reason === "weak_fit")) {
       skipped.push({ key: app.key, reason: "already_evaluated_weak", url: app.url });
       continue;
     }
@@ -263,7 +269,12 @@ async function fillUpAliveBatch(passed, target, deps) {
 //
 // BL-9 Step 4: extracted so both fresh and topup modes produce identical
 // entry shape. No behavior change vs the inline block runPre had before.
-function buildBatchEntry(urlRes, jd, profile, deps, companyTiers, salaryOpts, unknownTierSet) {
+//
+// BL-9 Step 5: optional `wasAlreadyWeak` opts the entry into the SKILL's
+// weak-fallback path. The SKILL reads it as "the row was judged Weak in a
+// prior run, do not re-judge — carry over fit_score/fit_rationale from TSV
+// and proceed straight to CL gen + Notion push as a fallback candidate".
+function buildBatchEntry(urlRes, jd, profile, deps, companyTiers, salaryOpts, unknownTierSet, opts = {}) {
   const entry = {
     key: urlRes.key,
     source: urlRes.source,
@@ -274,6 +285,12 @@ function buildBatchEntry(urlRes, jd, profile, deps, companyTiers, salaryOpts, un
     urlAlive: urlRes.alive,
     urlStatus: urlRes.status,
   };
+
+  if (opts.wasAlreadyWeak) {
+    entry.wasAlreadyWeak = true;
+    if (opts.priorFitScore) entry.priorFitScore = opts.priorFitScore;
+    if (opts.priorFitRationale) entry.priorFitRationale = opts.priorFitRationale;
+  }
 
   if (urlRes.boardRoot) entry.urlBoardRoot = true;
 
@@ -351,6 +368,36 @@ function computeSkipReasons(skipped) {
   return skipReasons;
 }
 
+// RFC 014 + back-compat: a TSV row is "fresh / not yet committed to apply"
+// when status is "Inbox" (post-RFC014) OR status="To Apply" with no
+// notion_page_id (legacy rows from before the migration).
+function isFreshInboxApp(app) {
+  return (
+    app.status === "Inbox" ||
+    (app.status === "To Apply" && !app.notion_page_id)
+  );
+}
+
+// BL-9 Step 5: signal for the autonomous SKILL loop. `inboxExhausted=true`
+// means there's nothing left in the TSV that could enter a future batch —
+// every fresh-inbox row is either already in the current batch or marked
+// `skip_reason="duplicate"` (which we always drop). The SKILL's loop should
+// stop iterating when this flips true, even if it hasn't reached its 30-job
+// target.
+//
+// Note: weak-flagged rows are NOT counted as exhausted in normal mode
+// (they're still picked up by `--mode weak-fallback`). They become exhausted
+// only after weak-fallback has pulled them into the batch.
+function computeInboxExhausted(apps, batchKeys) {
+  for (const app of apps) {
+    if (!isFreshInboxApp(app)) continue;
+    if (batchKeys.has(app.key)) continue;
+    if (app.skip_reason === "duplicate") continue;
+    return false;
+  }
+  return true;
+}
+
 // --- Deps & defaults ---------------------------------------------------------
 
 function makeDefaultDeps() {
@@ -401,11 +448,7 @@ async function runPre(ctx, deps) {
   // Back-compat: pre-RFC014 rows with status="To Apply" + no notion_page_id
   // are also accepted — backfill script normally rewrites them, but the dual
   // filter protects against partial migrations / forgotten profiles.
-  const inboxApps = apps.filter(
-    (a) =>
-      a.status === "Inbox" ||
-      (a.status === "To Apply" && !a.notion_page_id)
-  );
+  const inboxApps = apps.filter(isFreshInboxApp);
   stdout(`fresh-to-prepare: ${inboxApps.length} jobs`);
 
   // BL-9: pre-filter rows the SKILL has already evaluated in an earlier run.
@@ -498,6 +541,11 @@ async function runPre(ctx, deps) {
   // the SKILL falls back to resume_versions.json / cover_letter_template.md.
   const memory = profile.memory || { writingStyle: null, resumeKeyPoints: null, feedback: [] };
 
+  // BL-9 Step 5: signal for the autonomous SKILL loop ("Inbox is empty, stop
+  // iterating even if 30-target not yet hit").
+  const batchKeys = new Set(batchOut.map((e) => e.key));
+  const inboxExhausted = computeInboxExhausted(apps, batchKeys);
+
   // G-16: explicit schema version on the context file so future schema bumps
   // can migrate (or fail loudly) instead of silently re-using stale fields.
   // Bump only when shape changes break consumers; the SKILL must handle
@@ -524,6 +572,7 @@ async function runPre(ctx, deps) {
       urlDead: dead.length,
       deferred: deferredQueue.length,
       unknownTierCompanies: unknownTierCompanies.length,
+      inboxExhausted,
       skipReasons,
     },
   };
@@ -646,9 +695,7 @@ async function runPreTopup(ctx, deps) {
       droppedFromQueue.push({ key, reason: "not_in_tsv" });
       continue;
     }
-    const isFresh = app.status === "Inbox" ||
-      (app.status === "To Apply" && !app.notion_page_id);
-    if (!isFresh) {
+    if (!isFreshInboxApp(app)) {
       droppedFromQueue.push({ key, reason: "no_longer_fresh", url: app.url });
       continue;
     }
@@ -742,24 +789,28 @@ async function runPreTopup(ctx, deps) {
   }
 
   // 9) Merge into context.
+  const mergedBatch = [...prevBatch, ...newEntries];
+  const mergedBatchKeys = new Set(mergedBatch.map((e) => e.key));
+  const inboxExhausted = computeInboxExhausted(apps, mergedBatchKeys);
   const merged = {
     ...prev,
     mode: "topup",
     generatedAt: deps.now(),
-    batch: [...prevBatch, ...newEntries],
+    batch: mergedBatch,
     skipped: [...prevSkipped, ...newSkipped],
     deferredQueue: stillQueuedKeys,
     unknownTierCompanies: [...unknownTierSet].sort(),
     stats: {
       ...prevStats,
       alreadyEvaluated: (prevStats.alreadyEvaluated || 0) + alreadyEvaluatedSkips.length,
-      inBatch: prevBatch.length + newEntries.length,
+      inBatch: mergedBatch.length,
       urlChecked: (prevStats.urlChecked || 0) + allUrlResults.length,
       urlAlive: (prevStats.urlAlive || 0) + aliveResults.length,
       urlDead: (prevStats.urlDead || 0) + dead.length,
       deferred: stillQueuedKeys.length,
       unknownTierCompanies: unknownTierSet.size,
       topupRuns: (prevStats.topupRuns || 0) + 1,
+      inboxExhausted,
       skipReasons: computeSkipReasons([...prevSkipped, ...newSkipped]),
     },
   };
@@ -777,6 +828,267 @@ async function runPreTopup(ctx, deps) {
   stdout(
     `next: re-run the SKILL prepare mode for the new keys: ${newEntries.map((e) => e.key).join(", ")}`
   );
+  return 0;
+}
+
+// --- Phase: pre, mode weak-fallback ------------------------------------------
+//
+// BL-9 Step 5: the fallback step of the autonomous prepare loop. After the
+// SKILL has run several `--mode topup` iterations and Strong + Medium
+// candidates still don't fill the batch (target = batchSize, e.g. 30), the
+// loop falls back to Weak candidates so the user gets a complete batch
+// instead of underfilling Notion.
+//
+// Source pool (deduped by key, neither bucket counted twice):
+//   1. Whatever's left in `context.deferredQueue` — rows that passed the
+//      filter pipeline in the original fresh run but never got URL-checked
+//      (target was already met).
+//   2. Already-Weak fresh-Inbox rows in the TSV. These are rows the SKILL
+//      previously judged Weak (decision=skip → status stays Inbox,
+//      fit_score="Weak" persisted). `filterAlreadyEvaluated({mode:"weak-fallback"})`
+//      lets them through; the SKILL reads the entry's `wasAlreadyWeak` flag
+//      and reuses the saved verdict instead of re-judging.
+//
+// Re-validation (same as topup): drop committed / no-longer-fresh keys,
+// re-apply `applyPrepareFilter` (rules may have tightened, cap pre-accounts
+// for prevBatch entries already going to Notion). Fill-up loop URL-checks
+// until `--need K` alive (or pool exhausted).
+//
+// Output: appends new entries to `context.batch[]` with `wasAlreadyWeak:true`
+// where applicable; carries `priorFitScore` + `priorFitRationale` from TSV
+// so the SKILL doesn't re-fetch them. Sets `context.mode = "weak-fallback"`
+// and stamps `stats.weakFallbackRuns`.
+async function runPreWeakFallback(ctx, deps) {
+  const { profileId, flags, stdout, stderr } = ctx;
+  const profilesDir = resolveProfilesDir(ctx, ctx.env || process.env);
+
+  const profile = deps.loadProfile(profileId, { profilesDir });
+  const filterRules = { ...(profile.filterRules || {}), geo: profile.geo };
+  const contextPath = path.join(profile.paths.root, "prepare_context.json");
+
+  // 1) Load existing context.
+  let prev;
+  try {
+    prev = JSON.parse(deps.readFile(contextPath));
+  } catch (err) {
+    stderr(`error: cannot read prepare_context.json at ${contextPath}: ${err.message}`);
+    stderr(`hint: run --mode fresh first (default mode) to create the context file`);
+    return 1;
+  }
+  if (!Array.isArray(prev.batch)) {
+    stderr(`error: prepare_context.json missing 'batch' array`);
+    return 1;
+  }
+  const prevQueue = Array.isArray(prev.deferredQueue) ? prev.deferredQueue : [];
+  const prevSkipped = Array.isArray(prev.skipped) ? prev.skipped : [];
+  const prevBatch = prev.batch;
+  const prevStats = prev.stats || {};
+  const prevUnknownTiers = Array.isArray(prev.unknownTierCompanies)
+    ? prev.unknownTierCompanies
+    : [];
+  const batchSize = Number.isFinite(prev.batchSize) ? prev.batchSize : DEFAULT_BATCH_SIZE;
+
+  // 2) Compute need.
+  const explicitNeed = Number.isFinite(flags.need) && flags.need > 0 ? flags.need : null;
+  const need = explicitNeed != null
+    ? explicitNeed
+    : Math.max(0, batchSize - prevBatch.length);
+  if (need === 0) {
+    stdout(`weak-fallback: nothing to add (current batch ${prevBatch.length} already at batchSize ${batchSize})`);
+    return 0;
+  }
+
+  // 3) Build the source pool.
+  const applicationsPath = profile.paths.applicationsTsv;
+  const { apps } = deps.loadApplications(applicationsPath);
+  const byKey = Object.fromEntries(apps.map((a) => [a.key, a]));
+  const inBatchKeys = new Set(prevBatch.map((e) => e.key));
+
+  // 3a) deferredQueue → live apps (drop committed / no-longer-fresh).
+  const seen = new Set();
+  const droppedFromQueue = [];
+  const liveQueueApps = [];
+  for (const key of prevQueue) {
+    if (inBatchKeys.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    const app = byKey[key];
+    if (!app) {
+      droppedFromQueue.push({ key, reason: "not_in_tsv" });
+      continue;
+    }
+    if (!isFreshInboxApp(app)) {
+      droppedFromQueue.push({ key, reason: "no_longer_fresh", url: app.url });
+      continue;
+    }
+    liveQueueApps.push(app);
+  }
+
+  // 3b) Already-Weak fresh-inbox apps not yet in batch.
+  const alreadyWeakApps = [];
+  for (const app of apps) {
+    if (!isFreshInboxApp(app)) continue;
+    if (inBatchKeys.has(app.key) || seen.has(app.key)) continue;
+    if (app.fit_score !== "Weak" && app.skip_reason !== "weak_fit") continue;
+    seen.add(app.key);
+    alreadyWeakApps.push(app);
+  }
+
+  const pool = [...liveQueueApps, ...alreadyWeakApps];
+  stdout(
+    `weak-fallback: pool ${pool.length} (${liveQueueApps.length} from deferredQueue, ` +
+    `${alreadyWeakApps.length} already-Weak in TSV); need ${need}`
+  );
+
+  if (pool.length === 0) {
+    stdout(`weak-fallback: pool empty — nothing more to pull`);
+    // Still write inboxExhausted so SKILL loop sees the signal.
+    const noopMerged = {
+      ...prev,
+      mode: "weak-fallback",
+      generatedAt: deps.now(),
+      stats: {
+        ...prevStats,
+        weakFallbackRuns: (prevStats.weakFallbackRuns || 0) + 1,
+        inboxExhausted: computeInboxExhausted(apps, inBatchKeys),
+      },
+    };
+    if (!flags.dryRun) {
+      deps.writeFile(contextPath, JSON.stringify(noopMerged, null, 2));
+    }
+    return 0;
+  }
+
+  // 4) filterAlreadyEvaluated — keep weak rows, only drop duplicates.
+  const { passed: notDuplicate, skipped: duplicateSkips } =
+    filterAlreadyEvaluated(pool, { mode: "weak-fallback" });
+  if (duplicateSkips.length > 0) {
+    stdout(`weak-fallback: ${duplicateSkips.length} duplicate-flagged dropped`);
+  }
+
+  // 5) applyPrepareFilter (rules + cap pre-account from prevBatch).
+  const activeCounts = buildActiveCounts(apps);
+  for (const e of prevBatch) {
+    const co = e.companyName;
+    if (co) activeCounts[co] = (activeCounts[co] || 0) + 1;
+  }
+  const { passed, skipped: filteredOut } = applyPrepareFilter(
+    notDuplicate,
+    filterRules,
+    activeCounts
+  );
+  stdout(`weak-fallback: after filter ${passed.length} passed, ${filteredOut.length} skipped`);
+
+  // 6) Fill-up.
+  stdout(`weak-fallback: checking URLs (target: ${need} alive)…`);
+  const { aliveResults, allUrlResults, consumed } = await fillUpAliveBatch(
+    passed,
+    need,
+    deps
+  );
+  const dead = allUrlResults.filter((r) => !r.alive);
+  stdout(
+    `weak-fallback: URLs checked ${allUrlResults.length}, ${aliveResults.length} alive ` +
+    `(target ${need}), ${dead.length} dead, ${passed.length - consumed} still queued`
+  );
+
+  // 7) JD fetch + entry construction.
+  const companyTiers = (profile.company_tiers) || {};
+  const salaryOpts = profile.salaryConfig || {};
+  const jdCacheDir = profile.paths.jdCacheDir;
+  const jdByAppKey = await fetchJdsByKey(aliveResults, jdCacheDir, deps);
+
+  // Lookup table for "was this row already Weak?" — needed because aliveResults
+  // come from the URL-check path which only carries app fields applyPrepareFilter
+  // forwarded; we re-key against the original TSV row to read fit_score / fit_rationale.
+  const poolByKey = Object.fromEntries(pool.map((a) => [a.key, a]));
+  const unknownTierSet = new Set(prevUnknownTiers);
+  const newEntries = aliveResults.map((urlRes) => {
+    const tsvRow = poolByKey[urlRes.key] || {};
+    const wasAlreadyWeak =
+      tsvRow.fit_score === "Weak" || tsvRow.skip_reason === "weak_fit";
+    return buildBatchEntry(
+      urlRes,
+      jdByAppKey[urlRes.key],
+      profile,
+      deps,
+      companyTiers,
+      salaryOpts,
+      unknownTierSet,
+      {
+        wasAlreadyWeak,
+        priorFitScore: wasAlreadyWeak ? tsvRow.fit_score || "Weak" : "",
+        priorFitRationale: wasAlreadyWeak ? tsvRow.fit_rationale || "" : "",
+      }
+    );
+  });
+
+  // 8) Skip records.
+  const deadSkipped = dead.map((r) => ({
+    key: r.key,
+    reason: "url_dead",
+    url: r.url,
+    urlStatus: r.status,
+  }));
+  const newSkipped = [
+    ...duplicateSkips,
+    ...filteredOut,
+    ...deadSkipped,
+    ...droppedFromQueue,
+  ];
+
+  // 9) Rebuild deferred queue. Anything that passed but didn't fit `need`,
+  // plus the previously-queued items we couldn't push through (already-Weak
+  // residue and queue residue). Excluding URL-checked keys.
+  const checkedKeys = new Set(allUrlResults.map((r) => r.key));
+  const stillQueuedKeys = [];
+  for (const a of passed.slice(consumed)) {
+    if (!checkedKeys.has(a.key)) stillQueuedKeys.push(a.key);
+  }
+
+  // 10) Merge.
+  const mergedBatch = [...prevBatch, ...newEntries];
+  const mergedBatchKeys = new Set(mergedBatch.map((e) => e.key));
+  const inboxExhausted = computeInboxExhausted(apps, mergedBatchKeys);
+
+  const merged = {
+    ...prev,
+    mode: "weak-fallback",
+    generatedAt: deps.now(),
+    batch: mergedBatch,
+    skipped: [...prevSkipped, ...newSkipped],
+    deferredQueue: stillQueuedKeys,
+    unknownTierCompanies: [...unknownTierSet].sort(),
+    stats: {
+      ...prevStats,
+      inBatch: mergedBatch.length,
+      urlChecked: (prevStats.urlChecked || 0) + allUrlResults.length,
+      urlAlive: (prevStats.urlAlive || 0) + aliveResults.length,
+      urlDead: (prevStats.urlDead || 0) + dead.length,
+      deferred: stillQueuedKeys.length,
+      unknownTierCompanies: unknownTierSet.size,
+      weakFallbackRuns: (prevStats.weakFallbackRuns || 0) + 1,
+      inboxExhausted,
+      skipReasons: computeSkipReasons([...prevSkipped, ...newSkipped]),
+    },
+  };
+
+  if (flags.dryRun) {
+    stdout(
+      `(dry-run) would append ${newEntries.length} weak-fallback entries → batch=${merged.batch.length}`
+    );
+    stdout(`(dry-run) stats: ${JSON.stringify(merged.stats)}`);
+    return 0;
+  }
+
+  deps.writeFile(contextPath, JSON.stringify(merged, null, 2));
+  const weakCount = newEntries.filter((e) => e.wasAlreadyWeak).length;
+  stdout(
+    `weak-fallback: appended ${newEntries.length} entries (${weakCount} already-Weak, ` +
+    `${newEntries.length - weakCount} fresh) → batch=${merged.batch.length} (${contextPath})`
+  );
+  if (inboxExhausted) {
+    stdout(`inbox-exhausted: no more fresh rows in TSV — SKILL loop should stop`);
+  }
   return 0;
 }
 
@@ -1053,9 +1365,10 @@ function makePrepareCommand(overrides = {}) {
 
     if (phase === "pre") {
       if (mode === "topup") return runPreTopup(ctx, deps);
+      if (mode === "weak-fallback") return runPreWeakFallback(ctx, deps);
       if (mode === "fresh" || mode === "") return runPre(ctx, deps);
       ctx.stderr(
-        `error: unknown --mode "${mode}" (valid: fresh, topup)`
+        `error: unknown --mode "${mode}" (valid: fresh, topup, weak-fallback)`
       );
       return 1;
     }
@@ -1074,3 +1387,5 @@ module.exports.applyPrepareFilter = applyPrepareFilter;
 module.exports.filterAlreadyEvaluated = filterAlreadyEvaluated;
 module.exports.buildActiveCounts = buildActiveCounts;
 module.exports.fillUpAliveBatch = fillUpAliveBatch;
+module.exports.computeInboxExhausted = computeInboxExhausted;
+module.exports.isFreshInboxApp = isFreshInboxApp;
