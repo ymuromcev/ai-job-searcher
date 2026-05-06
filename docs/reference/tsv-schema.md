@@ -17,11 +17,12 @@ Both files are tab-separated with a header row first. Field separators
 inside values are normalized to a single space at write time
 (`escapeField` strips `\t \r \n`).
 
-## Schema v3 (current)
+## Schema v4 (current)
 
-`HEADER` constant in `engine/core/applications_tsv.js`. Sixteen columns.
-Schema rev'd from v2 → v3 on 2026-05-03 (RFC G-5) to restore prototype
-parity by adding `location` at index 6.
+`HEADER` constant in `engine/core/applications_tsv.js`. Twenty columns.
+Schema rev'd from v3 → v4 on 2026-05-05 (BL-9) to persist Claude's fit
+verdict on each row. Subsequent `prepare` runs use these columns to skip
+already-evaluated jobs instead of re-paying the SKILL cost.
 
 | # | Column | Type | Required | Description |
 |---|---|---|---|---|
@@ -41,6 +42,10 @@ parity by adding `location` at index 6.
 | 14 | `cl_path` | string | no | Filesystem path of the rendered cover letter (PDF). |
 | 15 | `createdAt` | ISO timestamp | yes | First time the row entered the pipeline. |
 | 16 | `updatedAt` | ISO timestamp | yes | Last write to the row. |
+| 17 | `fit_score` | enum | no | Claude's fit verdict from `prepare --phase commit`: `Strong` / `Medium` / `Weak` / `""`. Empty until the row passes through the SKILL. |
+| 18 | `fit_rationale` | string | no | Short free-text rationale (≤ ~200 chars typical). Written together with `fit_score`. |
+| 19 | `fit_evaluated_at` | ISO timestamp | no | When the SKILL run that wrote `fit_score` happened. Engine reads this to decide whether to re-evaluate (currently: never re-evaluate once written). |
+| 20 | `skip_reason` | enum | no | When the SKILL decision was `skip`: `weak_fit` / `duplicate` / `""`. Engine-level skips (`company_cap`, `title_blocklist`, etc.) are recomputed each run and **not** persisted here. |
 
 ## Status values
 
@@ -84,11 +89,12 @@ profile flavor unification (Stage 8) finalized the current set.
 
 | Version | Header | Width | Reader | Writer |
 |---|---|---|---|---|
-| v3 | `HEADER` | 16 | `rowToAppV3` | `rowFor` (current) |
-| v2 | `HEADER_V2` | 15 | `rowToAppV2` (synthesizes empty `location`) | none |
-| v1 | `HEADER_V1` | 12 | `rowToAppV1` (synthesizes empty `location`, `salary_min`, `salary_max`, `cl_path`) | none |
+| v4 | `HEADER` | 20 | `rowToAppV4` | `rowFor` (current) |
+| v3 | `HEADER_V3` | 16 | `rowToAppV3` (synthesizes empty `fit_*` + `skip_reason`) | none |
+| v2 | `HEADER_V2` | 15 | `rowToAppV2` (synthesizes empty `location` + `fit_*` + `skip_reason`) | none |
+| v1 | `HEADER_V1` | 12 | `rowToAppV1` (synthesizes empty `location`, `salary_min`, `salary_max`, `cl_path`, `fit_*`, `skip_reason`) | none |
 
-The reader rejects any header that does not match one of the three
+The reader rejects any header that does not match one of the four
 constants exactly — extra or reordered columns are not tolerated.
 
 ### Recorded backups
@@ -119,9 +125,9 @@ satisfies the command's own filter — there is no manifest layer.
 
 ## Future schema (draft)
 
-RFC 012 (relational data model) proposes a v4 layout that promotes
+RFC 012 (relational data model) proposes a v5 layout that promotes
 `companyName` → `companyId` and adds a separate `companies.tsv`. The
-TSV reader will keep auto-upgrading from v1, v2, and v3.
+TSV reader will keep auto-upgrading from v1, v2, v3, and v4.
 
 ## See also
 

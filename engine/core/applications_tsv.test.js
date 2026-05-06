@@ -103,14 +103,33 @@ test("save + load round-trips v3 fields (salary_min, salary_max, cl_path, locati
   built[0].location = "San Francisco, CA";
   apps.save(file, built);
   const back = apps.load(file);
-  assert.equal(back.schemaVersion, 3);
+  assert.equal(back.schemaVersion, 4);
   assert.equal(back.apps[0].salary_min, "140000");
   assert.equal(back.apps[0].salary_max, "190000");
   assert.equal(back.apps[0].cl_path, "Affirm_analyst_20260420");
   assert.equal(back.apps[0].location, "San Francisco, CA");
 });
 
-test("load auto-upgrades v1 files (12 cols) with empty v2+v3 fields", () => {
+// BL-9: persist Claude's fit verdict so subsequent prepare runs can skip
+// already-evaluated rows instead of re-paying the SKILL cost. Round-trip
+// covers writes + reads of the four v4 columns.
+test("save + load round-trips v4 fit fields (fit_score, fit_rationale, fit_evaluated_at, skip_reason)", () => {
+  const file = tmp();
+  const { apps: built } = apps.appendNew([], [fixtureJob()], { now: "2026-04-20T00:00:00Z" });
+  built[0].fit_score = "Weak";
+  built[0].fit_rationale = "Energy domain — outside PM core";
+  built[0].fit_evaluated_at = "2026-05-05T14:17:47Z";
+  built[0].skip_reason = "weak_fit";
+  apps.save(file, built);
+  const back = apps.load(file);
+  assert.equal(back.schemaVersion, 4);
+  assert.equal(back.apps[0].fit_score, "Weak");
+  assert.equal(back.apps[0].fit_rationale, "Energy domain — outside PM core");
+  assert.equal(back.apps[0].fit_evaluated_at, "2026-05-05T14:17:47Z");
+  assert.equal(back.apps[0].skip_reason, "weak_fit");
+});
+
+test("load auto-upgrades v1 files (12 cols) with empty v2+v3+v4 fields", () => {
   const file = tmp();
   const v1Header = apps.HEADER_V1.join("\t");
   const v1Row = [
@@ -127,16 +146,20 @@ test("load auto-upgrades v1 files (12 cols) with empty v2+v3 fields", () => {
   assert.equal(back.apps[0].salary_max, "");
   assert.equal(back.apps[0].cl_path, "");
   assert.equal(back.apps[0].location, "");
+  assert.equal(back.apps[0].fit_score, "");
+  assert.equal(back.apps[0].fit_rationale, "");
+  assert.equal(back.apps[0].fit_evaluated_at, "");
+  assert.equal(back.apps[0].skip_reason, "");
   assert.equal(back.apps[0].status, "To Apply");
   assert.equal(back.apps[0].notion_page_id, "abc");
 
-  // Re-saving promotes the file to v3.
+  // Re-saving promotes the file to v4.
   apps.save(file, back.apps);
   const after = apps.load(file);
-  assert.equal(after.schemaVersion, 3);
+  assert.equal(after.schemaVersion, 4);
 });
 
-test("load auto-upgrades v2 files (15 cols) with empty location", () => {
+test("load auto-upgrades v2 files (15 cols) with empty location and fit fields", () => {
   const file = tmp();
   const v2Header = apps.HEADER_V2.join("\t");
   const v2Row = [
@@ -153,11 +176,40 @@ test("load auto-upgrades v2 files (15 cols) with empty location", () => {
   assert.equal(back.apps[0].location, "");
   assert.equal(back.apps[0].salary_min, "140000");
   assert.equal(back.apps[0].cl_path, "Affirm_analyst_20260420");
+  assert.equal(back.apps[0].fit_score, "");
+  assert.equal(back.apps[0].skip_reason, "");
 
-  // Re-saving promotes to v3.
+  // Re-saving promotes to v4.
   apps.save(file, back.apps);
   const after = apps.load(file);
-  assert.equal(after.schemaVersion, 3);
+  assert.equal(after.schemaVersion, 4);
+});
+
+test("load auto-upgrades v3 files (16 cols) with empty fit fields", () => {
+  const file = tmp();
+  const v3Header = apps.HEADER_V3.join("\t");
+  const v3Row = [
+    "greenhouse:1", "greenhouse", "1", "Affirm", "PM", "https://x/1",
+    "San Francisco, CA",
+    "To Apply", "abc", "Risk_Fraud", "cl_key1",
+    "140000", "190000", "Affirm_analyst_20260420",
+    "2026-01-01", "2026-01-02",
+  ].join("\t");
+  fs.writeFileSync(file, `${v3Header}\n${v3Row}\n`);
+
+  const back = apps.load(file);
+  assert.equal(back.schemaVersion, 3);
+  assert.equal(back.apps.length, 1);
+  assert.equal(back.apps[0].location, "San Francisco, CA");
+  assert.equal(back.apps[0].fit_score, "");
+  assert.equal(back.apps[0].fit_rationale, "");
+  assert.equal(back.apps[0].fit_evaluated_at, "");
+  assert.equal(back.apps[0].skip_reason, "");
+
+  // Re-saving promotes to v4.
+  apps.save(file, back.apps);
+  const after = apps.load(file);
+  assert.equal(after.schemaVersion, 4);
 });
 
 test("appendNew copies first locations entry to row.location, falls back to ''", () => {

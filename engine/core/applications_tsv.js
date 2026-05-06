@@ -1,12 +1,15 @@
 // Per-profile pipeline file: profiles/<id>/applications.tsv.
 //
-// Schema (header required), v3 (added 2026-05-03 for G-5 — restores prototype
-// parity; prototype `job_registry.tsv` had `location` as column 10):
+// Schema (header required), v4 (added 2026-05-05 for BL-9 — persist Claude's
+// fit verdict on each row so subsequent prepare runs skip already-evaluated
+// jobs instead of re-paying the SKILL cost):
 //   key <TAB> source <TAB> jobId <TAB> companyName <TAB> title <TAB> url
 //             <TAB> location <TAB> status <TAB> notion_page_id
 //             <TAB> resume_ver <TAB> cl_key
 //             <TAB> salary_min <TAB> salary_max <TAB> cl_path
 //             <TAB> createdAt <TAB> updatedAt
+//             <TAB> fit_score <TAB> fit_rationale <TAB> fit_evaluated_at
+//             <TAB> skip_reason
 //
 // `key` = "<source>:<jobId>" — primary, used for dedup against the master pool.
 // New entries default to status="Inbox" (post-RFC 014, 2026-05-04). "Inbox" =
@@ -18,10 +21,25 @@
 // `location` carries the first non-empty entry from the discovery `locations`
 // array; "" when the source didn't provide one.
 //
+// v4 fit columns are written by `prepare --phase commit` from the SKILL's
+// results.json (Step 10):
+//   `fit_score`        — "Strong" | "Medium" | "Weak" | ""
+//   `fit_rationale`    — short free-text rationale (≤ ~200 chars typical)
+//   `fit_evaluated_at` — ISO timestamp of the SKILL run that wrote it
+//   `skip_reason`      — when decision="skip": "weak_fit" | "duplicate" | ""
+//                        (only SKILL-level reasons; engine-level skips like
+//                        company_cap / title_blocklist are recomputed each run
+//                        and not persisted)
+// Engine reads `fit_score === "Weak"` (or skip_reason ∈ {weak_fit, duplicate})
+// in `prepare --phase pre` to drop already-evaluated rows from the batch
+// candidates list — Claude no longer re-evaluates them.
+//
 // Backward compat:
+//   v3 (16 cols, 2026-05-03 — G-5 added location) → auto-upgrade with empty
+//     values for the 4 fit cols. save() always writes v4.
 //   v2 (15 cols, 2026-04 — Stage 13 added salary_min/max/cl_path) → auto-upgrade
-//     with location="" on read. save() always writes v3.
-//   v1 (12 cols, original) → auto-upgrade with empty values for the 4 new cols.
+//     with location="" + empty fit cols on read.
+//   v1 (12 cols, original) → auto-upgrade with empty values for all new cols.
 
 const fs = require("fs");
 const path = require("path");
@@ -29,6 +47,29 @@ const path = require("path");
 const { fuzzyKey } = require("./dedup.js");
 
 const HEADER = [
+  "key",
+  "source",
+  "jobId",
+  "companyName",
+  "title",
+  "url",
+  "location",
+  "status",
+  "notion_page_id",
+  "resume_ver",
+  "cl_key",
+  "salary_min",
+  "salary_max",
+  "cl_path",
+  "createdAt",
+  "updatedAt",
+  "fit_score",
+  "fit_rationale",
+  "fit_evaluated_at",
+  "skip_reason",
+];
+
+const HEADER_V3 = [
   "key",
   "source",
   "jobId",
@@ -107,13 +148,69 @@ function rowFor(app) {
     escapeField(app.cl_path || ""),
     escapeField(app.createdAt),
     escapeField(app.updatedAt),
+    escapeField(app.fit_score || ""),
+    escapeField(app.fit_rationale || ""),
+    escapeField(app.fit_evaluated_at || ""),
+    escapeField(app.skip_reason || ""),
   ].join("\t");
 }
 
-function rowToAppV3(parts, lineNo) {
+function rowToAppV4(parts, lineNo) {
   if (parts.length < HEADER.length) {
     throw new Error(
       `applications.tsv line ${lineNo}: expected ${HEADER.length} cols, got ${parts.length}`
+    );
+  }
+  const [
+    key,
+    source,
+    jobId,
+    companyName,
+    title,
+    url,
+    location,
+    status,
+    notion_page_id,
+    resume_ver,
+    cl_key,
+    salary_min,
+    salary_max,
+    cl_path,
+    createdAt,
+    updatedAt,
+    fit_score,
+    fit_rationale,
+    fit_evaluated_at,
+    skip_reason,
+  ] = parts;
+  return {
+    key,
+    source,
+    jobId,
+    companyName,
+    title,
+    url,
+    location: location || "",
+    status,
+    notion_page_id: notion_page_id || "",
+    resume_ver: resume_ver || "",
+    cl_key: cl_key || "",
+    salary_min: salary_min || "",
+    salary_max: salary_max || "",
+    cl_path: cl_path || "",
+    createdAt,
+    updatedAt,
+    fit_score: fit_score || "",
+    fit_rationale: fit_rationale || "",
+    fit_evaluated_at: fit_evaluated_at || "",
+    skip_reason: skip_reason || "",
+  };
+}
+
+function rowToAppV3(parts, lineNo) {
+  if (parts.length < HEADER_V3.length) {
+    throw new Error(
+      `applications.tsv line ${lineNo}: expected ${HEADER_V3.length} cols, got ${parts.length}`
     );
   }
   const [
@@ -151,6 +248,10 @@ function rowToAppV3(parts, lineNo) {
     cl_path: cl_path || "",
     createdAt,
     updatedAt,
+    fit_score: "",
+    fit_rationale: "",
+    fit_evaluated_at: "",
+    skip_reason: "",
   };
 }
 
@@ -194,6 +295,10 @@ function rowToAppV2(parts, lineNo) {
     cl_path: cl_path || "",
     createdAt,
     updatedAt,
+    fit_score: "",
+    fit_rationale: "",
+    fit_evaluated_at: "",
+    skip_reason: "",
   };
 }
 
@@ -234,6 +339,10 @@ function rowToAppV1(parts, lineNo) {
     cl_path: "",
     createdAt,
     updatedAt,
+    fit_score: "",
+    fit_rationale: "",
+    fit_evaluated_at: "",
+    skip_reason: "",
   };
 }
 
@@ -251,24 +360,27 @@ function load(filePath) {
   if (!lines.length) return { apps: [], path: filePath };
   const headerCols = lines[0].split("\t");
 
-  const isV3 = matchHeader(headerCols, HEADER);
-  const isV2 = !isV3 && matchHeader(headerCols, HEADER_V2);
-  const isV1 = !isV3 && !isV2 && matchHeader(headerCols, HEADER_V1);
+  const isV4 = matchHeader(headerCols, HEADER);
+  const isV3 = !isV4 && matchHeader(headerCols, HEADER_V3);
+  const isV2 = !isV4 && !isV3 && matchHeader(headerCols, HEADER_V2);
+  const isV1 = !isV4 && !isV3 && !isV2 && matchHeader(headerCols, HEADER_V1);
 
-  if (!isV3 && !isV2 && !isV1) {
+  if (!isV4 && !isV3 && !isV2 && !isV1) {
     throw new Error(
-      `applications.tsv header mismatch: expected v3 [${HEADER.join(", ")}], v2 [${HEADER_V2.join(", ")}] or v1 [${HEADER_V1.join(", ")}], got [${headerCols.join(", ")}]`
+      `applications.tsv header mismatch: expected v4 [${HEADER.join(", ")}], v3 [${HEADER_V3.join(", ")}], v2 [${HEADER_V2.join(", ")}] or v1 [${HEADER_V1.join(", ")}], got [${headerCols.join(", ")}]`
     );
   }
 
   const apps = [];
   for (let i = 1; i < lines.length; i += 1) {
     const parts = lines[i].split("\t");
-    if (isV3) apps.push(rowToAppV3(parts, i + 1));
+    if (isV4) apps.push(rowToAppV4(parts, i + 1));
+    else if (isV3) apps.push(rowToAppV3(parts, i + 1));
     else if (isV2) apps.push(rowToAppV2(parts, i + 1));
     else apps.push(rowToAppV1(parts, i + 1));
   }
-  return { apps, path: filePath, schemaVersion: isV3 ? 3 : isV2 ? 2 : 1 };
+  const schemaVersion = isV4 ? 4 : isV3 ? 3 : isV2 ? 2 : 1;
+  return { apps, path: filePath, schemaVersion };
 }
 
 function save(filePath, apps) {
@@ -333,9 +445,13 @@ function appendNew(
       cl_path: "",
       createdAt: now,
       updatedAt: now,
+      fit_score: "",
+      fit_rationale: "",
+      fit_evaluated_at: "",
+      skip_reason: "",
     });
   }
   return { apps: existing.concat(fresh), fresh, fuzzyDuplicates };
 }
 
-module.exports = { load, save, appendNew, makeKey, HEADER, HEADER_V1, HEADER_V2 };
+module.exports = { load, save, appendNew, makeKey, HEADER, HEADER_V1, HEADER_V2, HEADER_V3 };
