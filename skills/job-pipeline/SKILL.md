@@ -146,7 +146,7 @@ Step A — initialize
   Run: prepare --phase pre --mode fresh --batch 30
   Read: profiles/<id>/prepare_context.json
 
-Step B — per-iteration evaluation loop
+Step B — per-iteration evaluation loop (chase Strong)
   while True:
     iteration += 1
     new_entries = batch entries we haven't judged yet
@@ -154,19 +154,20 @@ Step B — per-iteration evaluation loop
       run Steps 1, 3, 4, 5, 5.7, 6, 7, 8 (fit + CL gen, NOT Notion push)
       append to verdicts[<fitScore-bucket>]
 
-    strongMedium = len(verdicts.strong) + len(verdicts.medium)
-
-    # Stop conditions
-    if strongMedium >= 30: break
+    # Stop conditions — keep iterating to chase more Strong even if
+    # Medium is plentiful. Selection priority is Strong → Medium → Weak,
+    # so 30 pure Strong always beats 15 Strong + 15 Medium.
+    if len(verdicts.strong) >= 30: break
     if stats.inboxExhausted: break
     if iteration >= 3: break
 
-    # Topup
-    Run: prepare --phase pre --mode topup --need (30 - strongMedium)
+    # Topup — try to find more Strong (need = how many Strong we still want)
+    Run: prepare --phase pre --mode topup --need (30 - len(verdicts.strong))
     Re-read prepare_context.json → continue
 
 Step C — weak fallback (only if needed)
-  if (len(verdicts.strong) + len(verdicts.medium) < 30) AND NOT stats.inboxExhausted:
+  strongMedium = len(verdicts.strong) + len(verdicts.medium)
+  if strongMedium < 30 AND NOT stats.inboxExhausted:
     Run: prepare --phase pre --mode weak-fallback --need (30 - strongMedium)
     Re-read prepare_context.json
     new_entries = batch entries not yet judged
@@ -181,7 +182,9 @@ Step C — weak fallback (only if needed)
       else:
         run Steps 1, 3, 4, 5, 5.7, 6, 7, 8 as usual
 
-Step D — pick top 30 by priority
+Step D — pick top 30 by sequential priority
+  # Sequential fill: take ALL Strong first, then Medium to fill, then Weak.
+  # Mediums never bump Strongs; Weaks never bump Mediums.
   candidates = verdicts.strong + verdicts.medium + verdicts.weak  (in that order)
   final = candidates[:30]
   if len(final) < 30:
@@ -229,8 +232,9 @@ selecting all 11 (4 Strong + 7 Medium) → push to Notion
 
 - **Do not** push to Notion (Step 9) inside the iteration loop. Push happens ONCE on the top-30 final list (Step E above). Otherwise we'd create 60–90 Notion pages and only some would be marked final.
 - **Do not** re-judge `entry.wasAlreadyWeak === true` rows in Step 4. The verdict is already in TSV; re-asking burns tokens. Carry `priorFitScore` / `priorFitRationale` straight into the verdict bucket.
-- **Do not** keep iterating past 3 even if Strong+Medium < 30 and Inbox isn't exhausted. The cap is by design — token budget protection. After 3, the SKILL falls back to weak.
-- **Do not** terminate the loop early just because iteration N had 0 Strong. Mediums and the weak-fallback can still hit the target; keep going until one of the three stop conditions is true.
+- **Do not** keep iterating past 3 even if Strong < 30 and Inbox isn't exhausted. The cap is by design — token budget protection. After 3, the SKILL falls back to weak.
+- **Do not** stop the loop just because Strong+Medium ≥ 30. Selection priority is Strong → Medium → Weak; we keep iterating to find more Strong (Mediums don't satisfy the target). Stop only on Strong ≥ 30, iter ≥ 3, or `inboxExhausted`.
+- **Do not** terminate the loop early just because iteration N had 0 Strong. Strong from later iterations can still hit the target; keep going until one of the three stop conditions is true.
 - **Do not** invoke `--mode topup` or `--mode weak-fallback` directly without first running `--mode fresh` (or another mode) to seed `prepare_context.json`. Topup / weak-fallback exit 1 if the context file is missing.
 
 The reference for each Step (1, 3, 4, 5, 5.7, 6, 7, 8, 9, 10, 11, 12) is below — these describe the per-job evaluation logic that the loop above orchestrates.
