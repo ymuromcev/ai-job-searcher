@@ -6,8 +6,11 @@
 // Usage:
 //   node scripts/dump_emails.js --profile jared --ids ID1,ID2,ID3
 //
-// Reads credentials from .env or profiles/<id>/.gmail-tokens/credentials.json
-// (whichever is set). gmail.readonly scope only — never mutates.
+// IDs are Gmail REST API message ids (hex form, e.g. "18ad08abc1234") —
+// same format that processed_messages.json uses. The script translates
+// them to IMAP X-GM-MSGID under the hood.
+//
+// Reads credentials from .env. Read-only IMAP — script never STOREs or EXPUNGEs.
 
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
@@ -16,9 +19,8 @@ const {
   loadCredentials,
   assertCredentials,
   makeGmailClient,
-  fetchMessage,
-  messageToRaw,
-} = require("../engine/modules/tracking/gmail_oauth");
+  fetchMessageByGmailId,
+} = require("../engine/modules/tracking/gmail_imap");
 const { classify, PATTERNS } = require("../engine/core/classifier");
 
 function parseArgs(argv) {
@@ -53,18 +55,17 @@ function findMatches(text) {
 
 async function main() {
   const args = parseArgs(process.argv);
-  const profileRoot = path.join(__dirname, "..", "profiles", args.profile);
-  const creds = loadCredentials(args.profile, { profileRoot });
+  const creds = loadCredentials(args.profile);
   assertCredentials(creds, args.profile);
   console.log(`# creds loaded from: ${creds.source}`);
 
-  const gmail = makeGmailClient(creds);
-
+  // Note: each call opens its own connection. For 2-3 ids that's fine; if you
+  // need to dump many, refactor to a single-connection batch path.
   for (const id of args.idList) {
     let raw;
     try {
-      const full = await fetchMessage(gmail, id);
-      raw = messageToRaw(full);
+      const client = makeGmailClient(creds);
+      raw = await fetchMessageByGmailId(client, id);
     } catch (err) {
       console.log(`\n=== ${id} ===`);
       console.log(`ERROR: ${err.message}`);

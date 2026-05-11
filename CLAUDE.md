@@ -118,11 +118,12 @@ section is just the things to keep in your head while editing code.
   3 (`--phase commit`) is again a deterministic CLI: read the results,
   mutate the TSV, generate artifacts, create the Notion page.
 - **`check` writes JSON for MCP.** Gmail reads happen inside Claude
-  via the Gmail MCP, not via `googleapis`. `check --prepare` writes
+  via the Gmail MCP for the two-phase flow. `check --prepare` writes
   the batch plan to `profiles/<id>/.gmail-state/check_context.json`;
   the operator's Claude session writes `raw_emails.json` next to it;
   `check --apply` consumes both. The `--auto` variant exists for cron
-  but needs an OAuth refresh token.
+  and fetches over IMAP using a per-profile app-password
+  (`<ID>_GMAIL_USER` + `<ID>_GMAIL_APP_PASSWORD` — RFC 021).
 - **`sync` is pull-only since 2026-05-04.** Notion → TSV reconcile
   only. The push phase, the Stage 16 `push_manifest.json` gate, and
   the Inbox callout updater were all removed in commit `4f85ed2`.

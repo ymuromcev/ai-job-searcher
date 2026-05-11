@@ -23,19 +23,20 @@ VOLUME_SIZE_GB="1"
 # their values — only verify each name appears in `fly secrets list`. The
 # user sets them via `fly secrets set <NAME>=...` themselves (the deploy
 # script never sees the value).
+#
+# IMAP transport (RFC 021): per-profile GMAIL_USER + GMAIL_APP_PASSWORD
+# generated at myaccount.google.com/apppasswords.
 REQUIRED_SECRETS=(
   JARED_NOTION_TOKEN
-  JARED_GMAIL_CLIENT_ID
-  JARED_GMAIL_CLIENT_SECRET
-  JARED_GMAIL_REFRESH_TOKEN
+  JARED_GMAIL_USER
+  JARED_GMAIL_APP_PASSWORD
 )
 # Optional secrets — checked but not required. Add the corresponding cron
 # line in cron/check.cron once they're set.
 OPTIONAL_SECRETS=(
   LILIA_NOTION_TOKEN
-  LILIA_GMAIL_CLIENT_ID
-  LILIA_GMAIL_CLIENT_SECRET
-  LILIA_GMAIL_REFRESH_TOKEN
+  LILIA_GMAIL_USER
+  LILIA_GMAIL_APP_PASSWORD
 )
 
 BOOTSTRAP=0
@@ -132,8 +133,8 @@ if [[ "${#MISSING[@]}" -gt 0 ]]; then
   err "Set them with:"
   err "  fly secrets set NAME=value -a ${APP_NAME}"
   err ""
-  err "For GMAIL_REFRESH_TOKEN, use the file written by scripts/gmail_auth.js:"
-  err "  source profiles/<id>/.gmail-tokens/fly-secret-command.sh"
+  err "Generate Gmail app-passwords at https://myaccount.google.com/apppasswords"
+  err "(requires 2FA). See docs/runbooks/gmail-cron.md §1 for the full flow."
   exit 1
 fi
 ok "all required secrets set"
@@ -146,12 +147,6 @@ if [[ "${#OPTIONAL_SECRETS[@]}" -gt 0 ]]; then
     fi
   done
 fi
-
-# 5. Profile dirs ready on volume? (best-effort warn — we can't inspect the
-#    volume from outside, but we can remind.)
-warn "remember: profiles/<id>/.gmail-tokens/credentials.json is NOT shipped"
-warn "          in the image (.dockerignore'd). For fly cron, the engine reads"
-warn "          the refresh-token from the *_GMAIL_REFRESH_TOKEN secret instead."
 
 if [[ "$CHECK_ONLY" -eq 1 ]]; then
   ok "pre-flight passed (--check, no deploy)"

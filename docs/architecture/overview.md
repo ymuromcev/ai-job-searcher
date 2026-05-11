@@ -235,16 +235,16 @@ no race window. Source: [RFC 014](../../rfc/014-status-split-new-vs-toapply.md).
 
 ### Why `check` is two-phase
 
-Gmail reads happen inside Claude via the Gmail MCP, not via
-`googleapis`. Phase 1 (`check --prepare`) writes a JSON batch plan
-based on the active jobs map and the cursor epoch; the operator's
-Claude session executes the searches and writes `raw_emails.json`;
-Phase 3 (`check --apply` or default dry-run) parses, classifies,
-matches against active TSV rows, and emits a status-update plan.
-Decision rationale: [ADR-003 — MCP vs OAuth](adrs/003-mcp-vs-oauth.md)
-and [RFC 002](../../rfc/002-check-command.md). The single-process
-`--auto` variant exists for cron / fly.io use; it requires an OAuth
-refresh token and bypasses MCP entirely.
+Gmail reads happen inside Claude via the Gmail MCP, not via a heavy
+SDK. Phase 1 (`check --prepare`) writes a JSON batch plan based on
+the active jobs map and the cursor epoch; the operator's Claude
+session executes the searches and writes `raw_emails.json`; Phase 3
+(`check --apply` or default dry-run) parses, classifies, matches
+against active TSV rows, and emits a status-update plan. Decision
+rationale: [ADR-003 — MCP vs OAuth](adrs/003-mcp-vs-oauth.md) and
+[RFC 002](../../rfc/002-check-command.md). The single-process
+`--auto` variant exists for cron / fly.io use; it bypasses MCP and
+fetches via IMAP with an app-password (see [RFC 021](../../rfc/021-gmail-cron-imap.md)).
 
 ### Why secrets are in one root `.env`, not per-profile
 

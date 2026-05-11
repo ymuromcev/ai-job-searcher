@@ -10,80 +10,52 @@ tags: [gmail, cron, fly, ops]
 Runbook for the autonomous email-tracker. Two execution modes share the same
 code path:
 
-- **Local (manual)** — `node engine/cli.js check --profile <id> --auto` on your
-  Mac. No Claude / MCP needed. Useful for one-off runs and debugging.
-- **Remote (cron)** — fly.io machine runs the same command at 8am PST daily.
-  Phase 2 (deferred). Phase 1 ships the `--auto` flag and OAuth wiring.
+- **Local (manual)** — `node engine/cli.js check --profile <id> --auto` on
+  your Mac. No Claude / MCP needed. Useful for one-off runs and debugging.
+- **Remote (cron)** — fly.io machine runs the same command at 8am PST daily
+  for every active profile.
 
-This document covers Phase 1 setup. Phase 2 (fly.io) lands in a follow-up.
+Transport: **IMAP + app-specific password** (RFC 021). No OAuth, no
+`googleapis`, no consent-screen flow. App-passwords don't expire, so the
+cron no longer needs weekly re-authentication.
 
 ---
 
 ## 1. One-time setup per profile
 
-You'll do this once per profile.
+Repeat for each profile (`jared`, `lilia`, …). If profiles live in
+different Google Accounts, do step 1a-1b in **each** account independently.
 
-### 1a. Create a Google Cloud OAuth client
+### 1a. Enable 2FA
 
-1. Go to <https://console.cloud.google.com/projectcreate> — create a new
-   project (e.g. `ai-job-searcher-<id>`). One project per profile keeps
-   audit trails clean. Skip if you already have one.
-2. Inside the project, go to **APIs & Services → Library**, search "Gmail
-   API", click **Enable**.
-3. **APIs & Services → OAuth consent screen** → **External** (unless you
-   have a Workspace org). App name: `ai-job-searcher`. User support email:
-   your own. Add the scope `https://www.googleapis.com/auth/gmail.readonly`
-   (search by name). Add yourself as a **Test user** (your Gmail address).
-   Save.
-4. **APIs & Services → Credentials → Create Credentials → OAuth client ID**:
-   - Application type: **Desktop app**
-   - Name: `ai-job-searcher-cli` (any)
-5. Copy the **Client ID** and **Client Secret**.
+App-passwords require 2-Step Verification. Skip if already on.
 
-### 1b. Add credentials to root `.env`
+1. `myaccount.google.com/security`
+2. **2-Step Verification** → on (any second factor — SMS, Authenticator,
+   hardware key — all work).
 
-```
-<PROFILE_ID>_GMAIL_CLIENT_ID=...apps.googleusercontent.com
-<PROFILE_ID>_GMAIL_CLIENT_SECRET=GOCSPX-...
-```
+### 1b. Generate an app-password
 
-The `.env` is gitignored. Pre-commit hook also blocks `GOCSPX-` strings.
+1. `myaccount.google.com/apppasswords`
+2. App name: `ai-job-searcher` (any label — appears only in the user's
+   security log).
+3. Copy the 16-character password Google shows. **This is the only time
+   it's displayed** — store it carefully or paste straight into `.env`.
 
-### 1c. Run the consent flow
+The page is gated on 2FA. If you don't see it, recheck step 1a.
+
+### 1c. Add credentials to root `.env`
+
+For each profile:
 
 ```
-node scripts/gmail_auth.js --profile <id>
+<ID_UPPER>_GMAIL_USER=foo@gmail.com
+<ID_UPPER>_GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
 ```
 
-What happens:
+The `.env` is gitignored. Pre-commit hook detects common secret prefixes.
 
-1. Local HTTP server starts on `http://localhost:3000`.
-2. Your default browser opens Google's consent screen.
-3. Pick the right Gmail account, click **Allow**.
-4. Google redirects to `http://localhost:3000/oauth-callback?code=...`.
-5. The script exchanges the code for a refresh-token and writes it to
-   `profiles/<id>/.gmail-tokens/credentials.json` (mode 600, gitignored).
-6. The script also writes a ready-to-run fly-secrets command to
-   `profiles/<id>/.gmail-tokens/fly-secret-command.sh` (mode 600,
-   gitignored). Run it once when you do Phase 2 (fly.io cron) — then
-   `rm` the file. The refresh-token is never echoed to stdout or the
-   shell's history.
-
-If consent screen says "This app isn't verified" — that's expected for a
-Desktop app in Testing mode. Click **Advanced → Go to ai-job-searcher
-(unsafe)**. You're approving an app you yourself just created.
-
-If port 3000 is taken: `GMAIL_AUTH_PORT=3030 node scripts/gmail_auth.js
---profile <id>` (and add `http://localhost:3030/oauth-callback` to your
-OAuth client's redirect URIs in the Google Cloud console).
-
-If the script reports `no refresh_token in response`: revoke the prior
-consent at <https://myaccount.google.com/permissions> → Security →
-Third-party apps → ai-job-searcher → Remove access, then re-run.
-
----
-
-## 2. Local smoke test
+### 1d. Local smoke test
 
 Dry-run first (no Notion writes, no TSV writes):
 
@@ -116,83 +88,75 @@ Override the cursor for a back-fill (e.g. re-check the past 30 days):
 node engine/cli.js check --profile <id> --auto --since 2026-04-01T00:00:00Z --apply
 ```
 
-`--since` is clamped to 30 days ago — Gmail search has a hard floor.
+`--since` is clamped to 30 days ago — Gmail's `after:` search has a
+floor that we don't try to outsmart.
 
 ---
 
-## 2bis. Phase 2 — fly.io cron deploy
+## 2. fly.io cron deploy
 
-Once Phase 1 is green locally, ship the same code to a fly.io machine that
-fires `--auto --apply` daily at 8am PT for every profile.
+The same code runs on a single fly.io machine via supercronic, firing
+`--auto --apply` for every profile at 8am PT daily.
 
-### 2bis.a Prerequisites
+### 2a. Prerequisites
 
 - `flyctl` installed: <https://fly.io/docs/hands-on/install-flyctl/>
 - Logged in: `fly auth login` (one-time)
-- Phase 1 already done — refresh-tokens already saved per profile
+- §1 already done for each profile — app-passwords already in local `.env`
 
-### 2bis.b One-time bootstrap
+### 2b. One-time bootstrap
 
 ```
 ./scripts/deploy_fly.sh --bootstrap
 ```
 
-This creates:
-- App `ai-job-searcher-cron` (region `sjc`)
-- Volume `ai_job_searcher_data` 1GB at `/data`
+Creates app `ai-job-searcher-cron` (region `sjc`) and volume
+`ai_job_searcher_data` (1GB at `/data`). Fails fast on missing secrets —
+expected, you haven't set them yet.
 
-Then it fails fast on missing secrets (expected — you haven't set them yet).
-
-### 2bis.c Set secrets
-
-For each profile, secrets must be set on fly. **Never paste them into your
-shell history**: instead, use the helper file written by `gmail_auth.js`.
+### 2c. Set secrets
 
 ```
-# Refresh-token (value already saved by Phase 1):
-sh profiles/<id>/.gmail-tokens/fly-secret-command.sh
-
-# Other per-profile secrets (read from your local .env):
 fly secrets set \
-  <PROFILE_ID>_NOTION_TOKEN="$(grep '^<PROFILE_ID>_NOTION_TOKEN=' .env | cut -d= -f2-)" \
-  <PROFILE_ID>_GMAIL_CLIENT_ID="$(grep '^<PROFILE_ID>_GMAIL_CLIENT_ID=' .env | cut -d= -f2-)" \
-  <PROFILE_ID>_GMAIL_CLIENT_SECRET="$(grep '^<PROFILE_ID>_GMAIL_CLIENT_SECRET=' .env | cut -d= -f2-)" \
+  JARED_NOTION_TOKEN="$(grep '^JARED_NOTION_TOKEN=' .env | cut -d= -f2-)" \
+  JARED_GMAIL_USER="$(grep '^JARED_GMAIL_USER=' .env | cut -d= -f2-)" \
+  JARED_GMAIL_APP_PASSWORD="$(grep '^JARED_GMAIL_APP_PASSWORD=' .env | cut -d= -f2-)" \
+  LILIA_NOTION_TOKEN="$(grep '^LILIA_NOTION_TOKEN=' .env | cut -d= -f2-)" \
+  LILIA_GMAIL_USER="$(grep '^LILIA_GMAIL_USER=' .env | cut -d= -f2-)" \
+  LILIA_GMAIL_APP_PASSWORD="$(grep '^LILIA_GMAIL_APP_PASSWORD=' .env | cut -d= -f2-)" \
   --app ai-job-searcher-cron
 ```
 
-Repeat for each profile. After the refresh-token is set on fly, **delete the
-helper file** so it doesn't linger in the repo dir:
+`scripts/set_fly_secrets_jared.sh` does this for `jared` end-to-end if
+you don't want to type the line above.
 
-```
-rm profiles/<id>/.gmail-tokens/fly-secret-command.sh
-```
-
-The local `credentials.json` stays — Mac runs need it.
-
-### 2bis.d First deploy
+### 2d. First deploy
 
 ```
 ./scripts/deploy_fly.sh
 ```
 
 The script verifies app + volume + every required secret before running
-`fly deploy`. Build takes ~2 minutes. The supercronic process starts on
-boot and waits for 8am PT.
+`fly deploy`. Build takes ~2 minutes. supercronic starts on boot and
+waits for the next 8am PT tick.
 
-### 2bis.e Smoke
+### 2e. Smoke
 
 Trigger one cron line manually inside the running container:
 
 ```
 fly ssh console -a ai-job-searcher-cron \
-  --command 'node /app/engine/cli.js check --profile <id> --auto'
+  --command 'node /app/engine/cli.js check --profile jared --auto'
+
+fly ssh console -a ai-job-searcher-cron \
+  --command 'node /app/engine/cli.js check --profile lilia --auto'
 ```
 
-Expect a JSON plan in stdout with `emailsFound: <n>` and no errors. Then
-the same with `--apply` for a real run. Check Notion DB for any new
-comments / status changes.
+Expect JSON with `emailsFound: <n>` and no errors. Then the same with
+`--apply` for a real run. Check Notion DB for any new comments / status
+changes.
 
-### 2bis.f Logs
+### 2f. Logs
 
 ```
 fly logs -a ai-job-searcher-cron        # tail
@@ -202,7 +166,7 @@ fly logs -a ai-job-searcher-cron --json # structured
 Each cron line prints stdout/stderr; supercronic adds a one-line summary
 when the job completes (`job succeeded` / `job failed`).
 
-### 2bis.g State on the volume
+### 2g. State on the volume
 
 The 1GB volume at `/data` keeps `processed_messages.json`, `applications.tsv`,
 log files, etc. — survives machine restarts and deploys. To inspect:
@@ -215,12 +179,12 @@ State on Mac and state on fly are deliberately not synced. Notion is the
 source of truth for status; each side's `processed_messages.json` prevents
 re-processing on its own side.
 
-### 2bis.h Updating the schedule
+### 2h. Updating the schedule
 
 Edit `cron/check.cron` and redeploy. supercronic reloads on container
 restart, which `fly deploy` does automatically.
 
-### 2bis.i Rolling back
+### 2i. Rolling back
 
 ```
 fly releases -a ai-job-searcher-cron     # find a known-good version
@@ -231,45 +195,48 @@ fly deploy --image registry.fly.io/ai-job-searcher-cron:<version>
 
 ## 3. Operational notes
 
-### Token rotation
+### App-password rotation
 
-Refresh-tokens don't expire automatically. They're invalidated when:
-- You revoke the app at myaccount.google.com.
-- 6 months of inactivity (we run daily — never inactive).
-- Password change with "Sign out everywhere".
-- The Cloud project is deleted.
+App-passwords don't expire automatically. They're invalidated when:
 
-If you see `invalid_grant` errors from `--auto`, re-run `gmail_auth.js`.
+- You revoke them at `myaccount.google.com/apppasswords`.
+- You change your Google password (all app-passwords are wiped).
+- You turn off 2-Step Verification (same — all app-passwords wiped).
+
+If you see `AUTHENTICATIONFAILED` from `--auto`, generate a new
+app-password and re-run §1c-1d locally, then update fly secrets per §2c.
 
 ### Multiple Gmail accounts
 
-Each profile gets its own OAuth client and its own refresh-token. Profiles
-never share credentials. The `loadCredentials` helper looks up env vars
-prefixed by the uppercased profile id (`<PROFILE_ID>_*`).
+Each profile gets its own `<ID_UPPER>_GMAIL_USER` / `_APP_PASSWORD`.
+Profiles never share credentials. If two profiles live in the **same**
+Google Account you can technically share an app-password — but it's
+cleaner to generate a separate one per profile so you can revoke
+selectively.
 
-### Read-only scope
+### Read-only by convention
 
-We only ever request `gmail.readonly`. The script will not (cannot) send,
-delete, or modify mail. If you see a different scope in the consent screen,
-something is wrong — abort.
+The `check` command never STOREs, EXPUNGEs, or APPENDs. The `gmail_imap.js`
+module exposes only fetch/search calls. Gmail's IMAP doesn't have
+per-app scope limits the way OAuth does, so this is a code-level
+invariant — keep it that way.
 
-### State sync between Mac and fly.io (Phase 2)
+### State sync between Mac and fly.io
 
-After Phase 2 ships, two parallel state stores will exist (Mac local +
-fly.io volume). They're deliberately not auto-synced. Notion is the source
-of truth for status; the per-side `processed_messages.json` prevents
-re-processing on its own side.
+Two parallel state stores exist (Mac local + fly.io volume). They're
+deliberately not auto-synced. Notion is the source of truth for status;
+each side's `processed_messages.json` prevents re-processing on its own
+side.
 
-If one side processes the same email the other side already saw, you get
-one extra Notion comment. Status itself is idempotent.
+If one side processes the same email the other side already saw, you
+get one extra Notion comment. Status itself is idempotent.
 
 ### Failures
 
-Phase 1 surfaces errors to stderr and exits non-zero. Phase 3 will add a
-Notion-comment notification to a per-profile ops page.
-
-For now, if cron silently fails on fly: `fly logs --app
-ai-job-searcher-cron` or `fly ssh console`.
+`--auto` surfaces errors to stderr, exits non-zero, and (Phase 3 / RFC 005
+§4.6) posts an @-mention comment to the per-profile `cron_ops_page_id`
+Notion page. The on-disk `cron_failures.log` in `.gmail-state/` is the
+durable record.
 
 ---
 
@@ -277,24 +244,26 @@ ai-job-searcher-cron` or `fly ssh console`.
 
 | Error | Likely cause | Fix |
 |---|---|---|
-| `missing <PROFILE_ID>_GMAIL_CLIENT_ID` | Env vars not set | Add to root `.env`. |
-| `gmail_oauth: missing refresh_token` | OAuth never run | Run `scripts/gmail_auth.js --profile <id>`. |
-| `invalid_grant` during fetch | Refresh-token revoked | Re-run `gmail_auth.js`. |
-| `port 3000 already in use` | Another process on 3000 | `GMAIL_AUTH_PORT=3030 ...` and update OAuth redirect URI. |
-| `no refresh_token in response` | Prior consent without `prompt=consent` | Revoke at myaccount.google.com → re-run. |
-| Notion 401 | `<PROFILE_ID>_NOTION_TOKEN` stale | Refresh the integration token in Notion settings. |
+| `missing <ID_UPPER>_GMAIL_USER` | Env var not set | Add to root `.env` (§1c). |
+| `missing <ID_UPPER>_GMAIL_APP_PASSWORD` | Env var not set | Generate at `myaccount.google.com/apppasswords` (§1b). |
+| `AUTHENTICATIONFAILED` / `Invalid credentials` | App-password revoked, password changed, or 2FA disabled | Regenerate per §1b, update `.env` + fly secrets. |
+| `Mailbox doesn't exist` | Localized Gmail account (e.g. `[Gmail]/Vsya pochta`) | Open `gmail.com` → Settings → Labels → enable "Show in IMAP" on All Mail. As a last resort, override the constant in `gmail_imap.js`. |
+| Notion 401 | `<ID_UPPER>_NOTION_TOKEN` stale | Refresh the integration token in Notion settings. |
 | Empty `emailsFound` after long absence | `last_check` more than 30 days ago | Pass `--since <ISO>` to widen the window (clamped to 30d). |
 
 ---
 
-## 5. What got built (Phase 1)
+## 5. What got built
 
-- `engine/modules/tracking/gmail_oauth.js` — googleapis wrapper. Pure: takes
-  credentials in, returns emails out. 28 unit tests.
-- `scripts/gmail_auth.js` — one-time OAuth consent. Captures token on
-  localhost:3000.
+- `engine/modules/tracking/gmail_imap.js` — imapflow wrapper. Pure: takes
+  credentials in, returns emails out. Round-trip-tested for Gmail
+  message-id hex↔decimal compatibility with `processed_messages.json`.
 - `engine/commands/check.js --auto` — single-process flow. Reads fresh
-  `processed_messages` from disk, fetches via OAuth, classifies, applies.
-  9 unit tests covering the new path.
-- Refactored `runApply` to share `processEmailsLoop` + `applyMutations`
-  with `runAuto` (no behavior change for `--apply`).
+  `processed_messages` from disk, fetches via IMAP, classifies, applies.
+- `scripts/dump_emails.js` — read-only debug helper, fetches a single
+  Gmail message by its REST API hex id (same format `processed_messages.json`
+  stores).
+
+See [RFC 021](../../rfc/021-gmail-cron-imap.md) for the OAuth→IMAP cutover
+rationale and [incidents.md](../../incidents.md) for the post-mortem on
+the 7-day refresh-token expiry that drove this work.
