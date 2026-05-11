@@ -718,18 +718,30 @@ function makeCommitDeps(apps, overrides = {}) {
     id: "testuser",
     filterRules: {},
     company_tiers: {},
+    // RFC 022: runCommit needs jobs_pipeline_db_id + companies_db_id to push.
+    // Tests that don't care about Notion still get the happy-path mocks below,
+    // so to_apply rows survive the push pass and tests assert post-push state.
+    notion: {
+      jobs_pipeline_db_id: "test-jobs-db",
+      companies_db_id: "test-companies-db",
+    },
     paths: {
       root: "/fake/profiles/testuser",
       applicationsTsv: "/fake/profiles/testuser/applications.tsv",
       jdCacheDir: "/fake/profiles/testuser/jd_cache",
     },
   };
+  // Default Notion mocks: token present, every push succeeds with a synthetic
+  // page id. Tests can override individual deps to exercise failure paths.
+  // Counter is closed over so the same dep set can be invoked multiple times.
+  let pushCounter = 0;
   return {
     loadProfile: () => profileBase,
     saveProfile: (id, patch) => {
       savedProfile = { id, patch };
       return { ...profileBase, ...patch };
     },
+    loadSecrets: () => ({ NOTION_TOKEN: "secret_test" }),
     loadApplications: () => ({ apps }),
     saveApplications: (_, updated) => { savedApps = updated; },
     checkUrls: async () => [],
@@ -738,6 +750,18 @@ function makeCommitDeps(apps, overrides = {}) {
     fetchFn: async () => ({ ok: true, status: 200 }),
     readFile: overrides.readFile || (() => ""),
     writeFile: () => {},
+    fileExists: () => true,
+    // RFC 022 Notion deps — all DI-able. Defaults keep happy path green.
+    makeNotionClient: () => ({}),
+    resolveDataSourceId: async () => "ds-fake",
+    makeCompanyResolver: () => ({
+      resolve: async () => "company-page-fake",
+    }),
+    pushJobPage: async () => {
+      pushCounter += 1;
+      return { pageId: `notion-page-${pushCounter}`, dedup: false };
+    },
+    formatSalaryDisplay: () => "$100-200K ($150K mid)",
     now: () => "2026-04-20T13:00:00.000Z",
     _getSaved: () => savedApps,
     _getSavedProfile: () => savedProfile,
@@ -800,7 +824,11 @@ test("prepare --phase commit: to_apply writes salary_min/salary_max/cl_path from
   assert.equal(app.cl_key, "Affirm_analyst_20260420");
 });
 
-test("prepare --phase commit: defaults cl_path to clKey when clPath missing", async () => {
+test("prepare --phase commit (RFC 022): to_apply with clKey but no clParagraphs reverts to Inbox (no PDF → no Notion push)", async () => {
+  // Pre-RFC-019 legacy: SKILL passed clKey without clParagraphs. Engine couldn't
+  // produce a PDF and Notion's Cover Letter field would point at a missing
+  // file. RFC 022 makes this case revert to Inbox so the next run gets a
+  // fresh, consistent attempt rather than landing a half-baked row in Notion.
   const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
   const results = {
     profileId: "testuser",
@@ -813,7 +841,9 @@ test("prepare --phase commit: defaults cl_path to clKey when clPath missing", as
   const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
   await cmd(ctx);
   const saved = deps._getSaved();
-  assert.equal(saved[0].cl_path, "just_a_key");
+  assert.equal(saved[0].status, "Inbox", "no PDF → revert to Inbox");
+  assert.equal(saved[0].cl_path, "", "cl_path cleared on revert");
+  assert.equal(saved[0].notion_page_id || "", "", "no Notion page id");
 });
 
 test("prepare --phase commit: archive sets status", async () => {
@@ -2626,4 +2656,433 @@ test("prepare --phase pre --dry-run: detects duplicates but does NOT write TSV (
   const line = ctx._lines.join("\n");
   assert.match(line, /would auto-collapse 1 duplicate group/);
   assert.match(line, /dry-run/);
+});
+
+// ---------- RFC 022: atomic Notion push (BL-23) ------------------------------
+
+function makeNotionRig(overrides = {}) {
+  // Centralised mock-set for RFC 022 integration tests. Records every
+  // pushJobPage call and every resolver.resolve call so tests can assert
+  // payload shape, ordering, and counts.
+  const pushCalls = [];
+  const resolveCalls = [];
+  const queryCalls = [];
+  let pushIdx = 0;
+  const failFn = overrides.pushFailFn || null;
+  return {
+    pushCalls,
+    resolveCalls,
+    queryCalls,
+    deps: {
+      makeNotionClient: () => ({
+        dataSources: {
+          async query(params) {
+            queryCalls.push(params);
+            return { results: overrides.queryResults || [] };
+          },
+        },
+      }),
+      resolveDataSourceId: async (_c, dbId) => `ds-${dbId}`,
+      makeCompanyResolver: () => ({
+        resolve: async (name) => {
+          resolveCalls.push(name);
+          return overrides.resolveReturns || "company-page-mock";
+        },
+      }),
+      pushJobPage: async (args) => {
+        pushIdx += 1;
+        pushCalls.push(args);
+        if (failFn) {
+          const result = failFn(args, pushIdx);
+          if (result && result.error) throw result.error;
+          if (result) return result;
+        }
+        return { pageId: `notion-${pushIdx}`, dedup: false };
+      },
+    },
+  };
+}
+
+test("RFC 022: happy path — to_apply with clParagraphs creates Notion page, writes page id to TSV", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm", title: "Senior PM" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "Affirm_PM_20260420",
+        resumeVer: "v1",
+        clParagraphs: ["P1", "P2", "P3", "P4"],
+        fitScore: "Strong",
+        fitRationale: "fintech background fits",
+        salaryMin: 180000,
+        salaryMax: 220000,
+        city: "San Francisco",
+        state: "CA",
+        workFormat: "Hybrid",
+      },
+    ],
+  };
+  const rec = makeClRecorder();
+  const rig = makeNotionRig();
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+    ...rig.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+  assert.equal(rig.pushCalls.length, 1);
+  const pushed = rig.pushCalls[0].jobFields;
+  assert.equal(pushed.key, "gh:1");
+  assert.equal(pushed.title, "Senior PM");
+  assert.equal(pushed.companyName, "Affirm");
+  assert.equal(pushed.fitScore, "Strong");
+  assert.equal(pushed.coverLetter, "Affirm_PM_20260420.pdf");
+  assert.equal(pushed.city, "San Francisco");
+  assert.equal(pushed.state, "CA");
+  assert.equal(pushed.workFormat, "Hybrid");
+  assert.equal(pushed.status, "To Apply");
+  const saved = deps._getSaved();
+  assert.equal(saved[0].status, "To Apply");
+  assert.equal(saved[0].notion_page_id, "notion-1");
+});
+
+test("RFC 022: Notion push failure reverts that row to Inbox, others continue", async () => {
+  const apps = [
+    makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm" }),
+    makeApp({ key: "gh:2", status: "Inbox", companyName: "Stripe" }),
+    makeApp({ key: "gh:3", status: "Inbox", companyName: "Plaid" }),
+  ];
+  const results = {
+    profileId: "testuser",
+    results: [
+      { key: "gh:1", decision: "to_apply", clKey: "Affirm_PM", resumeVer: "v1", clParagraphs: ["a"] },
+      { key: "gh:2", decision: "to_apply", clKey: "Stripe_PM", resumeVer: "v1", clParagraphs: ["b"] },
+      { key: "gh:3", decision: "to_apply", clKey: "Plaid_PM", resumeVer: "v1", clParagraphs: ["c"] },
+    ],
+  };
+  const rec = makeClRecorder();
+  // Fail only the 2nd push.
+  const rig = makeNotionRig({
+    pushFailFn: (_args, idx) => (idx === 2 ? { error: new Error("Notion 503") } : null),
+  });
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+    ...rig.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  assert.equal(rig.pushCalls.length, 3);
+  const saved = deps._getSaved();
+  const byKey = Object.fromEntries(saved.map((a) => [a.key, a]));
+  assert.equal(byKey["gh:1"].status, "To Apply");
+  assert.equal(byKey["gh:1"].notion_page_id, "notion-1");
+  assert.equal(byKey["gh:2"].status, "Inbox", "failed row reverts");
+  assert.equal(byKey["gh:2"].notion_page_id || "", "");
+  assert.equal(byKey["gh:2"].cl_key || "", "");
+  assert.equal(byKey["gh:2"].cl_path || "", "");
+  assert.equal(byKey["gh:2"].resume_ver || "", "");
+  assert.equal(byKey["gh:3"].status, "To Apply", "later rows continue");
+  assert.equal(byKey["gh:3"].notion_page_id, "notion-3");
+  const errLines = ctx._errLines.join("\n");
+  assert.match(errLines, /Notion push failed for gh:2.*Notion 503/);
+});
+
+test("RFC 022: PDF write failure reverts to Inbox, no Notion call for that row", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "Affirm_PM",
+        resumeVer: "v1",
+        clParagraphs: ["a"],
+      },
+    ],
+  };
+  const rec = makeClRecorder();
+  // Override PDF generator to throw — simulates pdfkit error / disk full.
+  rec.deps.generateCoverLetterPdf = async () => {
+    throw new Error("disk full");
+  };
+  const rig = makeNotionRig();
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+    ...rig.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  assert.equal(rig.pushCalls.length, 0, "no Notion call when PDF failed");
+  const saved = deps._getSaved();
+  assert.equal(saved[0].status, "Inbox");
+  assert.equal(saved[0].notion_page_id || "", "");
+});
+
+test("RFC 022: idempotent — row with existing notion_page_id skips push entirely", async () => {
+  const apps = [
+    makeApp({
+      key: "gh:1",
+      status: "Inbox",
+      companyName: "Affirm",
+      notion_page_id: "already-pushed",
+    }),
+  ];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "Affirm_PM",
+        resumeVer: "v1",
+        clParagraphs: ["a"],
+      },
+    ],
+  };
+  const rec = makeClRecorder();
+  const rig = makeNotionRig();
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+    ...rig.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  assert.equal(rig.pushCalls.length, 0);
+  const saved = deps._getSaved();
+  assert.equal(saved[0].status, "To Apply");
+  assert.equal(saved[0].notion_page_id, "already-pushed", "page id preserved");
+});
+
+test("RFC 022: legacy SKILL passes notionPageId in results.json — engine honours it, no push", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "x",
+        resumeVer: "v1",
+        clParagraphs: ["a"],
+        notionPageId: "legacy-page-id",
+      },
+    ],
+  };
+  const rec = makeClRecorder();
+  const rig = makeNotionRig();
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+    ...rig.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  assert.equal(rig.pushCalls.length, 0);
+  const saved = deps._getSaved();
+  assert.equal(saved[0].notion_page_id, "legacy-page-id");
+  assert.equal(saved[0].status, "To Apply");
+});
+
+test("RFC 022: missing NOTION_TOKEN reverts to_apply rows to Inbox with warning", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      { key: "gh:1", decision: "to_apply", clKey: "Affirm_PM", resumeVer: "v1", clParagraphs: ["a"] },
+    ],
+  };
+  const rec = makeClRecorder();
+  const rig = makeNotionRig();
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    loadSecrets: () => ({}), // no token
+    ...rec.deps,
+    ...rig.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  assert.equal(rig.pushCalls.length, 0);
+  const saved = deps._getSaved();
+  assert.equal(saved[0].status, "Inbox");
+  const errLines = ctx._errLines.join("\n");
+  assert.match(errLines, /TESTUSER_NOTION_TOKEN missing/);
+});
+
+test("RFC 022: --dry-run prints would-push count, no Notion calls", async () => {
+  const apps = [
+    makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm" }),
+    makeApp({ key: "gh:2", status: "Inbox", companyName: "Stripe" }),
+  ];
+  const results = {
+    profileId: "testuser",
+    results: [
+      { key: "gh:1", decision: "to_apply", clKey: "Affirm_PM", resumeVer: "v1", clParagraphs: ["a"] },
+      { key: "gh:2", decision: "to_apply", clKey: "Stripe_PM", resumeVer: "v1", clParagraphs: ["b"] },
+    ],
+  };
+  const rec = makeClRecorder();
+  const rig = makeNotionRig();
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+    ...rig.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json", dryRun: true } });
+  await cmd(ctx);
+  assert.equal(rig.pushCalls.length, 0);
+  const lines = ctx._lines.join("\n");
+  assert.match(lines, /would create 2 Notion page\(s\)/);
+});
+
+test("RFC 022: dedup hit (pushJobPage returns dedup=true) preserves existing page id", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      { key: "gh:1", decision: "to_apply", clKey: "Affirm_PM", resumeVer: "v1", clParagraphs: ["a"] },
+    ],
+  };
+  const rec = makeClRecorder();
+  const rig = makeNotionRig({
+    pushFailFn: () => ({ pageId: "dedup-existing-id", dedup: true }),
+  });
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+    ...rig.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  assert.equal(rig.pushCalls.length, 1);
+  const saved = deps._getSaved();
+  assert.equal(saved[0].notion_page_id, "dedup-existing-id");
+  assert.equal(saved[0].status, "To Apply");
+  const lines = ctx._lines.join("\n");
+  assert.match(lines, /1 dedup-hit/);
+});
+
+test("RFC 022: data_source resolve failure reverts all to_apply rows", async () => {
+  const apps = [
+    makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm" }),
+    makeApp({ key: "gh:2", status: "Inbox", companyName: "Stripe" }),
+  ];
+  const results = {
+    profileId: "testuser",
+    results: [
+      { key: "gh:1", decision: "to_apply", clKey: "Affirm_PM", resumeVer: "v1", clParagraphs: ["a"] },
+      { key: "gh:2", decision: "to_apply", clKey: "Stripe_PM", resumeVer: "v1", clParagraphs: ["b"] },
+    ],
+  };
+  const rec = makeClRecorder();
+  const rig = makeNotionRig();
+  rig.deps.resolveDataSourceId = async () => {
+    throw new Error("Notion DB not found");
+  };
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+    ...rig.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  assert.equal(rig.pushCalls.length, 0);
+  const saved = deps._getSaved();
+  assert.equal(saved[0].status, "Inbox");
+  assert.equal(saved[1].status, "Inbox");
+  const errLines = ctx._errLines.join("\n");
+  assert.match(errLines, /cannot resolve Notion data_source_ids/);
+});
+
+test("RFC 022: prepare_context.json supplies city/state/schedule via fallback", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "Affirm_PM",
+        resumeVer: "v1",
+        clParagraphs: ["a"],
+        // SKILL did NOT pass city/state/workFormat — engine falls back to context.
+      },
+    ],
+  };
+  const prepareContext = {
+    batch: [
+      { key: "gh:1", city: "New York", state: "NY", schedule: "Full-time", requirements: "5+ yrs" },
+    ],
+  };
+  const rec = makeClRecorder();
+  const rig = makeNotionRig();
+  let readCount = 0;
+  const deps = makeCommitDeps(apps, {
+    readFile: (p) => {
+      readCount += 1;
+      if (p.endsWith("prepare_context.json")) return JSON.stringify(prepareContext);
+      return JSON.stringify(results);
+    },
+    ...rec.deps,
+    ...rig.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  assert.equal(rig.pushCalls.length, 1);
+  const pushed = rig.pushCalls[0].jobFields;
+  assert.equal(pushed.city, "New York");
+  assert.equal(pushed.state, "NY");
+  assert.equal(pushed.schedule, "Full-time");
+  assert.equal(pushed.requirements, "5+ yrs");
+  assert.ok(readCount >= 2, "engine reads both results.json and prepare_context.json");
+});
+
+test("RFC 022: missing prepare_context.json — engine continues, omits city/state/schedule, warns once", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      { key: "gh:1", decision: "to_apply", clKey: "Affirm_PM", resumeVer: "v1", clParagraphs: ["a"] },
+    ],
+  };
+  const rec = makeClRecorder();
+  const rig = makeNotionRig();
+  const deps = makeCommitDeps(apps, {
+    readFile: (p) => {
+      if (p.endsWith("prepare_context.json")) {
+        const e = new Error("ENOENT");
+        e.code = "ENOENT";
+        throw e;
+      }
+      return JSON.stringify(results);
+    },
+    ...rec.deps,
+    ...rig.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  assert.equal(rig.pushCalls.length, 1);
+  const pushed = rig.pushCalls[0].jobFields;
+  assert.equal(pushed.city, undefined);
+  assert.equal(pushed.schedule, undefined);
+  const errLines = ctx._errLines.join("\n");
+  assert.match(errLines, /prepare_context\.json unreadable/);
 });

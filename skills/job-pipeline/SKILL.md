@@ -190,15 +190,14 @@ Step D — pick top 30 by sequential priority
   if len(final) < 30:
     warn user: "only N candidates found, push N instead of 30"
 
-Step E — push final to Notion
-  For each job in `final`: run Step 9 (Notion page creation)
-
-Step F — write results + commit
+Step E — write results + commit
   Step 10: write prepare_results_<timestamp>.json
     decision = "to_apply" for each job in `final`
     decision = "skip" for everything else evaluated this run (carries fitScore so the
                row gets persisted to TSV and won't be re-judged next prepare run)
   Step 11: prepare --phase commit --results-file <path>
+    Engine writes PDF + creates Notion page + updates TSV atomically per-row.
+    Notion-page-creation owned by engine since RFC 022 (BL-23).
   Step 12: report to user
 ```
 
@@ -209,7 +208,7 @@ prepare loop iteration 1/3: 30 candidates → 8 Strong, 12 Medium, 10 Weak
 prepare loop iteration 2/3: 27 new candidates → 5 Strong, 9 Medium, 13 Weak
 prepare loop iteration 3/3: 21 new candidates → 2 Strong, 9 Medium, 10 Weak
 loop done: 15 Strong, 30 Medium, 33 Weak (target 30)
-selecting top 30: 15 Strong + 15 Medium → push to Notion
+selecting top 30: 15 Strong + 15 Medium → commit
 ```
 
 If `weak-fallback` runs:
@@ -217,20 +216,20 @@ If `weak-fallback` runs:
 ```
 strong+medium below target (8+5=13 of 30); falling back to weak…
 weak-fallback: pulled 17 entries (12 already-Weak, 5 fresh)
-final: 8 Strong + 5 Medium + 17 Weak = 30 → push to Notion
+final: 8 Strong + 5 Medium + 17 Weak = 30 → commit
 ```
 
 If `inboxExhausted`:
 
 ```
 loop done: 4 Strong, 7 Medium (Inbox exhausted)
-warn: only 11 candidates found, push 11 instead of 30
-selecting all 11 (4 Strong + 7 Medium) → push to Notion
+warn: only 11 candidates found, commit 11 instead of 30
+selecting all 11 (4 Strong + 7 Medium) → commit
 ```
 
 #### Anti-patterns — do NOT
 
-- **Do not** push to Notion (Step 9) inside the iteration loop. Push happens ONCE on the top-30 final list (Step E above). Otherwise we'd create 60–90 Notion pages and only some would be marked final.
+- **Do not** create Notion pages inside the iteration loop or in any SKILL step. Notion-page creation is owned by `engine/commands/prepare.js` `runCommit` since RFC 022 (BL-23). The SKILL just writes `results.json` (Step 10) — the engine commit phase handles PDF + Notion + TSV atomically per-row.
 - **Do not** re-judge `entry.wasAlreadyWeak === true` rows in Step 4. The verdict is already in TSV; re-asking burns tokens. Carry `priorFitScore` / `priorFitRationale` straight into the verdict bucket.
 - **Do not** keep iterating past 3 even if Strong < 30 and Inbox isn't exhausted. The cap is by design — token budget protection. After 3, the SKILL falls back to weak.
 - **Do not** stop the loop just because Strong+Medium ≥ 30. Selection priority is Strong → Medium → Weak; we keep iterating to find more Strong (Mediums don't satisfy the target). Stop only on Strong ≥ 30, iter ≥ 3, or `inboxExhausted`.
@@ -376,49 +375,18 @@ Files the engine produces on commit:
 - `profiles/<id>/cover_letters_md/<CompanySlug>/<clKey>.md` — overwritten on every commit run with the fresh content from this batch.
 - `profiles/<id>/cover_letters/<CompanySlug>/<clKey>.pdf` — generated via `pdfkit` if it doesn't already exist; existing PDFs are preserved (idempotent).
 
-**Step 9 — Notion page creation (per job in the final top-N)**
+**Step 9 — REMOVED (RFC 022, BL-23)**
 
-This step runs ONCE per `prepare` invocation, after the autonomous loop (Step B) and weak-fallback (Step C) have settled the verdict buckets. Iterate over the top-30 sorted list (Step D above) — these are the jobs marked `decision = "to_apply"`. Do NOT push during loop iterations; that would create duplicate / over-pushed pages.
+Notion-page creation moved to engine `prepare --phase commit` so PDF + page + TSV are an atomic per-row transaction. The SKILL no longer touches the Notion MCP for Jobs Pipeline DB writes. Just write `results.json` (Step 10) and run commit (Step 11); engine takes it from there.
 
-For each job in the final top-N:
-
-**9.0 Skip-guard.** If the matching `applications.tsv` row already has a non-empty `notion_page_id`, the page was created in a prior run — record the existing id as `notionPageId` in results.json and skip 9a–9c (no new page, no duplicate). This makes operator-reruns of the SKILL idempotent.
-
-**9a. Resolve Company relation.** Query `profile.notion.companies_db_id` for the company by name (title match). If found — use that page id. If not — create a new Company page with `Name` = company and `Tier` from `profile.company_tiers[name]` (if known), then use the new page id.
-
-Create a Notion page in `profile.notion.jobs_pipeline_db_id` with ALL required fields (see Notion Field Completeness in Guard Rails):
-- **Title** — job title
-- **Company** — relation (array with the page id from 9a)
-- **Status** — "To Apply"
-- **Fit Score** — Strong / Medium (from Step 4)
-- **URL** — from `url`
-- **Source** — from `source`
-- **Date Added** — today (YYYY-MM-DD)
-- **Work Format** — from JD or job listing
-- **City** — from JD (or "Remote")
-- **State** — from JD (or `"Any"` when unspecified / remote US-wide)
-- **Notes** — fit rationale from Step 4
-- **Salary Expectations** — display string like `"$140-190K ($165K mid)"`
-- **Salary Min** — numeric dollar amount (e.g., 140000)
-- **Salary Max** — numeric dollar amount (e.g., 190000)
-- **Cover Letter** — full PDF filename **including the `.pdf` extension**, e.g. `Affirm_analyst-ii-credit-risk-analytics_20260420.pdf` (i.e. `<clKey>.pdf`). This is the value users search by in Finder / Drive to locate the actual file. Per BL-14: rich_text field, not file-attachment.
-- **Resume Version** — select, from `resumeVer`
-
-**Profile-gated fields (L-5)** — push only when `profile.notion.property_map` declares the field. If the property is absent from the map, do NOT push (back-compat: Jared has no Schedule / Requirements columns; his pages remain unchanged):
-
-- **Schedule** — select, from `prepare_context.batch[i].schedule` (extracted by the engine from JD text — values like `"Full-time"` / `"Part-time"` / `"Per Diem"` / `"PRN"` / `"Contract"`). Skip the field when the entry has no `schedule` key (extractor returned null).
-- **Requirements** — rich_text, from `prepare_context.batch[i].requirements` (short bulleted summary of education / years experience / language / certifications). Skip when the entry has no `requirements` key.
-
-`Industry` is a **rollup** — do NOT set it. It is inherited automatically from the Company relation.
-
-Record the returned `notion_page_id`.
+What you (SKILL) used to compute in Step 9 now goes into `results.json` `to_apply` entries (Step 10): `city`, `state`, `workFormat` — extracted from JD text by you, since you read the JD anyway. Everything else (Title, Company relation, Date Added, Salary display, Cover Letter filename, Schedule, Requirements) the engine assembles itself from TSV + `prepare_context.json`.
 
 **Step 10 — Write results file**
 
 Write `profiles/<id>/prepare_results_<YYYYMMDD_HHMMSS>.json` ONCE at the end of the run, covering every job evaluated across all loop iterations (not just the final top-N).
 
 Result entries:
-- `decision: "to_apply"` — the top-N pushed to Notion in Step 9. Carries `clKey`, `clParagraphs`, `clBaseKey`, `resumeVer`, `notionPageId`, `salaryMin`, `salaryMax`, plus `fitScore` / `fitRationale`. Engine writes the MD + PDF files from `clParagraphs` on commit (BL-14 / RFC 019); do **not** include `clPath` — engine derives it from the company slug + `clKey`.
+- `decision: "to_apply"` — the top-N the engine will commit + push to Notion. Carries `clKey`, `clParagraphs`, `clBaseKey`, `resumeVer`, `salaryMin`, `salaryMax`, plus `fitScore` / `fitRationale`. RFC 022: also include `city`, `state`, `workFormat` (extracted from JD text — SKILL is authoritative here). Engine writes the MD + PDF files from `clParagraphs`, creates the Notion page, and updates TSV atomically on commit (BL-14 / RFC 019 / RFC 022); do **not** include `clPath` (engine derives it from the company slug + `clKey`) and do **not** include `notionPageId` (engine creates the page itself).
 - `decision: "skip"` — every other judged row from the loop. Carries `fitScore: "Weak"` (or rarely Strong/Medium that didn't make the cut) + `fitRationale` so the engine commit phase persists the verdict and `filterAlreadyEvaluated` skips them on the next prepare run. (Strong/Medium that didn't make top-30 still get persisted; if they pass filter next time, they'll be picked up again.)
 
 Format:
@@ -446,9 +414,11 @@ Format:
       ],
       "clBaseKey": "<reused-entry-key-from-cover_letter_versions.json or null>",
       "resumeVer": "<archetype-key>",
-      "notionPageId": "<uuid>",
       "salaryMin": 140000,
-      "salaryMax": 190000
+      "salaryMax": 190000,
+      "city": "San Francisco",
+      "state": "CA",
+      "workFormat": "Hybrid"
     },
     {
       "key": "<source>:<jobId>",
@@ -466,7 +436,7 @@ Format:
 - Absent for `decision: "skip"` and `decision: "archive"` — no CL needed.
 - Must be exactly 4 strings (P1/P2/P3/P4). Each string is one paragraph; no embedded blank lines, no markdown headers, no `\n\n` inside individual strings (engine inserts the spacing).
 
-`companyTiers` is required only when `prepare_context.unknownTierCompanies` was non-empty. List every company from that array with the tier you assigned in Step 5.7. Engine merges this into `profile.json.company_tiers` on commit; Notion's Companies DB Tier field is updated by the SKILL itself when it creates/updates the company page in Step 9.
+`companyTiers` is required only when `prepare_context.unknownTierCompanies` was non-empty. List every company from that array with the tier you assigned in Step 5.7. Engine merges this into `profile.json.company_tiers` on commit and passes the merged map into the company-resolver, which writes the Tier field on new / unset Companies DB pages (RFC 022 — Notion writes now owned by engine, not SKILL).
 
 **Step 11 — Commit phase (CLI)**
 
@@ -768,9 +738,16 @@ The CLI surfaces the resolved config in `prepare_context.salaryConfig` — SKILL
 
 ### Notion Field Completeness
 
-Every Notion job page MUST have ALL of: Role, Company (relation — not empty), Status, Fit Score, Job URL, Source, Date Added, Work Format, City, State, Notes (fit rationale — never batch labels), Salary expectations.
+Since RFC 022 (BL-23) the engine owns Notion-page creation. The SKILL's contract is to put **everything the engine can't derive itself** into `results.json` `to_apply` entries:
 
-Per-profile Notion DB id: `profile.json → notion.jobs_pipeline_db_id`.
+- `fitScore` (Strong / Medium / Weak)
+- `fitRationale` — substantive, never batch labels
+- `clKey` + `clParagraphs` (engine writes MD + PDF)
+- `resumeVer` — must match a key in `resume_versions.json`
+- `salaryMin` / `salaryMax` — numeric dollar amounts
+- `city` / `state` / `workFormat` — extracted from JD text (SKILL is authoritative)
+
+Everything else (Title, Company relation, Status, URL, Source, Date Added, Cover Letter filename, Salary Expectations display, Schedule, Requirements) the engine derives from TSV + `prepare_context.json` + `now`. Per-profile Notion DB id: `profile.json → notion.jobs_pipeline_db_id`.
 
 ---
 

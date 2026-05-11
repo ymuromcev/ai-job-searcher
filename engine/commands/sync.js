@@ -23,26 +23,10 @@ const applications = require("../core/applications_tsv.js");
 const notion = require("../core/notion_sync.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 
-const DEFAULT_PROPERTY_MAP = {
-  title: { field: "Title", type: "title" },
-  companyRelation: { field: "Company", type: "relation" },
-  source: { field: "Source", type: "select" },
-  jobId: { field: "JobID", type: "rich_text" },
-  url: { field: "URL", type: "url" },
-  status: { field: "Status", type: "status" },
-  key: { field: "Key", type: "rich_text" },
-  fitScore: { field: "Fit Score", type: "select" },
-  dateAdded: { field: "Date Added", type: "date" },
-  workFormat: { field: "Work Format", type: "select" },
-  city: { field: "City", type: "rich_text" },
-  state: { field: "State", type: "rich_text" },
-  notes: { field: "Notes", type: "rich_text" },
-  salaryExpectations: { field: "Salary Expectations", type: "rich_text" },
-  salaryMin: { field: "Salary Min", type: "number" },
-  salaryMax: { field: "Salary Max", type: "number" },
-  coverLetter: { field: "Cover Letter", type: "rich_text" },
-  resumeVersion: { field: "Resume Version", type: "select" },
-};
+// Canonical map lives in notion_sync.js — all Notion-touching commands
+// share it. Re-export here as a const so the rest of this file stays
+// readable. Profiles may override via profile.notion.property_map.
+const { DEFAULT_PROPERTY_MAP } = notion;
 
 const DEFAULT_DEPS = {
   loadProfile: profileLoader.loadProfile,

@@ -63,14 +63,21 @@ test("SKILL.md Step 8e tells the SKILL not to write the .md file itself", () => 
   assert.match(text, /engine writes the files/i);
 });
 
-test("SKILL.md Step 9 Cover Letter field uses .pdf filename (BL-14)", () => {
+test("SKILL.md Step 9 removed (RFC 022 / BL-23) — Notion-page creation owned by engine", () => {
   const text = fs.readFileSync(SKILL_PATH, "utf8");
-  // Notion `Cover Letter` rich_text now stores the PDF filename, not stem.
-  assert.match(
+  // RFC 022: SKILL no longer creates Notion pages. Old "9a. Resolve Company"
+  // and field tables for Step 9 are gone; engine assembles the payload.
+  assert.doesNotMatch(
     text,
-    /\*\*Cover Letter\*\*[\s\S]*?\.pdf/,
-    "Step 9 Cover Letter field must reference .pdf extension"
+    /9a\.\s*Resolve Company relation/,
+    "Step 9a body must be removed (engine owns Notion push)"
   );
+  // Cover Letter filename invariant (BL-14) now belongs to the engine contract;
+  // SKILL just needs to keep clKey + .pdf naming consistent in results.json
+  // — there's still at least one .pdf reference in the file for that.
+  assert.match(text, /\.pdf/);
+  // Make the migration loud — Step 9 stub mentions RFC 022.
+  assert.match(text, /RFC 022/);
 });
 
 test("SKILL.md Step 10 results schema example includes clParagraphs (BL-14)", () => {
