@@ -9,6 +9,36 @@
 const { Client } = require("@notionhq/client");
 const fs = require("fs");
 
+// ---------- Default property map ----------
+//
+// Canonical mapping between TSV / engine field names and Notion property
+// names + types for the per-profile Jobs Pipeline DB. Lives here (not in
+// any one command) so all commands that read/write Notion (sync pull,
+// prepare commit Notion push, check status update) share the same shape.
+// Profiles may extend / override individual fields via
+// `profile.notion.property_map`.
+
+const DEFAULT_PROPERTY_MAP = {
+  title: { field: "Title", type: "title" },
+  companyRelation: { field: "Company", type: "relation" },
+  source: { field: "Source", type: "select" },
+  jobId: { field: "JobID", type: "rich_text" },
+  url: { field: "URL", type: "url" },
+  status: { field: "Status", type: "status" },
+  key: { field: "Key", type: "rich_text" },
+  fitScore: { field: "Fit Score", type: "select" },
+  dateAdded: { field: "Date Added", type: "date" },
+  workFormat: { field: "Work Format", type: "select" },
+  city: { field: "City", type: "rich_text" },
+  state: { field: "State", type: "rich_text" },
+  notes: { field: "Notes", type: "rich_text" },
+  salaryExpectations: { field: "Salary Expectations", type: "rich_text" },
+  salaryMin: { field: "Salary Min", type: "number" },
+  salaryMax: { field: "Salary Max", type: "number" },
+  coverLetter: { field: "Cover Letter", type: "rich_text" },
+  resumeVersion: { field: "Resume Version", type: "select" },
+};
+
 // ---------- Client factory ----------
 
 function makeClient(token) {
@@ -253,6 +283,7 @@ function clearQueue(queuePath) {
 }
 
 module.exports = {
+  DEFAULT_PROPERTY_MAP,
   makeClient,
   toPropertyValue,
   fromPropertyValue,

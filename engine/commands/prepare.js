@@ -42,6 +42,9 @@ const { resolveProfilesDir } = require("../core/paths.js");
 const { slugifyCompany } = require("../core/company_slug.js");
 const { generateCoverLetterPdf } = require("../modules/generators/cover_letter_pdf.js");
 const { planDedup } = require("../core/tsv_dedup.js");
+const notionSync = require("../core/notion_sync.js");
+const { makeCompanyResolver } = require("../core/company_resolver.js");
+const notionJobPage = require("../core/notion_job_page.js");
 
 // Active statuses that count toward the company cap. "To Apply" is included
 // because every triaged-and-prepared row is committed to be applied —
@@ -407,6 +410,7 @@ function makeDefaultDeps() {
   return {
     loadProfile: profileLoader.loadProfile,
     saveProfile: profileLoader.saveProfile,
+    loadSecrets: profileLoader.loadSecrets,
     loadApplications: applicationsTsv.load,
     saveApplications: applicationsTsv.save,
     checkUrls: checkAll,
@@ -426,6 +430,15 @@ function makeDefaultDeps() {
     copyFileSync: (src, dst) => fs.copyFileSync(src, dst),
     generateCoverLetterPdf,
     slugifyCompany,
+    // RFC 022: per-row Notion push in commit phase. All Notion deps are
+    // injectable so unit / integration tests can swap in a mock client +
+    // resolver without hitting the network.
+    makeNotionClient: notionSync.makeClient,
+    resolveDataSourceId: notionSync.resolveDataSourceId,
+    createJobPage: notionSync.createJobPage,
+    makeCompanyResolver,
+    pushJobPage: notionJobPage.pushJobPage,
+    formatSalaryDisplay: notionJobPage.formatSalaryDisplay,
     now: () => new Date().toISOString(),
   };
 }
@@ -1165,6 +1178,106 @@ async function runPreWeakFallback(ctx, deps) {
   return 0;
 }
 
+// --- Notion-push helpers (RFC 022) -------------------------------------------
+
+// Loads `profiles/<id>/prepare_context.json` and returns an entry-by-key map
+// so the commit phase can resolve per-job extras (city/state/workFormat/
+// schedule/requirements) without re-parsing JDs. Returns an empty map when
+// the file is missing or unreadable — caller falls back to base TSV fields
+// and prints a warning. We don't fail hard: multi-day workflows commonly
+// run commit on a stale results.json, and "page missing schedule" is
+// better than "page never created".
+async function loadPrepareContextByKey(profile, deps, stderr) {
+  const contextPath = path.join(profile.paths.root, "prepare_context.json");
+  let raw;
+  try {
+    raw = deps.readFile(contextPath);
+  } catch (err) {
+    stderr(
+      `warn: prepare_context.json unreadable (${err.code || err.message}) — ` +
+      `Notion pages will omit city/state/workFormat/schedule/requirements`
+    );
+    return {};
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    stderr(`warn: prepare_context.json malformed: ${err.message}`);
+    return {};
+  }
+  const batch = Array.isArray(parsed && parsed.batch) ? parsed.batch : [];
+  const byKey = {};
+  for (const entry of batch) {
+    if (entry && entry.key) byKey[entry.key] = entry;
+  }
+  return byKey;
+}
+
+// Assembles the flat field payload for one Notion job page. Pure: takes app
+// (TSV row), r (results.json entry), prepareCtxEntry (from prepare_context),
+// now (ISO timestamp), and a formatSalaryDisplay function; returns the
+// object buildProperties consumes via the property map.
+//
+// Field origins (RFC 022 §4):
+//   - companyName: app.companyName  (resolver hydrates into companyRelation)
+//   - title / url / source / jobId / key: TSV
+//   - status: constant "To Apply"
+//   - fitScore / notes / resumeVersion / salaryMin / salaryMax: results.json
+//   - coverLetter: derived from r.clKey
+//   - dateAdded: now (YYYY-MM-DD)
+//   - city / state / workFormat: results.json (SKILL extracts), fallback to
+//     prepareCtxEntry, fallback to TSV.location best-effort, else omitted
+//   - schedule / requirements: prepareCtxEntry (engine extracted in pre)
+//   - salaryExpectations: formatSalaryDisplay(min, max)
+function buildJobFieldsForNotion({ app, r, prepareCtxEntry, now, formatSalaryDisplay }) {
+  const ctx = prepareCtxEntry || {};
+  const fields = {
+    key: app.key,
+    title: app.title,
+    companyName: app.companyName,
+    source: app.source,
+    jobId: app.jobId,
+    url: app.url,
+    status: "To Apply",
+    dateAdded: String(now).slice(0, 10),
+  };
+  if (r.fitScore) fields.fitScore = r.fitScore;
+  if (r.fitRationale) fields.notes = r.fitRationale;
+  if (r.resumeVer) fields.resumeVersion = r.resumeVer;
+  if (r.salaryMin !== undefined && r.salaryMin !== null && r.salaryMin !== "") {
+    fields.salaryMin = r.salaryMin;
+  }
+  if (r.salaryMax !== undefined && r.salaryMax !== null && r.salaryMax !== "") {
+    fields.salaryMax = r.salaryMax;
+  }
+  const display = formatSalaryDisplay
+    ? formatSalaryDisplay(r.salaryMin, r.salaryMax)
+    : "";
+  if (display) fields.salaryExpectations = display;
+  if (r.clKey) fields.coverLetter = `${r.clKey}.pdf`;
+
+  // city / state / workFormat — SKILL is authoritative (it sees the JD), so
+  // prefer results.json. prepare_context.json doesn't pre-extract these
+  // (only schedule/requirements), so the second fallback is just for
+  // future-proofing if extractFromJd grows those fields.
+  if (r.city) fields.city = r.city;
+  else if (ctx.city) fields.city = ctx.city;
+  if (r.state) fields.state = r.state;
+  else if (ctx.state) fields.state = ctx.state;
+  if (r.workFormat) fields.workFormat = r.workFormat;
+  else if (ctx.workFormat) fields.workFormat = ctx.workFormat;
+
+  // schedule / requirements — engine extracted these in pre-phase, lives on
+  // prepare_context entry. SKILL may also send them; SKILL wins if both.
+  if (r.schedule) fields.schedule = r.schedule;
+  else if (ctx.schedule) fields.schedule = ctx.schedule;
+  if (r.requirements) fields.requirements = r.requirements;
+  else if (ctx.requirements) fields.requirements = ctx.requirements;
+
+  return fields;
+}
+
 // --- Phase: commit -----------------------------------------------------------
 
 async function runCommit(ctx, deps) {
@@ -1424,6 +1537,11 @@ async function runCommit(ctx, deps) {
     skipped: 0,
     failed: 0,
   };
+  // RFC 022: rows whose PDF is guaranteed on-disk after this pass. The
+  // Notion-push pass uses this set (not fileExists()) to decide whether
+  // it's safe to write the PDF filename into Notion's "Cover Letter" field.
+  // Includes successful new writes AND existing-PDF "skipped" rows.
+  const pdfReadyKeys = new Set();
   if (clResults.length > 0) {
     const profileRoot = profile.paths.root;
     for (const r of clResults) {
@@ -1444,6 +1562,7 @@ async function runCommit(ctx, deps) {
       if (flags.dryRun) {
         stdout(`(dry-run) would write ${mdRel} + ${pdfRel}`);
         app.cl_path = pdfRel;
+        pdfReadyKeys.add(r.key);
         continue;
       }
 
@@ -1462,11 +1581,13 @@ async function runCommit(ctx, deps) {
       // versions survive a re-run.
       if (deps.fileExists(pdfAbs)) {
         clStats.pdfSkipped++;
+        pdfReadyKeys.add(r.key);
       } else {
         try {
           deps.mkdirp(path.dirname(pdfAbs));
           await deps.generateCoverLetterPdf({ paragraphs: r.clParagraphs }, pdfAbs);
           clStats.pdfWritten++;
+          pdfReadyKeys.add(r.key);
         } catch (err) {
           stderr(`warn: failed to write PDF for ${r.key} (${pdfRel}): ${err.message}`);
           clStats.failed++;
@@ -1502,12 +1623,222 @@ async function runCommit(ctx, deps) {
     }
   }
 
+  // RFC 022 — atomic per-row Notion push.
+  //
+  // Runs AFTER PDF/MD writes (so the Cover Letter field always points at an
+  // existing file) and BEFORE saveApplications (so a Notion failure can
+  // revert the row's in-memory state and the TSV never records a "To Apply"
+  // without a matching Notion page).
+  //
+  // Behaviour:
+  //   - Skip rows where notion_page_id is already set (legacy SKILL passed
+  //     it, or a prior failed run left it). Idempotent.
+  //   - Dedup-by-`key` query inside pushJobPage closes the "engine crashed
+  //     after Notion-create, before saveApplications" window.
+  //   - Per-row failure (PDF missing, Notion 5xx, resolver throw) reverts
+  //     in-memory app: status → "Inbox", clear cl_key / resume_ver / cl_path,
+  //     drop notion_page_id. Other rows in the batch continue (option A,
+  //     RFC 022). Next prepare run picks up the row again.
+  //   - Missing NOTION_TOKEN logs once + reverts all to_apply rows (they
+  //     stay Inbox; user fixes env and re-runs).
+  //   - --dry-run: prints would-push count, no API calls, no reverts.
+  const notionStats = {
+    pushed: 0,
+    dedupHit: 0,
+    skippedExistingId: 0,
+    pdfMissing: 0,
+    notionFailed: 0,
+    dryRunWouldPush: 0,
+  };
+
+  const toApplyResults = results.filter(
+    (r) => r.decision === "to_apply" && byKey[r.key] && byKey[r.key].status === "To Apply"
+  );
+
+  function revertToInbox(app, reason) {
+    app.status = "Inbox";
+    app.cl_key = "";
+    app.resume_ver = "";
+    app.cl_path = "";
+    app.notion_page_id = "";
+    // updatedAt stays — the row was touched this run even if reverted, so
+    // future runs see fresh activity. fit_score / fit_rationale persist
+    // (verdict still valid; only the action couldn't complete).
+    updates.toApply--;
+    if (reason === "pdf_missing") notionStats.pdfMissing++;
+    else if (reason === "notion_failed") notionStats.notionFailed++;
+  }
+
+  // Partition: rows that need a Notion create vs rows that already carry a
+  // page id (legacy SKILL passed `notionPageId` or prior failed run). The
+  // "needs push" partition is what gates whether we even load secrets /
+  // construct a client. If everything's already pushed, do nothing.
+  //
+  // Dedup by key: a malformed results.json with two entries for the same
+  // key would otherwise let the second iteration revert the first's page id
+  // (data loss). Real SKILL never emits duplicate keys, but the defense is
+  // cheap and reviewer P2.2 flagged it.
+  const _seenKeys = new Set();
+  const toApplyNeedingPush = toApplyResults.filter((r) => {
+    if (byKey[r.key].notion_page_id) return false;
+    if (_seenKeys.has(r.key)) return false;
+    _seenKeys.add(r.key);
+    return true;
+  });
+  const toApplyAlreadyPushed = toApplyResults.filter(
+    (r) => byKey[r.key].notion_page_id
+  ).length;
+  if (toApplyAlreadyPushed > 0) {
+    notionStats.skippedExistingId = toApplyAlreadyPushed;
+  }
+
+  if (toApplyNeedingPush.length > 0) {
+    if (flags.dryRun) {
+      notionStats.dryRunWouldPush = toApplyNeedingPush.length;
+      stdout(
+        `(dry-run) would create ${toApplyNeedingPush.length} Notion page(s)` +
+        (toApplyAlreadyPushed > 0
+          ? ` (skipping ${toApplyAlreadyPushed} with existing notion_page_id)`
+          : "")
+      );
+    } else {
+      const secrets =
+        (deps.loadSecrets && deps.loadSecrets(profileId, ctx.env || process.env)) || {};
+      const token = secrets.NOTION_TOKEN || null;
+      const jobsDbId = profile.notion && profile.notion.jobs_pipeline_db_id;
+      const companiesDbId = profile.notion && profile.notion.companies_db_id;
+      const propertyMap =
+        (profile.notion && profile.notion.property_map) ||
+        notionSync.DEFAULT_PROPERTY_MAP;
+
+      if (!token) {
+        stderr(
+          `warn: ${profileId.toUpperCase()}_NOTION_TOKEN missing — Notion push skipped; ` +
+          `${toApplyNeedingPush.length} row(s) reverted to Inbox. Fix .env and re-run prepare.`
+        );
+        for (const r of toApplyNeedingPush) revertToInbox(byKey[r.key], "notion_failed");
+      } else if (!jobsDbId) {
+        stderr(
+          `warn: profile.notion.jobs_pipeline_db_id missing — Notion push skipped; ` +
+          `${toApplyNeedingPush.length} row(s) reverted to Inbox.`
+        );
+        for (const r of toApplyNeedingPush) revertToInbox(byKey[r.key], "notion_failed");
+      } else if (!companiesDbId) {
+        stderr(
+          `warn: profile.notion.companies_db_id missing — Notion push skipped; ` +
+          `${toApplyNeedingPush.length} row(s) reverted to Inbox.`
+        );
+        for (const r of toApplyNeedingPush) revertToInbox(byKey[r.key], "notion_failed");
+      } else {
+        // Load prepare_context.json for city/state/workFormat/schedule/requirements.
+        // It lives next to the TSV; missing or out-of-sync → degrade gracefully
+        // (push base fields only, log warning).
+        const ctxByKey = await loadPrepareContextByKey(profile, deps, stderr);
+
+        // Build client + resolvers ONCE per commit run.
+        const client = deps.makeNotionClient(token);
+        let jobsDataSourceId;
+        let companiesDataSourceId;
+        try {
+          [jobsDataSourceId, companiesDataSourceId] = await Promise.all([
+            deps.resolveDataSourceId(client, jobsDbId),
+            deps.resolveDataSourceId(client, companiesDbId),
+          ]);
+        } catch (err) {
+          stderr(
+            `warn: cannot resolve Notion data_source_ids: ${err.message}; ` +
+            `${toApplyNeedingPush.length} row(s) reverted to Inbox.`
+          );
+          for (const r of toApplyNeedingPush) revertToInbox(byKey[r.key], "notion_failed");
+          jobsDataSourceId = null;
+        }
+
+        if (jobsDataSourceId && companiesDataSourceId) {
+          const mergedTiers = {
+            ...(profile.company_tiers || {}),
+            ...tierUpdates,
+          };
+          const resolver = deps.makeCompanyResolver({
+            client,
+            companiesDbId,
+            companiesDataSourceId,
+            companyTiers: mergedTiers,
+            log: (msg) => stdout(msg),
+          });
+
+          for (const r of toApplyNeedingPush) {
+            const app = byKey[r.key];
+            // PDF guard: Cover Letter field MUST point to a file that exists.
+            // The CL-write pass populated pdfReadyKeys with row keys whose PDF
+            // is on disk after this run (either freshly written or pre-existing).
+            // If clKey is set but the row isn't in the ready set, the CL write
+            // failed — refuse to push (Notion would show a dangling filename).
+            if (r.clKey && !pdfReadyKeys.has(r.key)) {
+              const slug = deps.slugifyCompany(app.companyName);
+              const pdfRel = `cover_letters/${slug}/${r.clKey}.pdf`;
+              stderr(
+                `warn: PDF not written for ${r.key} (${pdfRel}) — Notion push skipped, row reverted to Inbox`
+              );
+              revertToInbox(app, "pdf_missing");
+              continue;
+            }
+
+            const jobFields = buildJobFieldsForNotion({
+              app,
+              r,
+              prepareCtxEntry: ctxByKey[r.key] || null,
+              now,
+              formatSalaryDisplay: deps.formatSalaryDisplay,
+            });
+
+            try {
+              const { pageId, dedup } = await deps.pushJobPage({
+                client,
+                jobsDbId,
+                jobsDataSourceId,
+                propertyMap,
+                companyResolver: resolver,
+                jobFields,
+              });
+              app.notion_page_id = pageId;
+              if (dedup) notionStats.dedupHit++;
+              else notionStats.pushed++;
+            } catch (err) {
+              stderr(
+                `warn: Notion push failed for ${r.key} (${app.companyName} / ${app.title}): ${err.message} — row reverted to Inbox`
+              );
+              revertToInbox(app, "notion_failed");
+            }
+          }
+        }
+      }
+    }
+
+    const notionParts = [];
+    if (notionStats.pushed > 0) notionParts.push(`${notionStats.pushed} created`);
+    if (notionStats.dedupHit > 0) notionParts.push(`${notionStats.dedupHit} dedup-hit`);
+    if (notionStats.skippedExistingId > 0)
+      notionParts.push(`${notionStats.skippedExistingId} already had page id`);
+    if (notionStats.pdfMissing > 0) notionParts.push(`${notionStats.pdfMissing} PDF missing`);
+    if (notionStats.notionFailed > 0) notionParts.push(`${notionStats.notionFailed} Notion failed`);
+    if (notionStats.dryRunWouldPush > 0)
+      notionParts.push(`${notionStats.dryRunWouldPush} dry-run`);
+    if (notionParts.length > 0) {
+      stdout(`notion: ${notionParts.join(", ")}`);
+    }
+  }
+
   const extras = [];
   if (updates.invalidDecision > 0) extras.push(`${updates.invalidDecision} invalid decision`);
   if (updates.invalidArchetype > 0) extras.push(`${updates.invalidArchetype} invalid archetype`);
   if (updates.invalidFitScore > 0) extras.push(`${updates.invalidFitScore} invalid fit_score`);
   if (updates.invalidSkipReason > 0) extras.push(`${updates.invalidSkipReason} invalid skip_reason`);
   if (tierStats.invalid > 0) extras.push(`${tierStats.invalid} invalid tier`);
+  if (notionStats.pdfMissing + notionStats.notionFailed > 0) {
+    extras.push(
+      `${notionStats.pdfMissing + notionStats.notionFailed} reverted to Inbox (Notion/PDF failure)`
+    );
+  }
   const extraStr = extras.length > 0 ? `, ${extras.join(", ")}` : "";
 
   stdout(
