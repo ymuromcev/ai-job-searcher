@@ -32,12 +32,19 @@ it in [`docs/product/personas.md`](../product/personas.md) before the
 deploy. The persona alias is what every public doc references; the real
 name lives only in `private/personas-real.md`.
 
-## 2. Send the intake template
+## 2. Send the intake template (Track A only — see below)
+
+> **Primary path is the `onboard-profile` skill (Track B), not this
+> runbook.** The skill walks the candidate through these questions in
+> a Claude chat and writes `profiles/<id>/intake.md` for them. This
+> runbook is the technical reference for a maintainer who wants to
+> script onboarding by hand (e.g. for CI fixtures, prototype testing,
+> or a candidate who refuses to use Claude).
 
 Send the raw markdown file to the candidate:
 
 ```
-scripts/stage18/intake_template.md
+profiles/_example/intake.template.md
 ```
 
 They fill it in offline. Answers may be in any language; `yes` / `no`

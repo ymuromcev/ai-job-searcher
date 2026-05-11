@@ -1,16 +1,28 @@
 ---
 id: RFC-004
 title: Onboarding Wizard (Stage 18)
-status: implemented
+status: superseded
 tier: L
 created: 2026-04-22
 decided: 2026-04-22
-tags: [onboarding, wizard, multi-profile]
+superseded_by: rfc/023-onboarding-skill-driven.md
+tags: [onboarding, wizard, multi-profile, superseded]
 ---
 
 # RFC 004 — Onboarding Wizard (Stage 18)
 
-**Status**: Draft v2 — open questions resolved 2026-04-22; awaiting final approval to start implementation
+> **Primary onboarding UX superseded by [RFC 023](023-onboarding-skill-driven.md)
+> (2026-05-11).** RFC 004 designed a questionnaire flow where the
+> maintainer mailed the candidate a markdown template, the candidate
+> filled it offline, and the maintainer ran `parse_intake.js` +
+> `deploy_profile.js` by hand. RFC 023 wraps the same engine in an
+> AI-driven skill so the candidate onboards themselves end-to-end via
+> Claude. The questionnaire template moved from
+> `scripts/stage18/intake_template.md` to
+> `profiles/_example/intake.template.md` — the rest of RFC 004 still
+> describes the engine that powers onboarding under the hood.
+
+**Status**: implemented (RFC 023 reuses this engine; primary UX now skill-driven)
 **Tier**: L (architecture + multi-user surface)
 **Author**: Claude (sonnet), 2026-04-22
 **Depends on**: RFC 001 (multi-profile architecture), RFC 003 (Jared migration — Stage 16)

@@ -1,8 +1,16 @@
-# Stage 18 — Onboarding Wizard (questionnaire-based)
+# Stage 18 — Onboarding engine (scripted reference)
+
+> **Primary onboarding is the [`onboard-profile`](../../skills/onboard-profile/SKILL.md) skill.**
+> Run `claude` in the repo root and say `/onboard-profile <id>`. The
+> skill walks you through the questionnaire in chat, writes
+> `profiles/<id>/intake.md` for you, and runs the scripts below under
+> the hood. The flow described here is the technical reference for
+> maintainers scripting onboarding by hand (CI fixtures, prototype
+> testing, candidates without Claude). RFCs:
+> [023](../../rfc/023-onboarding-skill-driven.md) (current UX),
+> [004](../../rfc/004-onboarding-wizard.md) (engine).
 
 Generic onboarding for new profiles. Replaces the ad-hoc "copy Jared's configs and edit" flow we used for the first profile.
-
-Full design: [rfc/004-onboarding-wizard.md](../../rfc/004-onboarding-wizard.md).
 
 ## Flow
 
@@ -39,10 +47,11 @@ Everything defaults to `--dry-run`. Pass `--apply` to write.
 
 ### Step 1 — send the template
 
-Email/message the raw file to the user:
+Email/message the raw file to the user (or have the skill write it
+into the candidate's profile directly):
 
 ```
-scripts/stage18/intake_template.md
+profiles/_example/intake.template.md
 ```
 
 They fill it in (any language; the parser accepts EN and RU yes/no values plus `+`/`-`) and send it back as e.g. `intake_filled.md`.
@@ -96,7 +105,7 @@ The current orchestrator stops short of the hub UI because those pieces are prof
 
 | File | Role |
 |---|---|
-| `intake_template.md` | The questionnaire. Ten sections A–K. Send to user unchanged. |
+| `../../profiles/_example/intake.template.md` | The questionnaire. Ten sections A–K. The skill or maintainer ships it to the candidate. |
 | `parse_intake.js` | Markdown → `intake.json`. Lenient; EN/RU values OK. |
 | `property_map.js` | Feature-gated Notion property_map resolver (core + per-module gated fields). |
 | `generators/profile_json.js` | intake → `profile.json` (identity, modules, tiers, notion, property_map). |

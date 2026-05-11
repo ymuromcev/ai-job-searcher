@@ -1,6 +1,6 @@
 // parse_intake.js — markdown intake questionnaire → structured JSON.
 //
-// Template: scripts/stage18/intake_template.md. Ten sections A–K.
+// Template: profiles/_example/intake.template.md. Ten sections A–K.
 // Parser is lenient: empty values are omitted, RU/EN values pass through,
 // "yes"/"no"/"да"/"нет" normalized to booleans, numbers parsed, comma lists
 // split.
