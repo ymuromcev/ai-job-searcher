@@ -158,7 +158,7 @@ All secrets in a single root `.env` (gitignored). One namespace per
 profile id, prefix = `<id_uppercased_with_underscores>_`. Loader
 (`profile_loader.loadSecrets`) returns the keys with the prefix
 **stripped**, so engine code only ever sees `NOTION_TOKEN`,
-`GMAIL_CLIENT_ID`, etc. Per-profile prefix isolation prevents one
+`GMAIL_APP_PASSWORD`, etc. Per-profile prefix isolation prevents one
 profile's run from reading another profile's keys.
 
 Canonical keys (post-prefix):
@@ -166,7 +166,7 @@ Canonical keys (post-prefix):
 | Key | Required by |
 |---|---|
 | `NOTION_TOKEN` | `sync`, `prepare --phase commit`, `check --apply`, `answer`, `scan→sync` hook |
-| `GMAIL_CLIENT_ID`, `_SECRET`, `_REFRESH_TOKEN` | `check --auto` |
+| `GMAIL_USER`, `GMAIL_APP_PASSWORD` | `check --auto` (IMAP, RFC 021) |
 | `USAJOBS_API_KEY`, `_EMAIL` | `discovery:usajobs` adapter |
 | `ADZUNA_APP_ID`, `_KEY` | `discovery:adzuna` adapter |
 
@@ -594,11 +594,11 @@ pre-call state. Self-healing on rerun.
 
 ### Autonomous mode (C-8)
 
-`--auto` runs prepare + Gmail OAuth fetch + apply in a single process
-(no MCP). Required env: `<ID>_GMAIL_CLIENT_ID`, `_SECRET`, plus a
-refresh token from `scripts/gmail_auth.js`. Required config:
-`profile.notion.cron_ops_page_id` and `cron_ops_user_id` for failure
-notifications.
+`--auto` runs prepare + Gmail IMAP fetch + apply in a single process
+(no MCP). Required env: `<ID>_GMAIL_USER` and `<ID>_GMAIL_APP_PASSWORD`
+(generated at <https://myaccount.google.com/apppasswords>, RFC 021).
+Required config: `profile.notion.cron_ops_page_id` and `cron_ops_user_id`
+for failure notifications.
 
 Failure path — any uncaught throw in `runAutoBody`:
 

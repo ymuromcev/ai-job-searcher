@@ -1,7 +1,7 @@
 ---
 title: "Incident log"
 status: live
-last_updated: 2026-05-05
+last_updated: 2026-05-08
 ---
 
 # Incidents
@@ -12,6 +12,88 @@ last_updated: 2026-05-05
 
 Blameless post-mortem log for production incidents in this engine.
 Format: cause → what changed → prevention. Severity tagged for skim.
+
+---
+
+## 2026-05-08 — `check --auto` died weekly with `invalid_grant` (Testing-mode 7-day token expiry)
+
+**Severity**: MEDIUM (cron silently went stale once a week — no
+status updates landed in Notion until manual re-consent).
+**Surface**: Gmail OAuth refresh-token + Google Cloud OAuth consent screen.
+**Detected by**: User-facing — cron failure notifications to ops Notion page,
+weekly cadence, identical stack trace each time:
+
+```
+Error: invalid_grant
+  at Gaxios._request (gaxios/build/cjs/src/gaxios.js:155:23)
+  at async OAuth2Client.refreshTokenNoCache
+  at async listMessageIds (engine/modules/tracking/gmail_oauth.js:158)
+  at async runAutoBody (engine/commands/check.js:873)
+```
+
+### Cause
+
+OAuth client lived in **Testing** mode in Google Cloud Console (External
+publishing status, candidate-developer-self listed as a Test user). In
+April 2024 Google tightened the rules: refresh-tokens issued to OAuth apps
+in Testing mode now **expire after 7 days unconditionally**, independent
+of activity. The original runbook (`docs/runbooks/gmail-cron.md` pre-RFC-021)
+called out "6 months of inactivity" as the only revocation trigger — that
+was correct for production mode but wrong for testing mode. Reading the
+runbook didn't surface the actual problem.
+
+Escape paths that didn't apply:
+
+- **Production OAuth + verification**. `gmail.readonly` is a *restricted*
+  scope, which requires a paid CASA security assessment (~$5k+). Not
+  viable for a personal project.
+- **Workspace "Internal"**. User is on consumer `@gmail.com`, not
+  Workspace.
+- **Service account + domain-wide delegation**. Also Workspace-only.
+
+### What changed (RFC 021)
+
+Transport switched from Gmail REST API + OAuth to **IMAP + app-specific
+password**:
+
+1. **`engine/modules/tracking/gmail_imap.js`** — imapflow-based wrapper,
+   same public surface as the deleted `gmail_oauth.js` (drop-in DI deps
+   for `check.js`). Round-trip helpers `gmailIdToHex` / `hexToGmailId`
+   keep `processed_messages.json` compatible across the cutover —
+   imapflow returns Gmail's `X-GM-MSGID` as decimal, the historic
+   `processed_messages.json` stores hex, so we convert on read/write.
+2. **`engine/commands/check.js`** — DI deps now point at `gmail_imap.*`.
+   `runAutoBody` no longer passes `profileRoot` to credential loading
+   (IMAP creds live in env only, no file fallback).
+3. **`scripts/dump_emails.js`** — migrated to IMAP via the new
+   `fetchMessageByGmailId(client, hexId)` helper, which translates
+   hex→decimal and searches by `X-GM-MSGID`.
+4. **`package.json`** — `googleapis` removed, `imapflow` + `mailparser`
+   added. No fly secret-rotation path remains.
+5. **Deleted**: `engine/modules/tracking/gmail_oauth.{js,test.js}`,
+   `scripts/gmail_auth.js`, OAuth sections of the runbook, OAuth env-var
+   blocks in `fly.toml` / `deploy_fly.sh` / `set_fly_secrets_jared.sh` /
+   `.env.example`.
+
+### Prevention
+
+- **Pin "why" to immutable docs**. RFC 021 documents the Testing-mode
+  expiry as the reason for the transport switch. Future debuggers
+  hitting `invalid_grant` will find the answer without having to
+  reproduce the Google policy archaeology.
+- **Runbook now describes the actual revocation triggers** for
+  app-passwords (revoke at myaccount.google.com, password change, 2FA
+  disabled). No more misleading "6 months of inactivity" line.
+- **Single-source of truth for transport**. `gmail_imap.js` is the only
+  module that talks to Gmail. No OAuth code left to drift back into
+  use.
+
+### Related
+
+- RFC 021 (this transport switch): `rfc/021-gmail-cron-imap.md`
+- Original cron design: `rfc/005-gmail-cron-autonomous-check.md` (now
+  partially superseded re. transport — orchestration unchanged)
+- BL-21: `private/backlog/BL-21.md`
 
 ---
 

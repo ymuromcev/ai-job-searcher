@@ -657,9 +657,8 @@ function makeAutoDeps(overrides = {}) {
       return { id: "comment" };
     },
     loadGmailCredentials: () => ({
-      clientId: "cid",
-      clientSecret: "csec",
-      refreshToken: "rt",
+      user: "jared@example.com",
+      appPassword: "abcd efgh ijkl mnop",
       source: "env",
     }),
     assertGmailCredentials: (creds, profileId) => {
@@ -682,14 +681,14 @@ function makeAutoDeps(overrides = {}) {
 test("check --auto: missing gmail creds → error 1, no fetch", async () => {
   const { deps, calls } = makeAutoDeps({
     assertGmailCredentials: () => {
-      throw new Error("missing JARED_GMAIL_REFRESH_TOKEN");
+      throw new Error("missing JARED_GMAIL_APP_PASSWORD");
     },
   });
   const { ctx, out } = makeCtx({ auto: true });
   const code = await makeCheckCommand(deps)(ctx);
   assert.equal(code, 1);
   assert.equal(calls.fetchGmailEmails.length, 0);
-  assert.match(out.errs.join("\n"), /missing JARED_GMAIL_REFRESH_TOKEN/);
+  assert.match(out.errs.join("\n"), /missing JARED_GMAIL_APP_PASSWORD/);
 });
 
 test("check --auto: zero emails fetched → no-op, bumps last_check on --apply", async () => {
@@ -784,13 +783,13 @@ test("check --auto: dry-run prints plan without mutations", async () => {
 test("check --auto: gmail fetch failure surfaces error", async () => {
   const { deps } = makeAutoDeps({
     fetchGmailEmails: async () => {
-      throw new Error("invalid_grant");
+      throw new Error("AUTHENTICATIONFAILED");
     },
   });
   const { ctx, out } = makeCtx({ auto: true, apply: true });
   const code = await makeCheckCommand(deps)(ctx);
   assert.equal(code, 1);
-  assert.match(out.errs.join("\n"), /invalid_grant/);
+  assert.match(out.errs.join("\n"), /AUTHENTICATIONFAILED/);
 });
 
 test("check --auto: passes --since to computeCursorEpoch", async () => {
@@ -811,8 +810,8 @@ test("check --auto: makeGmailClient receives loaded credentials", async () => {
   const { ctx } = makeCtx({ auto: true });
   await makeCheckCommand(deps)(ctx);
   assert.equal(calls.makeGmailClient.length, 1);
-  assert.equal(calls.makeGmailClient[0].clientId, "cid");
-  assert.equal(calls.makeGmailClient[0].refreshToken, "rt");
+  assert.equal(calls.makeGmailClient[0].user, "jared@example.com");
+  assert.equal(calls.makeGmailClient[0].appPassword, "abcd efgh ijkl mnop");
 });
 
 test("check --apply: Notion error on one action — others still processed", async () => {

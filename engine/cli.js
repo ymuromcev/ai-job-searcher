@@ -98,10 +98,11 @@ prepare flags:
 check flags:
   --prepare              Phase 1: build Gmail batches, write check_context.json.
   --apply                Phase 3: commit TSV + Notion updates. Default: dry-run.
-  --auto                 Single-process autonomous flow (OAuth Gmail fetch +
+  --auto                 Single-process autonomous flow (IMAP Gmail fetch +
                          classify + apply). Use for cron / fly.io. Requires
-                         {ID}_GMAIL_CLIENT_ID, {ID}_GMAIL_CLIENT_SECRET, and a
-                         refresh_token (run scripts/gmail_auth.js once).
+                         {ID}_GMAIL_USER and {ID}_GMAIL_APP_PASSWORD env vars.
+                         Generate an app-password at
+                         myaccount.google.com/apppasswords (requires 2FA).
   --since <ISO>          Override cursor (clamped to 30 days max).
 
 answer flags:

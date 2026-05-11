@@ -141,12 +141,12 @@ test("loadProfile throws when profile.id does not match requested id", () => {
 test("loadSecrets returns only keys for the requested profile, stripping prefix", () => {
   const env = {
     JARED_NOTION_TOKEN: "j-token",
-    JARED_GMAIL_CLIENT_ID: "j-gmail",
+    JARED_GMAIL_APP_PASSWORD: "j-app-pass",
     PAT_NOTION_TOKEN: "l-token",
     OTHER_VAR: "ignored",
   };
   const jared = loadSecrets("jared", env);
-  assert.deepEqual(jared, { NOTION_TOKEN: "j-token", GMAIL_CLIENT_ID: "j-gmail" });
+  assert.deepEqual(jared, { NOTION_TOKEN: "j-token", GMAIL_APP_PASSWORD: "j-app-pass" });
   assert.equal(jared.PAT_NOTION_TOKEN, undefined);
 
   const pat = loadSecrets("pat", env);

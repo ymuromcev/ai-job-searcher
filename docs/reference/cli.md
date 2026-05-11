@@ -218,7 +218,7 @@ Flags:
 | `--profile <id>` | string | — | Required. |
 | `--prepare` | boolean | false | Phase 1: build batches, write `check_context.json`, print JSON to stdout. |
 | `--apply` | boolean | false | Phase 3 commit. Without `--apply`, phase 3 runs in dry-run mode (plan only). |
-| `--auto` | boolean | false | Single-process autonomous flow using OAuth Gmail. Requires `<ID>_GMAIL_CLIENT_ID`, `<ID>_GMAIL_CLIENT_SECRET`, and a refresh token from `scripts/gmail_auth.js`. |
+| `--auto` | boolean | false | Single-process autonomous flow using IMAP + app-password (RFC 021). Requires `<ID>_GMAIL_USER` and `<ID>_GMAIL_APP_PASSWORD`. Generate the app-password at <https://myaccount.google.com/apppasswords> (requires 2FA). |
 | `--since <iso>` | string | saved cursor | Override cursor. Clamped to a 30-day max window. |
 | `--dry-run` | boolean | true for phase 3 default | Phase 1 honors it (skip context-file write). Phase 3 default is dry-run unless `--apply` is set. |
 | `--verbose` | boolean | false | In `--auto`, prints per-batch Gmail-id counts to stderr. |
@@ -238,7 +238,7 @@ node engine/cli.js check --profile <id> --apply
 Common errors:
 
 - `raw_emails.json not found` — phase 3 invoked before the MCP session wrote the file.
-- `gmail credentials missing for --auto` — namespaced env vars or refresh token absent.
+- `gmail credentials missing for --auto` — namespaced `<ID>_GMAIL_USER` or `<ID>_GMAIL_APP_PASSWORD` env vars absent. Generate the app-password at <https://myaccount.google.com/apppasswords>.
 - `error: notion update failed` — surfaced per row; exit 1 if any row failed.
 
 ### answer
@@ -319,10 +319,10 @@ Secrets are loaded by `engine/core/profile_loader.loadSecrets(profileId, env)`. 
 | `<ID>_NOTION_TOKEN` | `sync`, `prepare --phase commit`, `check --apply`, `answer`, the `scan → sync` hook | Internal Notion integration token. |
 | `<ID>_USAJOBS_API_KEY` | USAJOBS adapter (when `discovery:usajobs` is enabled) | Free key from usajobs.gov. |
 | `<ID>_USAJOBS_EMAIL` | USAJOBS adapter | Contact email registered with the API key. |
-| `<ID>_GMAIL_CLIENT_ID` | `check --auto` | OAuth client id; obtained via `scripts/gmail_auth.js`. |
-| `<ID>_GMAIL_CLIENT_SECRET` | `check --auto` | OAuth client secret. |
+| `<ID>_GMAIL_USER` | `check --auto` | Gmail address the IMAP login should use. |
+| `<ID>_GMAIL_APP_PASSWORD` | `check --auto` | Gmail app-password (16 chars, generated at <https://myaccount.google.com/apppasswords>). |
 
-A scheduled (cron / OAuth) variant of `check` is tracked in the backlog and is not part of the supported surface today; the supported paths are `check --prepare` + `check --apply` (MCP-driven) and `check --auto` (single-process OAuth, when configured).
+The supported `check` paths are `check --prepare` + `check --apply` (MCP-driven) and `check --auto` (single-process IMAP, when configured per RFC 021).
 
 The CLI loads `.env` via `dotenv` only when invoked as a binary; tests inject `env` explicitly through `runCli({ env })`.
 

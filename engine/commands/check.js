@@ -53,7 +53,7 @@ const {
 } = require("../core/email_filters.js");
 const emailState = require("../core/email_state.js");
 const emailLogs = require("../core/email_logs.js");
-const gmailOauth = require("../modules/tracking/gmail_oauth.js");
+const gmailImap = require("../modules/tracking/gmail_imap.js");
 
 // Notion DBs (both Jared and Lilia) use the 8-status set:
 //   To Apply / Applied / Interview / Offer / Rejected / Closed / No Response / Archived
@@ -97,10 +97,10 @@ const DEFAULT_DEPS = {
   updatePageStatus: notion.updatePageStatus,
   addPageComment: notion.addPageComment,
   // Gmail (used only by runAuto). Tests inject a fake.
-  loadGmailCredentials: gmailOauth.loadCredentials,
-  assertGmailCredentials: gmailOauth.assertCredentials,
-  makeGmailClient: gmailOauth.makeGmailClient,
-  fetchGmailEmails: gmailOauth.fetchEmailsForBatches,
+  loadGmailCredentials: gmailImap.loadCredentials,
+  assertGmailCredentials: gmailImap.assertCredentials,
+  makeGmailClient: gmailImap.makeGmailClient,
+  fetchGmailEmails: gmailImap.fetchEmailsForBatches,
   now: () => new Date(),
 };
 
@@ -876,10 +876,8 @@ async function runAutoBody(ctx, deps, profile, paths) {
   const { profileId, flags, stdout, stderr, env } = ctx;
 
   // Gmail credentials check first — fail fast before doing any work.
-  const gmailCreds = deps.loadGmailCredentials(profileId, {
-    env,
-    profileRoot: profile.paths.root,
-  });
+  // (IMAP-only: no file fallback, creds live in env / fly secrets.)
+  const gmailCreds = deps.loadGmailCredentials(profileId, { env });
   deps.assertGmailCredentials(gmailCreds, profileId);
 
   // Always read processed + last_check FRESH from disk (key difference from
@@ -899,7 +897,7 @@ async function runAutoBody(ctx, deps, profile, paths) {
   const searchWindow = `after:${epoch}`;
   const batches = buildBatches(companies, searchWindow);
 
-  // Fetch via Gmail OAuth — uncaught throws bubble to runAuto's try/catch
+  // Fetch via Gmail IMAP (RFC 021) — uncaught throws bubble to runAuto's try/catch
   // which notifies + logs.
   const gmail = deps.makeGmailClient(gmailCreds);
   const rawEmails = await deps.fetchGmailEmails(gmail, batches, {

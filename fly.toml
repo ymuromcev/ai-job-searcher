@@ -7,11 +7,12 @@
 # Bring-up (one time, manual):
 #   fly launch --no-deploy --name ai-job-searcher-cron --region sjc
 #   fly volumes create ai_job_searcher_data --region sjc --size 1
-#   fly secrets set JARED_NOTION_TOKEN=... JARED_GMAIL_CLIENT_ID=... \
-#                   JARED_GMAIL_CLIENT_SECRET=... JARED_GMAIL_REFRESH_TOKEN=... \
-#                   LILIA_NOTION_TOKEN=... LILIA_GMAIL_CLIENT_ID=... \
-#                   LILIA_GMAIL_CLIENT_SECRET=... LILIA_GMAIL_REFRESH_TOKEN=...
+#   fly secrets set JARED_NOTION_TOKEN=... \
+#                   JARED_GMAIL_USER=... JARED_GMAIL_APP_PASSWORD=... \
+#                   LILIA_NOTION_TOKEN=... \
+#                   LILIA_GMAIL_USER=... LILIA_GMAIL_APP_PASSWORD=...
 #   fly deploy
+# (See docs/runbooks/gmail-cron.md §1 for app-password generation.)
 #
 # Daily ops:
 #   fly logs                            # tail recent runs
