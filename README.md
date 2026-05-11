@@ -32,8 +32,9 @@ rewrote it from scratch:
 - **v2 (this repo)** — engine cleanly split from profile data, so one
   deployment serves multiple candidates. Per-profile Notion DBs,
   per-profile resume archetypes, per-profile salary models.
-  Onboarding a new candidate is a 10-minute markdown questionnaire
-  (see [Stage 18](scripts/stage18/README.md)), not a day of copy-paste.
+  Onboarding a new candidate is a 15-minute conversation with Claude
+  (the `onboard-profile` skill drives the questionnaire), not a day
+  of copy-paste.
 
 The old v1 codebases are not public — they predate the clean-slate
 rewrite and carry personal data in their history.
@@ -81,10 +82,13 @@ lives in `profiles/<id>/`.
 - **Check** — Reads Gmail replies via Claude MCP, classifies
   (rejection / interview invite / info request / recruiter
   outreach), updates Notion status and adds comments.
-- **Onboarding wizard** — A markdown intake form generates
-  `profile.json` / `filter_rules.json` / `resume_versions.json` /
-  cover letter templates, provisions per-profile Notion databases,
-  and (optionally) imports a prior hand-rolled prototype.
+- **Onboarding skill** — `/onboard-profile` walks a new candidate
+  through a six-block questionnaire in chat, writes their `intake.md`
+  inside `profiles/<id>/`, then provisions `profile.json` /
+  `filter_rules.json` / `resume_versions.json` / cover letter
+  templates / per-profile Notion databases by invoking the Stage 18
+  engine under the hood. Scripted onboarding (without Claude) remains
+  available as a technical reference in `scripts/stage18/`.
 
 ## What this tool does NOT do
 
@@ -111,42 +115,38 @@ git clone https://github.com/ymuromcev/ai-job-searcher.git
 cd ai-job-searcher
 npm install
 npm run setup-hooks          # installs the PII pre-commit guard
-npm test                     # 686 tests, no network required
+npm test                     # ~1000 tests, no network required
 ```
 
-That gets the engine + tests working. To actually run a job search you
-need a profile, which means going through the onboarding wizard — the
-`profiles/_example/` directory ships template *shapes* (each file has a
-`.example` suffix), not a runnable profile.
+That sets up the engine. To actually run a job search you need a
+profile. Onboarding is a conversation with Claude:
 
-## First profile
+```bash
+claude
+# in the Claude chat:
+> /onboard-profile me
+```
 
-Pick a short id (e.g. `me`), then:
+The [`onboard-profile`](skills/onboard-profile/SKILL.md) skill walks
+you through six question blocks (identity, career + filters, resumes,
+cover-letter voice, Notion, job sources), writes `profiles/me/intake.md`
+as you answer, then provisions your `profile.json`, generates filter
+rules and resume archetypes, and creates two Notion databases — all
+in a single conversation. End-to-end ~15 minutes for most people.
 
-1. **Fill in the intake form.** Copy `scripts/stage18/intake_template.md`
-   somewhere outside the repo, fill sections A–K, save as e.g.
-   `~/intake_filled.md`. The parser accepts EN and RU yes/no plus `+`/`-`.
-   The first field is `profile_id` — a short slug you choose:
-   lowercase letters, digits, `-`, `_`. It becomes the directory name
-   (`profiles/<id>/`) and the env-var prefix (e.g. `ME_NOTION_TOKEN`).
-2. **Add your Notion token to `.env`.** See
-   [docs/runbooks/notion-setup.md](docs/runbooks/notion-setup.md) for how to create the
-   integration and where to grant it page access.
-   ```
-   ME_NOTION_TOKEN=ntn_...
-   ```
-3. **Parse + deploy.** Both scripts default to `--dry-run`; pass
-   `--apply` to write.
-   ```bash
-   node scripts/stage18/parse_intake.js --input ~/intake_filled.md --apply
-   node scripts/stage18/deploy_profile.js --profile me --apply
-   ```
-4. **First scan.**
-   ```bash
-   node engine/cli.js scan --profile me
-   ```
+The skill never asks you to paste a token in chat — it points you at
+the `.env` file and only verifies the variable name is present.
 
-Full wizard runbook: [scripts/stage18/README.md](scripts/stage18/README.md).
+### Scripted onboarding (no Claude)
+
+If you don't want to use Claude for the onboarding step — for example,
+you're scripting CI fixtures or testing the wizard end-to-end — see
+[scripts/stage18/README.md](scripts/stage18/README.md). The intake
+template lives at
+[`profiles/_example/intake.template.md`](profiles/_example/intake.template.md);
+you fill it in by hand and run `parse_intake.js` + `deploy_profile.js`
+yourself. Day-to-day pipeline use still requires Claude (the
+`prepare` step is AI-driven), so most users should prefer the skill.
 
 ## Commands
 
