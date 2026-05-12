@@ -15,8 +15,11 @@ const PATTERNS = {
     /other candidates/i,
     /won.t be moving forward/i,
     /not a match/i,
-    /position has been filled/i,
-    /has been filled/i,
+    // /position has been filled/ and /has been filled/ moved to
+    // POSITION_CLOSED 2026-05-12 — "We just recently filled the role" is an
+    // employer-side closure signal (role evaporated), not a candidate-
+    // specific rejection. Notion gets "Closed", rejection-rate metric stays
+    // clean. See incidents 2026-05-12 audit follow-up.
     /decided not to proceed/i,
     /will not be proceeding/i,
     /we have chosen/i,
@@ -55,6 +58,13 @@ const PATTERNS = {
     /position has been (paused|put on hold)/i,
     /role has been (paused|put on hold)/i,
     /we('ve| have) paused hiring/i,
+    // "We've just recently filled the role" (Attentive) / "The position has
+    // been filled". Employer-side closure: role gone for everyone, not a
+    // candidate-specific reject. Moved here from REJECTION 2026-05-12.
+    // Patterns require role/position context — bare /has been filled/ used
+    // to live in REJECTION and matched "your cart has been filled" etc.
+    /(?:role|position) has been filled/i,
+    /filled (?:the|this) (?:role|position)/i,
   ],
   // INTERVIEW_INVITE patterns must require interview-INTENT context. Bare
   // \binterview\b / \bavailability\b were removed 2026-05-02 after Lilia

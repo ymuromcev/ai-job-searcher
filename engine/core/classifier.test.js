@@ -8,7 +8,8 @@ test("classify: rejection phrases → REJECTION", () => {
     "Unfortunately, we have decided to move forward with other candidates.",
     "We won't be moving forward with your application at this time.",
     "After careful consideration, we have chosen another candidate.",
-    "The position has been filled.",
+    // "The position has been filled." moved to POSITION_CLOSED fixtures
+    // 2026-05-12 — employer-side closure, not a candidate-specific reject.
     "We're not proceeding with your application.",
   ];
   for (const body of cases) {
@@ -510,6 +511,45 @@ test("classify: paused/on-hold variants → POSITION_CLOSED", () => {
   for (const body of fixtures) {
     const r = classify({ subject: "Hiring update", body });
     assert.equal(r.type, "POSITION_CLOSED", `failed: "${body}" got ${r.type}`);
+  }
+});
+
+// 2026-05-12 — "filled the role" moved from REJECTION to POSITION_CLOSED.
+// Employer-side signal: role gone for everyone (not a candidate-specific
+// rejection). Real production case: Attentive — "We've just recently
+// filled the role" (subject: "Update on your application"). Should land
+// in Notion as Closed, not Rejected, so rejection-rate metric stays clean.
+test("classify: 'we just recently filled the role' → POSITION_CLOSED (Attentive)", () => {
+  const fixtures = [
+    "Thank you for your interest. We've just recently filled the role and won't be moving forward.",
+    "The position has been filled. We appreciate the time you took to apply.",
+    "Unfortunately the role has been filled by another candidate.",
+    "We have filled this position internally — thank you for applying.",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Update on your application", body });
+    assert.equal(
+      r.type,
+      "POSITION_CLOSED",
+      `expected POSITION_CLOSED, got ${r.type} for: "${body}" (evidence: "${r.evidence}")`
+    );
+  }
+});
+
+// Negative control — "filled" without a role/position context (newsletter,
+// product copy) must not trip POSITION_CLOSED.
+test("classify: bare 'filled' without role context → not POSITION_CLOSED", () => {
+  const fixtures = [
+    "Your cart has been filled with the items you selected.",
+    "We have filled out the paperwork for your onboarding.",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Hello", body });
+    assert.notEqual(
+      r.type,
+      "POSITION_CLOSED",
+      `should NOT classify as POSITION_CLOSED: "${body}" (got ${r.type})`
+    );
   }
 });
 
