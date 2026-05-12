@@ -62,17 +62,26 @@ test("classify: empty/unknown → OTHER", () => {
 });
 
 test("classify: rejection beats interview when both present (first-match wins)", () => {
+  // 2026-05-12 (BL-26 revision) — body updated from bare "Unfortunately we
+  // will not be scheduling an interview" after bare /unfortunately/i was
+  // dropped from REJECTION patterns. The point of the test is unchanged:
+  // when an email contains BOTH rejection wording and interview wording,
+  // REJECTION must win because ORDER puts it before INTERVIEW_INVITE.
   const r = classify({
     subject: "Interview update",
-    body: "Unfortunately we will not be scheduling an interview.",
+    body: "Unfortunately, we have decided not to move forward with scheduling an interview at this time.",
   });
   assert.equal(r.type, "REJECTION");
 });
 
 test("classify: evidence contains matched phrase", () => {
+  // 2026-05-12 (BL-26 revision) — fixture/assertion updated. Previously
+  // "Unfortunately, not a match." matched bare /unfortunately/i first and
+  // evidence was "Unfortunately". After dropping bare /unfortunately/i, the
+  // surviving pattern is /not a match/i and evidence is "not a match".
   const r = classify({ subject: "Update", body: "Unfortunately, not a match." });
   assert.equal(r.type, "REJECTION");
-  assert.match(r.evidence, /unfortunately/i);
+  assert.match(r.evidence, /not a match/i);
 });
 
 // Regression: 2026-04-30. Headway rejection ("we've decided not to move
@@ -262,10 +271,15 @@ test("classify: real interview invites still match after tightening", () => {
 
 // Positive controls — real assessment requests must still match.
 test("classify: real assessment / take-home requests still match after tightening", () => {
+  // 2026-05-12 (BL-26 revision) — "Take-home assignment: please submit by
+  // Friday." reworded to "Your take-home assignment: please submit by Friday."
+  // after the article-less /\btake.?home (test|assignment|...)/i was tightened
+  // to require (your|the) prefix. Real candidate-facing requests always have
+  // the article — JD-process descriptions in ACK bodies do not.
   const fixtures = [
     "Please complete the assessment by end of week.",
     "Your take-home coding challenge is attached.",
-    "Take-home assignment: please submit by Friday.",
+    "Your take-home assignment: please submit by Friday.",
     "Complete the following questionnaire to move to the next round.",
     "Please provide the additional information we requested.",
   ];
@@ -631,6 +645,147 @@ test("classify: 'we'd like to schedule a call' → still INTERVIEW_INVITE (BL-50
       r.type,
       "INTERVIEW_INVITE",
       `expected INTERVIEW_INVITE for: "${body}", got ${r.type} (evidence: "${r.evidence}")`
+    );
+  }
+});
+
+// Regression 2026-05-12 (BL-26 revision) — Duolingo ATS confirmations on
+// Jared. Both bodies are identical except for the role name (Senior Product
+// Manager, Score vs DET). Body opens with "Thank you for applying" (ACK
+// signal), then immediately includes a scam-warning paragraph starting with
+// "Unfortunately, there is a rise in scammers pretending to be real Duolingo
+// employees…". Bare /unfortunately/i in REJECTION patterns matched this
+// preamble and produced REJECTION (status mutation in Notion was applied
+// before the user reverted manually). Bare /unfortunately/i dropped — these
+// fixtures lock the fix in. Gmail ids: 19e1897581413b89 (Score),
+// 19e1884021811520 (DET).
+test("classify: ACK 'Unfortunately, rise in scammers' → ACKNOWLEDGMENT (Duolingo Score 2026-05-08, BL-26)", () => {
+  const subject = "Thank you for applying to Duolingo!";
+  const body =
+    "Hi Jared,\n\n" +
+    "Thank you for applying to Duolingo! This email is to confirm your " +
+    "application has been received for Senior Product Manager, Score. We " +
+    "will review it as soon as we can and reach out if you seem to be a " +
+    "good fit for the position.\n\n" +
+    "Unfortunately, there is a rise in scammers pretending to be real " +
+    "Duolingo employees. Duolingo and our employees will never ask for " +
+    "your Social Security number, bank details, or passport info, and " +
+    "we'll never ask you to deposit a check, purchase equipment, or " +
+    "exchange money during the interview process. Real Duolingo " +
+    "employees always use an email that ends in @duolingo.com or " +
+    "@recruiting.duolingo.com. Stay alert and double-check these details " +
+    "before sharing any information.\n\n" +
+    "Warmly,\nDuolingo";
+  const r = classify({ subject, body });
+  assert.equal(
+    r.type,
+    "ACKNOWLEDGMENT",
+    `expected ACKNOWLEDGMENT, got ${r.type} (evidence: "${r.evidence}")`
+  );
+});
+
+test("classify: ACK 'Unfortunately, rise in scammers' → ACKNOWLEDGMENT (Duolingo DET 2026-05-08, BL-26)", () => {
+  const subject = "Thank you for applying to Duolingo!";
+  const body =
+    "Hi Jared,\n\n" +
+    "Thank you for applying to Duolingo! This email is to confirm your " +
+    "application has been received for Senior Product Manager, DET. We " +
+    "will review it as soon as we can and reach out if you seem to be a " +
+    "good fit for the position.\n\n" +
+    "Unfortunately, there is a rise in scammers pretending to be real " +
+    "Duolingo employees. Duolingo and our employees will never ask for " +
+    "your Social Security number, bank details, or passport info, and " +
+    "we'll never ask you to deposit a check, purchase equipment, or " +
+    "exchange money during the interview process. Real Duolingo " +
+    "employees always use an email that ends in @duolingo.com or " +
+    "@recruiting.duolingo.com. Stay alert and double-check these details " +
+    "before sharing any information.\n\n" +
+    "Warmly,\nDuolingo";
+  const r = classify({ subject, body });
+  assert.equal(
+    r.type,
+    "ACKNOWLEDGMENT",
+    `expected ACKNOWLEDGMENT, got ${r.type} (evidence: "${r.evidence}")`
+  );
+});
+
+// Regression 2026-05-12 (BL-26 revision) — Headway ATS confirmations on
+// Jared (Senior PM Client Engagement, both 19de00ba5c8385f0 and
+// 19df4e1978faf2e2 with identical bodies, sent 1 day apart). Greenhouse
+// boilerplate that describes the future hiring process inside the ACK
+// body: "the typical interview process will consist of: ... A take home
+// assignment designed to assess…". Bare /\btake.?home\b/, bare
+// /\bcoding challenge\b/, and the article-less
+// /\btake.?home (test|assignment|project|challenge)\b/ all fired on the
+// JD-future-steps description and produced INFO_REQUEST (only
+// comment_only Notion action, but still noisy @-mention). Bare patterns
+// dropped; the (test|assignment|…) form tightened to require an article
+// (your|the) — these fixtures lock the fix in.
+test("classify: ACK JD-process 'A take home assignment' → ACKNOWLEDGMENT (Headway CE 2026-05-08, BL-26)", () => {
+  const subject = "Thank you for applying to Headway";
+  const body =
+    "Hi Jared,\n\n" +
+    "Thank you for your interest in Headway! We have received your " +
+    "application for Senior Product Manager, Client Engagement and are " +
+    "delighted that you would consider joining our team.\n\n" +
+    "The Recruiting team will review your application and will be in " +
+    "touch if your qualifications match our needs at this time. If you " +
+    "are not selected for this position, keep an eye on our careers " +
+    "page as we're growing and adding openings.\n\n" +
+    "Best,\nThe Headway Team\n\n" +
+    "Curious about what happens next?\n\n" +
+    "While nothing's set in stone, the typical interview process will " +
+    "take 2-3 weeks and will consist of the following steps:\n\n" +
+    "* The Talent team will review your application.\n" +
+    "* A high-level screen with the Talent team about Headway, the " +
+    "role, and your background and experience.\n" +
+    "* A more in-depth conversation with the hiring manager to dig a " +
+    "bit deeper into the technicalities of the role.\n" +
+    "* A take home assignment designed to assess technical abilities " +
+    "necessary for the role.\n" +
+    "* A slate of structured interviews designed to assess for the " +
+    "unique skills deemed necessary for each role.";
+  const r = classify({ subject, body });
+  assert.equal(
+    r.type,
+    "ACKNOWLEDGMENT",
+    `expected ACKNOWLEDGMENT, got ${r.type} (evidence: "${r.evidence}")`
+  );
+});
+
+// Companion negative control — article-less "A take home assignment" /
+// "coding challenge" inside a JD-style sentence must not match
+// INFO_REQUEST. (Pure pattern test, no ACK wording.)
+test("classify: bare JD-style 'take home assignment' / 'coding challenge' → not INFO_REQUEST (BL-26)", () => {
+  const fixtures = [
+    "A take home assignment designed to assess technical abilities is part of the process.",
+    "The process includes a coding challenge in a later round.",
+    "A coding challenge designed to assess technical skills follows the screen.",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "About the role", body });
+    assert.notEqual(
+      r.type,
+      "INFO_REQUEST",
+      `should NOT classify as INFO_REQUEST: "${body}" (got ${r.type})`
+    );
+  }
+});
+
+// Positive control — article-bound forms still classify as INFO_REQUEST.
+test("classify: article-bound 'your/the take-home assignment' → INFO_REQUEST (BL-26 no-regression)", () => {
+  const fixtures = [
+    "Your take-home assignment is attached below.",
+    "Please complete the take-home assignment by Friday.",
+    "Your coding challenge link is here.",
+    "The take-home project is due in 5 days.",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Next steps", body });
+    assert.equal(
+      r.type,
+      "INFO_REQUEST",
+      `expected INFO_REQUEST for: "${body}", got ${r.type} (evidence: "${r.evidence}")`
     );
   }
 });

@@ -10,7 +10,17 @@
 
 const PATTERNS = {
   REJECTION: [
-    /unfortunately/i,
+    // Bare /unfortunately/i removed 2026-05-12 (BL-26 revision). Duolingo ACK
+    // confirmations (no-reply@duolingo.com, both Sr PM Score + Sr PM DET
+    // 2026-05-08) embed a scam-warning paragraph: "Unfortunately, there is a
+    // rise in scammers pretending to be real Duolingo employees..." Bare
+    // /unfortunately/i fired on this preamble and produced REJECTION. Real
+    // rejections always contain explicit action wording (not moving forward
+    // / decided not to proceed / not a match / etc.), all covered by the
+    // patterns below — removing the bare softener costs no real rejection
+    // coverage. Regression fixtures: Duolingo Score (19e1897581413b89) +
+    // Duolingo DET (19e1884021811520). See incidents.md 2026-05-12 BL-26
+    // revision.
     /not moving forward/i,
     /other candidates/i,
     /won.t be moving forward/i,
@@ -127,17 +137,40 @@ const PATTERNS = {
   // as part of the role description, not as a request to the candidate.
   INFO_REQUEST: [
     /(complete|take|finish) (the|your|an?) (assessment|questionnaire|coding challenge|take.?home|exercise)/i,
-    /(your|the) (assessment|questionnaire|take.?home|coding challenge) (is|link|attached|below|here)/i,
+    // Compound "take-home coding challenge" needs an optional prefix on
+    // `coding challenge` so it still matches alongside the bare forms.
+    // Without this, "Your take-home coding challenge is attached" stalls
+    // because `take.?home` matches "take-home" but `(is|link|...)` doesn't
+    // line up with the following " coding". 2026-05-12 (BL-26 revision).
+    /(your|the) (assessment|questionnaire|take.?home(?:\s+coding\s+challenge)?|coding challenge) (is|link|attached|below|here)/i,
+    // Inverse word order: "Here is your <noun>" / "Attached is your <noun>"
+    // / "Please find your <noun>". Real coordinator emails routinely use
+    // this phrasing — the main /(your|the) … (is|attached|…)/i pattern
+    // only catches the forward order. Same noun alternation. Added
+    // 2026-05-12 (BL-26 revision) when bare /\btake.?home\b/i was removed.
+    /(?:here|attached) (?:is|are|please find) (?:your|the) (assessment|questionnaire|take.?home(?:\s+coding\s+challenge)?|coding challenge|exercise)/i,
     /(assessment|questionnaire|coding challenge|take.?home) (link|invitation|invite|deadline)/i,
     /(please|kindly) (complete|fill out|provide|share|submit)/i,
-    /\btake.?home (test|assignment|project|challenge)\b/i,
     /(send|submit|provide) (us )?(your|the) (additional|requested) (information|details|materials)/i,
     /(we|i) need (some )?additional (information|details) (from you|to proceed)/i,
     /complete the following (form|questionnaire|assessment|steps)/i,
-    // "coding challenge" and "take-home" are unambiguous — they only ever
-    // refer to candidate-facing exercises in hiring contexts.
-    /\bcoding challenge\b/i,
-    /\btake.?home\b/i,
+    // 2026-05-12 (BL-26 revision) — Headway ATS confirmations
+    // (no-reply@us.greenhouse-mail.io, Sr PM Client Engagement
+    // 19de00ba5c8385f0 + 19df4e1978faf2e2) describe the future hiring
+    // process inside the ACK body: "the typical interview process will
+    // take 2-3 weeks and will consist of: ... A take home assignment
+    // designed to assess technical abilities". Bare /\btake.?home\b/i,
+    // /\bcoding challenge\b/i, and the article-less
+    // /\btake.?home (test|assignment|project|challenge)\b/i all fired on
+    // this JD-future-steps description and produced INFO_REQUEST. Same
+    // failure mode as the 2026-05-02 Indeed-digest incident with bare
+    // /\binterview\b/, /\bavailability\b/, /\bassessment\b/.
+    //
+    // After fix: article-bound versions only. Real candidate-facing
+    // requests use "your take-home" / "the take-home" / "your coding
+    // challenge" / explicit complete-the-attached wording.
+    /(your|the) take.?home (test|assignment|project|challenge)/i,
+    /(your|the) coding challenge/i,
   ],
   ACKNOWLEDGMENT: [
     /received your application/i,

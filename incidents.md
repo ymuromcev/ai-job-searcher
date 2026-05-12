@@ -1043,3 +1043,118 @@ to the false-positive rate.
 - 2026-05-12 "next steps in the interview process" incident above —
   same vendor-of-failure (ACK boilerplate matching cheap
   alternations).
+
+## 2026-05-12 — BL-26 revision: bare `/unfortunately/` + bare `/take.?home/` over-matched ACK boilerplate
+
+**Severity**: MEDIUM (4 documented production false-positives on
+Jared, status mutations applied in Notion before manual revert; new
+fixtures locked in to prevent regression).
+**Surface**: `engine/core/classifier.js` REJECTION + INFO_REQUEST
+patterns. **Caught by**: BL-26 revision probe — re-running classifier
+against the 5 gmail ids documented in BL-26 (created 2026-05-11)
+after today's earlier classifier fixes.
+
+### What happened
+
+BL-26 (created 2026-05-11) catalogued 4 live `--auto` mis-fires on
+Jared:
+
+| Case | Gmail id | Was | Should be |
+|------|----------|-----|-----------|
+| Hopper Sr PM Disruption | `19de0043b5146fc4` | INTERVIEW_INVITE | (see below) |
+| Duolingo Sr PM Score | `19e1897581413b89` | REJECTION | ACKNOWLEDGMENT |
+| Duolingo Sr PM DET | `19e1884021811520` | REJECTION | ACKNOWLEDGMENT |
+| Headway Sr PM Client Engagement (×2) | `19de00ba5c8385f0`, `19df4e1978faf2e2` | INFO_REQUEST | ACKNOWLEDGMENT |
+
+Probing the actual IMAP bodies of all 5 ids today:
+
+1. **Hopper case is misattributed in BL-26.** The body of
+   `19de0043b5146fc4` is *not* a rejection — it's the same ACK
+   boilerplate ("next steps in the process") that was already pinned
+   today as `Hopper 2026-04-30 → ACKNOWLEDGMENT` (commit `1d8c4fe`).
+   BL-26 likely conflated the ACK email with the genuine REJECTION
+   that arrived 1 day later (id `19df56b0ca7391ae`, also handled
+   correctly today). No further work needed here.
+2. **Duolingo (cases 2 + 3)** — both bodies open with "Thank you for
+   applying" then immediately pivot to a scam-warning paragraph:
+   > "Unfortunately, there is a rise in scammers pretending to be
+   > real Duolingo employees…"
+   The bare `/unfortunately/i` in REJECTION patterns fired on this
+   preamble. Pre-fix verdict: REJECTION; correct verdict:
+   ACKNOWLEDGMENT.
+3. **Headway (cases 4a + 4b)** — both bodies open with "Thank you
+   for your interest in Headway!" then include a future-process
+   description:
+   > "the typical interview process will take 2-3 weeks and will
+   > consist of: ... A take home assignment designed to assess
+   > technical abilities…"
+   Bare `/\btake.?home\b/i`, bare `/\bcoding challenge\b/i`, and
+   the article-less `/\btake.?home (test|assignment|project|challenge)\b/i`
+   all fired on this JD-future-steps language. Pre-fix verdict:
+   INFO_REQUEST; correct verdict: ACKNOWLEDGMENT.
+
+### What changed
+
+1. **`engine/core/classifier.js`**:
+   - REJECTION: dropped bare `/unfortunately/i`. Real rejections
+     always contain explicit action wording (`/not moving forward/`,
+     `/not a match/`, `/decided not to proceed/`, etc.) — removing
+     the softener costs no real-rejection coverage.
+   - INFO_REQUEST: dropped bare `/\btake.?home\b/i`, bare
+     `/\bcoding challenge\b/i`, and bare
+     `/\btake.?home (test|assignment|project|challenge)\b/i`.
+     Replaced with article-bound forms:
+     `/(your|the) take.?home (test|assignment|project|challenge)/i`
+     and `/(your|the) coding challenge/i`. Real candidate-facing
+     requests always use the article.
+   - INFO_REQUEST: extended `/(your|the) <noun> (is|link|attached|below|here)/i`
+     to handle the compound `(take.?home )?coding challenge`.
+   - INFO_REQUEST: added inverse-order pattern
+     `/(here|attached) (is|are|please find) (your|the) <noun>/i`
+     so "Here is your take-home coding challenge" still classifies.
+2. **`engine/core/classifier.test.js`**:
+   - Updated 2 existing tests that depended on bare `/unfortunately/i`
+     being the sole rejection signal (`evidence contains matched
+     phrase` + `rejection beats interview when both present`).
+   - Updated 1 fixture inside `real assessment / take-home
+     requests still match after tightening` ("Take-home assignment:
+     please submit by Friday." → "Your take-home assignment: please
+     submit by Friday." — same intent, article-bound).
+   - Added 4 regression fixtures from real IMAP bodies (Duolingo
+     Score, Duolingo DET, Headway CE) + 2 companion controls (bare
+     JD-style negative, article-bound positive). +7 net tests.
+3. **Test suite**: 1223/1223 green (1216 baseline + 7 net).
+4. **Production probe**: all 5 BL-26 gmail ids now classify
+   correctly (Hopper / Duolingo×2 / Headway×2 → ACKNOWLEDGMENT).
+
+### Prevention
+
+- **Bare softener / bare noun patterns are systematically dangerous.**
+  Today's three classifier tightenings (BL-45 next-steps drop,
+  BL-50 schedule-call drop, BL-26 unfortunately/take-home drop) all
+  share the same root cause: a single ambiguous token in REJECTION /
+  INFO_REQUEST / INTERVIEW_INVITE matched ACK boilerplate context.
+  Whenever a pattern is "just a noun" or "just an adverb", it needs
+  either co-occurring intent context (article, action verb, addressed
+  to candidate) or a high-precision compound (`phone screen`,
+  `calendly`, `position is now closed`).
+- **Audit fixtures from BL trackers as part of revision.** BL-26 sat
+  open for ~24 hours after partial closure (today's earlier fixes
+  closed Hopper). The remaining 4 cases were still live until
+  explicitly re-probed. Lesson: after each classifier change, audit
+  any open BL that lists classifier-related gmail ids — they're free
+  regression fodder.
+- **BL-26 misattribution is a BL-discipline issue.** The Hopper id
+  in BL-26 pointed at the ACK email but the BL quoted the REJECTION
+  body. When documenting classifier mis-fires, always paste the
+  actual body from IMAP, not what the operator remembered.
+
+### Related
+
+- BL-26 (this fix) — closed as `done` with all 4 documented cases
+  resolved and the Hopper misattribution clarified.
+- BL-45 (drop `/next steps in (the|our) (process|interview)/i`) +
+  BL-50 (drop `call|meeting|chat` from schedule regex) — same
+  failure family, earlier today.
+- 2026-05-02 Indeed-digest incident (bare `\binterview\b` / bare
+  `\bassessment\b`) — first instance of this lesson.
