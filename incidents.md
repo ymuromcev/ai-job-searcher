@@ -882,3 +882,92 @@ exclusively.
   `INTERVIEW_INVITE` to avoid JD-body matches. This fix relaxes
   `schedule X interview` along a strictly orthogonal axis (allowing
   more pre-words inside the existing intent context).
+
+---
+
+## 2026-05-12 — Audit of historical `processed_messages` for echo and phantom mutations (post-fix verification)
+
+**Severity**: LOW (no live impact found — purely confirms the two
+earlier 2026-05-12 fixes are net-clean; no rollback needed).
+**Surface**: `profiles/<id>/.gmail-state/processed_messages.json` on
+both Healthcare-Hannah and PM-Pete (~30 days back).
+**Detected by**: Step 3 of the agreed feedback-loop fix plan — after
+landing the Notion-comment filter and the classifier patch, scan
+historical entries to see if any earlier classifier mistakes had
+already mutated Notion incorrectly.
+
+### Method
+
+For every `processed_messages` entry with type in {INTERVIEW_INVITE,
+REJECTION, POSITION_CLOSED} (the three types that mutate Notion
+status), pull the original sender via IMAP (`/tmp/audit_echoes.js`,
+uses `engine/modules/tracking/gmail_imap.js`). Flag any row whose
+`from` contains `@mail.notion.so` as a Notion-comment echo. Probed:
+
+- Healthcare-Hannah: 3 mutating entries (all REJECTION).
+- PM-Pete: 56 mutating entries (54 REJECTION, 2 INTERVIEW_INVITE).
+
+### Findings
+
+1. **Zero Notion-echo entries.** None of the 59 historical mutating
+   classifications were driven by `@mail.notion.so`. The
+   self-amplifying feedback loop documented earlier today existed in
+   theory and was caught live once (Healthcare-Hannah "Eye Center"
+   echo, 2026-05-12 incident above), but it did not silently corrupt
+   any earlier Notion states. Filter landing pre-empted further
+   damage.
+
+2. **Two historical INTERVIEW_INVITE false-positives on PM-Pete**
+   from the *same* dropped regex as the Tyson & Mendes case:
+
+   - Remote.com (`19d8e30054186932`, 2026-04-14, ATS:
+     `no-reply@talent.remote.com`, subject "Thank you for applying to
+     Remote") — body says "we will contact you soon to arrange the
+     first interview" inside a fit-conditional ACK paragraph.
+   - Hopper (`19de0043b5146fc4`, 2026-04-30, ATS:
+     `no-reply@ashbyhq.com`, subject "Jared, thanks for applying to
+     Hopper!") — body says "regarding the next steps in the process"
+     verbatim.
+
+   Both were classified as INTERVIEW_INVITE under the old regex.
+   Current Notion state on the corresponding TSV rows: **Rejected**
+   (Hopper, 2026-05-04 reject email overwrote) and **Rejected /
+   Archived** (all 5 Remote.com pipeline rows). The phantom Interview
+   status, if it was ever applied, was overwritten by the subsequent
+   legitimate REJECTION email — so the current pipeline view is
+   correct without intervention.
+
+### What changed
+
+1. **`engine/core/classifier.test.js`** — added two regression tests
+   pinning the real Remote.com and Hopper bodies as ACKNOWLEDGMENT,
+   companion to the existing Tyson & Mendes ACK fixture. Same root
+   cause, different ATS — having three independent fixtures from
+   three different vendors (Greenhouse / Remote talent / Ashby) makes
+   the protection meaningfully harder to accidentally regress. 31/31
+   classifier tests pass.
+2. **No production data touched.** No Notion update, no TSV edit, no
+   `processed_messages` mutation. The audit is observational.
+
+### Prevention
+
+- **After a classifier fix, audit the historical tail.** The
+  feedback-loop fix had a clear scope (one email caught live), but
+  the same logic could have already corrupted past entries silently.
+  Probing the last 30 days of mutating-type entries takes ~60s
+  (script is in `/tmp/audit_echoes.js`, can be promoted to
+  `scripts/` if we end up doing this often). Worth running after any
+  pattern change that affects INTERVIEW_INVITE / REJECTION /
+  POSITION_CLOSED.
+- **Real bodies catch related vendors automatically.** Pinning the
+  Remote.com and Hopper fixtures means the next time someone is
+  tempted to re-add a broad "next steps" pattern, it fails against
+  three different real ATS confirmations, not just one.
+
+### Related
+
+- Earlier today: feedback-loop incident (Notion-echo filter) and
+  Tyson & Mendes ACK + POSITION_CLOSED incidents, both above.
+- Audit script: `/tmp/audit_echoes.js` (one-off, local; not
+  committed). Result snapshot in
+  `/tmp/audit_echoes_result.json`.

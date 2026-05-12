@@ -393,6 +393,53 @@ test("classify: ACK 'next steps in the interview process' → ACKNOWLEDGMENT (Ty
   );
 });
 
+// Regression 2026-05-12 (audit follow-up) — Jared 30-day probe surfaced
+// two more historical INTERVIEW_INVITE false-positives from the same
+// removed regex: Remote.com (Apr 14, gmail 19d8e30054186932) and
+// Hopper (Apr 30, gmail 19de0043b5146fc4). Same root cause as the
+// Tyson & Mendes case — ACK boilerplate that forward-looks at "the
+// first interview" / "next steps in the process". Both were later
+// overwritten by genuine REJECTION emails (Notion currently shows
+// Rejected/Archived), so no live phantom mutation remains — but
+// locking them in as fixtures prevents the regex from sneaking back.
+test("classify: ACK 'to arrange the first interview' → ACKNOWLEDGMENT (Remote.com 2026-04-14)", () => {
+  const subject = "Thank you for applying to Remote";
+  const body =
+    "Hi Jared,\n\n" +
+    "Thank you so much for applying to Remote. Your application has been " +
+    "received and we will review it as soon as possible.\n\n" +
+    "If your experience seems like a good fit for the position we will " +
+    "contact you soon to arrange the first interview. We will always let " +
+    "you know the outcome, but we may experience delays since we receive " +
+    "a high number of applications.\n\n" +
+    "Best wishes,\nRemote Talent Acquisition team";
+  const r = classify({ subject, body });
+  assert.equal(
+    r.type,
+    "ACKNOWLEDGMENT",
+    `expected ACKNOWLEDGMENT, got ${r.type} (evidence: "${r.evidence}")`
+  );
+});
+
+test("classify: ACK 'next steps in the process' → ACKNOWLEDGMENT (Hopper 2026-04-30)", () => {
+  const subject = "Jared, thanks for applying to Hopper!";
+  const body =
+    "Hi Jared,\n\n" +
+    "Thank you for your interest in joining the team at Hopper!\n\n" +
+    "We truly appreciate the time and effort you put into submitting your " +
+    "application.\n\n" +
+    "At this time, we are experiencing a high volume of applications, and " +
+    "our team is carefully reviewing each one. We will get back to you as " +
+    "soon as possible regarding the next steps in the process.\n\n" +
+    "Best,\nThe Hopper Team";
+  const r = classify({ subject, body });
+  assert.equal(
+    r.type,
+    "ACKNOWLEDGMENT",
+    `expected ACKNOWLEDGMENT, got ${r.type} (evidence: "${r.evidence}")`
+  );
+});
+
 // Companion fixture — same employer, real REJECTION sent ~10 days later
 // (Apr 27, gmail seen by user). Confirms the existing REJECTION pattern
 // /decided to move forward with other (candidates)?/i still catches the
