@@ -23,7 +23,12 @@ test("classify: interview invites → INTERVIEW_INVITE", () => {
     "We'd like to schedule a phone screen with you next week.",
     "Could you share your availability for an interview?",
     "Please book a time on my Calendly.",
-    "Next steps in the process: a 30-minute chat.",
+    // Replaced 2026-05-12: original case was "Next steps in the process:
+    // a 30-minute chat." which relied on the /next steps in (the|our)
+    // (process|interview)/i pattern. That pattern was dropped because it
+    // fired on ACK boilerplate (Tyson & Mendes regression below). The
+    // replacement uses the `invite you to a chat` pattern that survived.
+    "We invite you for a phone screen this week.",
   ];
   for (const body of cases) {
     const r = classify({ subject: "Next steps", body });
@@ -354,6 +359,141 @@ test("classify: 'schedule flexibility' / 'schedule team interviews' → not INTE
       r.type,
       "INTERVIEW_INVITE",
       `should NOT classify as INTERVIEW_INVITE: "${body}" (got ${r.type})`
+    );
+  }
+});
+
+// Regression 2026-05-12 — Lilia unmatched probe, Tyson & Mendes ACK
+// (gmail id 19d9d946a8271376, real body from production IMAP fetch).
+// Greenhouse ATS confirmation. Body says "our team will be in touch
+// regarding next steps in the interview process" — forward-looking ACK
+// language, not actual invite intent. The bare /next steps in (the|our)
+// (process|interview)/i pattern was producing a false-positive
+// INTERVIEW_INVITE classification and mutating Notion. Dropped from
+// INTERVIEW_INVITE patterns entirely. Real invites still match via
+// schedule/invite/phone-screen/book-a-time/calendly patterns.
+test("classify: ACK 'next steps in the interview process' → ACKNOWLEDGMENT (Tyson & Mendes 2026-05-12)", () => {
+  const subject = "Thank you for applying at Tyson & Mendes";
+  const body =
+    "Hi Lilia,\n\n" +
+    "Thank you so much for your interest in Tyson & Mendes and for taking " +
+    "the time to apply for the Legal Assistant position. We wanted to let " +
+    "you know that we received your application and are looking forward to " +
+    "reviewing it. Following the review, our team will be in in touch " +
+    "regarding next steps in the interview process.\n\n" +
+    "In the meantime, feel free to visit our Careers page on our website " +
+    "to learn more about our organization.\n\n" +
+    "Have a great day!\n\n" +
+    "Thank you,\nT&M Recruiting Team";
+  const r = classify({ subject, body });
+  assert.equal(
+    r.type,
+    "ACKNOWLEDGMENT",
+    `expected ACKNOWLEDGMENT, got ${r.type} (evidence: "${r.evidence}")`
+  );
+});
+
+// Companion fixture — same employer, real REJECTION sent ~10 days later
+// (Apr 27, gmail seen by user). Confirms the existing REJECTION pattern
+// /decided to move forward with other (candidates)?/i still catches the
+// genuine rejection wording after the INTERVIEW_INVITE patterns tightened.
+test("classify: real REJECTION still caught after INVITE tightening (Tyson & Mendes 2026-04-27)", () => {
+  const subject = "Thank you for your interest in Tyson & Mendes";
+  const body =
+    "Hi Lilia,\n\n" +
+    "Thank you for your interest in Tyson & Mendes and for taking the " +
+    "time to apply.\n\n" +
+    "We truly appreciate the opportunity to review your background and " +
+    "qualifications. After careful consideration, we have decided to move " +
+    "forward with other candidates at this time.\n\n" +
+    "We encourage you to keep an eye on our careers page and consider " +
+    "applying for future opportunities.\n\n" +
+    "Warmly,\nT&M Recruiting Team";
+  const r = classify({ subject, body });
+  assert.equal(r.type, "REJECTION", `got ${r.type} (evidence: "${r.evidence}")`);
+});
+
+// Regression 2026-05-12 — Lilia unmatched probe, Lyra Health closure
+// (gmail id 19dbcc95c93ca1af, real body from production IMAP fetch).
+// Lever ATS letter opens with "Thank you for your interest in Lyra Health"
+// (ACK-like) and announces "the Onboarding Support Specialist position is
+// now closed". Semantically this is NOT a rejection — the role was
+// withdrawn, the candidate wasn't told "no". New POSITION_CLOSED type
+// maps to Notion "Closed" (distinct from "Rejected").
+test("classify: 'position is now closed' → POSITION_CLOSED (Lyra Health 2026-05-12)", () => {
+  const subject = "Thank you for considering Lyra";
+  const body =
+    "Hi Lilia,\n\n" +
+    "Thank you for your interest in Lyra Health!\n\n" +
+    "We wanted to inform you that the Onboarding Support Specialist " +
+    "position is now closed. Our team continues to grow, so we invite " +
+    "you to continue checking our careers page for other opportunities " +
+    "with Lyra!\n\n" +
+    "All the best,\nLyra Talent Acquisition Team";
+  const r = classify({ subject, body });
+  assert.equal(r.type, "POSITION_CLOSED", `got ${r.type} (evidence: "${r.evidence}")`);
+});
+
+test("classify: 'role is now closed' / 'position has closed' → POSITION_CLOSED", () => {
+  const fixtures = [
+    "Update: the Senior PM role is now closed.",
+    "We're writing to let you know the position has closed.",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Application update", body });
+    assert.equal(r.type, "POSITION_CLOSED", `failed: "${body}" got ${r.type}`);
+  }
+});
+
+test("classify: 'no longer accepting applications' → POSITION_CLOSED", () => {
+  const r = classify({
+    subject: "Update on the role",
+    body: "We are no longer accepting applications for this position.",
+  });
+  assert.equal(r.type, "POSITION_CLOSED");
+});
+
+test("classify: paused/on-hold variants → POSITION_CLOSED", () => {
+  const fixtures = [
+    "The position has been paused while we reorganize the team.",
+    "Unfortunately the role has been put on hold for the quarter.",
+    "We've paused hiring for this role until further notice.",
+    "We have paused hiring across the org.",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Hiring update", body });
+    assert.equal(r.type, "POSITION_CLOSED", `failed: "${body}" got ${r.type}`);
+  }
+});
+
+// Priority test — closure beats rejection wording. If a letter contains
+// both "unfortunately" and "position is now closed", the closure is the
+// concrete fact about the role and we want Notion → "Closed", not
+// "Rejected". ORDER puts POSITION_CLOSED before REJECTION (2026-05-12).
+test("classify: closure beats rejection wording when both present (priority)", () => {
+  const r = classify({
+    subject: "Update",
+    body:
+      "Unfortunately, we have to let you know that the position is now " +
+      "closed. We appreciated your interest.",
+  });
+  assert.equal(r.type, "POSITION_CLOSED", `got ${r.type} (evidence: "${r.evidence}")`);
+});
+
+// Negative control — generic "closed" without position context must NOT
+// match (e.g. "our office is closed for the holiday").
+test("classify: bare 'closed' without position/role context → not POSITION_CLOSED", () => {
+  const fixtures = [
+    "Our office is closed for the holiday — we will respond Monday.",
+    "Applications are closed for the cohort.", // no "position is closed"
+    "The deadline has closed; we are reviewing submissions.",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Update", body });
+    assert.notEqual(
+      r.type,
+      "POSITION_CLOSED",
+      `should NOT classify as POSITION_CLOSED: "${body}" (got ${r.type})`
     );
   }
 });

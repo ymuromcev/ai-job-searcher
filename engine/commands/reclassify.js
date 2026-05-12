@@ -40,9 +40,12 @@ const SKIP_STATUSES = ["Inbox", "Rejected", "Closed", "Archived", "No Response"]
 // classifier type → Notion status string. INFO_REQUEST / ACKNOWLEDGMENT do
 // not move status (informational only); they leave the page status alone and
 // only add a bot comment (if --notion).
+// POSITION_CLOSED added 2026-05-12 — distinct from REJECTION (the role was
+// withdrawn, not the candidate rejected). Maps to Notion "Closed".
 const TYPE_TO_STATUS = {
   INTERVIEW_INVITE: "Interview",
   REJECTION: "Rejected",
+  POSITION_CLOSED: "Closed",
   INFO_REQUEST: null,
   ACKNOWLEDGMENT: null,
 };

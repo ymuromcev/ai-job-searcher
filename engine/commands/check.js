@@ -474,6 +474,27 @@ function processPipeline(email, ctx, state) {
     return { row, action, rejection };
   }
 
+  // POSITION_CLOSED — added 2026-05-12. The *role* was withdrawn, candidate
+  // was not rejected. Distinct Notion status ("Closed") + distinct emoji /
+  // wording so the user can see at a glance "this didn't get a 'no' — the
+  // role evaporated". Does NOT contribute to rejection stats.
+  if (type === "POSITION_CLOSED") {
+    if (SKIP_STATUSES.has(job.status)) {
+      row.action = `Already ${job.status}, skipped`;
+      return { row };
+    }
+    const action = {
+      kind: "status+comment",
+      pageId: job.notion_id,
+      appKey: job.key,
+      newStatus: "Closed",
+      comment: `🔒 Subject: "${email.subject}". Position withdrawn by employer → status set to Closed.`,
+    };
+    row.action = "queued: Status → Closed";
+    row.comment = "✅ queued";
+    return { row, action };
+  }
+
   if (type === "INTERVIEW_INVITE") {
     if (SKIP_STATUSES.has(job.status)) {
       row.action = `Already ${job.status}, skipped`;

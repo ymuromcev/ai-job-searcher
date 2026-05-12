@@ -41,6 +41,21 @@ const PATTERNS = {
     /decided to move forward with candidates whose/i,
     /your application was not selected/i,
   ],
+  // POSITION_CLOSED — added 2026-05-12 (Lilia Lyra Health probe). Semantically
+  // distinct from REJECTION: the *role* was withdrawn, the candidate was not
+  // rejected. Mapped to Notion status "Closed" (not "Rejected"). Priority is
+  // ABOVE REJECTION — if a letter contains both "unfortunately" and "position
+  // is now closed", the closure is the concrete fact about the role; the
+  // rejection word may just be ACK-style softener. See incidents 2026-05-12.
+  POSITION_CLOSED: [
+    /position is (now )?closed/i,
+    /role is (now )?closed/i,
+    /position has closed/i,
+    /no longer accepting applications/i,
+    /position has been (paused|put on hold)/i,
+    /role has been (paused|put on hold)/i,
+    /we('ve| have) paused hiring/i,
+  ],
   // INTERVIEW_INVITE patterns must require interview-INTENT context. Bare
   // \binterview\b / \bavailability\b were removed 2026-05-02 after Lilia
   // incident: Indeed digest emails embed JD body text containing "interview
@@ -66,7 +81,13 @@ const PATTERNS = {
     /first[- ]round interview/i,
     /round (one|1|two|2|three|3) interview/i,
     /\bphone screen\b/i,
-    /next steps in (the|our) (process|interview)/i,
+    // 2026-05-12 — Tyson & Mendes probe (Lilia unmatched set). The bare
+    // /next steps in (the|our) (process|interview)/i fired on ACK boilerplate
+    // "we'll be in touch regarding next steps in the interview process".
+    // This is forward-looking ACK language, not actual invite intent. Dropped
+    // entirely — real invites are still covered by schedule/invite/phone-screen
+    // /book-a-time/calendly/your-interview-is/round-N patterns. If we ever
+    // need this back, it must require an explicit invite verb in proximity.
     /would love to (chat|connect|meet|talk) (with you|to discuss)/i,
     /\bmeet with (the|our) (team|hiring|recruiting)/i,
     /share your availability/i,
@@ -106,7 +127,16 @@ const PATTERNS = {
   ],
 };
 
-const ORDER = ["REJECTION", "INTERVIEW_INVITE", "INFO_REQUEST", "ACKNOWLEDGMENT"];
+// POSITION_CLOSED goes BEFORE REJECTION (2026-05-12). When both signals are
+// present ("unfortunately…the position is now closed"), the closure is the
+// concrete fact and we want the Notion card → "Closed", not "Rejected".
+const ORDER = [
+  "POSITION_CLOSED",
+  "REJECTION",
+  "INTERVIEW_INVITE",
+  "INFO_REQUEST",
+  "ACKNOWLEDGMENT",
+];
 
 function classify({ subject, body } = {}) {
   const text = `${subject || ""} ${body || ""}`;

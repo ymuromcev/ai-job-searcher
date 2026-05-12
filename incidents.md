@@ -557,6 +557,110 @@ Workflow change applied in `CLAUDE.md` (agent rules):
 
 ---
 
+## 2026-05-12 — Classifier mis-fires on ACK boilerplate "next steps in the interview process" + missing closure semantics (BL-45 patch)
+
+**Severity**: HIGH (false INTERVIEW_INVITE on real ACK + closure-vs-rejection
+semantic gap; both produce wrong Notion statuses on user-visible cards).
+**Surface**: `engine/core/classifier.js` INTERVIEW_INVITE + REJECTION
+pattern sets; `engine/commands/check.js` and `engine/commands/reclassify.js`
+type→status mapping.
+**Detected by**: During Healthcare-Hannah 30-day dry-run validation of
+BL-45/RFC-029 (ATS-sender coverage), the unmatched-email probe surfaced
+4 emails that were either mis-classified or had no correct status target:
+
+- **Tyson & Mendes ACK** (`19d9d946a8271376`, Greenhouse, 2026-04-17) —
+  classified as INTERVIEW_INVITE. Real body says "our team will be in
+  touch regarding next steps in the interview process" — forward-looking
+  ACK boilerplate, not actual invite intent.
+- **Lyra Health closure** (`19dbcc95c93ca1af`, Lever, 2026-04-24) —
+  classified as ACKNOWLEDGMENT. Real body says "the Onboarding Support
+  Specialist position is now closed" — role withdrawn, candidate not
+  rejected. There was no `POSITION_CLOSED` type at all, and ACK won by
+  first-match because the letter opens with "Thank you for your interest".
+
+### Cause
+
+Two independent gaps:
+
+1. **INTERVIEW_INVITE pattern too broad.** Regex
+   `/next steps in (the|our) (process|interview)/i` was added during
+   RFC 020 to catch follow-up scheduling emails. It also fires on the
+   common ATS confirmation phrase "we will be in touch regarding next
+   steps in the interview process" — which is forward-looking ACK
+   language inside an application-received email, not invite intent.
+   First-match-wins meant INTERVIEW_INVITE beat ACKNOWLEDGMENT.
+
+2. **No `POSITION_CLOSED` type.** Classifier had no way to distinguish
+   "we are rejecting your application" from "the role itself has been
+   withdrawn". Both produced either REJECTION (if the wording happened
+   to match) or fell through to ACKNOWLEDGMENT/OTHER. Notion has had
+   the `Closed` Status option since RFC 014, but no classifier path
+   ever reached it.
+
+### What changed
+
+1. **`engine/core/classifier.js`** — INTERVIEW_INVITE: dropped
+   `/next steps in (the|our) (process|interview)/i` entirely. Real
+   invites still match via schedule/invite/phone-screen/book-a-time/
+   calendly/round-N/share-availability patterns. If we ever need this
+   phrase back, it must require an explicit invite verb in proximity.
+2. **`engine/core/classifier.js`** — new `POSITION_CLOSED` type with
+   7 patterns covering "position is now closed", "role is now closed",
+   "position has closed", "no longer accepting applications", "position
+   has been paused/put on hold", "role has been paused/put on hold",
+   "we've paused hiring". Priority is ABOVE REJECTION — if both signals
+   present, closure wins (the role evaporated, not the candidate
+   rejected).
+3. **`engine/commands/check.js`** — new handler for `type ===
+   "POSITION_CLOSED"` → action `status+comment` with `newStatus:
+   "Closed"`, emoji 🔒, wording "Position withdrawn by employer →
+   status set to Closed". Mirrors REJECTION handler but writes a
+   distinct Notion status.
+4. **`engine/commands/reclassify.js`** — `TYPE_TO_STATUS` map gains
+   `POSITION_CLOSED: "Closed"`, so the reclassify command also routes
+   closures correctly when re-grading historical OTHER emails.
+5. **`engine/core/classifier.test.js`** — 6 new regression cases:
+   - Tyson & Mendes ACK (real Apr-17 body) → ACKNOWLEDGMENT.
+   - Tyson & Mendes REJECTION (real Apr-27 body) → REJECTION
+     (positive control that the existing REJECTION pattern still
+     catches the genuine wording).
+   - Lyra Health closure (real Apr-24 body) → POSITION_CLOSED.
+   - "no longer accepting applications" → POSITION_CLOSED.
+   - paused/on-hold variants → POSITION_CLOSED.
+   - Priority test: "Unfortunately…position is now closed" →
+     POSITION_CLOSED (closure beats rejection wording).
+   - Negative control: bare "closed" without position context (office
+     closed for holiday, applications closed) → not POSITION_CLOSED.
+
+### Prevention
+
+- **Real bodies in fixtures.** Both Tyson & Mendes and Lyra fixtures
+  use the actual production email bodies (pulled via the IMAP probe
+  script, not invented). Synthetic fixtures are a leading source of
+  classifier regression incidents — see 2026-04-30 ATS-confirmation
+  fix where the bare `/not selected/i` pattern was caught by real
+  Greenhouse/Ashby/Lever ACK fixtures.
+- **Bias toward narrow patterns.** The dropped `/next steps in (the|
+  our) (process|interview)/i` is a cautionary tale: forward-looking
+  phrases inside ACK boilerplate look like invite intent in isolation.
+  Any new INTERVIEW_INVITE pattern should either require an explicit
+  invite verb in proximity, OR ship with at least one ATS-ACK
+  fixture proving it doesn't fire on confirmation emails.
+- **Semantic distinctions are first-class.** "Position closed" is not
+  "rejected" — different Notion status, different downstream signal
+  (closures do not count toward rejection rates). When a new state
+  emerges in the data, add a classifier type rather than overloading
+  an existing one.
+
+### Related
+
+- BL-45 — ATS-sender coverage in check tick (RFC 029).
+- BL-44 — `reclassify` command (re-grade historical OTHER emails).
+- 2026-04-30 incident — ATS-confirmation false REJECTIONs (same
+  general class: classifier over-broad pattern, ACK letters mis-typed).
+
+---
+
 ## 2026-05-12 — `check` tick blind to ATS-aggregator senders (missed real interview invite)
 
 **Severity**: HIGH (real interview invite for Healthcare-Hannah went
