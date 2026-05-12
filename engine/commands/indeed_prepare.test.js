@@ -43,7 +43,10 @@ test("buildScanUrls preserves keyword order and pairs each with its URL", () => 
     fromage: 7,
   });
   assert.equal(out.length, 3);
-  assert.deepEqual(out.map((o) => o.keyword), ["a", "b", "c"]);
+  assert.deepEqual(
+    out.map((o) => o.keyword),
+    ["a", "b", "c"]
+  );
   for (const o of out) {
     assert.ok(o.url.startsWith(SEARCH_BASE));
     assert.match(o.url, /radius=5/);
@@ -87,10 +90,7 @@ test("DEFAULT_CERT_BLOCKERS contains the prototype's healthcare cert keywords", 
 // ---- readIndeedConfig ----
 
 test("readIndeedConfig: throws when discovery.indeed missing", () => {
-  assert.throws(
-    () => readIndeedConfig({ id: "p", discovery: {} }),
-    /no discovery\.indeed config/
-  );
+  assert.throws(() => readIndeedConfig({ id: "p", discovery: {} }), /no discovery\.indeed config/);
 });
 
 test("readIndeedConfig: throws when keywords empty / missing", () => {
@@ -266,14 +266,15 @@ test("indeed-prep: errors when profile lacks discovery.indeed config", async () 
 test("indeed-prep: absolute ingest_file path is honored as-is", async () => {
   const writes = [];
   const cmd = makeIndeedPrepCommand({
-    loadProfile: () => makeFakeProfile({
-      discovery: {
-        indeed: {
-          keywords: ["a"],
-          ingest_file: "/abs/elsewhere/raw.json",
+    loadProfile: () =>
+      makeFakeProfile({
+        discovery: {
+          indeed: {
+            keywords: ["a"],
+            ingest_file: "/abs/elsewhere/raw.json",
+          },
         },
-      },
-    }),
+      }),
     ensureDir: () => {},
     writeFile: (p, c) => writes.push({ p, c }),
     fileExists: () => false,

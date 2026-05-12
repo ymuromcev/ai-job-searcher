@@ -36,9 +36,7 @@ function saveProcessed(filePath, existing, newEntries, now = new Date()) {
     }
   }
   const cutoff = new Date(now.getTime() - MAX_DAYS * 86400 * 1000);
-  data.processed = data.processed.filter(
-    (e) => new Date(e.date || 0) >= cutoff
-  );
+  data.processed = data.processed.filter((e) => new Date(e.date || 0) >= cutoff);
   data.last_check = now.toISOString();
   ensureDir(filePath);
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));

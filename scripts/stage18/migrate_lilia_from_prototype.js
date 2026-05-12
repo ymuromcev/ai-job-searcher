@@ -65,7 +65,10 @@ const STATUS_REMAP = {
 
 function getPlainText(rich) {
   if (!Array.isArray(rich)) return "";
-  return rich.map((r) => (r && r.plain_text) || "").join("").trim();
+  return rich
+    .map((r) => (r && r.plain_text) || "")
+    .join("")
+    .trim();
 }
 
 function getTitle(prop) {
@@ -129,8 +132,14 @@ function deriveJobId(coverLetterField, roleField, companyName) {
     if (stem) return stem.toLowerCase();
   }
   // Fallback: slug of company + role
-  const co = String(companyName || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
-  const ro = String(roleField || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  const co = String(companyName || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_|_$/g, "");
+  const ro = String(roleField || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_|_$/g, "");
   return [co, ro].filter(Boolean).join("_") || "unknown";
 }
 
@@ -169,9 +178,7 @@ function mapPrototypePageToRow(p, companyLookup, nowIso) {
   const source = getSelect(props.Source) || "Indeed";
 
   const companyIds = getRelationIds(props.Company);
-  const companyName = companyIds.length
-    ? (companyLookup.get(companyIds[0]) || "")
-    : "";
+  const companyName = companyIds.length ? companyLookup.get(companyIds[0]) || "" : "";
 
   const jobId = deriveJobId(cl, role, companyName);
 
@@ -264,7 +271,9 @@ async function main() {
   const appsPath = path.join(profileDirPath, "applications.tsv");
   const { apps: existing } = applications.load(appsPath);
   const nonProto = existing.filter((r) => r.source !== "prototype");
-  console.log(`  existing rows: ${existing.length} (${existing.length - nonProto.length} prototype, ${nonProto.length} other)`);
+  console.log(
+    `  existing rows: ${existing.length} (${existing.length - nonProto.length} prototype, ${nonProto.length} other)`
+  );
 
   // Build a map of existing prototype rows by key to preserve notion_page_id
   // when re-running migration.

@@ -56,9 +56,8 @@ function buildProfileJson(intake) {
     throw new Error("buildProfileJson: intake.identity.profile_id is required");
   }
   const id = intake.identity.profile_id;
-  const modules = intake.modules && intake.modules.length
-    ? intake.modules.slice()
-    : DEFAULT_MODULES.slice();
+  const modules =
+    intake.modules && intake.modules.length ? intake.modules.slice() : DEFAULT_MODULES.slice();
 
   const propertyMap = resolvePropertyMap(intake);
   const notionParentId = extractNotionPageId(

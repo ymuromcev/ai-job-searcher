@@ -22,10 +22,7 @@ const {
   validateProfileId,
 } = require("./_common.js");
 
-const {
-  SUBPAGES,
-  buildSubpageBody,
-} = require("./build_hub_layout.js");
+const { SUBPAGES, buildSubpageBody } = require("./build_hub_layout.js");
 
 async function listAllChildren(client, pageId) {
   const out = [];
@@ -78,7 +75,8 @@ async function main() {
     ? JSON.parse(fs.readFileSync(versionsPath, "utf8"))
     : { versions: {} };
 
-  const subpages = (profile.notion && profile.notion.hub_layout && profile.notion.hub_layout.subpages) || {};
+  const subpages =
+    (profile.notion && profile.notion.hub_layout && profile.notion.hub_layout.subpages) || {};
   const token = requireToken(id);
   const client = new Client({ auth: token });
 

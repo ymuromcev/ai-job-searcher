@@ -38,8 +38,7 @@ function escapeRegex(s) {
 // default PM regex when the profile didn't declare a requirelist.
 function buildTitleFilter(filterRules) {
   const patterns =
-    (filterRules && filterRules.title_requirelist && filterRules.title_requirelist.patterns) ||
-    [];
+    (filterRules && filterRules.title_requirelist && filterRules.title_requirelist.patterns) || [];
   const tokens = patterns
     .map((p) => String(p && p.pattern ? p.pattern : "").trim())
     .filter(Boolean);
@@ -52,22 +51,30 @@ function buildTitleFilter(filterRules) {
 
 // Reject locations that are clearly non-US. Keep "Anywhere"/"Worldwide"/"Remote"
 // (usually accept US applicants) and unknown locations (keep = inclusive default).
-const NON_US_RE = /(india|europe|^eu$|emea|apac|australia|brazil|mexico|canada only|uk only|united kingdom only|russia|ukraine|philippines|only lat|only apac|only emea)/i;
+const NON_US_RE =
+  /(india|europe|^eu$|emea|apac|australia|brazil|mexico|canada only|uk only|united kingdom only|russia|ukraine|philippines|only lat|only apac|only emea)/i;
 
 function isUsCompatible(loc) {
   if (!loc) return true;
   const l = loc.toLowerCase();
   if (/anywhere|worldwide|global|remote/i.test(l) && !NON_US_RE.test(l)) return true;
-  if (/united states|\busa\b|\bu\.s\.a\b|\bus$|\bca$|california|new york|san francisco|texas|washington|seattle|boston|chicago|denver|austin|oregon|arizona|colorado|florida|georgia|illinois/i.test(l)) return true;
+  if (
+    /united states|\busa\b|\bu\.s\.a\b|\bus$|\bca$|california|new york|san francisco|texas|washington|seattle|boston|chicago|denver|austin|oregon|arizona|colorado|florida|georgia|illinois/i.test(
+      l
+    )
+  )
+    return true;
   if (NON_US_RE.test(l)) return false;
   return true; // unknown → keep (inclusive)
 }
 
 function companySlug(name) {
-  return String(name || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "") || "remoteok";
+  return (
+    String(name || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "remoteok"
+  );
 }
 
 function mapJob(j) {

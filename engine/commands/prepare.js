@@ -126,9 +126,8 @@ function filterAlreadyEvaluated(apps, { mode = "default" } = {}) {
 
 function applyPrepareFilter(apps, rules, activeCounts) {
   const companyCap = (rules && rules.company_cap) || {};
-  const maxActive =
-    companyCap.max_active != null ? Number(companyCap.max_active) : Infinity;
-  const capOverrides = (companyCap.overrides) || {};
+  const maxActive = companyCap.max_active != null ? Number(companyCap.max_active) : Infinity;
+  const capOverrides = companyCap.overrides || {};
 
   // Blocklists arrive in the flat engine shape from profile_loader's
   // normalizeFilterRules (company_blocklist: [strings], title_blocklist:
@@ -142,9 +141,7 @@ function applyPrepareFilter(apps, rules, activeCounts) {
       .map((c) => c.toLowerCase())
   );
 
-  const titlePatterns = (
-    Array.isArray(rules && rules.title_blocklist) ? rules.title_blocklist : []
-  )
+  const titlePatterns = (Array.isArray(rules && rules.title_blocklist) ? rules.title_blocklist : [])
     .map((p) => (p && typeof p === "object" ? p.pattern : p))
     .filter((p) => typeof p === "string" && p.length > 0)
     .map((p) => p.toLowerCase());
@@ -176,7 +173,10 @@ function applyPrepareFilter(apps, rules, activeCounts) {
 
     // title_requirelist: positive gate checked before blocklist
     if (titleRequirelist.length > 0 && titleLower) {
-      const parts = titleLower.split("/").map((p) => p.trim()).filter(Boolean);
+      const parts = titleLower
+        .split("/")
+        .map((p) => p.trim())
+        .filter(Boolean);
       const titleParts = parts.length > 0 ? parts : [titleLower];
       const anyMatches = titleParts.some((part) =>
         titleRequirelist.some((pat) => new RegExp(`\\b${escapeRegex(pat)}\\b`, "i").test(part))
@@ -280,7 +280,16 @@ async function fillUpAliveBatch(passed, target, deps) {
 // weak-fallback path. The SKILL reads it as "the row was judged Weak in a
 // prior run, do not re-judge — carry over fit_score/fit_rationale from TSV
 // and proceed straight to CL gen + Notion push as a fallback candidate".
-function buildBatchEntry(urlRes, jd, profile, deps, companyTiers, salaryOpts, unknownTierSet, opts = {}) {
+function buildBatchEntry(
+  urlRes,
+  jd,
+  profile,
+  deps,
+  companyTiers,
+  salaryOpts,
+  unknownTierSet,
+  opts = {}
+) {
   const entry = {
     key: urlRes.key,
     source: urlRes.source,
@@ -354,9 +363,10 @@ async function fetchJdsByKey(aliveResults, jdCacheDir, deps) {
     ...a,
     slug: parseSlugFromUrl(a.source, a.url),
   }));
-  const jdResults = jdInputs.length > 0
-    ? await deps.fetchJds(jdInputs, jdCacheDir, { fetchFn: deps.fetchFn }, { concurrency: 8 })
-    : [];
+  const jdResults =
+    jdInputs.length > 0
+      ? await deps.fetchJds(jdInputs, jdCacheDir, { fetchFn: deps.fetchFn }, { concurrency: 8 })
+      : [];
   const jdByAppKey = {};
   for (let i = 0; i < jdInputs.length; i++) {
     jdByAppKey[jdInputs[i].key] = jdResults[i];
@@ -391,9 +401,8 @@ function computeSkipReasons(skipped) {
 // Threshold is exactly `target` (no coefficient). `target` is the operator's
 // chosen `--batch`; an extra cushion knob would never get tuned in practice.
 function computeInboxHealth({ remainingViable, target, inBatch, dropsThisRun }) {
-  const safeRemaining = Number.isFinite(remainingViable) && remainingViable >= 0
-    ? remainingViable
-    : 0;
+  const safeRemaining =
+    Number.isFinite(remainingViable) && remainingViable >= 0 ? remainingViable : 0;
   const safeTarget = Number.isFinite(target) && target > 0 ? target : 0;
   // target=0 (defensive: no shortfall possible) → "healthy" vacuously.
   const status = safeRemaining < safeTarget ? "low" : "healthy";
@@ -412,10 +421,7 @@ function computeInboxHealth({ remainingViable, target, inBatch, dropsThisRun }) 
 // when status is "Inbox" (post-RFC014) OR status="To Apply" with no
 // notion_page_id (legacy rows from before the migration).
 function isFreshInboxApp(app) {
-  return (
-    app.status === "Inbox" ||
-    (app.status === "To Apply" && !app.notion_page_id)
-  );
+  return app.status === "Inbox" || (app.status === "To Apply" && !app.notion_page_id);
 }
 
 // BL-9 Step 5: signal for the autonomous SKILL loop. `inboxExhausted=true`
@@ -505,7 +511,7 @@ function runAutoDedup(apps, applicationsPath, ctx, deps) {
     if (dryRun) {
       ctx.stdout(
         `dedup: would auto-collapse ${plan.pairs} duplicate group(s) — ` +
-        `would keep ${kept} row(s), would remove ${removed} row(s) (dry-run, no write)`
+          `would keep ${kept} row(s), would remove ${removed} row(s) (dry-run, no write)`
       );
     } else {
       const stamp = String(deps.now()).replace(/[:.]/g, "-");
@@ -516,8 +522,8 @@ function runAutoDedup(apps, applicationsPath, ctx, deps) {
       deps.saveApplications(applicationsPath, plan.kept);
       ctx.stdout(
         `dedup: found ${plan.pairs} duplicate group(s) in TSV — ` +
-        `auto-collapsed, kept ${kept} row(s), removed ${removed} row(s) ` +
-        `(backup: ${path.basename(backupPath)})`
+          `auto-collapsed, kept ${kept} row(s), removed ${removed} row(s) ` +
+          `(backup: ${path.basename(backupPath)})`
       );
     }
   }
@@ -525,8 +531,8 @@ function runAutoDedup(apps, applicationsPath, ctx, deps) {
   if (plan.suspicious.length > 0) {
     ctx.stderr(
       `dedup: ${plan.suspicious.length} suspicious group(s) NOT auto-collapsed ` +
-      `(rows disagree on company or url) — manual review required, ` +
-      `run \`validate --dedup\` for details`
+        `(rows disagree on company or url) — manual review required, ` +
+        `run \`validate --dedup\` for details`
     );
   }
 
@@ -543,9 +549,8 @@ const VALID_TIERS = new Set(["S", "A", "B", "C"]);
 async function runPre(ctx, deps) {
   const { profileId, flags, stdout, stderr } = ctx;
   const profilesDir = resolveProfilesDir(ctx, ctx.env || process.env);
-  const batchSize = Number.isFinite(flags.batch) && flags.batch > 0
-    ? flags.batch
-    : DEFAULT_BATCH_SIZE;
+  const batchSize =
+    Number.isFinite(flags.batch) && flags.batch > 0 ? flags.batch : DEFAULT_BATCH_SIZE;
 
   const profile = deps.loadProfile(profileId, { profilesDir });
   // L-4 (RFC 013): inject profile.geo into filter rules so applyPrepareFilter
@@ -579,8 +584,8 @@ async function runPre(ctx, deps) {
   if (alreadyEvaluatedSkips.length > 0) {
     stdout(
       `already-evaluated: ${alreadyEvaluatedSkips.length} skipped (` +
-      `${alreadyEvaluatedSkips.filter((s) => s.reason === "already_evaluated_weak").length} weak, ` +
-      `${alreadyEvaluatedSkips.filter((s) => s.reason === "already_evaluated_duplicate").length} duplicate)`
+        `${alreadyEvaluatedSkips.filter((s) => s.reason === "already_evaluated_weak").length} weak, ` +
+        `${alreadyEvaluatedSkips.filter((s) => s.reason === "already_evaluated_duplicate").length} duplicate)`
     );
   }
 
@@ -601,18 +606,14 @@ async function runPre(ctx, deps) {
   // (array of TSV keys) on the context so a follow-up `--mode topup` run can
   // pull more without rebuilding the filter pipeline from scratch.
   stdout(`checking URLs (target: ${batchSize} alive)…`);
-  const { aliveResults, allUrlResults, consumed } = await fillUpAliveBatch(
-    passed,
-    batchSize,
-    deps
-  );
+  const { aliveResults, allUrlResults, consumed } = await fillUpAliveBatch(passed, batchSize, deps);
   const dead = allUrlResults.filter((r) => !r.alive);
   stdout(
     `URLs: checked ${allUrlResults.length}, ${aliveResults.length} alive (target ${batchSize}), ${dead.length} dead, ${passed.length - consumed} deferred`
   );
 
   // JD fetch for alive URLs only.
-  const companyTiers = (profile.company_tiers) || {};
+  const companyTiers = profile.company_tiers || {};
   // L-1: per-profile salary config (parser + matrix + COL). null when block
   // missing → calcSalary falls back to engine defaults (Jared parity).
   const salaryOpts = profile.salaryConfig || {};
@@ -802,18 +803,22 @@ async function runPreTopup(ctx, deps) {
 
   // 2) Compute need: explicit flag, else fill the deficit (batchSize - current).
   const explicitNeed = Number.isFinite(flags.need) && flags.need > 0 ? flags.need : null;
-  const need = explicitNeed != null
-    ? explicitNeed
-    : Math.max(0, batchSize - prevBatch.length);
+  const need = explicitNeed != null ? explicitNeed : Math.max(0, batchSize - prevBatch.length);
   if (need === 0) {
-    stdout(`topup: nothing to add (current batch ${prevBatch.length} already at batchSize ${batchSize})`);
+    stdout(
+      `topup: nothing to add (current batch ${prevBatch.length} already at batchSize ${batchSize})`
+    );
     stdout(`hint: pass --need <K> to force pulling more entries`);
     return 0;
   }
-  stdout(`topup: need ${need} more entries (current batch ${prevBatch.length}, queue ${prevQueue.length})`);
+  stdout(
+    `topup: need ${need} more entries (current batch ${prevBatch.length}, queue ${prevQueue.length})`
+  );
 
   if (prevQueue.length === 0) {
-    stdout(`topup: deferredQueue is empty — nothing to top up from. Run --mode fresh after a new scan.`);
+    stdout(
+      `topup: deferredQueue is empty — nothing to top up from. Run --mode fresh after a new scan.`
+    );
     return 0;
   }
 
@@ -848,8 +853,8 @@ async function runPreTopup(ctx, deps) {
   if (alreadyEvaluatedSkips.length > 0) {
     stdout(
       `topup: ${alreadyEvaluatedSkips.length} already-evaluated dropped (` +
-      `${alreadyEvaluatedSkips.filter((s) => s.reason === "already_evaluated_weak").length} weak, ` +
-      `${alreadyEvaluatedSkips.filter((s) => s.reason === "already_evaluated_duplicate").length} duplicate)`
+        `${alreadyEvaluatedSkips.filter((s) => s.reason === "already_evaluated_weak").length} weak, ` +
+        `${alreadyEvaluatedSkips.filter((s) => s.reason === "already_evaluated_duplicate").length} duplicate)`
     );
   }
 
@@ -871,18 +876,14 @@ async function runPreTopup(ctx, deps) {
 
   // 6) Fill-up loop on the residue.
   stdout(`topup: checking URLs (target: ${need} alive)…`);
-  const { aliveResults, allUrlResults, consumed } = await fillUpAliveBatch(
-    passed,
-    need,
-    deps
-  );
+  const { aliveResults, allUrlResults, consumed } = await fillUpAliveBatch(passed, need, deps);
   const dead = allUrlResults.filter((r) => !r.alive);
   stdout(
     `topup: URLs checked ${allUrlResults.length}, ${aliveResults.length} alive (target ${need}), ${dead.length} dead, ${passed.length - consumed} still queued`
   );
 
   // 7) JD fetch + entry construction.
-  const companyTiers = (profile.company_tiers) || {};
+  const companyTiers = profile.company_tiers || {};
   const salaryOpts = profile.salaryConfig || {};
   const jdCacheDir = profile.paths.jdCacheDir;
   const jdByAppKey = await fetchJdsByKey(aliveResults, jdCacheDir, deps);
@@ -1041,11 +1042,11 @@ async function runPreWeakFallback(ctx, deps) {
 
   // 2) Compute need.
   const explicitNeed = Number.isFinite(flags.need) && flags.need > 0 ? flags.need : null;
-  const need = explicitNeed != null
-    ? explicitNeed
-    : Math.max(0, batchSize - prevBatch.length);
+  const need = explicitNeed != null ? explicitNeed : Math.max(0, batchSize - prevBatch.length);
   if (need === 0) {
-    stdout(`weak-fallback: nothing to add (current batch ${prevBatch.length} already at batchSize ${batchSize})`);
+    stdout(
+      `weak-fallback: nothing to add (current batch ${prevBatch.length} already at batchSize ${batchSize})`
+    );
     return 0;
   }
 
@@ -1087,7 +1088,7 @@ async function runPreWeakFallback(ctx, deps) {
   const pool = [...liveQueueApps, ...alreadyWeakApps];
   stdout(
     `weak-fallback: pool ${pool.length} (${liveQueueApps.length} from deferredQueue, ` +
-    `${alreadyWeakApps.length} already-Weak in TSV); need ${need}`
+      `${alreadyWeakApps.length} already-Weak in TSV); need ${need}`
   );
 
   if (pool.length === 0) {
@@ -1110,8 +1111,9 @@ async function runPreWeakFallback(ctx, deps) {
   }
 
   // 4) filterAlreadyEvaluated — keep weak rows, only drop duplicates.
-  const { passed: notDuplicate, skipped: duplicateSkips } =
-    filterAlreadyEvaluated(pool, { mode: "weak-fallback" });
+  const { passed: notDuplicate, skipped: duplicateSkips } = filterAlreadyEvaluated(pool, {
+    mode: "weak-fallback",
+  });
   if (duplicateSkips.length > 0) {
     stdout(`weak-fallback: ${duplicateSkips.length} duplicate-flagged dropped`);
   }
@@ -1131,19 +1133,15 @@ async function runPreWeakFallback(ctx, deps) {
 
   // 6) Fill-up.
   stdout(`weak-fallback: checking URLs (target: ${need} alive)…`);
-  const { aliveResults, allUrlResults, consumed } = await fillUpAliveBatch(
-    passed,
-    need,
-    deps
-  );
+  const { aliveResults, allUrlResults, consumed } = await fillUpAliveBatch(passed, need, deps);
   const dead = allUrlResults.filter((r) => !r.alive);
   stdout(
     `weak-fallback: URLs checked ${allUrlResults.length}, ${aliveResults.length} alive ` +
-    `(target ${need}), ${dead.length} dead, ${passed.length - consumed} still queued`
+      `(target ${need}), ${dead.length} dead, ${passed.length - consumed} still queued`
   );
 
   // 7) JD fetch + entry construction.
-  const companyTiers = (profile.company_tiers) || {};
+  const companyTiers = profile.company_tiers || {};
   const salaryOpts = profile.salaryConfig || {};
   const jdCacheDir = profile.paths.jdCacheDir;
   const jdByAppKey = await fetchJdsByKey(aliveResults, jdCacheDir, deps);
@@ -1155,8 +1153,7 @@ async function runPreWeakFallback(ctx, deps) {
   const unknownTierSet = new Set(prevUnknownTiers);
   const newEntries = aliveResults.map((urlRes) => {
     const tsvRow = poolByKey[urlRes.key] || {};
-    const wasAlreadyWeak =
-      tsvRow.fit_score === "Weak" || tsvRow.skip_reason === "weak_fit";
+    const wasAlreadyWeak = tsvRow.fit_score === "Weak" || tsvRow.skip_reason === "weak_fit";
     return buildBatchEntry(
       urlRes,
       jdByAppKey[urlRes.key],
@@ -1180,12 +1177,7 @@ async function runPreWeakFallback(ctx, deps) {
     url: r.url,
     urlStatus: r.status,
   }));
-  const newSkipped = [
-    ...duplicateSkips,
-    ...filteredOut,
-    ...deadSkipped,
-    ...droppedFromQueue,
-  ];
+  const newSkipped = [...duplicateSkips, ...filteredOut, ...deadSkipped, ...droppedFromQueue];
 
   // 9) Rebuild deferred queue. Anything that passed but didn't fit `need`,
   // plus the previously-queued items we couldn't push through (already-Weak
@@ -1257,7 +1249,7 @@ async function runPreWeakFallback(ctx, deps) {
   const weakCount = newEntries.filter((e) => e.wasAlreadyWeak).length;
   stdout(
     `weak-fallback: appended ${newEntries.length} entries (${weakCount} already-Weak, ` +
-    `${newEntries.length - weakCount} fresh) → batch=${merged.batch.length} (${contextPath})`
+      `${newEntries.length - weakCount} fresh) → batch=${merged.batch.length} (${contextPath})`
   );
   stdout(
     `inbox health: ${merged_inbox_health.status} (${merged_inbox_health.remaining_viable} viable for next run, target ${merged_inbox_health.target})`
@@ -1285,7 +1277,7 @@ async function loadPrepareContextByKey(profile, deps, stderr) {
   } catch (err) {
     stderr(
       `warn: prepare_context.json unreadable (${err.code || err.message}) — ` +
-      `Notion pages will omit city/state/workFormat/schedule/requirements`
+        `Notion pages will omit city/state/workFormat/schedule/requirements`
     );
     return {};
   }
@@ -1341,9 +1333,7 @@ function buildJobFieldsForNotion({ app, r, prepareCtxEntry, now, formatSalaryDis
   if (r.salaryMax !== undefined && r.salaryMax !== null && r.salaryMax !== "") {
     fields.salaryMax = r.salaryMax;
   }
-  const display = formatSalaryDisplay
-    ? formatSalaryDisplay(r.salaryMin, r.salaryMax)
-    : "";
+  const display = formatSalaryDisplay ? formatSalaryDisplay(r.salaryMin, r.salaryMax) : "";
   if (display) fields.salaryExpectations = display;
   if (r.clKey) fields.coverLetter = `${r.clKey}.pdf`;
 
@@ -1424,14 +1414,12 @@ async function runCommit(ctx, deps) {
     parsedTiers = undefined;
   }
   if (parsedTiers && typeof parsedTiers === "object" && !Array.isArray(parsedTiers)) {
-    const existing = (profile.company_tiers) || {};
+    const existing = profile.company_tiers || {};
     for (const [name, tier] of Object.entries(parsedTiers)) {
       const t = String(tier || "").toUpperCase();
       if (!name || !VALID_TIERS.has(t)) {
         tierStats.invalid++;
-        stderr(
-          `warn: invalid tier "${tier}" for company "${name}" — must be one of S/A/B/C`
-        );
+        stderr(`warn: invalid tier "${tier}" for company "${name}" — must be one of S/A/B/C`);
         continue;
       }
       if (existing[name] === t) {
@@ -1451,22 +1439,20 @@ async function runCommit(ctx, deps) {
         { profilesDir }
       );
       stdout(
-        `tiers: persisted ${tierStats.added} new tier(s) → profile.json (${
-          Object.entries(tierUpdates)
-            .map(([n, t]) => `${n}=${t}`)
-            .join(", ")
-        })`
+        `tiers: persisted ${tierStats.added} new tier(s) → profile.json (${Object.entries(
+          tierUpdates
+        )
+          .map(([n, t]) => `${n}=${t}`)
+          .join(", ")})`
       );
     } catch (err) {
       stderr(`warn: failed to persist company_tiers: ${err.message}`);
     }
   } else if (tierStats.added > 0 && flags.dryRun) {
     stdout(
-      `(dry-run) would persist ${tierStats.added} new tier(s): ${
-        Object.entries(tierUpdates)
-          .map(([n, t]) => `${n}=${t}`)
-          .join(", ")
-      }`
+      `(dry-run) would persist ${tierStats.added} new tier(s): ${Object.entries(tierUpdates)
+        .map(([n, t]) => `${n}=${t}`)
+        .join(", ")}`
     );
   }
 
@@ -1501,7 +1487,7 @@ async function runCommit(ctx, deps) {
       } else {
         stderr(
           `warn: invalid fitScore "${r.fitScore}" for key ${r.key} — must be one of ` +
-          `${[...VALID_FIT_SCORES].join("/")}; not persisted`
+            `${[...VALID_FIT_SCORES].join("/")}; not persisted`
         );
         updates.invalidFitScore++;
       }
@@ -1515,7 +1501,7 @@ async function runCommit(ctx, deps) {
       } else {
         stderr(
           `warn: invalid skipReason "${r.skipReason}" for key ${r.key} — must be one of ` +
-          `${[...VALID_SKIP_REASONS].join("/")}; not persisted`
+            `${[...VALID_SKIP_REASONS].join("/")}; not persisted`
         );
         updates.invalidSkipReason++;
       }
@@ -1545,7 +1531,7 @@ async function runCommit(ctx, deps) {
       updates.invalidDecision++;
       stderr(
         `warn: unknown decision "${r.decision}" for key ${r.key} — treating as skip ` +
-        `(valid: ${[...VALID_DECISIONS].join(", ")})`
+          `(valid: ${[...VALID_DECISIONS].join(", ")})`
       );
       updates.skip++;
       continue;
@@ -1562,7 +1548,7 @@ async function runCommit(ctx, deps) {
         updates.invalidArchetype++;
         stderr(
           `warn: unknown resumeVer "${r.resumeVer}" for key ${r.key} — treating as skip ` +
-          `(valid keys: ${[...validArchetypes].join(", ")})`
+            `(valid keys: ${[...validArchetypes].join(", ")})`
         );
         // Capture the verdict even on the downgraded path.
         applyFitFields(app, r);
@@ -1708,7 +1694,7 @@ async function runCommit(ctx, deps) {
     if (toApplyMissingParagraphs.length > 0) {
       stderr(
         `warn: ${toApplyMissingParagraphs.length} to_apply row(s) missing clParagraphs — ` +
-        `engine cannot generate MD/PDF (likely an old SKILL version; see RFC 019)`
+          `engine cannot generate MD/PDF (likely an old SKILL version; see RFC 019)`
       );
     }
   }
@@ -1775,9 +1761,7 @@ async function runCommit(ctx, deps) {
     _seenKeys.add(r.key);
     return true;
   });
-  const toApplyAlreadyPushed = toApplyResults.filter(
-    (r) => byKey[r.key].notion_page_id
-  ).length;
+  const toApplyAlreadyPushed = toApplyResults.filter((r) => byKey[r.key].notion_page_id).length;
   if (toApplyAlreadyPushed > 0) {
     notionStats.skippedExistingId = toApplyAlreadyPushed;
   }
@@ -1787,9 +1771,9 @@ async function runCommit(ctx, deps) {
       notionStats.dryRunWouldPush = toApplyNeedingPush.length;
       stdout(
         `(dry-run) would create ${toApplyNeedingPush.length} Notion page(s)` +
-        (toApplyAlreadyPushed > 0
-          ? ` (skipping ${toApplyAlreadyPushed} with existing notion_page_id)`
-          : "")
+          (toApplyAlreadyPushed > 0
+            ? ` (skipping ${toApplyAlreadyPushed} with existing notion_page_id)`
+            : "")
       );
     } else {
       const secrets =
@@ -1798,25 +1782,24 @@ async function runCommit(ctx, deps) {
       const jobsDbId = profile.notion && profile.notion.jobs_pipeline_db_id;
       const companiesDbId = profile.notion && profile.notion.companies_db_id;
       const propertyMap =
-        (profile.notion && profile.notion.property_map) ||
-        notionSync.DEFAULT_PROPERTY_MAP;
+        (profile.notion && profile.notion.property_map) || notionSync.DEFAULT_PROPERTY_MAP;
 
       if (!token) {
         stderr(
           `warn: ${profileId.toUpperCase()}_NOTION_TOKEN missing — Notion push skipped; ` +
-          `${toApplyNeedingPush.length} row(s) reverted to Inbox. Fix .env and re-run prepare.`
+            `${toApplyNeedingPush.length} row(s) reverted to Inbox. Fix .env and re-run prepare.`
         );
         for (const r of toApplyNeedingPush) revertToInbox(byKey[r.key], "notion_failed");
       } else if (!jobsDbId) {
         stderr(
           `warn: profile.notion.jobs_pipeline_db_id missing — Notion push skipped; ` +
-          `${toApplyNeedingPush.length} row(s) reverted to Inbox.`
+            `${toApplyNeedingPush.length} row(s) reverted to Inbox.`
         );
         for (const r of toApplyNeedingPush) revertToInbox(byKey[r.key], "notion_failed");
       } else if (!companiesDbId) {
         stderr(
           `warn: profile.notion.companies_db_id missing — Notion push skipped; ` +
-          `${toApplyNeedingPush.length} row(s) reverted to Inbox.`
+            `${toApplyNeedingPush.length} row(s) reverted to Inbox.`
         );
         for (const r of toApplyNeedingPush) revertToInbox(byKey[r.key], "notion_failed");
       } else {
@@ -1837,7 +1820,7 @@ async function runCommit(ctx, deps) {
         } catch (err) {
           stderr(
             `warn: cannot resolve Notion data_source_ids: ${err.message}; ` +
-            `${toApplyNeedingPush.length} row(s) reverted to Inbox.`
+              `${toApplyNeedingPush.length} row(s) reverted to Inbox.`
           );
           for (const r of toApplyNeedingPush) revertToInbox(byKey[r.key], "notion_failed");
           jobsDataSourceId = null;
@@ -1911,8 +1894,7 @@ async function runCommit(ctx, deps) {
       notionParts.push(`${notionStats.skippedExistingId} already had page id`);
     if (notionStats.pdfMissing > 0) notionParts.push(`${notionStats.pdfMissing} PDF missing`);
     if (notionStats.notionFailed > 0) notionParts.push(`${notionStats.notionFailed} Notion failed`);
-    if (notionStats.dryRunWouldPush > 0)
-      notionParts.push(`${notionStats.dryRunWouldPush} dry-run`);
+    if (notionStats.dryRunWouldPush > 0) notionParts.push(`${notionStats.dryRunWouldPush} dry-run`);
     if (notionParts.length > 0) {
       stdout(`notion: ${notionParts.join(", ")}`);
     }
@@ -1922,7 +1904,8 @@ async function runCommit(ctx, deps) {
   if (updates.invalidDecision > 0) extras.push(`${updates.invalidDecision} invalid decision`);
   if (updates.invalidArchetype > 0) extras.push(`${updates.invalidArchetype} invalid archetype`);
   if (updates.invalidFitScore > 0) extras.push(`${updates.invalidFitScore} invalid fit_score`);
-  if (updates.invalidSkipReason > 0) extras.push(`${updates.invalidSkipReason} invalid skip_reason`);
+  if (updates.invalidSkipReason > 0)
+    extras.push(`${updates.invalidSkipReason} invalid skip_reason`);
   if (tierStats.invalid > 0) extras.push(`${tierStats.invalid} invalid tier`);
   if (notionStats.pdfMissing + notionStats.notionFailed > 0) {
     extras.push(
@@ -1933,12 +1916,12 @@ async function runCommit(ctx, deps) {
 
   stdout(
     `commit: ${updates.toApply} → To Apply, ${updates.archive} archived, ` +
-    `${updates.skip} skipped, ${updates.notFound} not found${extraStr}`
+      `${updates.skip} skipped, ${updates.notFound} not found${extraStr}`
   );
   if (updates.fitWritten > 0) {
     stdout(
       `fit verdicts: ${updates.fitWritten} new fit_score values persisted to TSV ` +
-      `(future prepare runs will skip these rows)`
+        `(future prepare runs will skip these rows)`
     );
   }
 
@@ -1965,16 +1948,12 @@ function makePrepareCommand(overrides = {}) {
       if (mode === "topup") return runPreTopup(ctx, deps);
       if (mode === "weak-fallback") return runPreWeakFallback(ctx, deps);
       if (mode === "fresh" || mode === "") return runPre(ctx, deps);
-      ctx.stderr(
-        `error: unknown --mode "${mode}" (valid: fresh, topup, weak-fallback)`
-      );
+      ctx.stderr(`error: unknown --mode "${mode}" (valid: fresh, topup, weak-fallback)`);
       return 1;
     }
     if (phase === "commit") return runCommit(ctx, deps);
 
-    ctx.stderr(
-      `error: --phase <pre|commit> is required for the prepare command`
-    );
+    ctx.stderr(`error: --phase <pre|commit> is required for the prepare command`);
     return 1;
   };
 }

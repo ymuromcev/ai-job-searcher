@@ -102,9 +102,15 @@ async function fetchAllAnswers(client, databaseId) {
 async function searchAnswers(client, databaseId, { company, role, question }) {
   const all = await fetchAllAnswers(client, databaseId);
   const targetKey = dedupKey({ company, role, question });
-  const targetCo = String(company || "").trim().toLowerCase();
-  const targetRo = String(role || "").trim().toLowerCase();
-  const targetQu = String(question || "").trim().toLowerCase();
+  const targetCo = String(company || "")
+    .trim()
+    .toLowerCase();
+  const targetRo = String(role || "")
+    .trim()
+    .toLowerCase();
+  const targetQu = String(question || "")
+    .trim()
+    .toLowerCase();
 
   let exact = null;
   const partials = [];
@@ -115,9 +121,15 @@ async function searchAnswers(client, databaseId, { company, role, question }) {
       if (!exact) exact = a;
       continue;
     }
-    const aCo = String(a.company || "").trim().toLowerCase();
-    const aRo = String(a.role || "").trim().toLowerCase();
-    const aQu = String(a.question || "").trim().toLowerCase();
+    const aCo = String(a.company || "")
+      .trim()
+      .toLowerCase();
+    const aRo = String(a.role || "")
+      .trim()
+      .toLowerCase();
+    const aQu = String(a.question || "")
+      .trim()
+      .toLowerCase();
     const sameCoRole = aCo === targetCo && aRo === targetRo;
     const sameQuestion = aQu === targetQu;
     if (sameCoRole || sameQuestion) {

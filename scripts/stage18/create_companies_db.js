@@ -94,9 +94,11 @@ async function findDbByTitle(client, parentPageId, title) {
       start_cursor: cursor,
     });
     for (const block of resp.results || []) {
-      if (block.type === "child_database" &&
-          block.child_database &&
-          block.child_database.title === title) {
+      if (
+        block.type === "child_database" &&
+        block.child_database &&
+        block.child_database.title === title
+      ) {
         return block.id;
       }
     }
@@ -112,7 +114,10 @@ async function createDb(client, parentPageId, title, properties) {
     parent: { type: "page_id", page_id: parentPageId },
     title: [{ type: "text", text: { content: title } }],
     description: [
-      { type: "text", text: { content: "Target companies — tiered and enriched. Created by Stage 18 wizard." } },
+      {
+        type: "text",
+        text: { content: "Target companies — tiered and enriched. Created by Stage 18 wizard." },
+      },
     ],
     is_inline: false,
     initial_data_source: { properties },

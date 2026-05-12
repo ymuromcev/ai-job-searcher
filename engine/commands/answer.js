@@ -24,11 +24,7 @@ const fs = require("fs");
 const profileLoader = require("../core/profile_loader.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 const { makeClient } = require("../core/notion_sync.js");
-const {
-  searchAnswers,
-  createAnswerPage,
-  updateAnswerPage,
-} = require("../core/qa_notion.js");
+const { searchAnswers, createAnswerPage, updateAnswerPage } = require("../core/qa_notion.js");
 const { dedupKey } = require("../core/qa_dedup.js");
 const { categorize, CATEGORIES } = require("../core/qa_categorize.js");
 
@@ -49,7 +45,9 @@ function slugify(s) {
 }
 
 function backupFilename({ company, role, dateStamp = todayStamp() }) {
-  const co = String(company || "unknown").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const co = String(company || "unknown")
+    .replace(/[^A-Za-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
   const rs = slugify(role) || "role";
   return `${co || "unknown"}_${rs}_${dateStamp}.md`;
 }
@@ -110,9 +108,7 @@ function validateDraft(draft) {
     draft.existingPageId != null &&
     (typeof draft.existingPageId !== "string" || !draft.existingPageId.trim())
   ) {
-    errors.push(
-      "existingPageId must be a non-empty string when present"
-    );
+    errors.push("existingPageId must be a non-empty string when present");
   }
   if (draft.notes != null && typeof draft.notes !== "string") {
     errors.push("notes must be a string when present");
@@ -149,21 +145,16 @@ async function runSearch(ctx, deps) {
   }
 
   const profile = deps.loadProfile(profileId);
-  const dbId =
-    profile && profile.notion && profile.notion.application_qa_db_id;
+  const dbId = profile && profile.notion && profile.notion.application_qa_db_id;
   if (!dbId) {
-    stderr(
-      `error: profile "${profileId}" has no notion.application_qa_db_id configured`
-    );
+    stderr(`error: profile "${profileId}" has no notion.application_qa_db_id configured`);
     return 1;
   }
 
   const secrets = deps.loadSecrets(profileId, env);
   const token = secrets.NOTION_TOKEN;
   if (!token) {
-    stderr(
-      `error: missing ${profileLoader.secretEnvName(profileId, "NOTION_TOKEN")} env var`
-    );
+    stderr(`error: missing ${profileLoader.secretEnvName(profileId, "NOTION_TOKEN")} env var`);
     return 1;
   }
 
@@ -217,21 +208,16 @@ async function runPush(ctx, deps) {
   }
 
   const profile = deps.loadProfile(profileId);
-  const dbId =
-    profile && profile.notion && profile.notion.application_qa_db_id;
+  const dbId = profile && profile.notion && profile.notion.application_qa_db_id;
   if (!dbId) {
-    stderr(
-      `error: profile "${profileId}" has no notion.application_qa_db_id configured`
-    );
+    stderr(`error: profile "${profileId}" has no notion.application_qa_db_id configured`);
     return 1;
   }
 
   const secrets = deps.loadSecrets(profileId, env);
   const token = secrets.NOTION_TOKEN;
   if (!token) {
-    stderr(
-      `error: missing ${profileLoader.secretEnvName(profileId, "NOTION_TOKEN")} env var`
-    );
+    stderr(`error: missing ${profileLoader.secretEnvName(profileId, "NOTION_TOKEN")} env var`);
     return 1;
   }
 

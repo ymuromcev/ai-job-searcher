@@ -7,7 +7,9 @@
 const QUESTION_HEAD_LIMIT = 120;
 
 function normField(value) {
-  return String(value || "").trim().toLowerCase();
+  return String(value || "")
+    .trim()
+    .toLowerCase();
 }
 
 function dedupKey({ company, role, question } = {}) {

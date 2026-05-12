@@ -8,7 +8,9 @@ function makeFetch(body, status = 200) {
   return async () => ({
     ok: status < 400,
     status,
-    async json() { return body; },
+    async json() {
+      return body;
+    },
   });
 }
 
@@ -107,7 +109,10 @@ test("discover returns same results regardless of targets", async () => {
   const fetchFn = makeFetch(FIXTURE);
   const withoutTargets = await adapter.discover([], { fetchFn });
   const withTargets = await adapter.discover(
-    [{ name: "Stripe", slug: "stripe" }, { name: "Acme", slug: "acme" }],
+    [
+      { name: "Stripe", slug: "stripe" },
+      { name: "Acme", slug: "acme" },
+    ],
     { fetchFn }
   );
   assert.equal(withoutTargets.length, withTargets.length);
@@ -117,7 +122,9 @@ test("discover returns same results regardless of targets", async () => {
 
 test("discover handles network error gracefully", async () => {
   const logs = [];
-  const fetchFn = async () => { throw new Error("ECONNRESET"); };
+  const fetchFn = async () => {
+    throw new Error("ECONNRESET");
+  };
   const jobs = await adapter.discover([], { fetchFn, logger: { warn: (m) => logs.push(m) } });
   assert.deepEqual(jobs, []);
   assert.equal(logs.length, 1);
@@ -225,7 +232,16 @@ test("discover stays back-compat (DEFAULT_PM_RE) when no filterRules in ctx", as
 test("discover skips meta block (no id)", async () => {
   const feed = [
     { legal: "true" }, // meta block — no id
-    { id: 1, company: "X", position: "Product Manager", location: "Remote", url: "https://remoteok.com/jobs/1", slug: "x-pm", date: null, tags: [] },
+    {
+      id: 1,
+      company: "X",
+      position: "Product Manager",
+      location: "Remote",
+      url: "https://remoteok.com/jobs/1",
+      slug: "x-pm",
+      date: null,
+      tags: [],
+    },
   ];
   const jobs = await adapter.discover([], { fetchFn: makeFetch(feed) });
   assert.equal(jobs.length, 1);

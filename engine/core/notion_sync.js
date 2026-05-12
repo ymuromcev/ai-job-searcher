@@ -197,6 +197,14 @@ async function fetchJobsFromDatabase(client, databaseId, propertyMap, queryOptio
   return jobs;
 }
 
+// Retrieve the full data_source schema (properties + their options) for the
+// configured Jobs Pipeline DB. Two API calls: databases.retrieve to learn
+// the data_source_id, then dataSources.retrieve for the schema body.
+async function fetchDataSourceSchema(client, databaseId) {
+  const dataSourceId = await resolveDataSourceId(client, databaseId);
+  return client.dataSources.retrieve({ data_source_id: dataSourceId });
+}
+
 // ---------- Targeted updates used by `check` command ----------
 
 // Writes a single Status change to an existing page. The check command uses
@@ -295,6 +303,7 @@ module.exports = {
   addPageComment,
   updateCalloutBlock,
   fetchJobsFromDatabase,
+  fetchDataSourceSchema,
   resolveDataSourceId,
   readQueue,
   writeQueue,

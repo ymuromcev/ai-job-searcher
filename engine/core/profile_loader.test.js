@@ -24,7 +24,10 @@ function writeProfile(profilesDir, id, profile, extras = {}) {
   fs.mkdirSync(root, { recursive: true });
   fs.writeFileSync(path.join(root, "profile.json"), JSON.stringify(profile, null, 2));
   for (const [file, content] of Object.entries(extras)) {
-    fs.writeFileSync(path.join(root, file), typeof content === "string" ? content : JSON.stringify(content));
+    fs.writeFileSync(
+      path.join(root, file),
+      typeof content === "string" ? content : JSON.stringify(content)
+    );
   }
   return root;
 }
@@ -222,16 +225,16 @@ test("normalizeFilterRules: preserves auxiliary sections verbatim", () => {
 });
 
 test("saveProfile: validates id", () => {
-  assert.throws(() => saveProfile("../etc", { x: 1 }, { profilesDir: "/tmp" }), /invalid profile id/);
+  assert.throws(
+    () => saveProfile("../etc", { x: 1 }, { profilesDir: "/tmp" }),
+    /invalid profile id/
+  );
 });
 
 test("saveProfile: throws when profile.json missing", () => {
   const dir = makeTempProfiles();
   fs.mkdirSync(path.join(dir, "bare"));
-  assert.throws(
-    () => saveProfile("bare", { x: 1 }, { profilesDir: dir }),
-    /profile\.json missing/
-  );
+  assert.throws(() => saveProfile("bare", { x: 1 }, { profilesDir: dir }), /profile\.json missing/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -271,11 +274,7 @@ test("saveProfile: writes atomically via tmp+rename (no partial file on error)",
 test("saveProfile: handles empty current company_tiers", () => {
   const dir = makeTempProfiles();
   writeProfile(dir, "p", { id: "p" });
-  const next = saveProfile(
-    "p",
-    { company_tiers: { Acme: "B" } },
-    { profilesDir: dir }
-  );
+  const next = saveProfile("p", { company_tiers: { Acme: "B" } }, { profilesDir: dir });
   assert.deepEqual(next.company_tiers, { Acme: "B" });
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -292,20 +291,16 @@ test("loadProfile: surfaces empty memory block when profile.memory absent", () =
 
 test("loadProfile: loads memory files declared in profile.memory", () => {
   const dir = makeTempProfiles();
-  const root = writeProfile(
-    dir,
-    "p",
-    {
-      id: "p",
-      identity: { name: "x", email: "x@x" },
-      modules: [],
-      memory: {
-        writing_style_file: "memory/style.md",
-        resume_key_points_file: "memory/key_points.md",
-        feedback_dir: "memory",
-      },
-    }
-  );
+  const root = writeProfile(dir, "p", {
+    id: "p",
+    identity: { name: "x", email: "x@x" },
+    modules: [],
+    memory: {
+      writing_style_file: "memory/style.md",
+      resume_key_points_file: "memory/key_points.md",
+      feedback_dir: "memory",
+    },
+  });
   fs.mkdirSync(path.join(root, "memory"));
   fs.writeFileSync(path.join(root, "memory/style.md"), "warm 5/10");
   fs.writeFileSync(path.join(root, "memory/key_points.md"), "front-desk strong fit");
@@ -400,10 +395,14 @@ test("loadProfile: normalises profile.salary into salaryConfig", () => {
 
 test("normalizeGeo: missing block defaults to unrestricted", () => {
   assert.deepEqual(normalizeGeo(undefined), {
-    mode: "unrestricted", remote_ok: false, blocklist: [],
+    mode: "unrestricted",
+    remote_ok: false,
+    blocklist: [],
   });
   assert.deepEqual(normalizeGeo(null), {
-    mode: "unrestricted", remote_ok: false, blocklist: [],
+    mode: "unrestricted",
+    remote_ok: false,
+    blocklist: [],
   });
 });
 
@@ -413,17 +412,11 @@ test("normalizeGeo: rejects non-object input", () => {
 });
 
 test("normalizeGeo: rejects unknown mode", () => {
-  assert.throws(
-    () => normalizeGeo({ mode: "global" }),
-    /must be one of/
-  );
+  assert.throws(() => normalizeGeo({ mode: "global" }), /must be one of/);
 });
 
 test("normalizeGeo: metro mode requires non-empty cities", () => {
-  assert.throws(
-    () => normalizeGeo({ mode: "metro", states: ["CA"] }),
-    /cities is required/
-  );
+  assert.throws(() => normalizeGeo({ mode: "metro", states: ["CA"] }), /cities is required/);
   assert.throws(
     () => normalizeGeo({ mode: "metro", cities: [], states: ["CA"] }),
     /cities is required/
@@ -508,9 +501,6 @@ test("loadProfile: profile without geo block defaults to unrestricted", () => {
 test("loadProfile: invalid geo block raises clean error", () => {
   const dir = makeTempProfiles();
   writeProfile(dir, "broken", { id: "broken", geo: { mode: "metro", cities: ["X"] } });
-  assert.throws(
-    () => loadProfile("broken", { profilesDir: dir }),
-    /states is required/
-  );
+  assert.throws(() => loadProfile("broken", { profilesDir: dir }), /states is required/);
   fs.rmSync(dir, { recursive: true, force: true });
 });

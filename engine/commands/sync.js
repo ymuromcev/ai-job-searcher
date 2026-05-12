@@ -98,8 +98,7 @@ function makeSyncCommand(overrides = {}) {
       return 1;
     }
 
-    const propertyMap =
-      (profile.notion && profile.notion.property_map) || DEFAULT_PROPERTY_MAP;
+    const propertyMap = (profile.notion && profile.notion.property_map) || DEFAULT_PROPERTY_MAP;
 
     const applicationsPath = path.join(profile.paths.root, "applications.tsv");
     const { apps } = deps.loadApplications(applicationsPath);
@@ -168,9 +167,7 @@ function makeSyncCommand(overrides = {}) {
     if (calloutBlockId) {
       try {
         const inboxCount = apps.filter(
-          (a) =>
-            a.status === "Inbox" ||
-            (a.status === "To Apply" && !a.notion_page_id)
+          (a) => a.status === "Inbox" || (a.status === "To Apply" && !a.notion_page_id)
         ).length;
         const today = deps.now().slice(0, 10);
         await deps.updateCalloutBlock(

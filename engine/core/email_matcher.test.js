@@ -37,7 +37,11 @@ test("findCompany: matches by subject", () => {
 });
 
 test("findCompany: matches body with word boundary (no false positive on 'next steps')", () => {
-  const email = { from: "no@match.io", subject: "Update", body: "About your application to Affirm." };
+  const email = {
+    from: "no@match.io",
+    subject: "Update",
+    body: "About your application to Affirm.",
+  };
   const map = { Affirm: [{ role: "PM", notion_id: "p1" }] };
   const r = findCompany(email, map);
   assert.equal(r.company, "Affirm");
@@ -168,7 +172,8 @@ test("findRole: rejection-boilerplate words don't act as disambiguators", () => 
   ];
   const r = findRole(
     {
-      subject: "Thank You from Hinge - Regarding your Application for Senior Lead Product Manager, Matching",
+      subject:
+        "Thank You from Hinge - Regarding your Application for Senior Lead Product Manager, Matching",
       body: "Hi Jared, after careful consideration we've decided to move forward with candidates whose experience more closely matches the role.",
     },
     jobs

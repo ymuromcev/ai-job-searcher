@@ -1,7 +1,15 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { jobKey, normalizeJobId, normalizeCompanyName, normalizeTitle, fuzzyKey, dedupeJobs, dedupeAgainst } = require("./dedup.js");
+const {
+  jobKey,
+  normalizeJobId,
+  normalizeCompanyName,
+  normalizeTitle,
+  fuzzyKey,
+  dedupeJobs,
+  dedupeAgainst,
+} = require("./dedup.js");
 
 test("jobKey combines source and jobId", () => {
   assert.equal(jobKey({ source: "greenhouse", jobId: "123" }), "greenhouse:123");
@@ -55,7 +63,10 @@ test("dedupeJobs removes duplicates by (source, jobId) preserving first", () => 
 });
 
 test("dedupeJobs skips malformed entries", () => {
-  const jobs = [{ source: "", jobId: "" }, { source: "gh", jobId: "1" }];
+  const jobs = [
+    { source: "", jobId: "" },
+    { source: "gh", jobId: "1" },
+  ];
   assert.equal(dedupeJobs(jobs).length, 1);
 });
 

@@ -6,7 +6,16 @@ const { categorize, isValidCategory, CATEGORIES } = require("./qa_categorize.js"
 test("CATEGORIES list matches Notion DB option set", () => {
   assert.deepEqual(
     CATEGORIES.sort(),
-    ["Behavioral", "Culture Fit", "Experience", "Logistics", "Motivation", "Other", "Salary", "Technical"].sort()
+    [
+      "Behavioral",
+      "Culture Fit",
+      "Experience",
+      "Logistics",
+      "Motivation",
+      "Other",
+      "Salary",
+      "Technical",
+    ].sort()
   );
 });
 
@@ -28,7 +37,10 @@ test("Behavioral: influences / mentors / introspective questions", () => {
   assert.equal(categorize("Who are your biggest professional influences?"), "Behavioral");
   assert.equal(categorize("Who do you admire most in tech?"), "Behavioral");
   assert.equal(categorize("Tell me about a time you handled a conflict."), "Behavioral");
-  assert.equal(categorize("Describe a situation where you disagreed with a manager."), "Behavioral");
+  assert.equal(
+    categorize("Describe a situation where you disagreed with a manager."),
+    "Behavioral"
+  );
   assert.equal(categorize("What's your biggest professional failure?"), "Behavioral");
 });
 
@@ -61,7 +73,10 @@ test("Culture Fit: values / ideal team", () => {
 });
 
 test("Experience: years, achievements, past roles", () => {
-  assert.equal(categorize("How many years of experience do you have in product management?"), "Experience");
+  assert.equal(
+    categorize("How many years of experience do you have in product management?"),
+    "Experience"
+  );
   assert.equal(categorize("What is your proudest professional achievement?"), "Experience");
   assert.equal(categorize("Tell me about your background."), "Experience");
 });
@@ -73,17 +88,11 @@ test("Other: unrecognized prompts fall through", () => {
 });
 
 test("Salary takes priority over Motivation when both keywords present", () => {
-  assert.equal(
-    categorize("What are your salary expectations and why are you looking?"),
-    "Salary"
-  );
+  assert.equal(categorize("What are your salary expectations and why are you looking?"), "Salary");
 });
 
 test("Logistics takes priority over Motivation for visa questions", () => {
-  assert.equal(
-    categorize("Why do you need visa sponsorship?"),
-    "Logistics"
-  );
+  assert.equal(categorize("Why do you need visa sponsorship?"), "Logistics");
 });
 
 test("isValidCategory accepts canonical names only", () => {
@@ -122,4 +131,3 @@ test("Technical scoped 'code' patterns still match correctly", () => {
   assert.equal(categorize("Have you written code in production?"), "Technical");
   assert.equal(categorize("How comfortable are you with source code reading?"), "Technical");
 });
-

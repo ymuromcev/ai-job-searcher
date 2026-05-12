@@ -104,8 +104,7 @@ async function pushJobPage({
 
   // Resolve data_source_id lazily — caller may have it cached, or we look
   // it up once. (Tests pass an in-memory jobsDataSourceId to skip the API.)
-  const dsId =
-    jobsDataSourceId || (await resolveDataSourceId(client, jobsDbId));
+  const dsId = jobsDataSourceId || (await resolveDataSourceId(client, jobsDbId));
 
   // Guard 1: dedup against existing page by key.
   const existingId = await findExistingJobPage({

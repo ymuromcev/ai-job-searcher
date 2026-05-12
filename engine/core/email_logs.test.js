@@ -18,7 +18,13 @@ function tmpFile(name) {
 test("appendRecruiterLeads: creates header + row on first call", () => {
   const fp = tmpFile("rl.md");
   appendRecruiterLeads(fp, [
-    { date: "2026-04-20", agency: "Acme Staffing", role: "PM", contact: "a@x.com", subject: "Role | X" },
+    {
+      date: "2026-04-20",
+      agency: "Acme Staffing",
+      role: "PM",
+      contact: "a@x.com",
+      subject: "Role | X",
+    },
   ]);
   const out = fs.readFileSync(fp, "utf8");
   assert.match(out, /# Recruiter Leads/);
@@ -34,9 +40,11 @@ test("appendRecruiterLeads: noop on empty input", () => {
 
 test("appendRejectionLog: creates file with table on first call", () => {
   const fp = tmpFile("rej.md");
-  appendRejectionLog(fp, [
-    { company: "Acme", role: "Sr PM", level: "Senior", arch: "Risk_Fraud", prevApplied: true },
-  ], new Date("2026-04-20T00:00:00Z"));
+  appendRejectionLog(
+    fp,
+    [{ company: "Acme", role: "Sr PM", level: "Senior", arch: "Risk_Fraud", prevApplied: true }],
+    new Date("2026-04-20T00:00:00Z")
+  );
   const out = fs.readFileSync(fp, "utf8");
   assert.match(out, /# Rejection Log/);
   assert.match(out, /\| Acme \| Sr PM \| Senior \|/);
@@ -94,7 +102,17 @@ test("buildSummary: inbox additions + recruiter leads", () => {
 test("appendCheckLog: creates file with header + entry", () => {
   const fp = tmpFile("chk.md");
   appendCheckLog(fp, {
-    logRows: [{ id: "m1", company: "Acme", role: "PM", match: "HIGH", type: "REJECTION", action: "queued", comment: "✅" }],
+    logRows: [
+      {
+        id: "m1",
+        company: "Acme",
+        role: "PM",
+        match: "HIGH",
+        type: "REJECTION",
+        action: "queued",
+        comment: "✅",
+      },
+    ],
     actionCount: 1,
     now: new Date("2026-04-20T12:00:00Z"),
   });

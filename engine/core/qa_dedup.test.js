@@ -25,8 +25,16 @@ test("dedupKey handles missing fields without throwing", () => {
 });
 
 test("dedupKey is case-insensitive across same logical entry", () => {
-  const a = { company: "FIGMA", role: "Product Manager, AI Platform", question: "Why do you want to join Figma?" };
-  const b = { company: "figma", role: "product manager, ai platform", question: "why do you want to join figma?" };
+  const a = {
+    company: "FIGMA",
+    role: "Product Manager, AI Platform",
+    question: "Why do you want to join Figma?",
+  };
+  const b = {
+    company: "figma",
+    role: "product manager, ai platform",
+    question: "why do you want to join figma?",
+  };
   assert.equal(dedupKey(a), dedupKey(b));
 });
 

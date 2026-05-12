@@ -56,11 +56,7 @@ test("loadCredentials: throws when profileId not a string", () => {
 
 test("assertCredentials: actionable error message points at app-passwords page", () => {
   assert.throws(
-    () =>
-      imap.assertCredentials(
-        { user: "jared@example.com", appPassword: null },
-        "jared"
-      ),
+    () => imap.assertCredentials({ user: "jared@example.com", appPassword: null }, "jared"),
     /JARED_GMAIL_APP_PASSWORD.*myaccount\.google\.com\/apppasswords/s
   );
 });
@@ -74,10 +70,7 @@ test("assertCredentials: complains about missing user", () => {
 
 test("assertCredentials: passes when both fields present", () => {
   assert.doesNotThrow(() =>
-    imap.assertCredentials(
-      { user: "jared@example.com", appPassword: "xxxx" },
-      "jared"
-    )
+    imap.assertCredentials({ user: "jared@example.com", appPassword: "xxxx" }, "jared")
   );
 });
 
@@ -156,8 +149,7 @@ test("formatFromAddress: empty envelope → empty string (no crash)", () => {
 // ---------- stripHtmlTags ----------
 
 test("stripHtmlTags: removes tags and script/style, collapses whitespace", () => {
-  const html =
-    "<style>.x{}</style><p>Hello   <b>world</b></p><script>x</script>";
+  const html = "<style>.x{}</style><p>Hello   <b>world</b></p><script>x</script>";
   assert.equal(imap.stripHtmlTags(html), "Hello world");
 });
 
@@ -334,11 +326,9 @@ test("fetchEmailsForBatches: dedups same emailId across batches", async () => {
     },
     fetchByUid: { 1: msgA },
   });
-  const out = await imap.fetchEmailsForBatches(
-    client,
-    ["from:foo", "subject:bar"],
-    { parseMessage: fakeParse }
-  );
+  const out = await imap.fetchEmailsForBatches(client, ["from:foo", "subject:bar"], {
+    parseMessage: fakeParse,
+  });
   assert.equal(out.length, 1);
   assert.equal(out[0].messageId, BigInt("100").toString(16));
 });

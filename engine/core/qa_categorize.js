@@ -28,10 +28,16 @@ const CATEGORIES = [
 // with") and similar STAR-style introspective questions match correctly.
 const PATTERNS = [
   // Salary — high specificity, must come before "expectations"-style motivation
-  [/\b(salary|compensation|\bcomp\b|pay range|pay expectations|desired (salary|comp)|how much|expected (salary|comp))/i, "Salary"],
+  [
+    /\b(salary|compensation|\bcomp\b|pay range|pay expectations|desired (salary|comp)|how much|expected (salary|comp))/i,
+    "Salary",
+  ],
 
   // Logistics — work auth, visa, start date, location practicalities
-  [/\b(visa|sponsor|relocat|start date|notice period|earliest start|when (can|could) you start|work authoriz|right to work|legally authorized|us citizen|green card)/i, "Logistics"],
+  [
+    /\b(visa|sponsor|relocat|start date|notice period|earliest start|when (can|could) you start|work authoriz|right to work|legally authorized|us citizen|green card)/i,
+    "Logistics",
+  ],
 
   // Motivation — why join / why excited / what motivates / look forward to
   [/\bwhy (do you|are you) (want|interested|excited)\b/i, "Motivation"],
@@ -45,11 +51,17 @@ const PATTERNS = [
   [/\b(look forward to|excited about|drew you to)\b/i, "Motivation"],
 
   // Culture fit — values, ideal team, working style preferences
-  [/\b(culture|values|ideal team|work environment|how do you (like to )?work|prefer to work|team dynamic)\b/i, "Culture Fit"],
+  [
+    /\b(culture|values|ideal team|work environment|how do you (like to )?work|prefer to work|team dynamic)\b/i,
+    "Culture Fit",
+  ],
 
   // Behavioral — STAR-style prompts + influences/inspirations (introspective).
   // Must run before Technical to catch "experience with conflict" etc.
-  [/\b(tell me about a time|describe a (time|situation)|give an example|walk me through (a|the))\b/i, "Behavioral"],
+  [
+    /\b(tell me about a time|describe a (time|situation)|give an example|walk me through (a|the))\b/i,
+    "Behavioral",
+  ],
   [/\b(conflict|disagree|biggest (\w+\s)?(failure|mistake|challenge))/i, "Behavioral"],
   [/\b(admire|inspire|role model|learn the most from)/i, "Behavioral"],
   // "biggest professional influence" / "biggest influences" — explicit Behavioral.
@@ -63,13 +75,19 @@ const PATTERNS = [
   // Technical — tools, stack, technical depth, AI tools.
   // Tightened: bare 'code' and 'api' are too noisy ("code of conduct",
   // "rapid api" etc.). Use scoped variants instead.
-  [/\b(worked with|tools|stack|technical depth|technical background|programming|source code|code review|(writing|written|wrote|ship|shipped|production) code|sql|python|claude code|chatgpt|llm|ai tools|public api|rest api|graphql api)\b/i, "Technical"],
+  [
+    /\b(worked with|tools|stack|technical depth|technical background|programming|source code|code review|(writing|written|wrote|ship|shipped|production) code|sql|python|claude code|chatgpt|llm|ai tools|public api|rest api|graphql api)\b/i,
+    "Technical",
+  ],
   // 'experience with <noun>' is Technical UNLESS the noun is behavioral —
   // which is already handled above by the Behavioral patterns running first.
   [/\bexperience with\b/i, "Technical"],
 
   // Experience — years, past roles, projects, achievements (catch-all for "tell me about your X")
-  [/\b(years of experience|prior (role|experience)|past (role|projects)|background|tell me about your (work|experience|background|projects)|what is your experience|describe your experience|biggest (achievement|win|accomplishment)|proudest)\b/i, "Experience"],
+  [
+    /\b(years of experience|prior (role|experience)|past (role|projects)|background|tell me about your (work|experience|background|projects)|what is your experience|describe your experience|biggest (achievement|win|accomplishment)|proudest)\b/i,
+    "Experience",
+  ],
 ];
 
 function categorize(question) {

@@ -40,9 +40,7 @@ function makeCompanyResolver({
     const page = results[0];
     const tierProp = page.properties && page.properties.Tier;
     const currentTier =
-      tierProp && tierProp.select && tierProp.select.name
-        ? tierProp.select.name
-        : null;
+      tierProp && tierProp.select && tierProp.select.name ? tierProp.select.name : null;
     return { id: page.id, currentTier };
   }
 

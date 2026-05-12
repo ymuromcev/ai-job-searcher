@@ -35,7 +35,10 @@ function bulletItem(doc, items) {
   const maxW = doc.page.width - doc.page.margins.right - textX;
   const startY = doc.y;
 
-  doc.font("Helvetica").fontSize(9).text("- ", left + 2, startY, { width: 16 });
+  doc
+    .font("Helvetica")
+    .fontSize(9)
+    .text("- ", left + 2, startY, { width: 16 });
   doc.y = startY;
 
   const lastIdx = items.length - 1;
@@ -86,7 +89,10 @@ function renderCertifications(doc, certs) {
   sectionHeader(doc, "CERTIFICATIONS");
   certs.forEach((c, i) => {
     if (i > 0) doc.moveDown(0.15);
-    doc.font("Helvetica-Bold").fontSize(9).text(`${c.name}  |  ${c.displayDate || c.date || ""}`);
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(9)
+      .text(`${c.name}  |  ${c.displayDate || c.date || ""}`);
     doc.font("Helvetica").fontSize(8).fillColor("#555555").text(c.issuer);
     doc.fillColor("#000000");
   });
@@ -109,7 +115,9 @@ function renderProjects(doc, projects) {
   sectionHeader(doc, "PERSONAL PROJECTS");
   projects.forEach((p, i) => {
     if (i > 0) doc.moveDown(0.15);
-    const header = p.url ? `${p.name}  |  ${p.dates}  \u2022  ${p.url}` : `${p.name}  |  ${p.dates}`;
+    const header = p.url
+      ? `${p.name}  |  ${p.dates}  \u2022  ${p.url}`
+      : `${p.name}  |  ${p.dates}`;
     doc.font("Helvetica-Bold").fontSize(9).text(header);
     if (p.description) {
       doc.font("Helvetica").fontSize(8.5).text(p.description, { lineGap: 1 });

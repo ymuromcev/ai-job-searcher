@@ -139,11 +139,12 @@ function matchBlocklists(job, rules) {
   // single string. enforceGeo returns ok=true for unrestricted mode, so the
   // explicit guard below is just an optimization (skip the call entirely).
   if (rules.geo && rules.geo.mode && rules.geo.mode !== "unrestricted") {
-    const locsForGeo = Array.isArray(job.locations) && job.locations.length > 0
-      ? job.locations
-      : job.location
-      ? [job.location]
-      : [];
+    const locsForGeo =
+      Array.isArray(job.locations) && job.locations.length > 0
+        ? job.locations
+        : job.location
+          ? [job.location]
+          : [];
     const geoResult = enforceGeo(locsForGeo, rules.geo);
     if (!geoResult.ok) {
       return { kind: geoResult.reason, mode: rules.geo.mode };
@@ -162,8 +163,8 @@ function checkJob(job, rules, counts) {
   const limit = Object.prototype.hasOwnProperty.call(overrides, job.company)
     ? overrides[job.company]
     : cap.max_active != null
-    ? cap.max_active
-    : Infinity;
+      ? cap.max_active
+      : Infinity;
   const current = counts[job.company] || 0;
   if (current >= limit) {
     return { kind: "company_cap", cap: limit, current };

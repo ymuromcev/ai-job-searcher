@@ -20,7 +20,12 @@ test("save + load round-trips rows including extra_json", () => {
   const file = tmpFile();
   const rows = [
     { name: "Affirm", source: "greenhouse", slug: "affirm", extra: null },
-    { name: "Capital One", source: "workday", slug: "capitalone", extra: { dc: "wd1", site: "jobs" } },
+    {
+      name: "Capital One",
+      source: "workday",
+      slug: "capitalone",
+      extra: { dc: "wd1", site: "jobs" },
+    },
     { name: "Ramp", source: "ashby", slug: "ramp", extra: null },
   ];
   companies.save(file, rows);
@@ -40,10 +45,7 @@ test("load throws on malformed header", () => {
 
 test("load throws on missing required field", () => {
   const file = tmpFile();
-  fs.writeFileSync(
-    file,
-    "name\tats_source\tats_slug\textra_json\nAcme\t\tslug\t\n"
-  );
+  fs.writeFileSync(file, "name\tats_source\tats_slug\textra_json\nAcme\t\tslug\t\n");
   assert.throws(() => companies.load(file), /name\/ats_source\/ats_slug are all required/);
 });
 
@@ -121,7 +123,13 @@ test("parse + serialize: 5-col schema with profile round-trips", () => {
   const file = tmpFile();
   companies.save(file, [
     { name: "Affirm", source: "greenhouse", slug: "affirm", extra: null, profile: "jared" },
-    { name: "Sutter Health", source: "workday", slug: "sutterhealth", extra: { dc: "wd1" }, profile: "lilia" },
+    {
+      name: "Sutter Health",
+      source: "workday",
+      slug: "sutterhealth",
+      extra: { dc: "wd1" },
+      profile: "lilia",
+    },
     { name: "Public Co", source: "lever", slug: "pub", extra: null, profile: "" },
   ]);
   const back = companies.load(file);
@@ -131,7 +139,7 @@ test("parse + serialize: 5-col schema with profile round-trips", () => {
   assert.equal(back.rows[2].profile, "");
 });
 
-test("parse: legacy 4-col rows load with profile=\"\" (backward-compat)", () => {
+test('parse: legacy 4-col rows load with profile="" (backward-compat)', () => {
   const file = tmpFile();
   fs.writeFileSync(
     file,
@@ -143,7 +151,7 @@ test("parse: legacy 4-col rows load with profile=\"\" (backward-compat)", () => 
   assert.equal(back.rows[1].profile, "");
 });
 
-test("parse: \"both\" alias normalizes to empty profile", () => {
+test('parse: "both" alias normalizes to empty profile', () => {
   const file = tmpFile();
   fs.writeFileSync(
     file,
@@ -161,8 +169,14 @@ test("filterByProfile: public + matching + multi-id rows visible", () => {
     { name: "C", source: "x", slug: "c", profile: "" },
     { name: "D", source: "x", slug: "d", profile: "jared,lilia" },
   ];
-  const jared = companies.filterByProfile(rows, "jared").map((r) => r.name).sort();
-  const lilia = companies.filterByProfile(rows, "lilia").map((r) => r.name).sort();
+  const jared = companies
+    .filterByProfile(rows, "jared")
+    .map((r) => r.name)
+    .sort();
+  const lilia = companies
+    .filterByProfile(rows, "lilia")
+    .map((r) => r.name)
+    .sort();
   assert.deepEqual(jared, ["A", "C", "D"]);
   assert.deepEqual(lilia, ["B", "C", "D"]);
 });

@@ -186,9 +186,7 @@ function makeScanCommand(overrides = {}) {
     const secretValues = Object.values(secrets || {});
     const redact = redactor(secretValues);
     if (flags.verbose) {
-      const activeMasks = secretValues.filter(
-        (v) => typeof v === "string" && v.length >= 6
-      ).length;
+      const activeMasks = secretValues.filter((v) => typeof v === "string" && v.length >= 6).length;
       stdout(`redactor: ${activeMasks} secret value(s) will be masked in output`);
     }
     const result = await deps.scan({
@@ -241,7 +239,7 @@ function makeScanCommand(overrides = {}) {
     // prototype find_jobs.js). Reason details go to filter_rejections.log
     // (jsonl) to avoid a TSV schema change.
     // profile_loader normalizes rules onto `filterRules` (camelCase). Some
-     // callers/tests still pass `filter_rules` (snake_case) — accept both.
+    // callers/tests still pass `filter_rules` (snake_case) — accept both.
     const filterRules = profile.filterRules || profile.filter_rules || {};
     const cap = filterRules.company_cap || {};
     const activeStatuses = new Set(
@@ -269,10 +267,7 @@ function makeScanCommand(overrides = {}) {
       company: j.companyName,
       role: j.title,
       locations: Array.isArray(j.locations) ? j.locations.map(String) : [],
-      location:
-        Array.isArray(j.locations) && j.locations.length > 0
-          ? String(j.locations[0])
-          : "",
+      location: Array.isArray(j.locations) && j.locations.length > 0 ? String(j.locations[0]) : "",
     }));
     // L-4: inject profile.geo into filter rules. Default unrestricted block
     // means the geo check is a no-op for Jared (back-compat).
@@ -304,11 +299,10 @@ function makeScanCommand(overrides = {}) {
     // now reserved for prepared-and-ready cards. `prepare --phase commit`
     // transitions Inbox → To Apply once URL liveness / fit / CL all pass.
     // "Inbox" is a TSV-only state — Notion DBs keep the 8-status set.)
-    const passedAppend = deps.appendNewApplications(
-      existingApps,
-      passedJobs,
-      { now: deps.now(), defaultStatus: "Inbox" }
-    );
+    const passedAppend = deps.appendNewApplications(existingApps, passedJobs, {
+      now: deps.now(),
+      defaultStatus: "Inbox",
+    });
     const rejectedAppend = deps.appendNewApplications(
       passedAppend.apps,
       rejectedEntries.map((r) => r.job),
@@ -334,9 +328,7 @@ function makeScanCommand(overrides = {}) {
       company: r.job.companyName,
       title: r.job.title,
       location:
-        Array.isArray(r.job.locations) && r.job.locations.length > 0
-          ? r.job.locations[0]
-          : "",
+        Array.isArray(r.job.locations) && r.job.locations.length > 0 ? r.job.locations[0] : "",
       kind: r.reason.kind,
       detail: r.reason,
     }));
@@ -347,9 +339,7 @@ function makeScanCommand(overrides = {}) {
         `(dry-run) would append ${freshApps.length} Inbox + ${archivedApps.length} Archived rows to ${applicationsPath}`
       );
       if (rejectionLines.length > 0) {
-        stdout(
-          `(dry-run) would append ${rejectionLines.length} entries to ${rejectionsPath}`
-        );
+        stdout(`(dry-run) would append ${rejectionLines.length} entries to ${rejectionsPath}`);
       }
       return 0;
     }

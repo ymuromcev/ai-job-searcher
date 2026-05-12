@@ -1,11 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const {
-  makeSyncCommand,
-  reconcilePull,
-  DEFAULT_PROPERTY_MAP,
-} = require("./sync.js");
+const { makeSyncCommand, reconcilePull, DEFAULT_PROPERTY_MAP } = require("./sync.js");
 
 function captureOut() {
   const stdout = [];
@@ -46,10 +42,7 @@ function makeDeps(overrides = {}) {
     }),
     loadSecrets: () => ({ NOTION_TOKEN: "tok" }),
     loadApplications: () => ({
-      apps: [
-        fakeApp({ jobId: "1" }),
-        fakeApp({ jobId: "2", notion_page_id: "page-existing" }),
-      ],
+      apps: [fakeApp({ jobId: "1" }), fakeApp({ jobId: "2", notion_page_id: "page-existing" })],
     }),
     saveApplications: (file, apps) => {
       calls.saveApplications.push({ file, count: apps.length });
@@ -121,7 +114,13 @@ test("sync --apply applies pull updates from Notion (status wins)", async () => 
       apps: [fakeApp({ jobId: "1", status: "To Apply", notion_page_id: "p1" })],
     }),
     fetchJobsFromDatabase: async () => [
-      { notionPageId: "p1", source: "greenhouse", jobId: "1", key: "greenhouse:1", status: "Applied" },
+      {
+        notionPageId: "p1",
+        source: "greenhouse",
+        jobId: "1",
+        key: "greenhouse:1",
+        status: "Applied",
+      },
     ],
   });
   const { ctx, out } = makeCtx({ flags: { dryRun: false, apply: true, verbose: false } });
@@ -251,7 +250,9 @@ test("sync --apply prints setup prompt when inbox_callout_block_id not configure
       calloutCalls.push({ blockId, text });
     },
   });
-  const { ctx, out } = makeCtx({ flags: { dryRun: false, apply: true, verbose: false, noCallout: false } });
+  const { ctx, out } = makeCtx({
+    flags: { dryRun: false, apply: true, verbose: false, noCallout: false },
+  });
   await makeSyncCommand(deps)(ctx);
   assert.equal(calloutCalls.length, 0);
   assert.match(out.all(), /hub callout: not configured/);
@@ -266,7 +267,9 @@ test("sync --apply + --no-callout silently skips when callout not configured", a
       calloutCalls.push({ blockId, text });
     },
   });
-  const { ctx, out } = makeCtx({ flags: { dryRun: false, apply: true, verbose: false, noCallout: true } });
+  const { ctx, out } = makeCtx({
+    flags: { dryRun: false, apply: true, verbose: false, noCallout: true },
+  });
   await makeSyncCommand(deps)(ctx);
   assert.equal(calloutCalls.length, 0);
   assert.doesNotMatch(out.all(), /hub callout/);

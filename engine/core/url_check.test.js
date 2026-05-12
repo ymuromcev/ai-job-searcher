@@ -25,22 +25,27 @@ const JOB_URL = "https://boards.greenhouse.io/affirm/jobs/12345";
 
 test("isSafeLivenessUrl blocks private IPv4 ranges", () => {
   assert.deepEqual(isSafeLivenessUrl("http://10.0.0.1/"), {
-    ok: false, reason: "blocked private/loopback host 10.0.0.1",
+    ok: false,
+    reason: "blocked private/loopback host 10.0.0.1",
   });
   assert.deepEqual(isSafeLivenessUrl("http://192.168.1.100/"), {
-    ok: false, reason: "blocked private/loopback host 192.168.1.100",
+    ok: false,
+    reason: "blocked private/loopback host 192.168.1.100",
   });
   assert.deepEqual(isSafeLivenessUrl("http://172.16.5.1/"), {
-    ok: false, reason: "blocked private/loopback host 172.16.5.1",
+    ok: false,
+    reason: "blocked private/loopback host 172.16.5.1",
   });
   assert.deepEqual(isSafeLivenessUrl("http://127.0.0.1/"), {
-    ok: false, reason: "blocked private/loopback host 127.0.0.1",
+    ok: false,
+    reason: "blocked private/loopback host 127.0.0.1",
   });
 });
 
 test("isSafeLivenessUrl blocks loopback hostname", () => {
   assert.deepEqual(isSafeLivenessUrl("http://localhost/path"), {
-    ok: false, reason: "blocked loopback host localhost",
+    ok: false,
+    reason: "blocked loopback host localhost",
   });
 });
 
@@ -182,7 +187,11 @@ test("checkAll processes all rows and returns same count", async () => {
   ];
   const fetchMap = {};
   for (const u of urls) fetchMap[`HEAD:${u}`] = { status: 200 };
-  const results = await checkAll(urls.map((u) => ({ url: u })), makeFetch(fetchMap), { concurrency: 2 });
+  const results = await checkAll(
+    urls.map((u) => ({ url: u })),
+    makeFetch(fetchMap),
+    { concurrency: 2 }
+  );
   assert.equal(results.length, 3);
   assert.ok(results.every((r) => r.alive === true));
 });
@@ -195,11 +204,7 @@ test("checkAll respects concurrency — one failure does not block others", asyn
     [`HEAD:${bad}`]: { throws: new Error("timeout") },
     [`GET:${bad}`]: { throws: new Error("timeout") },
   });
-  const results = await checkAll(
-    [{ url: good }, { url: bad }],
-    fetchFn,
-    { concurrency: 1 }
-  );
+  const results = await checkAll([{ url: good }, { url: bad }], fetchFn, { concurrency: 1 });
   assert.equal(results.length, 2);
   assert.equal(results[0].alive, true);
   assert.equal(results[1].alive, false);
@@ -219,7 +224,7 @@ test("checkOne skips HEAD/GET for linkedin source and marks alive", async () => 
   };
   const result = await checkOne(
     { url: "https://linkedin.com/jobs/view/123", source: "linkedin" },
-    fetchFn,
+    fetchFn
   );
   assert.equal(result.alive, true);
   assert.equal(result.skipped, true);
@@ -230,10 +235,7 @@ test("checkOne early-skip is case-insensitive on source", async () => {
   const fetchFn = async () => {
     throw new Error("fetchFn must not be called");
   };
-  const result = await checkOne(
-    { url: "https://indeed.com/job/abc", source: "Indeed" },
-    fetchFn,
-  );
+  const result = await checkOne({ url: "https://indeed.com/job/abc", source: "Indeed" }, fetchFn);
   assert.equal(result.alive, true);
   assert.equal(result.skipped, true);
 });
@@ -244,7 +246,7 @@ test("checkOne early-skip for custom source", async () => {
   };
   const result = await checkOne(
     { url: "https://example.com/careers/role-42", source: "custom" },
-    fetchFn,
+    fetchFn
   );
   assert.equal(result.alive, true);
   assert.equal(result.skipped, true);
@@ -256,7 +258,7 @@ test("checkOne does not skip for greenhouse/lever/ashby", async () => {
   });
   const result = await checkOne(
     { url: "https://boards.greenhouse.io/x/jobs/1", source: "greenhouse" },
-    fetchFn,
+    fetchFn
   );
   assert.equal(result.alive, true);
   assert.equal(result.skipped, undefined);

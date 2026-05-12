@@ -53,13 +53,10 @@ function appendRejectionLog(filePath, rejections, now = new Date()) {
     log += `\n${newRows}\n`;
   }
 
-  log = log.replace(
-    /(-\s*\*\*Rejected\*\*:\s*)(\d+)([^\n]*)/,
-    (_, pre, num) => {
-      const names = rejections.map((r) => r.company).join(", ");
-      return `${pre}${parseInt(num, 10) + rejections.length} (+${rejections.length} from email check ${today}: ${names})`;
-    }
-  );
+  log = log.replace(/(-\s*\*\*Rejected\*\*:\s*)(\d+)([^\n]*)/, (_, pre, num) => {
+    const names = rejections.map((r) => r.company).join(", ");
+    return `${pre}${parseInt(num, 10) + rejections.length} (+${rejections.length} from email check ${today}: ${names})`;
+  });
 
   const appliedCount = rejections.filter((r) => r.prevApplied).length;
   if (appliedCount > 0) {
@@ -95,9 +92,7 @@ function buildSummary({
         .join(", ")})`
     );
   }
-  const interviews = logRows.filter((r) =>
-    (r.action || "").includes("Interview")
-  );
+  const interviews = logRows.filter((r) => (r.action || "").includes("Interview"));
   if (interviews.length > 0) {
     parts.push(
       `🔔 ${interviews.length} приглашение на интервью (${interviews.map((r) => r.company).join(", ")})`
@@ -107,8 +102,7 @@ function buildSummary({
     (r) => r.type === "INFO_REQUEST" && (r.action || "").includes("comment_only")
   );
   if (infoReqs.length > 0) parts.push(`${infoReqs.length} запрос информации`);
-  if (inboxAdded > 0)
-    parts.push(`📥 ${inboxAdded} новых в Inbox (LinkedIn/рекрутеры)`);
+  if (inboxAdded > 0) parts.push(`📥 ${inboxAdded} новых в Inbox (LinkedIn/рекрутеры)`);
   if (recruiterLeadsCount > 0)
     parts.push(`📋 ${recruiterLeadsCount} рекрутерских лидов → recruiter_leads.md`);
   if (parts.length === 0) {
@@ -119,14 +113,17 @@ function buildSummary({
 
 // New entries are inserted right after the first "---\n\n" separator, so the
 // file reads newest-first.
-function appendCheckLog(filePath, {
-  logRows = [],
-  actionCount = 0,
-  rejections = [],
-  inboxAdded = 0,
-  recruiterLeadsCount = 0,
-  now = new Date(),
-} = {}) {
+function appendCheckLog(
+  filePath,
+  {
+    logRows = [],
+    actionCount = 0,
+    rejections = [],
+    inboxAdded = 0,
+    recruiterLeadsCount = 0,
+    now = new Date(),
+  } = {}
+) {
   const dateStr = `${now.toISOString().slice(0, 10)} ${now.toISOString().slice(11, 16)}`;
   const matched = logRows.filter((r) => r.match !== "NONE").length;
 

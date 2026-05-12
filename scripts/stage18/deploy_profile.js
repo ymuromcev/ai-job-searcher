@@ -145,7 +145,9 @@ async function main() {
   if (!ok) {
     console.error("  intake validation failed:");
     for (const e of errors) console.error("    - " + e);
-    fatal(new Error("intake has required-field errors. Fix intake.md + re-run parse_intake.js --apply."));
+    fatal(
+      new Error("intake has required-field errors. Fix intake.md + re-run parse_intake.js --apply.")
+    );
   }
 
   ensureStage18Dir(id);
@@ -178,10 +180,7 @@ async function main() {
 
   // ── Step 3: seed companies ────────────────────────────────────────────
   console.log("\n--- Step 3: seed Companies DB ---");
-  const includeSeed =
-    intake.flags && intake.flags.include_companies_seed === false
-      ? false
-      : true;
+  const includeSeed = intake.flags && intake.flags.include_companies_seed === false ? false : true;
   if (!includeSeed) {
     console.log("  intake.flags.include_companies_seed=false — skipping");
   } else {

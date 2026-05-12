@@ -49,7 +49,9 @@ function parseExtra(raw) {
 function parseProfile(raw) {
   // Empty + "both" both mean "visible to every profile". Multi-id values
   // are comma-separated and trimmed.
-  const v = String(raw == null ? "" : raw).trim().toLowerCase();
+  const v = String(raw == null ? "" : raw)
+    .trim()
+    .toLowerCase();
   if (!v || v === "both") return "";
   return v
     .split(",")
@@ -177,7 +179,10 @@ function groupBySource(rows) {
 function rowVisibleToProfile(row, profileId) {
   const p = row && row.profile ? String(row.profile).trim().toLowerCase() : "";
   if (!p || p === "both") return true;
-  const ids = p.split(",").map((s) => s.trim()).filter(Boolean);
+  const ids = p
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   return ids.includes(String(profileId || "").toLowerCase());
 }
 

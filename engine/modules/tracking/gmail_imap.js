@@ -45,9 +45,7 @@ function loadCredentials(profileId, opts = {}) {
 function assertCredentials(creds, profileId) {
   const upper = String(profileId).toUpperCase();
   if (!creds.user) {
-    throw new Error(
-      `gmail_imap: missing ${upper}_GMAIL_USER (set in .env or fly secrets)`
-    );
+    throw new Error(`gmail_imap: missing ${upper}_GMAIL_USER (set in .env or fly secrets)`);
   }
   if (!creds.appPassword) {
     throw new Error(
@@ -187,9 +185,7 @@ async function resolveAllMailMailbox(client) {
   // Prefer SPECIAL-USE \All (RFC 6154) — language-agnostic.
   const list = await client.list();
   if (!Array.isArray(list)) return ALL_MAIL_FALLBACK;
-  const bySpecial = list.find(
-    (b) => b && (b.specialUse === "\\All" || b.specialUse === "All")
-  );
+  const bySpecial = list.find((b) => b && (b.specialUse === "\\All" || b.specialUse === "All"));
   if (bySpecial && bySpecial.path) return bySpecial.path;
   // Best-effort name fallback across known locales.
   const byName = list.find(

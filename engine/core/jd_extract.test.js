@@ -1,11 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const {
-  extractSchedule,
-  extractRequirements,
-  extractFromJd,
-} = require("./jd_extract.js");
+const { extractSchedule, extractRequirements, extractFromJd } = require("./jd_extract.js");
 
 // --- Fixtures (realistic healthcare JD slices) -------------------------------
 

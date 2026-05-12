@@ -14,45 +14,45 @@
 
 // Core — always emitted.
 const CORE_FIELDS = {
-  title:         { field: "Title",        type: "title" },
-  companyName:   { field: "Company",      type: "relation" },
-  source:        { field: "Source",       type: "select" },
-  jobId:         { field: "JobID",        type: "rich_text" },
-  url:           { field: "URL",          type: "url" },
-  status:        { field: "Status",       type: "status" },
-  key:           { field: "Key",          type: "rich_text" },
-  dateAdded:     { field: "Date Added",   type: "date" },
-  notes:         { field: "Notes",        type: "rich_text" },
+  title: { field: "Title", type: "title" },
+  companyName: { field: "Company", type: "relation" },
+  source: { field: "Source", type: "select" },
+  jobId: { field: "JobID", type: "rich_text" },
+  url: { field: "URL", type: "url" },
+  status: { field: "Status", type: "status" },
+  key: { field: "Key", type: "rich_text" },
+  dateAdded: { field: "Date Added", type: "date" },
+  notes: { field: "Notes", type: "rich_text" },
 };
 
 // Module-gated groups. Key: module id (string present in intake.modules
 // or one of the synthetic flags below). Value: {internal: {field, type}}.
 const GATED_GROUPS = {
-  "prepare": {
-    salaryMin:         { field: "Salary Min",           type: "number" },
-    salaryMax:         { field: "Salary Max",           type: "number" },
-    salaryExpectations:{ field: "Salary Expectations",  type: "rich_text" },
-    workFormat:        { field: "Work Format",          type: "select" },
-    city:              { field: "City",                 type: "rich_text" },
-    state:             { field: "State",                type: "rich_text" },
-    fitScore:          { field: "Fit Score",            type: "select" },
-    resumeVersion:     { field: "Resume Version",       type: "select" },
-    coverLetter:       { field: "Cover Letter",         type: "rich_text" },
-    datePosted:        { field: "Date Posted",          type: "date" },
-    dateApplied:       { field: "Date Applied",         type: "date" },
+  prepare: {
+    salaryMin: { field: "Salary Min", type: "number" },
+    salaryMax: { field: "Salary Max", type: "number" },
+    salaryExpectations: { field: "Salary Expectations", type: "rich_text" },
+    workFormat: { field: "Work Format", type: "select" },
+    city: { field: "City", type: "rich_text" },
+    state: { field: "State", type: "rich_text" },
+    fitScore: { field: "Fit Score", type: "select" },
+    resumeVersion: { field: "Resume Version", type: "select" },
+    coverLetter: { field: "Cover Letter", type: "rich_text" },
+    datePosted: { field: "Date Posted", type: "date" },
+    dateApplied: { field: "Date Applied", type: "date" },
   },
-  "check": {
-    lastFollowup:  { field: "Last Follow-up", type: "date" },
-    nextFollowup:  { field: "Next Follow-up", type: "date" },
+  check: {
+    lastFollowup: { field: "Last Follow-up", type: "date" },
+    nextFollowup: { field: "Next Follow-up", type: "date" },
   },
   "discovery:calcareers": {
-    classification:  { field: "Classification",    type: "rich_text" },
-    jobControlId:    { field: "Job Control ID",    type: "rich_text" },
-    soqRequired:     { field: "SOQ Required",      type: "checkbox" },
-    soqSubmitted:    { field: "SOQ Submitted",     type: "checkbox" },
+    classification: { field: "Classification", type: "rich_text" },
+    jobControlId: { field: "Job Control ID", type: "rich_text" },
+    soqRequired: { field: "SOQ Required", type: "checkbox" },
+    soqSubmitted: { field: "SOQ Submitted", type: "checkbox" },
     finalFilingDate: { field: "Final Filing Date", type: "date" },
   },
-  "watcher": {
+  watcher: {
     watcher: { field: "Watcher", type: "people" },
   },
 };

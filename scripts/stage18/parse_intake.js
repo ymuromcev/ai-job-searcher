@@ -49,10 +49,7 @@ const BOOL_FIELDS = new Set([
 ]);
 
 // Fields where a single line is actually a comma-separated list.
-const COMMA_LIST_FIELDS = new Set([
-  "company_sizes_ok",
-  "tags",
-]);
+const COMMA_LIST_FIELDS = new Set(["company_sizes_ok", "tags"]);
 
 function toBool(value) {
   if (typeof value !== "string") return null;
@@ -202,9 +199,7 @@ function parseSectionE(events) {
     // Drop the template placeholder "<key>" if user didn't rename it.
     if (a.key === "<key>" || a.key.startsWith("<") || !a.key) continue;
     // Require at least one meaningful field beyond the slug.
-    const meaningful = Object.keys(coerced).some(
-      (k) => k !== "key" && coerced[k] !== undefined
-    );
+    const meaningful = Object.keys(coerced).some((k) => k !== "key" && coerced[k] !== undefined);
     if (!meaningful) continue;
     result.push({ key: a.key, ...coerced });
   }
@@ -334,9 +329,7 @@ async function main() {
   const id = validateProfileId(intake.identity.profile_id);
   if (args.profile && args.profile !== id && args.profile !== "jared") {
     // CLI --profile override is advisory; intake is source of truth.
-    console.warn(
-      `  --profile=${args.profile} overridden by intake.identity.profile_id=${id}`
-    );
+    console.warn(`  --profile=${args.profile} overridden by intake.identity.profile_id=${id}`);
   }
   ensureStage18Dir(id);
   const intakePath = writeIntake(id, intake);

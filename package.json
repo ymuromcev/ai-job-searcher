@@ -6,6 +6,10 @@
   "main": "engine/cli.js",
   "scripts": {
     "test": "node --test 'engine/**/*.test.js' 'skills/**/*.test.js' 'scripts/**/*.test.js'",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "setup-hooks": "node scripts/setup-hooks.js",
     "docs:check": "node scripts/check_docs_links.js",
     "docs:lang": "node scripts/check_docs_lang.js",
@@ -24,11 +28,18 @@
     "@notionhq/client": "^5.19.0",
     "docx": "^9.6.1",
     "dotenv": "^17.4.2",
-    "imapflow": "^1.0.196",
+    "imapflow": "^1.3.3",
     "mailparser": "^3.7.4",
     "pdfkit": "^0.18.0"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.3.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.3"
   }
 }

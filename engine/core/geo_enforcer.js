@@ -36,27 +36,114 @@ const US_MARKERS = ["united states", "usa", ", us", "(us)", "u.s.", "u.s.a"];
 // US state name → 2-letter code lookup. Used in "us-wide" mode and as
 // implicit country marker (e.g. "Sacramento, CA" → US even without "USA").
 const US_STATE_CODES = new Set([
-  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS",
-  "KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY",
-  "NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV",
-  "WI","WY","DC",
+  "AL",
+  "AK",
+  "AZ",
+  "AR",
+  "CA",
+  "CO",
+  "CT",
+  "DE",
+  "FL",
+  "GA",
+  "HI",
+  "ID",
+  "IL",
+  "IN",
+  "IA",
+  "KS",
+  "KY",
+  "LA",
+  "ME",
+  "MD",
+  "MA",
+  "MI",
+  "MN",
+  "MS",
+  "MO",
+  "MT",
+  "NE",
+  "NV",
+  "NH",
+  "NJ",
+  "NM",
+  "NY",
+  "NC",
+  "ND",
+  "OH",
+  "OK",
+  "OR",
+  "PA",
+  "RI",
+  "SC",
+  "SD",
+  "TN",
+  "TX",
+  "UT",
+  "VT",
+  "VA",
+  "WA",
+  "WV",
+  "WI",
+  "WY",
+  "DC",
 ]);
 
 // 2-letter code → full state name (lowercase). Used to expand states list:
 // if user puts "CA" in profile.geo.states, matcher also accepts "California"
 // in job locations (and vice versa).
 const US_CODE_TO_NAME = {
-  AL: "alabama", AK: "alaska", AZ: "arizona", AR: "arkansas", CA: "california",
-  CO: "colorado", CT: "connecticut", DE: "delaware", FL: "florida", GA: "georgia",
-  HI: "hawaii", ID: "idaho", IL: "illinois", IN: "indiana", IA: "iowa",
-  KS: "kansas", KY: "kentucky", LA: "louisiana", ME: "maine", MD: "maryland",
-  MA: "massachusetts", MI: "michigan", MN: "minnesota", MS: "mississippi",
-  MO: "missouri", MT: "montana", NE: "nebraska", NV: "nevada", NH: "new hampshire",
-  NJ: "new jersey", NM: "new mexico", NY: "new york", NC: "north carolina",
-  ND: "north dakota", OH: "ohio", OK: "oklahoma", OR: "oregon", PA: "pennsylvania",
-  RI: "rhode island", SC: "south carolina", SD: "south dakota", TN: "tennessee",
-  TX: "texas", UT: "utah", VT: "vermont", VA: "virginia", WA: "washington",
-  WV: "west virginia", WI: "wisconsin", WY: "wyoming", DC: "district of columbia",
+  AL: "alabama",
+  AK: "alaska",
+  AZ: "arizona",
+  AR: "arkansas",
+  CA: "california",
+  CO: "colorado",
+  CT: "connecticut",
+  DE: "delaware",
+  FL: "florida",
+  GA: "georgia",
+  HI: "hawaii",
+  ID: "idaho",
+  IL: "illinois",
+  IN: "indiana",
+  IA: "iowa",
+  KS: "kansas",
+  KY: "kentucky",
+  LA: "louisiana",
+  ME: "maine",
+  MD: "maryland",
+  MA: "massachusetts",
+  MI: "michigan",
+  MN: "minnesota",
+  MS: "mississippi",
+  MO: "missouri",
+  MT: "montana",
+  NE: "nebraska",
+  NV: "nevada",
+  NH: "new hampshire",
+  NJ: "new jersey",
+  NM: "new mexico",
+  NY: "new york",
+  NC: "north carolina",
+  ND: "north dakota",
+  OH: "ohio",
+  OK: "oklahoma",
+  OR: "oregon",
+  PA: "pennsylvania",
+  RI: "rhode island",
+  SC: "south carolina",
+  SD: "south dakota",
+  TN: "tennessee",
+  TX: "texas",
+  UT: "utah",
+  VT: "vermont",
+  VA: "virginia",
+  WA: "washington",
+  WV: "west virginia",
+  WI: "wisconsin",
+  WY: "wyoming",
+  DC: "district of columbia",
 };
 
 const US_NAME_TO_CODE = Object.fromEntries(
@@ -66,7 +153,9 @@ const US_NAME_TO_CODE = Object.fromEntries(
 const US_STATE_NAMES = new Set(Object.values(US_CODE_TO_NAME));
 
 function normalizeLocStr(s) {
-  return String(s == null ? "" : s).trim().toLowerCase();
+  return String(s == null ? "" : s)
+    .trim()
+    .toLowerCase();
 }
 
 function isRemoteLoc(locLower) {
@@ -227,11 +316,7 @@ function enforceGeo(jobLocations, profileGeo) {
   const mode = profileGeo.mode || "unrestricted";
 
   // Normalize input: accept array (canonical) or single string (legacy).
-  const locsRaw = Array.isArray(jobLocations)
-    ? jobLocations
-    : jobLocations
-    ? [jobLocations]
-    : [];
+  const locsRaw = Array.isArray(jobLocations) ? jobLocations : jobLocations ? [jobLocations] : [];
   const locs = locsRaw.map(normalizeLocStr).filter(Boolean);
 
   if (locs.length === 0) {
@@ -263,11 +348,15 @@ function enforceGeo(jobLocations, profileGeo) {
       blockedAll = false; // at least one location wasn't a blocklist hit
       if (!firstReason) {
         firstReason =
-          mode === "metro" ? "geo_metro_miss"
-          : mode === "us-wide" ? "geo_country_miss"
-          : mode === "remote-only" ? "geo_remote_only_miss"
-          : mode === "unrestricted" ? null  // unreachable (unrestricted always passes)
-          : "geo_unknown_mode";
+          mode === "metro"
+            ? "geo_metro_miss"
+            : mode === "us-wide"
+              ? "geo_country_miss"
+              : mode === "remote-only"
+                ? "geo_remote_only_miss"
+                : mode === "unrestricted"
+                  ? null // unreachable (unrestricted always passes)
+                  : "geo_unknown_mode";
       }
     }
   }

@@ -3,11 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const {
-  formatSalaryDisplay,
-  findExistingJobPage,
-  pushJobPage,
-} = require("./notion_job_page.js");
+const { formatSalaryDisplay, findExistingJobPage, pushJobPage } = require("./notion_job_page.js");
 const { DEFAULT_PROPERTY_MAP } = require("./notion_sync.js");
 
 // ---------- formatSalaryDisplay ----------

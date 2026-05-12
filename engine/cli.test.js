@@ -46,7 +46,11 @@ test("runCli exits 0 and prints help on --help", async () => {
 
 test("runCli rejects unknown command and shows help on stderr", async () => {
   const s = makeStreams();
-  const code = await runCli({ argv: ["bogus", "--profile", "jared"], stdout: s.stdout, stderr: s.stderr });
+  const code = await runCli({
+    argv: ["bogus", "--profile", "jared"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+  });
   assert.equal(code, 1);
   assert.match(s.err(), /unknown command: bogus/);
   assert.match(s.err(), /Commands:/);
@@ -177,7 +181,15 @@ test("runCli reports missing handler with a clear error", async () => {
 });
 
 test("KNOWN_COMMANDS lists exactly the supported commands", () => {
-  assert.deepEqual([...KNOWN_COMMANDS].sort(), ["answer", "check", "indeed-prep", "prepare", "scan", "sync", "validate"]);
+  assert.deepEqual([...KNOWN_COMMANDS].sort(), [
+    "answer",
+    "check",
+    "indeed-prep",
+    "prepare",
+    "scan",
+    "sync",
+    "validate",
+  ]);
 });
 
 test("scan auto-triggers sync --apply after success (pipeline hook)", async () => {
@@ -189,7 +201,10 @@ test("scan auto-triggers sync --apply after success (pipeline hook)", async () =
     stderr: s.stderr,
     commands: {
       scan: spyCommand(() => 0),
-      sync: async (ctx) => { syncCalls.push(ctx); return 0; },
+      sync: async (ctx) => {
+        syncCalls.push(ctx);
+        return 0;
+      },
     },
   });
   assert.equal(code, 0);
@@ -207,7 +222,10 @@ test("scan --no-sync skips the auto-sync hook", async () => {
     stderr: s.stderr,
     commands: {
       scan: spyCommand(() => 0),
-      sync: async (ctx) => { syncCalls.push(ctx); return 0; },
+      sync: async (ctx) => {
+        syncCalls.push(ctx);
+        return 0;
+      },
     },
   });
   assert.equal(code, 0);
@@ -223,7 +241,10 @@ test("scan --dry-run skips the auto-sync hook", async () => {
     stderr: s.stderr,
     commands: {
       scan: spyCommand(() => 0),
-      sync: async (ctx) => { syncCalls.push(ctx); return 0; },
+      sync: async (ctx) => {
+        syncCalls.push(ctx);
+        return 0;
+      },
     },
   });
   assert.equal(code, 0);
@@ -238,7 +259,9 @@ test("scan hook: sync failure is non-fatal — scan still exits 0", async () => 
     stderr: s.stderr,
     commands: {
       scan: spyCommand(() => 0),
-      sync: async () => { throw new Error("no token"); },
+      sync: async () => {
+        throw new Error("no token");
+      },
     },
   });
   assert.equal(code, 0);
@@ -254,7 +277,10 @@ test("scan hook does not run when scan itself fails", async () => {
     stderr: s.stderr,
     commands: {
       scan: spyCommand(() => 1),
-      sync: async (ctx) => { syncCalls.push(ctx); return 0; },
+      sync: async (ctx) => {
+        syncCalls.push(ctx);
+        return 0;
+      },
     },
   });
   assert.equal(code, 1);
@@ -265,10 +291,7 @@ test("runCli passes prepare-specific flags to handler", async () => {
   const s = makeStreams();
   const prepare = spyCommand(() => 0);
   const code = await runCli({
-    argv: [
-      "prepare", "--profile", "jared",
-      "--phase", "pre", "--batch", "10",
-    ],
+    argv: ["prepare", "--profile", "jared", "--phase", "pre", "--batch", "10"],
     stdout: s.stdout,
     stderr: s.stderr,
     commands: { prepare },
@@ -284,10 +307,7 @@ test("runCli passes --results-file flag for prepare commit", async () => {
   const s = makeStreams();
   const prepare = spyCommand(() => 0);
   await runCli({
-    argv: [
-      "prepare", "--profile", "jared",
-      "--phase", "commit", "--results-file", "/tmp/r.json",
-    ],
+    argv: ["prepare", "--profile", "jared", "--phase", "commit", "--results-file", "/tmp/r.json"],
     stdout: s.stdout,
     stderr: s.stderr,
     commands: { prepare },

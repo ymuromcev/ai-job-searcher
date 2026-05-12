@@ -124,9 +124,7 @@ function main() {
   const now = new Date().toISOString();
   const next = applyPlan(loaded.apps, updates, now);
   apps.save(tsvPath, next);
-  process.stdout.write(
-    `applied: rewrote ${updates.length} rows to status="Inbox" in ${tsvPath}\n`
-  );
+  process.stdout.write(`applied: rewrote ${updates.length} rows to status="Inbox" in ${tsvPath}\n`);
 }
 
 if (require.main === module) main();

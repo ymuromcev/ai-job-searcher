@@ -46,7 +46,14 @@ test("buildAnswerProperties produces the full schema", () => {
     company: "Linear",
     notes: "210 chars",
   });
-  assert.deepEqual(Object.keys(props).sort(), ["Answer", "Category", "Company", "Notes", "Question", "Role"]);
+  assert.deepEqual(Object.keys(props).sort(), [
+    "Answer",
+    "Category",
+    "Company",
+    "Notes",
+    "Question",
+    "Role",
+  ]);
   assert.equal(props.Question.title[0].text.content, "Why?");
   assert.equal(props.Answer.rich_text[0].text.content, "Because.");
   assert.equal(props.Category.select.name, "Motivation");
@@ -56,7 +63,13 @@ test("buildAnswerProperties produces the full schema", () => {
 });
 
 test("buildAnswerProperties omits Category when not provided", () => {
-  const props = buildAnswerProperties({ question: "Q", answer: "A", role: "PM", company: "X", notes: "" });
+  const props = buildAnswerProperties({
+    question: "Q",
+    answer: "A",
+    role: "PM",
+    company: "X",
+    notes: "",
+  });
   assert.equal(props.Category, undefined);
 });
 
@@ -166,8 +179,22 @@ function makePage({ id, q, a, cat, role, co, notes }) {
 
 test("searchAnswers returns exact match when dedup key matches", async () => {
   const client = makeFakeClient([
-    makePage({ id: "p1", q: "Why join Linear?", a: "Because.", cat: "Motivation", role: "PM", co: "Linear" }),
-    makePage({ id: "p2", q: "What motivates you?", a: "Leverage.", cat: "Motivation", role: "PM", co: "Linear" }),
+    makePage({
+      id: "p1",
+      q: "Why join Linear?",
+      a: "Because.",
+      cat: "Motivation",
+      role: "PM",
+      co: "Linear",
+    }),
+    makePage({
+      id: "p2",
+      q: "What motivates you?",
+      a: "Leverage.",
+      cat: "Motivation",
+      role: "PM",
+      co: "Linear",
+    }),
   ]);
   const { exact, partials } = await searchAnswers(client, "db-1", {
     company: "Linear",
@@ -181,7 +208,14 @@ test("searchAnswers returns exact match when dedup key matches", async () => {
 
 test("searchAnswers is case-insensitive for dedup matching", async () => {
   const client = makeFakeClient([
-    makePage({ id: "p1", q: "Why join Linear?", a: "X", cat: "Motivation", role: "Product Manager", co: "Linear" }),
+    makePage({
+      id: "p1",
+      q: "Why join Linear?",
+      a: "X",
+      cat: "Motivation",
+      role: "Product Manager",
+      co: "Linear",
+    }),
   ]);
   const { exact } = await searchAnswers(client, "db-1", {
     company: "LINEAR",
@@ -206,8 +240,22 @@ test("searchAnswers returns null exact + empty partials when nothing matches", a
 
 test("searchAnswers returns same-question matches across companies as partials", async () => {
   const client = makeFakeClient([
-    makePage({ id: "p1", q: "What motivates you?", a: "X", cat: "Motivation", role: "PM", co: "Stripe" }),
-    makePage({ id: "p2", q: "What motivates you?", a: "Y", cat: "Motivation", role: "PM", co: "Affirm" }),
+    makePage({
+      id: "p1",
+      q: "What motivates you?",
+      a: "X",
+      cat: "Motivation",
+      role: "PM",
+      co: "Stripe",
+    }),
+    makePage({
+      id: "p2",
+      q: "What motivates you?",
+      a: "Y",
+      cat: "Motivation",
+      role: "PM",
+      co: "Affirm",
+    }),
   ]);
   const { exact, partials } = await searchAnswers(client, "db-1", {
     company: "Linear",
@@ -223,7 +271,12 @@ test("searchAnswers returns same-question matches across companies as partials",
 test("createAnswerPage sends parent + full properties", async () => {
   let captured = null;
   const client = {
-    pages: { create: async (req) => { captured = req; return { id: "new" }; } },
+    pages: {
+      create: async (req) => {
+        captured = req;
+        return { id: "new" };
+      },
+    },
   };
   await createAnswerPage(client, "db-1", {
     question: "Q",
@@ -241,7 +294,12 @@ test("createAnswerPage sends parent + full properties", async () => {
 test("updateAnswerPage sends only the provided fields", async () => {
   let captured = null;
   const client = {
-    pages: { update: async (req) => { captured = req; return { id: req.page_id }; } },
+    pages: {
+      update: async (req) => {
+        captured = req;
+        return { id: req.page_id };
+      },
+    },
   };
   await updateAnswerPage(client, "page-123", { answer: "new", category: "Salary" });
   assert.equal(captured.page_id, "page-123");

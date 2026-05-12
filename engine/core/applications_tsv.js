@@ -368,10 +368,7 @@ function rowToAppV1(parts, lineNo) {
 }
 
 function matchHeader(headerCols, expected) {
-  return (
-    headerCols.length === expected.length &&
-    expected.every((c, i) => c === headerCols[i])
-  );
+  return headerCols.length === expected.length && expected.every((c, i) => c === headerCols[i]);
 }
 
 function load(filePath) {
@@ -446,9 +443,7 @@ function appendNew(
     // Discovery `NormalizedJob.locations` is an array; the first entry is
     // canonical. Fall back to "" when the source didn't provide one.
     const location =
-      Array.isArray(job.locations) && job.locations.length > 0
-        ? String(job.locations[0])
-        : "";
+      Array.isArray(job.locations) && job.locations.length > 0 ? String(job.locations[0]) : "";
     fresh.push({
       key,
       source: job.source,

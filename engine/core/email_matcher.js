@@ -23,8 +23,18 @@
 //   { "Match Group": ["Hinge", "Tinder", "OkCupid"] }
 
 const TOKEN_STOP_WORDS = new Set([
-  "and", "the", "for", "with", "from", "its", "our", "not",
-  "llc", "inc", "ltd", "corp",
+  "and",
+  "the",
+  "for",
+  "with",
+  "from",
+  "its",
+  "our",
+  "not",
+  "llc",
+  "inc",
+  "ltd",
+  "corp",
 ]);
 
 function companyTokens(name) {
@@ -130,8 +140,21 @@ function hasShortDiscriminatorMatch(synonyms, haystack, useWordBoundary) {
 // discriminate. Used ONLY by pickBestWithTieBreak to decide between
 // equally-scored entries.
 const TIE_BREAK_STOP_WORDS = new Set([
-  "and", "the", "for", "with", "from", "its", "our", "not", "of",
-  "llc", "inc", "ltd", "corp", "co", "&",
+  "and",
+  "the",
+  "for",
+  "with",
+  "from",
+  "its",
+  "our",
+  "not",
+  "of",
+  "llc",
+  "inc",
+  "ltd",
+  "corp",
+  "co",
+  "&",
 ]);
 
 function tieBreakTokens(name) {
@@ -166,8 +189,8 @@ function pickBestWithTieBreak(entries, haystack, useWordBoundary) {
   // if any appear in the haystack. Uses tieBreakTokens (more lenient) to
   // catch short distinctive words like "spa" / "ENT" that companyTokens
   // drops.
-  const allTiedTokens = tied.map((s) =>
-    new Set(s.entry.synonyms.flatMap((syn) => tieBreakTokens(syn)))
+  const allTiedTokens = tied.map(
+    (s) => new Set(s.entry.synonyms.flatMap((syn) => tieBreakTokens(syn)))
   );
   const candidatesWithUniqueMatch = tied.filter((s, i) => {
     const myTokens = allTiedTokens[i];
@@ -198,11 +221,33 @@ function pickBestWithTieBreak(entries, haystack, useWordBoundary) {
 // ("candidates whose experience more closely matches"), so without this guard
 // any role containing "Experience" in its title falsely wins disambiguation.
 const ROLE_MATCH_SKIP = new Set([
-  "product", "manager", "senior", "principal", "staff", "lead", "technical", "manager,",
-  "experience", "candidates", "considered", "application", "applications",
-  "opportunity", "opportunities", "position", "decided", "carefully",
-  "unfortunately", "qualified", "qualifications", "interest", "interested",
-  "review", "reviewed", "consideration", "appreciate",
+  "product",
+  "manager",
+  "senior",
+  "principal",
+  "staff",
+  "lead",
+  "technical",
+  "manager,",
+  "experience",
+  "candidates",
+  "considered",
+  "application",
+  "applications",
+  "opportunity",
+  "opportunities",
+  "position",
+  "decided",
+  "carefully",
+  "unfortunately",
+  "qualified",
+  "qualifications",
+  "interest",
+  "interested",
+  "review",
+  "reviewed",
+  "consideration",
+  "appreciate",
 ]);
 
 function findRole(email, jobs) {

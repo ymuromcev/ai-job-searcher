@@ -63,9 +63,7 @@ function mapEntry(target, entry) {
   }
   const title = sanitizeText(entry.title);
   const companyName = sanitizeText(entry.company) || target.name;
-  const url = entry.url
-    ? String(entry.url)
-    : `${VIEWJOB_BASE}?jk=${encodeURIComponent(jk)}`;
+  const url = entry.url ? String(entry.url) : `${VIEWJOB_BASE}?jk=${encodeURIComponent(jk)}`;
   const locations = dedupeLocations([entry.location]);
   const job = {
     source: SOURCE,
@@ -103,9 +101,7 @@ async function discover(targets, ctx = {}) {
       try {
         out.push(mapEntry(target, entry));
       } catch (err) {
-        logger.warn(
-          `[${SOURCE}] ${target.slug || target.name}: skipped entry — ${err.message}`
-        );
+        logger.warn(`[${SOURCE}] ${target.slug || target.name}: skipped entry — ${err.message}`);
       }
     }
   }

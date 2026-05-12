@@ -67,8 +67,7 @@ function makeDeps(overrides = {}) {
     }),
     loadSecrets: () => ({ NOTION_TOKEN: "tok" }),
     loadApplications: () => ({ apps: [fakeApp()] }),
-    saveApplications: (file, apps) =>
-      calls.saveApplications.push({ file, count: apps.length }),
+    saveApplications: (file, apps) => calls.saveApplications.push({ file, count: apps.length }),
     loadProcessed: () => ({ processed: [], last_check: null }),
     saveProcessed: (file, existing, entries, now) =>
       calls.saveProcessed.push({ file, count: entries.length, now }),
@@ -78,7 +77,17 @@ function makeDeps(overrides = {}) {
       epoch: 1700000000,
       searchWindow: "after:1700000000",
       batches: [],
-      activeJobsMap: { Affirm: [{ company: "Affirm", role: "Product Manager", status: "Applied", notion_id: "page-1", key: "greenhouse:1" }] },
+      activeJobsMap: {
+        Affirm: [
+          {
+            company: "Affirm",
+            role: "Product Manager",
+            status: "Applied",
+            notion_id: "page-1",
+            key: "greenhouse:1",
+          },
+        ],
+      },
       processedIds: [],
     }),
     saveContext: (file, ctx) => calls.saveContext.push({ file, ctx }),
@@ -220,11 +229,7 @@ test("processLinkedIn: duplicate against tsvCache", () => {
 // ---------- processRecruiter ----------
 
 test("processRecruiter: no role → unparseable", () => {
-  const row = processRecruiter(
-    { messageId: "m1", subject: "hey!" },
-    { nowIso: "x" },
-    makeState()
-  );
+  const row = processRecruiter({ messageId: "m1", subject: "hey!" }, { nowIso: "x" }, makeState());
   assert.equal(row.action, "unparseable role");
 });
 
@@ -269,7 +274,11 @@ test("processPipeline: no company match → unmatched", () => {
   const res = processPipeline(
     { messageId: "m1", subject: "random", body: "" },
     { nowIso: "x" },
-    makeState({ activeJobsMap: { Affirm: [{ company: "Affirm", role: "PM", status: "Applied", notion_id: "p1" }] } })
+    makeState({
+      activeJobsMap: {
+        Affirm: [{ company: "Affirm", role: "PM", status: "Applied", notion_id: "p1" }],
+      },
+    })
   );
   assert.equal(res.row.match, "NONE");
   assert.equal(res.action, undefined);
@@ -318,9 +327,7 @@ test("processPipeline: REJECTION skipped if already Rejected", () => {
     { nowIso: "x" },
     makeState({
       activeJobsMap: {
-        Affirm: [
-          { company: "Affirm", role: "PM", status: "Rejected", notion_id: "p1", key: "k" },
-        ],
+        Affirm: [{ company: "Affirm", role: "PM", status: "Rejected", notion_id: "p1", key: "k" }],
       },
     })
   );
@@ -378,8 +385,20 @@ test("processPipeline: LOW confidence → skipped, no action", () => {
     makeState({
       activeJobsMap: {
         Affirm: [
-          { company: "Affirm", role: "Senior Product Manager, Growth", status: "Applied", notion_id: "p1", key: "k1" },
-          { company: "Affirm", role: "Senior Product Manager, Risk", status: "Applied", notion_id: "p2", key: "k2" },
+          {
+            company: "Affirm",
+            role: "Senior Product Manager, Growth",
+            status: "Applied",
+            notion_id: "p1",
+            key: "k1",
+          },
+          {
+            company: "Affirm",
+            role: "Senior Product Manager, Risk",
+            status: "Applied",
+            notion_id: "p2",
+            key: "k2",
+          },
         ],
       },
     })
@@ -586,7 +605,9 @@ test("check --apply: idempotent on re-run with same raw_emails", async () => {
       epoch: 1,
       searchWindow: "after:1",
       batches: [],
-      activeJobsMap: { Affirm: [{ company: "Affirm", role: "PM", status: "Applied", notion_id: "p1", key: "k" }] },
+      activeJobsMap: {
+        Affirm: [{ company: "Affirm", role: "PM", status: "Applied", notion_id: "p1", key: "k" }],
+      },
       processedIds: ["m1"],
     }),
     loadRawEmails: () => [
@@ -835,7 +856,12 @@ test("check --apply: Notion error on one action — others still processed", asy
       ],
     }),
     loadRawEmails: () => [
-      { messageId: "m1", from: "@affirm.com", subject: "unfortunately", body: "not moving forward" },
+      {
+        messageId: "m1",
+        from: "@affirm.com",
+        subject: "unfortunately",
+        body: "not moving forward",
+      },
       { messageId: "m2", from: "@block.xyz", subject: "unfortunately", body: "not moving forward" },
     ],
     updatePageStatus: async (c, pageId, s) => {

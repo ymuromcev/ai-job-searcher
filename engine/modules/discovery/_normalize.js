@@ -22,11 +22,7 @@ function parseIsoDate(value) {
       const moi = +mo - 1;
       const di = +d;
       const tmp = new Date(Date.UTC(yi, moi, di));
-      if (
-        tmp.getUTCFullYear() === yi &&
-        tmp.getUTCMonth() === moi &&
-        tmp.getUTCDate() === di
-      ) {
+      if (tmp.getUTCFullYear() === yi && tmp.getUTCMonth() === moi && tmp.getUTCDate() === di) {
         return `${y}-${mo}-${d}`;
       }
       return null;

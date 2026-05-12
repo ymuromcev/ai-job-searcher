@@ -26,10 +26,12 @@ function buildFilterRules(intake = {}) {
   const userTitles = Array.isArray(career.title_blocklist) ? career.title_blocklist : [];
   const titleBlocklist = [
     ...BASELINE_TITLE_PATTERNS,
-    ...userTitles.map((t) => ({
-      pattern: String(t).trim().toLowerCase(),
-      reason: "user title blocklist",
-    })).filter((p) => p.pattern.length),
+    ...userTitles
+      .map((t) => ({
+        pattern: String(t).trim().toLowerCase(),
+        reason: "user title blocklist",
+      }))
+      .filter((p) => p.pattern.length),
   ];
   // De-dupe by pattern.
   const seen = new Set();

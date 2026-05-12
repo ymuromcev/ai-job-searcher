@@ -20,29 +20,29 @@
  *   --list   print a summary line per file (count) instead of full report
  */
 
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
-const ROOT = path.resolve(__dirname, '..');
-const QUIET = process.argv.includes('--quiet');
-const LIST = process.argv.includes('--list');
+const ROOT = path.resolve(__dirname, "..");
+const QUIET = process.argv.includes("--quiet");
+const LIST = process.argv.includes("--list");
 
 const EXCLUDE_DIRS = new Set([
-  'node_modules',
-  '.git',
-  '.stage',
-  'private',
-  'profiles',
-  'data',
-  'coverage',
-  '.gmail-state',
-  '.gmail-tokens',
-  '.indeed-state',
-  'jd_cache',
+  "node_modules",
+  ".git",
+  ".stage",
+  "private",
+  "profiles",
+  "data",
+  "coverage",
+  ".gmail-state",
+  ".gmail-tokens",
+  ".indeed-state",
+  "jd_cache",
   // Agent tooling, not a public doc surface. Classifier-input strings
   // here are intentional RU signal (phrases the matcher listens for).
   // See RFC 018 §15 + each SKILL.md preamble.
-  'skills',
+  "skills",
 ]);
 
 // Files exempt from the EN-only rule. Use sparingly:
@@ -50,14 +50,12 @@ const EXCLUDE_DIRS = new Set([
 //     verbatim because the matcher compares user input against them.
 //     Prose-translation regressions there are caught by code review,
 //     not the scanner.
-const EXEMPT_FILES = new Set([
-  'rfc/009-application-answers-command.md',
-]);
+const EXEMPT_FILES = new Set(["rfc/009-application-answers-command.md"]);
 
 function shouldSkipDir(name) {
   if (EXCLUDE_DIRS.has(name)) return true;
-  if (name.startsWith('.stage')) return true;
-  if (name.startsWith('.') && name !== '.github') return true;
+  if (name.startsWith(".stage")) return true;
+  if (name.startsWith(".") && name !== ".github") return true;
   return false;
 }
 
@@ -66,7 +64,7 @@ function walk(dir, out = []) {
     if (entry.isDirectory()) {
       if (shouldSkipDir(entry.name)) continue;
       walk(path.join(dir, entry.name), out);
-    } else if (entry.isFile() && entry.name.endsWith('.md')) {
+    } else if (entry.isFile() && entry.name.endsWith(".md")) {
       out.push(path.join(dir, entry.name));
     }
   }
@@ -77,8 +75,8 @@ const CYRILLIC_RE = /[А-Яа-яЁё]/;
 const CYRILLIC_RUN_RE = /[А-Яа-яЁё][А-Яа-яЁё\s.,;:'"!?\-—–«»]*/g;
 
 function checkFile(absPath) {
-  const text = fs.readFileSync(absPath, 'utf8');
-  const lines = text.split('\n');
+  const text = fs.readFileSync(absPath, "utf8");
+  const lines = text.split("\n");
   const hits = [];
   lines.forEach((line, idx) => {
     if (!CYRILLIC_RE.test(line)) return;
@@ -115,18 +113,21 @@ function main() {
     console.error(`\n${rel}:`);
     for (const h of hits) {
       const sample = h.samples.length
-        ? h.samples.map(s => s.length > 40 ? s.slice(0, 37) + '…' : s).join(' | ')
-        : '(no extractable sample)';
+        ? h.samples.map((s) => (s.length > 40 ? s.slice(0, 37) + "…" : s)).join(" | ")
+        : "(no extractable sample)";
       console.error(`  L${h.line}  ${sample}`);
     }
   }
 
   if (totalHits === 0) {
-    if (!QUIET) console.log(`docs:lang   ${files.length} files scanned, 0 Cyrillic hits in public docs`);
+    if (!QUIET)
+      console.log(`docs:lang   ${files.length} files scanned, 0 Cyrillic hits in public docs`);
     process.exit(0);
   }
 
-  console.error(`\ndocs:lang   FAILED  ${totalHits} line(s) with Cyrillic in ${filesWithHits} public file(s)`);
+  console.error(
+    `\ndocs:lang   FAILED  ${totalHits} line(s) with Cyrillic in ${filesWithHits} public file(s)`
+  );
   console.error(`(public docs must be EN-only per RFC 018 §15; private/ is exempt)`);
   process.exit(1);
 }

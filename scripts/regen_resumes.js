@@ -63,13 +63,12 @@ async function main() {
     const version = {
       title: ver.title,
       summary: ver.summary,
-      skillsVariable:
-        ver.skillsProduct
-          ? [
-              { label: "Product", value: ver.skillsProduct },
-              { label: "Domain", value: ver.skillsDomain },
-            ]
-          : [],
+      skillsVariable: ver.skillsProduct
+        ? [
+            { label: "Product", value: ver.skillsProduct },
+            { label: "Domain", value: ver.skillsDomain },
+          ]
+        : [],
     };
 
     const data = {

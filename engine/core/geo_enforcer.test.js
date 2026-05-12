@@ -9,18 +9,21 @@ const { enforceGeo, isRemoteLoc, hasUsMarker } = require("./geo_enforcer.js");
 
 test("unrestricted mode passes everything", () => {
   const geo = { mode: "unrestricted" };
-  assert.deepStrictEqual(
-    enforceGeo(["Sacramento, CA"], geo),
-    { ok: true, reason: null, matchedBy: "unrestricted" }
-  );
-  assert.deepStrictEqual(
-    enforceGeo(["Munich, Germany"], geo),
-    { ok: true, reason: null, matchedBy: "unrestricted" }
-  );
-  assert.deepStrictEqual(
-    enforceGeo([], geo),
-    { ok: true, reason: null, matchedBy: "unrestricted" }
-  );
+  assert.deepStrictEqual(enforceGeo(["Sacramento, CA"], geo), {
+    ok: true,
+    reason: null,
+    matchedBy: "unrestricted",
+  });
+  assert.deepStrictEqual(enforceGeo(["Munich, Germany"], geo), {
+    ok: true,
+    reason: null,
+    matchedBy: "unrestricted",
+  });
+  assert.deepStrictEqual(enforceGeo([], geo), {
+    ok: true,
+    reason: null,
+    matchedBy: "unrestricted",
+  });
 });
 
 test("unrestricted mode still applies blocklist", () => {
@@ -265,9 +268,18 @@ test("Lilia metro profile: Sacramento area variants pass", () => {
   const geo = {
     mode: "metro",
     cities: [
-      "Sacramento", "Roseville", "Folsom", "Rocklin", "Citrus Heights",
-      "Elk Grove", "Auburn", "Rancho Cordova", "Davis", "West Sacramento",
-      "Carmichael", "Fair Oaks",
+      "Sacramento",
+      "Roseville",
+      "Folsom",
+      "Rocklin",
+      "Citrus Heights",
+      "Elk Grove",
+      "Auburn",
+      "Rancho Cordova",
+      "Davis",
+      "West Sacramento",
+      "Carmichael",
+      "Fair Oaks",
     ],
     states: ["CA"],
     remote_ok: false,

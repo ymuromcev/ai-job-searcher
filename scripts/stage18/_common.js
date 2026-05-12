@@ -143,8 +143,7 @@ function extractNotionPageId(urlOrId) {
   // Strip URL params / fragments first.
   const cleaned = urlOrId.split("?")[0].split("#")[0];
   // Find a 32-hex run (with or without dashes).
-  const m = cleaned.match(/[0-9a-fA-F]{32}/) ||
-            cleaned.match(/[0-9a-fA-F-]{36}/);
+  const m = cleaned.match(/[0-9a-fA-F]{32}/) || cleaned.match(/[0-9a-fA-F-]{36}/);
   if (!m) {
     throw new Error(
       `could not extract Notion page id from ${JSON.stringify(urlOrId)}. ` +

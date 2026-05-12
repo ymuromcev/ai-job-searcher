@@ -8,13 +8,17 @@
 // others emit the raw id ("7769924"). Strip the prefix so two scans of the same
 // posting via different adapter versions collide on the same key.
 function normalizeJobId(id) {
-  const s = String(id || "").trim().toLowerCase();
+  const s = String(id || "")
+    .trim()
+    .toLowerCase();
   const m = s.match(/^(gh|ashby|lever|workday|smart|sr):(.+)$/);
   return m ? m[2] : s;
 }
 
 function jobKey(job) {
-  const source = String(job.source || "").toLowerCase().trim();
+  const source = String(job.source || "")
+    .toLowerCase()
+    .trim();
   const id = normalizeJobId(job.jobId);
   return `${source}:${id}`;
 }
@@ -86,4 +90,12 @@ function dedupeAgainst(existing, incoming) {
   return fresh;
 }
 
-module.exports = { jobKey, normalizeJobId, normalizeCompanyName, normalizeTitle, fuzzyKey, dedupeJobs, dedupeAgainst };
+module.exports = {
+  jobKey,
+  normalizeJobId,
+  normalizeCompanyName,
+  normalizeTitle,
+  fuzzyKey,
+  dedupeJobs,
+  dedupeAgainst,
+};

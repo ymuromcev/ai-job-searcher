@@ -32,11 +32,9 @@ test("load returns empty when file missing", () => {
 });
 
 test("appendNew adds previously-unseen jobs as 'Inbox' entries (default status, RFC 014)", () => {
-  const result = apps.appendNew(
-    [],
-    [fixtureJob(), fixtureJob({ jobId: "2", title: "Staff PM" })],
-    { now: "2026-04-20T00:00:00Z" }
-  );
+  const result = apps.appendNew([], [fixtureJob(), fixtureJob({ jobId: "2", title: "Staff PM" })], {
+    now: "2026-04-20T00:00:00Z",
+  });
   assert.equal(result.apps.length, 2);
   assert.equal(result.fresh.length, 2);
   assert.equal(result.apps[0].key, "greenhouse:1");
@@ -133,9 +131,18 @@ test("load auto-upgrades v1 files (12 cols) with empty v2+v3+v4 fields", () => {
   const file = tmp();
   const v1Header = apps.HEADER_V1.join("\t");
   const v1Row = [
-    "greenhouse:1", "greenhouse", "1", "Affirm", "PM", "https://x/1",
-    "To Apply", "abc", "Risk_Fraud", "cl_key1",
-    "2026-01-01", "2026-01-02",
+    "greenhouse:1",
+    "greenhouse",
+    "1",
+    "Affirm",
+    "PM",
+    "https://x/1",
+    "To Apply",
+    "abc",
+    "Risk_Fraud",
+    "cl_key1",
+    "2026-01-01",
+    "2026-01-02",
   ].join("\t");
   fs.writeFileSync(file, `${v1Header}\n${v1Row}\n`);
 
@@ -163,10 +170,21 @@ test("load auto-upgrades v2 files (15 cols) with empty location and fit fields",
   const file = tmp();
   const v2Header = apps.HEADER_V2.join("\t");
   const v2Row = [
-    "greenhouse:1", "greenhouse", "1", "Affirm", "PM", "https://x/1",
-    "To Apply", "abc", "Risk_Fraud", "cl_key1",
-    "140000", "190000", "Affirm_analyst_20260420",
-    "2026-01-01", "2026-01-02",
+    "greenhouse:1",
+    "greenhouse",
+    "1",
+    "Affirm",
+    "PM",
+    "https://x/1",
+    "To Apply",
+    "abc",
+    "Risk_Fraud",
+    "cl_key1",
+    "140000",
+    "190000",
+    "Affirm_analyst_20260420",
+    "2026-01-01",
+    "2026-01-02",
   ].join("\t");
   fs.writeFileSync(file, `${v2Header}\n${v2Row}\n`);
 
@@ -189,11 +207,22 @@ test("load auto-upgrades v3 files (16 cols) with empty fit fields", () => {
   const file = tmp();
   const v3Header = apps.HEADER_V3.join("\t");
   const v3Row = [
-    "greenhouse:1", "greenhouse", "1", "Affirm", "PM", "https://x/1",
+    "greenhouse:1",
+    "greenhouse",
+    "1",
+    "Affirm",
+    "PM",
+    "https://x/1",
     "San Francisco, CA",
-    "To Apply", "abc", "Risk_Fraud", "cl_key1",
-    "140000", "190000", "Affirm_analyst_20260420",
-    "2026-01-01", "2026-01-02",
+    "To Apply",
+    "abc",
+    "Risk_Fraud",
+    "cl_key1",
+    "140000",
+    "190000",
+    "Affirm_analyst_20260420",
+    "2026-01-01",
+    "2026-01-02",
   ].join("\t");
   fs.writeFileSync(file, `${v3Header}\n${v3Row}\n`);
 
@@ -249,8 +278,20 @@ test("appendNew skips fuzzy duplicates of existing apps (cross-platform GH→Lev
     },
   ];
   const incoming = [
-    fixtureJob({ source: "lever", jobId: "lv-9", companyName: "Stripe, Inc.", title: "Senior PM", url: "https://jobs.lever.co/stripe/lv-9" }),
-    fixtureJob({ source: "lever", jobId: "lv-10", companyName: "Stripe", title: "Staff PM", url: "https://jobs.lever.co/stripe/lv-10" }),
+    fixtureJob({
+      source: "lever",
+      jobId: "lv-9",
+      companyName: "Stripe, Inc.",
+      title: "Senior PM",
+      url: "https://jobs.lever.co/stripe/lv-9",
+    }),
+    fixtureJob({
+      source: "lever",
+      jobId: "lv-10",
+      companyName: "Stripe",
+      title: "Staff PM",
+      url: "https://jobs.lever.co/stripe/lv-10",
+    }),
   ];
   const r = apps.appendNew(existing, incoming, { now: "2026-04-20T00:00:00Z" });
   assert.equal(r.fresh.length, 1, "Senior PM cross-platform dup must be skipped");
@@ -280,9 +321,7 @@ test("appendNew fuzzy-dedup does not over-match when company or title is missing
   ];
   const r = apps.appendNew(
     existing,
-    [
-      fixtureJob({ source: "remoteok", jobId: "2", companyName: "", title: "" }),
-    ],
+    [fixtureJob({ source: "remoteok", jobId: "2", companyName: "", title: "" })],
     { now: "2026-04-20T00:00:00Z" }
   );
   assert.equal(r.fresh.length, 1);

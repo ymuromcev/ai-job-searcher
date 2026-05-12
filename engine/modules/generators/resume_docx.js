@@ -77,7 +77,11 @@ function roleBlock(role) {
 function headerBlock(contact, versionTitle) {
   const displayName = versionTitle ? `${contact.name}, ${versionTitle}` : contact.name;
   const contactChildren = [
-    new TextRun({ text: `${contact.phone} \u2022 ${contact.location} \u2022 `, font: "Arial", size: 18 }),
+    new TextRun({
+      text: `${contact.phone} \u2022 ${contact.location} \u2022 `,
+      font: "Arial",
+      size: 18,
+    }),
     new ExternalHyperlink({
       children: [new TextRun({ text: contact.email, style: "Hyperlink", font: "Arial", size: 18 })],
       link: `mailto:${contact.email}`,
@@ -208,7 +212,14 @@ function skillsBlock(skills) {
   return out;
 }
 
-function buildDocument({ contact, version, sharedExperience, sharedSections, certifications, projects }) {
+function buildDocument({
+  contact,
+  version,
+  sharedExperience,
+  sharedSections,
+  certifications,
+  projects,
+}) {
   const experience = [...(version.experienceOverride || []), ...(sharedExperience || [])];
   const skills = [
     ...((sharedSections && sharedSections.skillsFixed) || []),

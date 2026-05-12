@@ -8,24 +8,26 @@
 // Usage:
 //   node scripts/migrate_backlog_to_files.js [--apply] [--source <path>] [--dest <dir>]
 
-'use strict';
+"use strict";
 
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
-const DEFAULT_SOURCE = 'private/BACKLOG.md';
-const DEFAULT_DEST = 'private/backlog/';
-const DEFAULT_CREATED = '2026-05-05';
+const DEFAULT_SOURCE = "private/BACKLOG.md";
+const DEFAULT_DEST = "private/backlog/";
+const DEFAULT_CREATED = "2026-05-05";
 
 function parseArgs(argv) {
   const args = { apply: false, source: DEFAULT_SOURCE, dest: DEFAULT_DEST };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--apply') args.apply = true;
-    else if (a === '--source') args.source = argv[++i];
-    else if (a === '--dest') args.dest = argv[++i];
-    else if (a === '--help' || a === '-h') {
-      console.log('Usage: node scripts/migrate_backlog_to_files.js [--apply] [--source <path>] [--dest <dir>]');
+    if (a === "--apply") args.apply = true;
+    else if (a === "--source") args.source = argv[++i];
+    else if (a === "--dest") args.dest = argv[++i];
+    else if (a === "--help" || a === "-h") {
+      console.log(
+        "Usage: node scripts/migrate_backlog_to_files.js [--apply] [--source <path>] [--dest <dir>]"
+      );
       process.exit(0);
     } else {
       console.error(`Unknown arg: ${a}`);
@@ -40,9 +42,9 @@ function parseArgs(argv) {
 // Match an id token in a heading. Forms recognised:
 //   BL-6, BL-6.1, BL #8, BL#8, BL 8, G-29, RFC-012, #1, #8.1
 const ID_PATTERNS = [
-  /\bBL[-\s#]*(\d+(?:\.\d+)?)\b/i,  // BL-6, BL #8, BL 8, BL-6.1
-  /\bG[-\s]*(\d+)\b/,                // G-29
-  /\bRFC[-\s]*(\d{1,3})\b/i,         // RFC-012
+  /\bBL[-\s#]*(\d+(?:\.\d+)?)\b/i, // BL-6, BL #8, BL 8, BL-6.1
+  /\bG[-\s]*(\d+)\b/, // G-29
+  /\bRFC[-\s]*(\d{1,3})\b/i, // RFC-012
 ];
 
 // Standalone #N — only when whole heading is "#N — Title"
@@ -57,11 +59,13 @@ function extractId(headingText) {
     const m = txt.match(re);
     if (m) {
       const num = m[1];
-      const prefix = re.source.startsWith('\\bBL') ? 'BL'
-        : re.source.startsWith('\\bG') ? 'G'
-        : 'RFC';
+      const prefix = re.source.startsWith("\\bBL")
+        ? "BL"
+        : re.source.startsWith("\\bG")
+          ? "G"
+          : "RFC";
       // Normalize RFC to 3-digit zero-pad
-      if (prefix === 'RFC') return `RFC-${num.padStart(3, '0')}`;
+      if (prefix === "RFC") return `RFC-${num.padStart(3, "0")}`;
       return `${prefix}-${num}`;
     }
   }
@@ -85,19 +89,19 @@ function extractTitle(headingText) {
   //   "RFC 012: Relational data model" → "Relational data model"
 
   // Drop leading id token(s)
-  t = t.replace(/^#?\d+(?:\.\d+)?\s*/, '');             // leading #N
-  t = t.replace(/^BL[-\s#]*\d+(?:\.\d+)?\s*/i, '');     // BL-N / BL #N
-  t = t.replace(/^G[-\s]*\d+\s*/, '');                  // G-N
-  t = t.replace(/^RFC[-\s]*\d{1,3}[:\s]*/i, '');        // RFC-NNN
+  t = t.replace(/^#?\d+(?:\.\d+)?\s*/, ""); // leading #N
+  t = t.replace(/^BL[-\s#]*\d+(?:\.\d+)?\s*/i, ""); // BL-N / BL #N
+  t = t.replace(/^G[-\s]*\d+\s*/, ""); // G-N
+  t = t.replace(/^RFC[-\s]*\d{1,3}[:\s]*/i, ""); // RFC-NNN
 
   // Drop emojis (basic stripping for the icons used in this file)
-  t = t.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F000}-\u{1F2FF}]/gu, '').trim();
+  t = t.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F000}-\u{1F2FF}]/gu, "").trim();
 
   // Drop parenthetical priority/state markers that are id-adjacent
-  t = t.replace(/^\((?:next|now|later|done|archive|архив)\)\s*/i, '');
+  t = t.replace(/^\((?:next|now|later|done|archive|архив)\)\s*/i, "");
 
   // Drop leading separator chars
-  t = t.replace(/^[—–\-:·\s]+/, '').trim();
+  t = t.replace(/^[—–\-:·\s]+/, "").trim();
 
   // If a colon remained ("RFC 012: Relational data model" path), keep the rhs
   // only when it's not a one-word noun like "DONE".
@@ -106,38 +110,72 @@ function extractTitle(headingText) {
 
 // Crude Cyrillic → Latin transliteration so RU-titled clusters get readable slugs.
 const CYR_MAP = {
-  а:'a',б:'b',в:'v',г:'g',д:'d',е:'e',ё:'yo',ж:'zh',з:'z',и:'i',й:'y',к:'k',л:'l',
-  м:'m',н:'n',о:'o',п:'p',р:'r',с:'s',т:'t',у:'u',ф:'f',х:'h',ц:'ts',ч:'ch',ш:'sh',
-  щ:'sch',ъ:'',ы:'y',ь:'',э:'e',ю:'yu',я:'ya',
+  а: "a",
+  б: "b",
+  в: "v",
+  г: "g",
+  д: "d",
+  е: "e",
+  ё: "yo",
+  ж: "zh",
+  з: "z",
+  и: "i",
+  й: "y",
+  к: "k",
+  л: "l",
+  м: "m",
+  н: "n",
+  о: "o",
+  п: "p",
+  р: "r",
+  с: "s",
+  т: "t",
+  у: "u",
+  ф: "f",
+  х: "h",
+  ц: "ts",
+  ч: "ch",
+  ш: "sh",
+  щ: "sch",
+  ъ: "",
+  ы: "y",
+  ь: "",
+  э: "e",
+  ю: "yu",
+  я: "ya",
 };
 
 function translitCyrillic(s) {
   return s.replace(/[а-яё]/gi, (ch) => {
     const lower = ch.toLowerCase();
-    return CYR_MAP[lower] || '';
+    return CYR_MAP[lower] || "";
   });
 }
 
 function slugify(title) {
-  if (!title) return 'untitled';
-  return translitCyrillic(title)
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')           // strip accents
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .replace(/-{2,}/g, '-')
-    .slice(0, 60) || 'untitled';
+  if (!title) return "untitled";
+  return (
+    translitCyrillic(title)
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[̀-ͯ]/g, "") // strip accents
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .replace(/-{2,}/g, "-")
+      .slice(0, 60) || "untitled"
+  );
 }
 
 // --- Heading scan ---
 
 function isHandoff(headingText) {
   const t = headingText.toLowerCase();
-  return /handoff/.test(t)
-    || /next session/i.test(headingText)
-    || /старый handoff/i.test(headingText)
-    || /🚀/.test(headingText);
+  return (
+    /handoff/.test(t) ||
+    /next session/i.test(headingText) ||
+    /старый handoff/i.test(headingText) ||
+    /🚀/.test(headingText)
+  );
 }
 
 function isArchiveHeader(headingText) {
@@ -155,7 +193,7 @@ function isQueueHeader(headingText) {
 }
 
 function looksArchived(headingText, body) {
-  const blob = (headingText + '\n' + body).toLowerCase();
+  const blob = (headingText + "\n" + body).toLowerCase();
   if (/\bdone\b/.test(blob)) return true;
   if (/✅/.test(blob)) return true;
   if (/recently closed/i.test(blob)) return true;
@@ -173,21 +211,21 @@ function extractCreated(body) {
 
 function extractPriority(body) {
   const m = body.match(/\b(P[0-3])\b/);
-  return m ? m[1] : 'P2';
+  return m ? m[1] : "P2";
 }
 
 function extractTier(body) {
   // Match "Тир: M" / "Tier: L" / "tier M-L" — take first letter of L/M/S/XS
   const m = body.match(/\b(?:тир|tier)\s*[:=\-—]?\s*(XS|S|M|L)\b/i);
-  return m ? m[1].toUpperCase() : 'M';
+  return m ? m[1].toUpperCase() : "M";
 }
 
 // --- Main parse loop ---
 
 function parseBacklog(text) {
   const lines = text.split(/\r?\n/);
-  const items = [];        // collected items
-  const skipped = [];      // {reason, heading}
+  const items = []; // collected items
+  const skipped = []; // {reason, heading}
 
   // Find heading lines (## or ###)
   const headings = [];
@@ -224,7 +262,10 @@ function parseBacklog(text) {
     // Body: cut at the first id-bearing child (siblings get their own files).
     // Id-less sub-headings are kept inline.
     const bodyEnd = Math.min(firstIdChildLine, endLine);
-    const body = lines.slice(cur.line + 1, bodyEnd).join('\n').trim();
+    const body = lines
+      .slice(cur.line + 1, bodyEnd)
+      .join("\n")
+      .trim();
     const hasChildren = firstChildLine < endLine;
     const hasIdChildren = firstIdChildLine < endLine;
 
@@ -232,7 +273,7 @@ function parseBacklog(text) {
     // see in the heading list — filter by walking forward and skipping any
     // child headings inside this range).
     if (cur.level === 2 && isHandoff(cur.text)) {
-      skipped.push({ reason: 'handoff', heading: cur.text });
+      skipped.push({ reason: "handoff", heading: cur.text });
       // Walk forward, skip every heading until next ## of equal level
       while (h + 1 < headings.length && headings[h + 1].line < endLine) h++;
       continue;
@@ -240,25 +281,25 @@ function parseBacklog(text) {
 
     // Skip archive section header itself; treat its children as archived items
     if (cur.level === 2 && isArchiveHeader(cur.text)) {
-      skipped.push({ reason: 'archive-header', heading: cur.text });
+      skipped.push({ reason: "archive-header", heading: cur.text });
       continue;
     }
 
     // Skip queue parent header (its #N children are the actual items)
     if (cur.level === 2 && isQueueHeader(cur.text) && hasIdChildren) {
-      skipped.push({ reason: 'queue-parent', heading: cur.text });
+      skipped.push({ reason: "queue-parent", heading: cur.text });
       continue;
     }
 
     // Skip parents whose body is empty AND have id-bearing children — pure container.
     if (!body && hasIdChildren) {
-      skipped.push({ reason: 'container-no-body', heading: cur.text });
+      skipped.push({ reason: "container-no-body", heading: cur.text });
       continue;
     }
 
     // Skip empty bodies (purely organizational headers, no children)
     if (!body) {
-      skipped.push({ reason: 'empty-body', heading: cur.text });
+      skipped.push({ reason: "empty-body", heading: cur.text });
       continue;
     }
 
@@ -283,7 +324,7 @@ function parseBacklog(text) {
       if (cur.level === 2) {
         id = `BL-topic-${slugify(extractTitle(cur.text))}`;
       } else {
-        skipped.push({ reason: 'no-id', heading: cur.text });
+        skipped.push({ reason: "no-id", heading: cur.text });
         isMalformed = true;
         continue;
       }
@@ -291,7 +332,7 @@ function parseBacklog(text) {
     if (isMalformed) continue;
 
     const title = extractTitle(cur.text) || cur.text;
-    const status = looksArchived(cur.text, body) ? 'archived' : 'planned';
+    const status = looksArchived(cur.text, body) ? "archived" : "planned";
     const created = extractCreated(body);
     const priority = extractPriority(body);
     const tier = extractTier(body);
@@ -330,26 +371,26 @@ function parseBacklog(text) {
 
 function renderFile(item) {
   const fm = [
-    '---',
+    "---",
     `id: ${item.id}`,
     `title: ${item.title.replace(/"/g, '\\"')}`,
     `status: ${item.status}`,
     `priority: ${item.priority}`,
     `tier: ${item.tier}`,
     `created: ${item.created}`,
-    'refs: []',
-    'tags: []',
-    '---',
-    '',
+    "refs: []",
+    "tags: []",
+    "---",
+    "",
     item.body,
-    '',
-  ].join('\n');
+    "",
+  ].join("\n");
   return fm;
 }
 
 function targetPath(destDir, item) {
   // For synthetic topic ids the id already encodes the slug; avoid duplicating.
-  const base = item.id.startsWith('BL-topic-') ? item.id : `${item.id}-${item.slug}`;
+  const base = item.id.startsWith("BL-topic-") ? item.id : `${item.id}-${item.slug}`;
   return path.join(destDir, `${base}.md`);
 }
 
@@ -365,7 +406,7 @@ function main() {
     console.error(`Source not found: ${sourcePath}`);
     process.exit(1);
   }
-  const text = fs.readFileSync(sourcePath, 'utf8');
+  const text = fs.readFileSync(sourcePath, "utf8");
   const { items, skipped } = parseBacklog(text);
 
   // Tally + plan
@@ -376,7 +417,7 @@ function main() {
     const content = renderFile(it);
     const exists = fs.existsSync(p);
     if (exists) {
-      const cur = fs.readFileSync(p, 'utf8');
+      const cur = fs.readFileSync(p, "utf8");
       if (cur !== content) existing.push({ item: it, path: p, differs: true, content });
       else existing.push({ item: it, path: p, differs: false });
     } else {
@@ -384,46 +425,48 @@ function main() {
     }
   }
 
-  const archived = items.filter((i) => i.status === 'archived').length;
+  const archived = items.filter((i) => i.status === "archived").length;
 
   // Plan output
-  console.log('=== migrate_backlog_to_files — plan ===');
+  console.log("=== migrate_backlog_to_files — plan ===");
   console.log(`source: ${path.relative(root, sourcePath)}`);
   console.log(`dest:   ${path.relative(root, destDir)}/`);
-  console.log(`mode:   ${args.apply ? 'APPLY' : 'dry-run'}`);
-  console.log('');
+  console.log(`mode:   ${args.apply ? "APPLY" : "dry-run"}`);
+  console.log("");
   console.log(`Detected items:           ${items.length}`);
   console.log(`  archived:               ${archived}`);
   console.log(`  planned:                ${items.length - archived}`);
   console.log(`Skipped:                  ${skipped.length}`);
   for (const s of skipped) console.log(`  - [${s.reason}] ${s.heading}`);
-  console.log('');
+  console.log("");
   console.log(`Targets new (will write): ${toWrite.length}`);
   console.log(`Targets already exist:    ${existing.length}`);
   console.log(`  identical content:      ${existing.filter((e) => !e.differs).length}`);
   console.log(`  differing content:      ${existing.filter((e) => e.differs).length}`);
-  console.log('');
-  console.log('--- Items ---');
+  console.log("");
+  console.log("--- Items ---");
   for (const it of items) {
     const p = targetPath(destDir, it);
     const rel = path.relative(root, p);
     const bytes = renderFile(it).length;
-    const flag = it.cluster ? ' [CLUSTER]' : '';
-    const stat = it.status === 'archived' ? '[archived]' : '[planned ]';
-    console.log(`  ${stat} ${it.id.padEnd(26)} ${it.title.slice(0, 60).padEnd(60)} → ${rel} (${bytes}B)${flag}`);
+    const flag = it.cluster ? " [CLUSTER]" : "";
+    const stat = it.status === "archived" ? "[archived]" : "[planned ]";
+    console.log(
+      `  ${stat} ${it.id.padEnd(26)} ${it.title.slice(0, 60).padEnd(60)} → ${rel} (${bytes}B)${flag}`
+    );
   }
 
   if (existing.some((e) => e.differs)) {
-    console.log('');
-    console.log('!!! WARNING: targets already exist with differing content:');
+    console.log("");
+    console.log("!!! WARNING: targets already exist with differing content:");
     for (const e of existing.filter((e) => e.differs)) {
       console.log(`  ${path.relative(root, e.path)}`);
     }
   }
 
   if (!args.apply) {
-    console.log('');
-    console.log('(dry-run; rerun with --apply to write files)');
+    console.log("");
+    console.log("(dry-run; rerun with --apply to write files)");
     return;
   }
 
@@ -432,7 +475,7 @@ function main() {
   let written = 0;
   let skippedExisting = 0;
   for (const w of toWrite) {
-    fs.writeFileSync(w.path, w.content, 'utf8');
+    fs.writeFileSync(w.path, w.content, "utf8");
     written++;
   }
   for (const e of existing) {
@@ -443,12 +486,14 @@ function main() {
       skippedExisting++;
     }
   }
-  console.log('');
+  console.log("");
   console.log(`Wrote: ${written}, skipped (existing): ${skippedExisting}`);
 }
 
 if (require.main === module) {
-  try { main(); } catch (e) {
+  try {
+    main();
+  } catch (e) {
     console.error(e.stack || e.message);
     process.exit(1);
   }

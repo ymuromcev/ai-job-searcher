@@ -76,13 +76,17 @@ function buildTenantUrls(target) {
 
 function locationMatchesAllow(locationsText, allow) {
   if (!Array.isArray(allow) || allow.length === 0) return true;
-  const lt = String(locationsText == null ? "" : locationsText).toLowerCase().trim();
+  const lt = String(locationsText == null ? "" : locationsText)
+    .toLowerCase()
+    .trim();
   if (!lt) return false;
   // Workday hides multi-location postings behind "N Locations" / "N Location" —
   // we cannot match cities without an extra API call, so drop conservatively.
   if (/^\d+\s+locations?$/.test(lt)) return false;
   return allow.some((p) => {
-    const needle = String(p == null ? "" : p).toLowerCase().trim();
+    const needle = String(p == null ? "" : p)
+      .toLowerCase()
+      .trim();
     return needle.length > 0 && lt.includes(needle);
   });
 }

@@ -65,7 +65,13 @@ test("defaultFetch returns 4xx response without retry", async () => {
   await withFetch(
     async () => {
       n += 1;
-      return { ok: false, status: 404, async json() { return {}; } };
+      return {
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
+      };
     },
     async () => {
       const res = await defaultFetch("https://x.test/", { retries: 3, backoffMs: 1 });

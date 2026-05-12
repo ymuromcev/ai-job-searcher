@@ -79,8 +79,7 @@ test("the_muse: passes ALL Product-category items through (no adapter-level titl
 });
 
 test("the_muse: normalises job fields correctly", async () => {
-  const fetchFn = async () =>
-    makeRes({ results: [PM_ITEM], page_count: 1 });
+  const fetchFn = async () => makeRes({ results: [PM_ITEM], page_count: 1 });
 
   const [job] = await discover([], { fetchFn, logger: { warn: () => {} } });
 
@@ -145,8 +144,7 @@ test("the_muse: handles HTTP error gracefully, returns accumulated jobs", async 
 test("the_muse: keeps adjacent PM titles (product lead, product owner) — passthrough", async () => {
   const leadItem = { ...PM_ITEM, id: 501, name: "Product Lead, Growth" };
   const ownerItem = { ...PM_ITEM, id: 502, name: "Product Owner" };
-  const fetchFn = async () =>
-    makeRes({ results: [leadItem, ownerItem], page_count: 1 });
+  const fetchFn = async () => makeRes({ results: [leadItem, ownerItem], page_count: 1 });
 
   const jobs = await discover([], { fetchFn, logger: { warn: () => {} } });
   assert.equal(jobs.length, 2);

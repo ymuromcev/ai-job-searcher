@@ -67,7 +67,9 @@ function stripAllPrefixes(id) {
 }
 
 function canonicalKey(app) {
-  const source = String(app.source || "").toLowerCase().trim();
+  const source = String(app.source || "")
+    .toLowerCase()
+    .trim();
   const id = stripAllPrefixes(app.jobId);
   if (!source || !id) return null;
   return `${source}:${id}`;
@@ -91,7 +93,9 @@ function parseTime(s) {
 // be a true reuse of an id by the ATS or a data corruption that needs
 // human eyes. Surfaced separately in the report.
 function normalizeCompanyForCompare(s) {
-  return String(s || "").toLowerCase().trim();
+  return String(s || "")
+    .toLowerCase()
+    .trim();
 }
 
 function normalizeUrlForCompare(s) {
@@ -245,9 +249,7 @@ function planDedup(apps) {
   // Preserve original row order in the output as much as possible: walk
   // the input list, replace dropped rows with their winner once, skip the
   // rest. (kept above was append-as-we-go which doesn't preserve order.)
-  const winnerByCanonical = new Map(
-    pairsByGroup.map((g) => [g.canonical, g.winner])
-  );
+  const winnerByCanonical = new Map(pairsByGroup.map((g) => [g.canonical, g.winner]));
   const droppedKeys = new Set(dropped.map((r) => r.key));
   const orderedKept = [];
   const emittedCanonical = new Set();

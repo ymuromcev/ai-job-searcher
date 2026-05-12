@@ -117,8 +117,7 @@ const ADAPTER_PRESETS = {
   smartrecruiters: {
     name: "SmartRecruiters",
     type: "ATS",
-    apiTemplate:
-      "https://api.smartrecruiters.com/v1/companies/{slug}/postings",
+    apiTemplate: "https://api.smartrecruiters.com/v1/companies/{slug}/postings",
   },
   workday: {
     name: "Workday",
@@ -217,9 +216,7 @@ async function createDb(client, parentPageId, title, properties, description) {
   return client.databases.create({
     parent: { type: "page_id", page_id: parentPageId },
     title: [{ type: "text", text: { content: title } }],
-    description: description
-      ? [{ type: "text", text: { content: description } }]
-      : undefined,
+    description: description ? [{ type: "text", text: { content: description } }] : undefined,
     is_inline: false,
     initial_data_source: { properties },
   });
@@ -245,7 +242,9 @@ async function ensureDb(client, parentPageId, title, properties, description, ar
   }
 
   if (!id) {
-    console.log(`    will create "${title}" (${Object.keys(properties).length} props) under ${parentPageId}`);
+    console.log(
+      `    will create "${title}" (${Object.keys(properties).length} props) under ${parentPageId}`
+    );
     if (!args.apply) return { id: "<dry-run>", created: true };
     const resp = await createDb(client, parentPageId, title, properties, description);
     id = resp.id;

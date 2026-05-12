@@ -1,11 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const {
-  resolvePropertyMap,
-  toNotionSchema,
-  CORE_FIELDS,
-} = require("./property_map.js");
+const { resolvePropertyMap, toNotionSchema, CORE_FIELDS } = require("./property_map.js");
 
 test("resolvePropertyMap: core always present", () => {
   const pm = resolvePropertyMap({});
@@ -47,11 +43,7 @@ test("resolvePropertyMap: watcher gated on explicit flag", () => {
 
 test("resolvePropertyMap: second-profile-like minimal profile excludes CalCareers fields", () => {
   const pm = resolvePropertyMap({
-    modules: [
-      "discovery:greenhouse",
-      "discovery:lever",
-      "discovery:ashby",
-    ],
+    modules: ["discovery:greenhouse", "discovery:lever", "discovery:ashby"],
     flags: { watcher_enabled: false },
   });
   // Core + prepare + check, no CalCareers/watcher

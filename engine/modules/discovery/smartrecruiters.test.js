@@ -59,7 +59,10 @@ test("smartrecruiters.discover maps fixture to normalized jobs", async () => {
   assert.deepEqual(j1.locations, ["San Francisco, CA"]);
   assert.equal(j1.team, "Product");
   assert.equal(j1.postedAt, "2026-04-01");
-  assert.equal(j1.url, "https://jobs.smartrecruiters.com/Bosch/abc123-director-of-product-platform-identity");
+  assert.equal(
+    j1.url,
+    "https://jobs.smartrecruiters.com/Bosch/abc123-director-of-product-platform-identity"
+  );
 
   assert.deepEqual(j2.locations, ["Remote"]);
   assert.equal(j2.team, null);
@@ -103,15 +106,17 @@ test("smartrecruiters rejects empty title via assertJob", async () => {
     "https://api.smartrecruiters.com/v1/companies/empty/postings": {
       status: 200,
       body: {
-        content: [{ id: "x1", name: "", location: { city: "SF" }, department: null, releasedDate: null }],
+        content: [
+          { id: "x1", name: "", location: { city: "SF" }, department: null, releasedDate: null },
+        ],
       },
     },
   });
   const logs = [];
-  const jobs = await sr.discover(
-    [{ name: "Empty", slug: "empty" }],
-    { fetchFn, logger: { warn: (m) => logs.push(m) } }
-  );
+  const jobs = await sr.discover([{ name: "Empty", slug: "empty" }], {
+    fetchFn,
+    logger: { warn: (m) => logs.push(m) },
+  });
   assert.deepEqual(jobs, []);
   assert.equal(logs.length, 1);
   assert.match(logs[0], /title must be a non-empty string/);

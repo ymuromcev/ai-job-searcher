@@ -28,7 +28,11 @@ test("backupFilename uses Company_role-slug_YYYYMMDD format", () => {
 });
 
 test("backupFilename handles Figma's role with comma", () => {
-  const f = backupFilename({ company: "Figma", role: "Product Manager, AI Platform", dateStamp: "20260430" });
+  const f = backupFilename({
+    company: "Figma",
+    role: "Product Manager, AI Platform",
+    dateStamp: "20260430",
+  });
   assert.equal(f, "Figma_product-manager-ai-platform_20260430.md");
 });
 
@@ -62,7 +66,13 @@ test("buildBackupMarkdown formats expected sections", () => {
 
 test("buildBackupMarkdown marks update vs submit", () => {
   const fresh = buildBackupMarkdown({ company: "X", role: "Y", question: "Q", answer: "A" });
-  const updated = buildBackupMarkdown({ company: "X", role: "Y", question: "Q", answer: "A", existingPageId: "p1" });
+  const updated = buildBackupMarkdown({
+    company: "X",
+    role: "Y",
+    question: "Q",
+    answer: "A",
+    existingPageId: "p1",
+  });
   assert.match(fresh, /\*\*Status\*\*: submitted/);
   assert.match(updated, /\*\*Status\*\*: updated/);
 });
@@ -114,9 +124,7 @@ function makeCtx({ phase, flags = {}, env, replaceEnv = false } = {}) {
   const err = captureWriter();
   // Default env supplies a fake token. Tests that want to assert "missing token"
   // pass `replaceEnv: true` with `env: {}`.
-  const finalEnv = replaceEnv
-    ? env || {}
-    : { JARED_NOTION_TOKEN: "ntn_test", ...(env || {}) };
+  const finalEnv = replaceEnv ? env || {} : { JARED_NOTION_TOKEN: "ntn_test", ...(env || {}) };
   return {
     profileId: "jared",
     flags: { phase, ...flags },
@@ -306,7 +314,10 @@ test("runPush creates Notion page + writes local backup", async () => {
   // Backup written to expected dir.
   const writtenPaths = Object.keys(fakeFs._written);
   assert.equal(writtenPaths.length, 1);
-  assert.match(writtenPaths[0], /\/tmp\/profiles\/jared\/application_answers\/Linear_product-manager_/);
+  assert.match(
+    writtenPaths[0],
+    /\/tmp\/profiles\/jared\/application_answers\/Linear_product-manager_/
+  );
   assert.match(fakeFs._written[writtenPaths[0]], /## Q\. Why join\?/);
 });
 
@@ -357,22 +368,38 @@ test("answer command errors on missing/unknown phase", async () => {
 
 test("validateDraft rejects non-string existingPageId", () => {
   const errs1 = validateDraft({
-    company: "X", role: "Y", question: "Z", answer: "A", existingPageId: 42,
+    company: "X",
+    role: "Y",
+    question: "Z",
+    answer: "A",
+    existingPageId: 42,
   });
   assert.match(errs1.join(";"), /existingPageId must be a non-empty string/);
   const errs2 = validateDraft({
-    company: "X", role: "Y", question: "Z", answer: "A", existingPageId: "",
+    company: "X",
+    role: "Y",
+    question: "Z",
+    answer: "A",
+    existingPageId: "",
   });
   assert.match(errs2.join(";"), /existingPageId must be a non-empty string/);
   const errs3 = validateDraft({
-    company: "X", role: "Y", question: "Z", answer: "A", existingPageId: "abc",
+    company: "X",
+    role: "Y",
+    question: "Z",
+    answer: "A",
+    existingPageId: "abc",
   });
   assert.deepEqual(errs3, []);
 });
 
 test("validateDraft rejects non-string notes", () => {
   const errs = validateDraft({
-    company: "X", role: "Y", question: "Z", answer: "A", notes: 123,
+    company: "X",
+    role: "Y",
+    question: "Z",
+    answer: "A",
+    notes: 123,
   });
   assert.match(errs.join(";"), /notes must be a string/);
 });

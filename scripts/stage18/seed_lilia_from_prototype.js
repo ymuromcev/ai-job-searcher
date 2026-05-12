@@ -16,14 +16,7 @@
 const path = require("path");
 const fs = require("fs");
 
-const {
-  parseArgs,
-  banner,
-  done,
-  fatal,
-  profileDir,
-  loadIntake,
-} = require("./_common.js");
+const { parseArgs, banner, done, fatal, profileDir, loadIntake } = require("./_common.js");
 const applications = require("../../engine/core/applications_tsv.js");
 
 function resolveClPath(profileDirPath, jobId) {
@@ -74,12 +67,14 @@ function main() {
   const profileDirPath = profileDir(id);
   const configPath = path.join(profileDirPath, "cover_letter_versions.json");
   if (!fs.existsSync(configPath)) {
-    fatal(new Error(`cover_letter_versions.json not found at ${configPath} — run import_prototype first`));
+    fatal(
+      new Error(
+        `cover_letter_versions.json not found at ${configPath} — run import_prototype first`
+      )
+    );
   }
   const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  const letters = Array.isArray(cfg.letters)
-    ? cfg.letters
-    : Object.values(cfg.letters || {});
+  const letters = Array.isArray(cfg.letters) ? cfg.letters : Object.values(cfg.letters || {});
 
   const now = new Date().toISOString();
   const rows = buildRowsFromLetters(letters, profileDirPath, now);
@@ -109,7 +104,11 @@ function main() {
 }
 
 if (require.main === module) {
-  try { main(); } catch (err) { fatal(err); }
+  try {
+    main();
+  } catch (err) {
+    fatal(err);
+  }
 }
 
 module.exports = { buildRowsFromLetters, resolveClPath };

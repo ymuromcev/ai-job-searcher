@@ -162,10 +162,7 @@ test("buildCandidateProfileBlocks: uses identity + preferences, ends with sentin
   // Last block: sentinel
   const last = blocks[blocks.length - 1];
   assert.equal(last.type, "paragraph");
-  assert.equal(
-    last.paragraph.rich_text[0].text.content,
-    subpageSentinel("candidate_profile")
-  );
+  assert.equal(last.paragraph.rich_text[0].text.content, subpageSentinel("candidate_profile"));
 });
 
 test("buildCandidateProfileBlocks: empty profile still produces heading + sentinel", () => {
@@ -246,20 +243,25 @@ test("buildWorkflowBlocks: section headings are in Russian", () => {
   const blocks = buildWorkflowBlocks("lilia");
   const headings = blocks
     .filter((b) => b.type === "heading_2" || b.type === "heading_3")
-    .map((b) =>
-      ((b.heading_2 || b.heading_3).rich_text || [])
-        .map((r) => r.text.content)
-        .join("")
-    );
+    .map((b) => ((b.heading_2 || b.heading_3).rich_text || []).map((r) => r.text.content).join(""));
   // At least one h2 must be in Russian
   assert.ok(
     headings.some((h) => /Команды|Ограничения|Ключевые файлы|Триггеры/.test(h)),
     `expected at least one Russian h2 heading, got: ${headings.join(" | ")}`
   );
   // Headings include a Russian descriptor on key commands
-  assert.ok(headings.some((h) => h.includes("Найти новые вакансии")), "scan heading translated");
-  assert.ok(headings.some((h) => h.includes("Подготовить материалы")), "prepare heading translated");
-  assert.ok(headings.some((h) => h.includes("Синхронизировать")), "sync heading translated");
+  assert.ok(
+    headings.some((h) => h.includes("Найти новые вакансии")),
+    "scan heading translated"
+  );
+  assert.ok(
+    headings.some((h) => h.includes("Подготовить материалы")),
+    "prepare heading translated"
+  );
+  assert.ok(
+    headings.some((h) => h.includes("Синхронизировать")),
+    "sync heading translated"
+  );
 });
 
 test("buildWorkflowBlocks: uses unified status set (no Phone Screen / Onsite transitions; RFC 014 Inbox→To Apply allowed)", () => {
@@ -272,10 +274,7 @@ test("buildWorkflowBlocks: uses unified status set (no Phone Screen / Onsite tra
   assert.ok(!joined.includes("→ Onsite"), "no transition to Onsite status");
   // Company cap explicitly listed as "Applied + To Apply" — Inbox MUST NOT
   // appear in the cap list (RFC 014: Inbox is pre-triage, doesn't count).
-  assert.ok(
-    !/активные вакансии[^)]*Inbox/i.test(joined),
-    "company cap should not include Inbox"
-  );
+  assert.ok(!/активные вакансии[^)]*Inbox/i.test(joined), "company cap should not include Inbox");
 });
 
 test("buildWorkflowBlocks: ignores legacy flavor field — single workflow for all profiles", () => {
@@ -345,12 +344,18 @@ test("buildTargetTierBlocks: heading + body are in Russian", () => {
   const bullets = blocks
     .filter((b) => b.type === "bulleted_list_item")
     .map((b) => b.bulleted_list_item.rich_text[0].text.content);
-  assert.ok(bullets.some((t) => t.includes("компании мечты")), "S tier body in Russian");
+  assert.ok(
+    bullets.some((t) => t.includes("компании мечты")),
+    "S tier body in Russian"
+  );
   // Counts paragraph is Russian
   const paragraphs = blocks
     .filter((b) => b.type === "paragraph")
     .map((b) => b.paragraph.rich_text[0].text.content);
-  assert.ok(paragraphs.some((t) => t.includes("Текущие счётчики")), "counts label in Russian");
+  assert.ok(
+    paragraphs.some((t) => t.includes("Текущие счётчики")),
+    "counts label in Russian"
+  );
 });
 
 // ---------------------------------------------------------------------------

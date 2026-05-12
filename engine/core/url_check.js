@@ -27,7 +27,7 @@ const SKIP_URL_CHECK_SOURCES = new Set(["linkedin", "indeed", "custom"]);
 // Patterns indicating a redirect landed on a generic board root page (job
 // was pulled but the ATS still returns 200 for the careers-home URL).
 const BOARD_ROOT_RE = [
-  /greenhouse\.io\/[^/]+\/?(?:\?|$)/i,      // /slug or /slug/
+  /greenhouse\.io\/[^/]+\/?(?:\?|$)/i, // /slug or /slug/
   /careers\.airbnb\.com\/positions\/?$/i,
   /careers\.airbnb\.com\/positions\/\?/i,
   /\/jobs\/?$/i,
@@ -48,13 +48,13 @@ function isPrivateIpv4(host) {
   const o = ipv4Octets(host);
   if (!o) return false;
   const [a, b] = o;
-  if (a === 10) return true;                         // 10.0.0.0/8
-  if (a === 127) return true;                        // loopback
-  if (a === 169 && b === 254) return true;           // link-local
-  if (a === 172 && b >= 16 && b <= 31) return true;  // 172.16/12
-  if (a === 192 && b === 168) return true;           // 192.168/16
-  if (a === 0) return true;                          // 0.0.0.0/8
-  if (a === 255 && b === 255) return true;           // broadcast
+  if (a === 10) return true; // 10.0.0.0/8
+  if (a === 127) return true; // loopback
+  if (a === 169 && b === 254) return true; // link-local
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12
+  if (a === 192 && b === 168) return true; // 192.168/16
+  if (a === 0) return true; // 0.0.0.0/8
+  if (a === 255 && b === 255) return true; // broadcast
   return false;
 }
 
@@ -62,7 +62,7 @@ function isPrivateIpv6(host) {
   const h = host.toLowerCase();
   if (h === "::" || h === "::1") return true;
   if (h.startsWith("fe80:") || h.startsWith("fe80::")) return true; // link-local
-  if (h.startsWith("fc") || h.startsWith("fd")) return true;        // unique local
+  if (h.startsWith("fc") || h.startsWith("fd")) return true; // unique local
   return false;
 }
 
@@ -173,9 +173,7 @@ async function checkAll(rows, fetchFn, opts = {}) {
       results[idx] = await checkOne(rows[idx], fetchFn, opts);
     }
   }
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, rows.length) }, () => worker())
-  );
+  await Promise.all(Array.from({ length: Math.min(concurrency, rows.length) }, () => worker()));
   return results;
 }
 

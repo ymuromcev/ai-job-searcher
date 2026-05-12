@@ -98,7 +98,10 @@ test("scan records error when adapter for source is missing", async () => {
 });
 
 test("scan is idempotent on repeated calls against same pool", async () => {
-  const adapter = stubAdapter("greenhouse", async () => [job("greenhouse", 1), job("greenhouse", 2)]);
+  const adapter = stubAdapter("greenhouse", async () => [
+    job("greenhouse", 1),
+    job("greenhouse", 2),
+  ]);
   const first = await scan({
     targetsBySource: { greenhouse: [{ slug: "acme" }] },
     adapters: [adapter],

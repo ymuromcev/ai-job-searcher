@@ -29,20 +29,18 @@ const BASE = "https://www.themuse.com/api/public/jobs";
 const MAX_PAGES = 4; // 20 results/page × 4 pages = up to 80 raw results
 
 function companySlug(name) {
-  return String(name || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "") || "unknown";
+  return (
+    String(name || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "unknown"
+  );
 }
 
 function mapJob(item) {
-  const company = sanitizeText(
-    (item.company && item.company.name) || "Unknown"
-  );
+  const company = sanitizeText((item.company && item.company.name) || "Unknown");
   const locations = dedupeLocations(
-    (Array.isArray(item.locations) ? item.locations : []).map(
-      (l) => l && l.name
-    )
+    (Array.isArray(item.locations) ? item.locations : []).map((l) => l && l.name)
   );
   const url = (item.refs && item.refs.landing_page) || "";
   const job = {

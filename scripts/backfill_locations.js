@@ -28,9 +28,7 @@ function parseArgs(argv) {
     if (a === "--profile") out.profile = argv[++i];
     else if (a === "--apply") out.apply = true;
     else if (a === "--help" || a === "-h") {
-      process.stdout.write(
-        "Usage: node scripts/backfill_locations.js --profile <id> [--apply]\n"
-      );
+      process.stdout.write("Usage: node scripts/backfill_locations.js --profile <id> [--apply]\n");
       process.exit(0);
     }
   }
@@ -65,9 +63,7 @@ function main() {
     const key = `${String(j.source || "").toLowerCase()}:${j.jobId}`;
     if (!locByKey.has(key)) {
       const loc =
-        Array.isArray(j.locations) && j.locations.length > 0
-          ? String(j.locations[0])
-          : "";
+        Array.isArray(j.locations) && j.locations.length > 0 ? String(j.locations[0]) : "";
       locByKey.set(key, loc);
     }
   }

@@ -87,7 +87,11 @@ function formatLever(data, job) {
 
 const DEFAULT_DEPS = {
   fetchFn: defaultFetch,
-  exists: (p) => fsp.access(p).then(() => true, () => false),
+  exists: (p) =>
+    fsp.access(p).then(
+      () => true,
+      () => false
+    ),
   readFile: (p) => fsp.readFile(p, "utf8"),
   writeFile: (p, data) => fsp.writeFile(p, data, "utf8"),
   mkdirp: (dir) => fsp.mkdir(dir, { recursive: true }),
@@ -148,9 +152,7 @@ async function fetchAll(jobs, cacheDir, deps = {}, opts = {}) {
       results[idx] = await fetchJd(jobs[idx], cacheDir, deps);
     }
   }
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, jobs.length) }, () => worker())
-  );
+  await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, () => worker()));
   return results;
 }
 

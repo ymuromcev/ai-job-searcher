@@ -129,10 +129,11 @@ test("calcareers.discover dedupes across pages by jobControlId", async () => {
     }, // page 2
   ];
   const fetchFn = makeFetch(script);
-  const jobs = await calcareers.discover(
-    [{ name: "x", slug: "x", keyword: "kw" }],
-    { fetchFn, stepDelayMs: 0, keywordDelayMs: 0 }
-  );
+  const jobs = await calcareers.discover([{ name: "x", slug: "x", keyword: "kw" }], {
+    fetchFn,
+    stepDelayMs: 0,
+    keywordDelayMs: 0,
+  });
   const ids = jobs.map((j) => j.jobId).sort();
   assert.deepEqual(ids, ["500001", "500002", "500003"]);
 });
@@ -155,10 +156,12 @@ test("calcareers.discover warns when ResultCount marker is missing but rows exis
   ];
   const fetchFn = makeFetch(script);
   const logs = [];
-  const jobs = await calcareers.discover(
-    [{ name: "x", slug: "x", keyword: "kw" }],
-    { fetchFn, stepDelayMs: 0, keywordDelayMs: 0, logger: { warn: (m) => logs.push(m) } }
-  );
+  const jobs = await calcareers.discover([{ name: "x", slug: "x", keyword: "kw" }], {
+    fetchFn,
+    stepDelayMs: 0,
+    keywordDelayMs: 0,
+    logger: { warn: (m) => logs.push(m) },
+  });
   assert.equal(jobs.length, 2);
   assert.ok(logs.some((m) => m.includes("ResultCount marker missing")));
 });
@@ -167,10 +170,10 @@ test("calcareers.discover surfaces errors via logger (no viewstate)", async () =
   const script = [{ status: 200, html: "<html>no viewstate here</html>" }];
   const fetchFn = makeFetch(script);
   const logs = [];
-  const jobs = await calcareers.discover(
-    [{ name: "x", slug: "x", keyword: "kw" }],
-    { fetchFn, logger: { warn: (m) => logs.push(m) } }
-  );
+  const jobs = await calcareers.discover([{ name: "x", slug: "x", keyword: "kw" }], {
+    fetchFn,
+    logger: { warn: (m) => logs.push(m) },
+  });
   assert.deepEqual(jobs, []);
   assert.match(logs[0], /no viewstate/);
 });

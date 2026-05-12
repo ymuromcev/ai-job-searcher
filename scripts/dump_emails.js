@@ -32,13 +32,14 @@ function parseArgs(argv) {
     else if (a === "--max-body") args.maxBody = Number(argv[++i]);
   }
   if (!args.profile || !args.ids) {
-    console.error(
-      "usage: node scripts/dump_emails.js --profile <id> --ids ID1,ID2,..."
-    );
+    console.error("usage: node scripts/dump_emails.js --profile <id> --ids ID1,ID2,...");
     process.exit(1);
   }
   args.maxBody = args.maxBody || 2000;
-  args.idList = args.ids.split(",").map((s) => s.trim()).filter(Boolean);
+  args.idList = args.ids
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   return args;
 }
 

@@ -97,10 +97,9 @@ test("workday.discover stops early when page is short", async () => {
     },
     recorded
   );
-  const jobs = await workday.discover(
-    [{ name: "X", slug: "x", dc: "wd5", site: "External" }],
-    { fetchFn }
-  );
+  const jobs = await workday.discover([{ name: "X", slug: "x", dc: "wd5", site: "External" }], {
+    fetchFn,
+  });
   assert.equal(jobs.length, 1);
   assert.equal(recorded.length, 1);
 });
@@ -112,7 +111,12 @@ test("workday.discover drops postings without externalPath and warns", async () 
       body: {
         total: 3,
         jobPostings: [
-          { title: "Good", locationsText: "SF", externalPath: "/job/SF/Good/JR-1", postedOn: "2026-04-01" },
+          {
+            title: "Good",
+            locationsText: "SF",
+            externalPath: "/job/SF/Good/JR-1",
+            postedOn: "2026-04-01",
+          },
           { title: "NoPath", locationsText: "NY", postedOn: "2026-04-02" },
           { title: "EmptyPath", locationsText: "LA", externalPath: "", postedOn: "2026-04-03" },
         ],
@@ -120,10 +124,10 @@ test("workday.discover drops postings without externalPath and warns", async () 
     },
   });
   const logs = [];
-  const jobs = await workday.discover(
-    [{ name: "Acme", slug: "acme" }],
-    { fetchFn, logger: { warn: (m) => logs.push(m) } }
-  );
+  const jobs = await workday.discover([{ name: "Acme", slug: "acme" }], {
+    fetchFn,
+    logger: { warn: (m) => logs.push(m) },
+  });
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].jobId, "/job/SF/Good/JR-1");
   assert.ok(logs.some((m) => m.includes("dropped 2 postings without externalPath")));
@@ -135,17 +139,52 @@ test("workday.discover loops over searchTexts and dedupes by externalPath", asyn
   const recorded = [];
   const responsesByQuery = {
     "patient access": [
-      { title: "Patient Access Rep", locationsText: "Sac", externalPath: "/job/JR-100", postedOn: "2026-04-01" },
-      { title: "Patient Access Coord", locationsText: "Sac", externalPath: "/job/JR-101", postedOn: "2026-04-02" },
+      {
+        title: "Patient Access Rep",
+        locationsText: "Sac",
+        externalPath: "/job/JR-100",
+        postedOn: "2026-04-01",
+      },
+      {
+        title: "Patient Access Coord",
+        locationsText: "Sac",
+        externalPath: "/job/JR-101",
+        postedOn: "2026-04-02",
+      },
     ],
     scheduler: [
-      { title: "Patient Access Rep", locationsText: "Sac", externalPath: "/job/JR-100", postedOn: "2026-04-01" }, // dup of query 1
-      { title: "Scheduler", locationsText: "Sac", externalPath: "/job/JR-200", postedOn: "2026-04-03" },
+      {
+        title: "Patient Access Rep",
+        locationsText: "Sac",
+        externalPath: "/job/JR-100",
+        postedOn: "2026-04-01",
+      }, // dup of query 1
+      {
+        title: "Scheduler",
+        locationsText: "Sac",
+        externalPath: "/job/JR-200",
+        postedOn: "2026-04-03",
+      },
     ],
     "front desk": [
-      { title: "Scheduler", locationsText: "Sac", externalPath: "/job/JR-200", postedOn: "2026-04-03" }, // dup of query 2
-      { title: "Front Desk", locationsText: "Sac", externalPath: "/job/JR-300", postedOn: "2026-04-04" },
-      { title: "Receptionist", locationsText: "Sac", externalPath: "/job/JR-301", postedOn: "2026-04-05" },
+      {
+        title: "Scheduler",
+        locationsText: "Sac",
+        externalPath: "/job/JR-200",
+        postedOn: "2026-04-03",
+      }, // dup of query 2
+      {
+        title: "Front Desk",
+        locationsText: "Sac",
+        externalPath: "/job/JR-300",
+        postedOn: "2026-04-04",
+      },
+      {
+        title: "Receptionist",
+        locationsText: "Sac",
+        externalPath: "/job/JR-301",
+        postedOn: "2026-04-05",
+      },
     ],
   };
   const fetchFn = makeFetch(
@@ -173,7 +212,13 @@ test("workday.discover loops over searchTexts and dedupes by externalPath", asyn
   assert.equal(recorded.length, 3, "one POST per searchText");
   assert.equal(jobs.length, 5, "JR-100/101/200/300/301 after dedup");
   const ids = jobs.map((j) => j.jobId).sort();
-  assert.deepEqual(ids, ["/job/JR-100", "/job/JR-101", "/job/JR-200", "/job/JR-300", "/job/JR-301"]);
+  assert.deepEqual(ids, [
+    "/job/JR-100",
+    "/job/JR-101",
+    "/job/JR-200",
+    "/job/JR-300",
+    "/job/JR-301",
+  ]);
   for (const j of jobs) assertJob(j);
 });
 
@@ -223,10 +268,7 @@ test("workday.discover prefers searchTexts over searchText when both present", a
   );
   // 2 POSTs (one per searchTexts entry), neither carrying "ignored".
   assert.equal(recorded.length, 2);
-  assert.deepEqual(
-    recorded.map((r) => r.body.searchText).sort(),
-    ["a", "b"]
-  );
+  assert.deepEqual(recorded.map((r) => r.body.searchText).sort(), ["a", "b"]);
 });
 
 test("workday.discover passes appliedFacets to API body when set on target", async () => {

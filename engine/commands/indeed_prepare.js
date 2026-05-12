@@ -55,16 +55,7 @@ const EXTRACTION_SNIPPET = `(() => {
 
 // Default cert/license blockers — Lilia has none of these. Profile can
 // override via discovery.indeed.filters.cert_blockers.
-const DEFAULT_CERT_BLOCKERS = [
-  "CMA",
-  "COA",
-  "COT",
-  "RN",
-  "LVN",
-  "CPC",
-  "RDA",
-  "RDH",
-];
+const DEFAULT_CERT_BLOCKERS = ["CMA", "COA", "COT", "RN", "LVN", "CPC", "RDA", "RDH"];
 
 const DEFAULT_DEPS = {
   loadProfile: profileLoader.loadProfile,
@@ -118,7 +109,9 @@ function buildInstructions({ ingestFile, viewjobBase, batchHint }) {
     `6. Capture per surviving entry: { jk, title, company, location, url?, postedAt? }.`,
     `7. Write the array to ingest_file (overwrite). The existing file is a scaffold — safe to replace.`,
     `8. Run \`node engine/cli.js scan --profile <id>\`. The indeed adapter will normalize and append fresh rows to applications.tsv with status="To Apply".`,
-    batchHint ? `Hint: limit one prep run to ~${batchHint} entries to keep MCP output readable.` : null,
+    batchHint
+      ? `Hint: limit one prep run to ~${batchHint} entries to keep MCP output readable.`
+      : null,
   ].filter(Boolean);
 }
 
@@ -130,9 +123,7 @@ function readIndeedConfig(profile) {
     );
   }
   if (!Array.isArray(indeed.keywords) || indeed.keywords.length === 0) {
-    throw new Error(
-      `profile "${profile.id}" discovery.indeed.keywords must be a non-empty array`
-    );
+    throw new Error(`profile "${profile.id}" discovery.indeed.keywords must be a non-empty array`);
   }
   return {
     keywords: indeed.keywords,
@@ -199,7 +190,9 @@ function makeIndeedPrepCommand(overrides = {}) {
 
     if (flags.dryRun) {
       stdout(`(dry-run) would create ${ingestDir}/ and seed empty raw_indeed.json`);
-      stdout(`(dry-run) ${scanUrls.length} scan URLs, ${cfg.filters.cert_blockers.length} cert blockers`);
+      stdout(
+        `(dry-run) ${scanUrls.length} scan URLs, ${cfg.filters.cert_blockers.length} cert blockers`
+      );
       return 0;
     }
 

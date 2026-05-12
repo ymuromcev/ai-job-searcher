@@ -21,12 +21,14 @@
 // --- Helpers ----------------------------------------------------------------
 
 function normalize(text) {
-  return String(text || "")
-    // collapse runs of whitespace to a single space inside a line, but keep
-    // line breaks so bullet/heading patterns still anchor.
-    .replace(/[ \t]+/g, " ")
-    .replace(/\r\n?/g, "\n")
-    .trim();
+  return (
+    String(text || "")
+      // collapse runs of whitespace to a single space inside a line, but keep
+      // line breaks so bullet/heading patterns still anchor.
+      .replace(/[ \t]+/g, " ")
+      .replace(/\r\n?/g, "\n")
+      .trim()
+  );
 }
 
 function firstMatch(text, regex) {
@@ -115,28 +117,53 @@ const EXPERIENCE_PATTERN = /\b(\d+\+?(?:\s*-\s*\d+\+?)?)\s*(?:year|yr)s?\b(?:[^.
 // Healthcare certifications (Lilia's domain). Match common abbreviations as
 // whole tokens — avoid bare "RN" matching "WARN", "LEARN", etc.
 const HEALTHCARE_CERTS = [
-  "BLS", "ACLS", "CPR", "PALS",
-  "CMA", "RMA", "MA",
-  "CNA", "CRMA", "CCMA",
-  "RDA", "RDH", "RDAEF",
-  "LVN", "LPN", "RN", "NP", "PA",
-  "CPC", "CPB", "CCS", "CMRS",
-  "Phlebotomy", "EMT",
+  "BLS",
+  "ACLS",
+  "CPR",
+  "PALS",
+  "CMA",
+  "RMA",
+  "MA",
+  "CNA",
+  "CRMA",
+  "CCMA",
+  "RDA",
+  "RDH",
+  "RDAEF",
+  "LVN",
+  "LPN",
+  "RN",
+  "NP",
+  "PA",
+  "CPC",
+  "CPB",
+  "CCS",
+  "CMRS",
+  "Phlebotomy",
+  "EMT",
 ];
 
 const CERT_PATTERN = new RegExp(
   `\\b(${HEALTHCARE_CERTS.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b(?:\\s+(?:cert(?:ification)?|license|licensure|credential))?`,
-  "g",
+  "g"
 );
 
 // Software certifications (Lilia's billing/admin context — kept short).
 const SOFTWARE_CERTS = [
-  "Epic", "Cerner", "Athena", "AthenaHealth", "eClinicalWorks", "NextGen",
-  "Dentrix", "Eaglesoft", "Open Dental", "Nextech",
+  "Epic",
+  "Cerner",
+  "Athena",
+  "AthenaHealth",
+  "eClinicalWorks",
+  "NextGen",
+  "Dentrix",
+  "Eaglesoft",
+  "Open Dental",
+  "Nextech",
 ];
 const SOFTWARE_PATTERN = new RegExp(
   `\\b(${SOFTWARE_CERTS.map((c) => c.replace(/\s+/g, "\\s+")).join("|")})\\b`,
-  "gi",
+  "gi"
 );
 
 // Languages. Bilingual / Spanish-speaking is a Lilia-specific positive signal

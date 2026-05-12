@@ -19,10 +19,7 @@ test("filterJobs passes a normal job", () => {
 });
 
 test("filterJobs rejects by company_blocklist", () => {
-  const { passed, rejected } = filterJobs(
-    [BASE_JOB],
-    { company_blocklist: ["Stripe"] }
-  );
+  const { passed, rejected } = filterJobs([BASE_JOB], { company_blocklist: ["Stripe"] });
   assert.equal(passed.length, 0);
   assert.equal(rejected[0].reason.kind, "company_blocklist");
 });
@@ -44,10 +41,9 @@ test("filterJobs company_blocklist is case-insensitive", () => {
 
 test("filterJobs rejects by title_blocklist substring", () => {
   const job = { ...BASE_JOB, role: "Associate Product Manager" };
-  const { rejected } = filterJobs(
-    [job],
-    { title_blocklist: [{ pattern: "Associate", reason: "too junior" }] }
-  );
+  const { rejected } = filterJobs([job], {
+    title_blocklist: [{ pattern: "Associate", reason: "too junior" }],
+  });
   assert.equal(rejected.length, 1);
   assert.equal(rejected[0].reason.kind, "title_blocklist");
   assert.equal(rejected[0].reason.why, "too junior");
@@ -55,10 +51,9 @@ test("filterJobs rejects by title_blocklist substring", () => {
 
 test("filterJobs title_blocklist is case-insensitive", () => {
   const job = { ...BASE_JOB, role: "associate PM" };
-  const { rejected } = filterJobs(
-    [job],
-    { title_blocklist: [{ pattern: "ASSOCIATE", reason: "junior" }] }
-  );
+  const { rejected } = filterJobs([job], {
+    title_blocklist: [{ pattern: "ASSOCIATE", reason: "junior" }],
+  });
   assert.equal(rejected.length, 1);
 });
 
@@ -67,28 +62,23 @@ test("filterJobs title_blocklist treats metacharacters literally (no regex)", ()
   // "Sr. Director" pattern must match literally — the `.` does NOT match any
   // character as it would in regex mode.
   const matches = { ...BASE_JOB, role: "Sr. Director of Product" };
-  const { rejected: r1 } = filterJobs(
-    [matches],
-    { title_blocklist: [{ pattern: "Sr. Director", reason: "too senior" }] }
-  );
+  const { rejected: r1 } = filterJobs([matches], {
+    title_blocklist: [{ pattern: "Sr. Director", reason: "too senior" }],
+  });
   assert.equal(r1.length, 1);
 
   // A string that would match in regex mode (`.` as any char) must NOT match
   // in substring mode when the literal dot is absent.
   const noDot = { ...BASE_JOB, role: "SrXDirector of Product" };
-  const { rejected: r2, passed: p2 } = filterJobs(
-    [noDot],
-    { title_blocklist: [{ pattern: "Sr. Director", reason: "too senior" }] }
-  );
+  const { rejected: r2, passed: p2 } = filterJobs([noDot], {
+    title_blocklist: [{ pattern: "Sr. Director", reason: "too senior" }],
+  });
   assert.equal(r2.length, 0);
   assert.equal(p2.length, 1);
 
   // Parentheses in patterns must not throw (were regex syntax errors before).
   assert.doesNotThrow(() =>
-    filterJobs(
-      [BASE_JOB],
-      { title_blocklist: [{ pattern: "Principal (Staff)", reason: "x" }] }
-    )
+    filterJobs([BASE_JOB], { title_blocklist: [{ pattern: "Principal (Staff)", reason: "x" }] })
   );
 });
 
@@ -96,38 +86,34 @@ test("filterJobs title_blocklist uses word-boundary (rn does not match PRN)", ()
   // 2026-04-28 fix: short patterns like "rn", "do", "md" must not match
   // mid-word substrings. "PRN" (per-shift) is NOT a registered nurse role.
   const prn = { ...BASE_JOB, role: "Medical Records Assistant - PRN" };
-  const { passed, rejected } = filterJobs(
-    [prn],
-    { title_blocklist: [{ pattern: "rn", reason: "registered nurse" }] }
-  );
+  const { passed, rejected } = filterJobs([prn], {
+    title_blocklist: [{ pattern: "rn", reason: "registered nurse" }],
+  });
   assert.equal(rejected.length, 0);
   assert.equal(passed.length, 1);
 
   // But standalone "RN" still matches.
   const rn = { ...BASE_JOB, role: "RN — Acute Care" };
-  const { rejected: r2 } = filterJobs(
-    [rn],
-    { title_blocklist: [{ pattern: "rn", reason: "registered nurse" }] }
-  );
+  const { rejected: r2 } = filterJobs([rn], {
+    title_blocklist: [{ pattern: "rn", reason: "registered nurse" }],
+  });
   assert.equal(r2.length, 1);
 });
 
 test("filterJobs title_blocklist word-boundary (do does not match orthodontic)", () => {
   // "DO" (Doctor of Osteopathy) must not match "orthodontic" or "doctor".
   const ortho = { ...BASE_JOB, role: "Bilingual Orthodontic Receptionist" };
-  const { passed, rejected } = filterJobs(
-    [ortho],
-    { title_blocklist: [{ pattern: "do", reason: "doctor of osteopathy" }] }
-  );
+  const { passed, rejected } = filterJobs([ortho], {
+    title_blocklist: [{ pattern: "do", reason: "doctor of osteopathy" }],
+  });
   assert.equal(rejected.length, 0);
   assert.equal(passed.length, 1);
 
   // Standalone "DO" still matches.
   const dox = { ...BASE_JOB, role: "Family Practice DO" };
-  const { rejected: r2 } = filterJobs(
-    [dox],
-    { title_blocklist: [{ pattern: "do", reason: "doctor of osteopathy" }] }
-  );
+  const { rejected: r2 } = filterJobs([dox], {
+    title_blocklist: [{ pattern: "do", reason: "doctor of osteopathy" }],
+  });
   assert.equal(r2.length, 1);
 });
 
@@ -135,10 +121,9 @@ test("filterJobs title_blocklist compound title (slash) — any clean part passe
   // 2026-04-28: "Dental Receptionist/Office Manager" must pass even if
   // "manager" is on the blocklist — receptionist part is clean.
   const compound = { ...BASE_JOB, role: "Dental Receptionist/Office Manager" };
-  const { passed, rejected } = filterJobs(
-    [compound],
-    { title_blocklist: [{ pattern: "manager", reason: "managerial" }] }
-  );
+  const { passed, rejected } = filterJobs([compound], {
+    title_blocklist: [{ pattern: "manager", reason: "managerial" }],
+  });
   assert.equal(rejected.length, 0);
   assert.equal(passed.length, 1);
 });
@@ -146,15 +131,12 @@ test("filterJobs title_blocklist compound title (slash) — any clean part passe
 test("filterJobs title_blocklist compound title (slash) — all parts blocked → rejected", () => {
   // "Senior Manager/Director" — both halves hit "manager" / "director" → blocked.
   const allBad = { ...BASE_JOB, role: "Senior Manager/Director of Ops" };
-  const { rejected } = filterJobs(
-    [allBad],
-    {
-      title_blocklist: [
-        { pattern: "manager", reason: "managerial" },
-        { pattern: "director", reason: "too senior" },
-      ],
-    }
-  );
+  const { rejected } = filterJobs([allBad], {
+    title_blocklist: [
+      { pattern: "manager", reason: "managerial" },
+      { pattern: "director", reason: "too senior" },
+    ],
+  });
   assert.equal(rejected.length, 1);
   assert.equal(rejected[0].reason.kind, "title_blocklist");
 });
@@ -162,10 +144,9 @@ test("filterJobs title_blocklist compound title (slash) — all parts blocked �
 test("filterJobs title_blocklist does NOT split on comma (department modifier stays)", () => {
   // "Supervisor, Medical" is ONE role with a department modifier — must block.
   const role = { ...BASE_JOB, role: "Supervisor, Medical" };
-  const { rejected } = filterJobs(
-    [role],
-    { title_blocklist: [{ pattern: "supervisor", reason: "managerial" }] }
-  );
+  const { rejected } = filterJobs([role], {
+    title_blocklist: [{ pattern: "supervisor", reason: "managerial" }],
+  });
   assert.equal(rejected.length, 1);
   assert.equal(rejected[0].reason.pattern, "supervisor");
 });
@@ -185,10 +166,7 @@ test("filterJobs skips location_blocklist when US marker present", () => {
     ...BASE_JOB,
     location: "Atlanta, GA, United States; Toronto, Canada",
   };
-  const { passed, rejected } = filterJobs(
-    [multi],
-    { location_blocklist: ["canada"] }
-  );
+  const { passed, rejected } = filterJobs([multi], { location_blocklist: ["canada"] });
   assert.equal(passed.length, 1);
   assert.equal(rejected.length, 0);
 
@@ -201,10 +179,7 @@ test("filterJobs skips location_blocklist when US marker present", () => {
 
   // No US marker → blocklist still applies.
   const canadaOnly = { ...BASE_JOB, location: "Toronto, Canada" };
-  const { rejected: rej } = filterJobs(
-    [canadaOnly],
-    { location_blocklist: ["canada"] }
-  );
+  const { rejected: rej } = filterJobs([canadaOnly], { location_blocklist: ["canada"] });
   assert.equal(rej.length, 1);
 });
 
@@ -248,11 +223,7 @@ test("filterJobs accumulates counts from currentCounts baseline", () => {
     { ...BASE_JOB, jobId: "x" },
     { ...BASE_JOB, jobId: "y" },
   ];
-  const { passed, rejected } = filterJobs(
-    jobs,
-    { company_cap: { max_active: 2 } },
-    { Stripe: 2 }
-  );
+  const { passed, rejected } = filterJobs(jobs, { company_cap: { max_active: 2 } }, { Stripe: 2 });
   assert.equal(passed.length, 0);
   assert.equal(rejected.length, 2);
 });

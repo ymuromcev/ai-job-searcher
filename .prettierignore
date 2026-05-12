@@ -1,0 +1,18 @@
+node_modules/
+private/
+profiles/
+data/
+coverage/
+dist/
+*.min.js
+.claude/worktrees/
+package-lock.json
+.obsidian/
+
+# BL-20 baseline: only JS in scope for formatting right now. Markdown is
+# excluded because docs/rfc/skill files often rely on intentional whitespace
+# (aligned tables, soft-wrapped lists). JSON/CSS are gated until a follow-up
+# BL decides their formatting policy. Remove the lines below to expand scope.
+**/*.md
+**/*.json
+**/*.css

@@ -192,24 +192,24 @@ const LILIA_TIERS = {
 };
 const LILIA_MATRIX = {
   S: {
-    MedAdmin:    { min: 48000, max: 58000, mid: 53000 },
+    MedAdmin: { min: 48000, max: 58000, mid: 53000 },
     Coordinator: { min: 52000, max: 64000, mid: 58000 },
-    Senior:      { min: 56000, max: 70000, mid: 63000 },
+    Senior: { min: 56000, max: 70000, mid: 63000 },
   },
   A: {
-    MedAdmin:    { min: 44000, max: 52000, mid: 48000 },
+    MedAdmin: { min: 44000, max: 52000, mid: 48000 },
     Coordinator: { min: 48000, max: 58000, mid: 53000 },
-    Senior:      { min: 52000, max: 64000, mid: 58000 },
+    Senior: { min: 52000, max: 64000, mid: 58000 },
   },
   B: {
-    MedAdmin:    { min: 40000, max: 48000, mid: 44000 },
+    MedAdmin: { min: 40000, max: 48000, mid: 44000 },
     Coordinator: { min: 44000, max: 52000, mid: 48000 },
-    Senior:      { min: 48000, max: 58000, mid: 53000 },
+    Senior: { min: 48000, max: 58000, mid: 53000 },
   },
   C: {
-    MedAdmin:    { min: 36000, max: 44000, mid: 40000 },
+    MedAdmin: { min: 36000, max: 44000, mid: 40000 },
     Coordinator: { min: 40000, max: 48000, mid: 44000 },
-    Senior:      { min: 44000, max: 52000, mid: 48000 },
+    Senior: { min: 44000, max: 52000, mid: 48000 },
   },
 };
 

@@ -56,9 +56,7 @@ function main() {
   });
 
   // Load TSV — either custom snapshot or current.
-  const tsvPath = args.tsv
-    ? path.resolve(args.tsv)
-    : profile.paths.applicationsTsv;
+  const tsvPath = args.tsv ? path.resolve(args.tsv) : profile.paths.applicationsTsv;
   if (!fs.existsSync(tsvPath)) {
     console.error(`error: TSV not found: ${tsvPath}`);
     process.exit(1);
@@ -85,11 +83,7 @@ function main() {
   const procCtx = { nowIso: new Date().toISOString() };
 
   // Run the loop (pure).
-  const { logRows, actions, rejections } = processEmailsLoop(
-    rawEmails,
-    state,
-    procCtx
-  );
+  const { logRows, actions, rejections } = processEmailsLoop(rawEmails, state, procCtx);
 
   // Output.
   const result = {

@@ -30,7 +30,9 @@ function parseLevelPm(title) {
 
 // --- Healthcare (Lilia) — receptionist / coordinator ------------------------
 function parseLevelHealthcare(title) {
-  const t = String(title || "").toLowerCase().trim();
+  const t = String(title || "")
+    .toLowerCase()
+    .trim();
   // "Lead", "Supervisor", "Senior" → senior tier (rare for Lilia: blocklist
   // catches most managerial titles, but the level still exists in the matrix
   // for edge cases like "Senior Patient Services Rep").
@@ -66,27 +68,27 @@ function parseLevel(title, parser) {
 const DEFAULT_SALARY_MATRIX = {
   // Tier S — public big-tech / top fintech, $10B+ market cap
   S: {
-    PM:     { min: 180000, max: 230000, mid: 205000 },
+    PM: { min: 180000, max: 230000, mid: 205000 },
     Senior: { min: 220000, max: 300000, mid: 260000 },
-    Lead:   { min: 250000, max: 330000, mid: 290000 },
+    Lead: { min: 250000, max: 330000, mid: 290000 },
   },
   // Tier A — late-stage / public mid-cap, strong funding
   A: {
-    PM:     { min: 160000, max: 200000, mid: 180000 },
+    PM: { min: 160000, max: 200000, mid: 180000 },
     Senior: { min: 190000, max: 260000, mid: 225000 },
-    Lead:   { min: 220000, max: 290000, mid: 255000 },
+    Lead: { min: 220000, max: 290000, mid: 255000 },
   },
   // Tier B — growth-stage, Series C-E, $1-5B valuation
   B: {
-    PM:     { min: 140000, max: 180000, mid: 160000 },
+    PM: { min: 140000, max: 180000, mid: 160000 },
     Senior: { min: 170000, max: 220000, mid: 195000 },
-    Lead:   { min: 190000, max: 250000, mid: 220000 },
+    Lead: { min: 190000, max: 250000, mid: 220000 },
   },
   // Tier C — early/mid-stage, Series A-B, <$1B
   C: {
-    PM:     { min: 120000, max: 160000, mid: 140000 },
+    PM: { min: 120000, max: 160000, mid: 140000 },
     Senior: { min: 150000, max: 190000, mid: 170000 },
-    Lead:   { min: 170000, max: 220000, mid: 195000 },
+    Lead: { min: 170000, max: 220000, mid: 195000 },
   },
 };
 

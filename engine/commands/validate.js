@@ -24,6 +24,12 @@ const { matchBlocklists } = require("../core/filter.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 const { planDedup } = require("../core/tsv_dedup.js");
+const notion = require("../core/notion_sync.js");
+const {
+  EXPECTED_STATUS_OPTIONS,
+  extractStatusOptions,
+  checkStatusSchema,
+} = require("../core/notion_status_options.js");
 
 // RFC 014: TSV-level 9-status set — Inbox / To Apply / Applied / Interview /
 // Offer / Rejected / Closed / No Response / Archived. (Notion DBs keep the
@@ -42,10 +48,13 @@ const DEFAULT_PING_CONCURRENCY = 8;
 
 const DEFAULT_DEPS = {
   loadProfile: profileLoader.loadProfile,
+  loadSecrets: profileLoader.loadSecrets,
   loadJobs: jobsTsv.load,
   loadApplications: applications.load,
   saveApplications: applications.save,
   fetchFn: defaultFetch,
+  makeNotionClient: notion.makeClient,
+  fetchDataSourceSchema: notion.fetchDataSourceSchema,
   now: () => new Date().toISOString(),
   copyFileSync: (src, dst) => fs.copyFileSync(src, dst),
 };
@@ -116,11 +125,7 @@ function isSafeLivenessUrl(rawUrl) {
 
 // --- Ping -------------------------------------------------------------------
 
-async function pingUrl(
-  fetchFn,
-  url,
-  { timeoutMs = DEFAULT_PING_TIMEOUT_MS } = {}
-) {
+async function pingUrl(fetchFn, url, { timeoutMs = DEFAULT_PING_TIMEOUT_MS } = {}) {
   if (!url) return { url, status: 0, ok: false, error: "no url" };
   const safe = isSafeLivenessUrl(url);
   if (!safe.ok) {
@@ -160,10 +165,7 @@ async function pingAll(
       results[idx] = await pingUrl(fetchFn, urls[idx], { timeoutMs });
     }
   }
-  const workers = Array.from(
-    { length: Math.min(concurrency, urls.length) },
-    () => worker()
-  );
+  const workers = Array.from({ length: Math.min(concurrency, urls.length) }, () => worker());
   await Promise.all(workers);
   return results;
 }
@@ -252,7 +254,9 @@ async function runDedup(ctx, deps, profile) {
     for (const s of plan.suspicious.slice(0, 10)) {
       stdout(`    canonical=${s.canonical} (${s.reason})`);
       for (const r of s.rows) {
-        stdout(`      ${r.key}  status=${r.status}  company="${r.companyName}"  url=${r.url || "(none)"}`);
+        stdout(
+          `      ${r.key}  status=${r.status}  company="${r.companyName}"  url=${r.url || "(none)"}`
+        );
       }
     }
     if (plan.suspicious.length > 10) {
@@ -332,14 +336,14 @@ function makeValidateCommand(overrides = {}) {
       if (dedupPlan.pairs > 0) {
         stdout(
           `tsv_dedup: ${dedupPlan.pairs} duplicate group(s) detected ` +
-          `(will be auto-collapsed on the next \`prepare --phase pre\` run)`
+            `(will be auto-collapsed on the next \`prepare --phase pre\` run)`
         );
       }
       if (dedupPlan.suspicious.length > 0) {
         ctx.stderr(
           `tsv_dedup: ${dedupPlan.suspicious.length} suspicious group(s) ` +
-          `(rows disagree on company or url) — manual review required, ` +
-          `run \`validate --dedup\` for details`
+            `(rows disagree on company or url) — manual review required, ` +
+            `run \`validate --dedup\` for details`
         );
       }
       if (dedupPlan.pairs === 0 && dedupPlan.suspicious.length === 0) {
@@ -387,12 +391,18 @@ function makeValidateCommand(overrides = {}) {
           `url_liveness: pinging first ${activeApps.length} of ${activeAppsAll.length} URLs (cap ${urlCap}); raise ctx.urlCap to check all`
         );
       } else {
-        stdout(`url_liveness: HEAD-pinging ${activeApps.length} URLs (concurrency ${pingConcurrency})…`);
+        stdout(
+          `url_liveness: HEAD-pinging ${activeApps.length} URLs (concurrency ${pingConcurrency})…`
+        );
       }
-      const results = await pingAll(deps.fetchFn, activeApps.map((a) => a.url), {
-        concurrency: pingConcurrency,
-        timeoutMs: pingTimeoutMs,
-      });
+      const results = await pingAll(
+        deps.fetchFn,
+        activeApps.map((a) => a.url),
+        {
+          concurrency: pingConcurrency,
+          timeoutMs: pingTimeoutMs,
+        }
+      );
       const blocked = results.filter((r) => r.blocked);
       const dead = results.filter((r) => !r.ok && !r.blocked);
       if (blocked.length > 0) {
@@ -415,6 +425,58 @@ function makeValidateCommand(overrides = {}) {
       }
     }
 
+    // 3.5. Notion Status schema (BL-18). Read-only: one retrieve to make sure
+    // the per-profile Jobs Pipeline DB still exposes every Status option the
+    // pipeline writes. A renamed / deleted option ("Applied" → "Submitted")
+    // would otherwise blow up live `pages.update` with an opaque Notion
+    // `validation_error`. WARN-only — never increments `issues`. Skipped
+    // silently when Notion isn't configured for the profile or no token is
+    // available; `validate` must keep working offline.
+    const notionConf = profile && profile.notion;
+    const jobsDbId = notionConf && notionConf.jobs_pipeline_db_id;
+    const statusFieldName =
+      (notionConf &&
+        notionConf.property_map &&
+        notionConf.property_map.status &&
+        notionConf.property_map.status.field) ||
+      "Status";
+    let notionToken;
+    try {
+      const secrets = deps.loadSecrets(profileId, ctx.env || process.env);
+      notionToken = secrets && secrets.NOTION_TOKEN;
+    } catch {
+      notionToken = null;
+    }
+    if (!jobsDbId || !notionToken) {
+      stdout(`notion_status_schema: skipped (notion not configured for profile)`);
+    } else if (flags.dryRun) {
+      stdout(`notion_status_schema: skipped (dry-run)`);
+    } else {
+      try {
+        const client = deps.makeNotionClient(notionToken);
+        const dataSource = await deps.fetchDataSourceSchema(client, jobsDbId);
+        const actual = extractStatusOptions(dataSource, statusFieldName);
+        if (actual === null) {
+          ctx.stderr(
+            `notion_status_schema: "${statusFieldName}" property not found on the Jobs Pipeline DB (or has no select/status options). Pipeline expects: [${EXPECTED_STATUS_OPTIONS.join(", ")}]`
+          );
+        } else {
+          const res = checkStatusSchema(actual);
+          if (res.ok) {
+            stdout(
+              `notion_status_schema: ok (${actual.length} options present, ${EXPECTED_STATUS_OPTIONS.length} expected covered)`
+            );
+          } else {
+            ctx.stderr(
+              `notion_status_schema: missing options in Notion ${statusFieldName} select: [${res.missing.join(", ")}]. Pipeline expects all of: [${EXPECTED_STATUS_OPTIONS.join(", ")}]. Add them in Notion → ${statusFieldName} field properties.`
+            );
+          }
+        }
+      } catch (err) {
+        ctx.stderr(`notion_status_schema: skipped (Notion fetch failed — ${err.message})`);
+      }
+    }
+
     // 4. Retro blocklist sweep: re-apply title/company/location blocklists to
     // existing "To Apply" rows (the only pre-apply triage state in the 8-status
     // set). Catches the case where a pattern was added to filter_rules.json
@@ -433,7 +495,8 @@ function makeValidateCommand(overrides = {}) {
     const hasBlocklistRules =
       (Array.isArray(filterRules.company_blocklist) && filterRules.company_blocklist.length > 0) ||
       (Array.isArray(filterRules.title_blocklist) && filterRules.title_blocklist.length > 0) ||
-      (Array.isArray(filterRules.location_blocklist) && filterRules.location_blocklist.length > 0) ||
+      (Array.isArray(filterRules.location_blocklist) &&
+        filterRules.location_blocklist.length > 0) ||
       geoActive;
     if (appsResult.apps.length > 0 && hasBlocklistRules) {
       const matches = [];
@@ -446,14 +509,14 @@ function makeValidateCommand(overrides = {}) {
         if (reason) matches.push({ app, reason });
       }
       if (matches.length === 0) {
-        stdout(`retro_sweep: ok (${appsResult.apps.filter((a) => RETRO_SWEEP_STATUSES.has(a.status)).length} rows re-screened)`);
+        stdout(
+          `retro_sweep: ok (${appsResult.apps.filter((a) => RETRO_SWEEP_STATUSES.has(a.status)).length} rows re-screened)`
+        );
       } else if (flags.apply) {
         const byKey = new Map(matches.map((m) => [m.app.key, m.reason]));
         const now = deps.now();
         const updated = appsResult.apps.map((a) =>
-          byKey.has(a.key)
-            ? { ...a, status: "Archived", updatedAt: now }
-            : a
+          byKey.has(a.key) ? { ...a, status: "Archived", updatedAt: now } : a
         );
         deps.saveApplications(path.join(profile.paths.root, "applications.tsv"), updated);
         stdout(`retro_sweep: archived ${matches.length} row(s) matching blocklists`);
@@ -463,7 +526,9 @@ function makeValidateCommand(overrides = {}) {
         if (matches.length > 20) stdout(`  … and ${matches.length - 20} more`);
       } else {
         issues += matches.length;
-        ctx.stderr(`retro_sweep: ${matches.length} row(s) now match blocklists (pass --apply to archive)`);
+        ctx.stderr(
+          `retro_sweep: ${matches.length} row(s) now match blocklists (pass --apply to archive)`
+        );
         for (const m of matches.slice(0, 20)) {
           ctx.stderr(`  MATCH ${m.app.companyName} — ${m.app.title} (${formatReason(m.reason)})`);
         }
@@ -482,14 +547,17 @@ function makeValidateCommand(overrides = {}) {
 
 function formatReason(reason) {
   if (reason.kind === "company_blocklist") return `company_blocklist: ${reason.company}`;
-  if (reason.kind === "title_blocklist") return `title_blocklist: "${reason.pattern}"${reason.why ? ` — ${reason.why}` : ""}`;
+  if (reason.kind === "title_blocklist")
+    return `title_blocklist: "${reason.pattern}"${reason.why ? ` — ${reason.why}` : ""}`;
   if (reason.kind === "location_blocklist") return `location_blocklist: ${reason.match}`;
   // L-4 (RFC 013): geo enforcement reasons.
   if (reason.kind === "geo_metro_miss") return `geo_metro_miss (mode: ${reason.mode || "metro"})`;
-  if (reason.kind === "geo_country_miss") return `geo_country_miss (mode: ${reason.mode || "us-wide"})`;
+  if (reason.kind === "geo_country_miss")
+    return `geo_country_miss (mode: ${reason.mode || "us-wide"})`;
   if (reason.kind === "geo_remote_only_miss") return `geo_remote_only_miss`;
   if (reason.kind === "geo_blocklist") return `geo_blocklist`;
-  if (reason.kind === "geo_no_location") return `geo_no_location (TSV row missing location field — backfill?)`;
+  if (reason.kind === "geo_no_location")
+    return `geo_no_location (TSV row missing location field — backfill?)`;
   return reason.kind;
 }
 

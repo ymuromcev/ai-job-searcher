@@ -168,8 +168,12 @@ async function main() {
 
     if (item.kind === "dir") {
       if (!args.apply) {
-        const entries = fs.readdirSync(srcAbs, { withFileTypes: true }).filter(e => !e.name.startsWith("."));
-        console.log(`  [${item.key}] dir: ${item.src}/ (~${entries.length} entries at top level) → ${item.dst}/`);
+        const entries = fs
+          .readdirSync(srcAbs, { withFileTypes: true })
+          .filter((e) => !e.name.startsWith("."));
+        console.log(
+          `  [${item.key}] dir: ${item.src}/ (~${entries.length} entries at top level) → ${item.dst}/`
+        );
         continue;
       }
       const r = copyDir(srcAbs, dstAbs, { overwrite: item.overwrite });

@@ -150,9 +150,7 @@ async function main() {
   const token = requireToken(id);
   const client = new Client({ auth: token, notionVersion: "2025-09-03" });
 
-  const profile = JSON.parse(
-    fs.readFileSync(path.join(profileDir(id), "profile.json"), "utf8")
-  );
+  const profile = JSON.parse(fs.readFileSync(path.join(profileDir(id), "profile.json"), "utf8"));
   const jobsDbId = profile.notion.jobs_pipeline_db_id;
   const companiesDbId = profile.notion.companies_db_id;
   const jobsDsId = await resolveDataSourceId(client, jobsDbId);
@@ -232,7 +230,9 @@ async function main() {
   if (args.apply && newPageIds.size > 0) {
     // Persist new notion_page_ids back to TSV.
     const updated = apps.map((r) =>
-      newPageIds.has(r.key) ? { ...r, notion_page_id: newPageIds.get(r.key), updatedAt: new Date().toISOString() } : r
+      newPageIds.has(r.key)
+        ? { ...r, notion_page_id: newPageIds.get(r.key), updatedAt: new Date().toISOString() }
+        : r
     );
     applications.save(appsPath, updated);
     console.log(`  wrote ${newPageIds.size} new notion_page_id(s) back to TSV`);

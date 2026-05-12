@@ -47,9 +47,11 @@ async function findDbByTitle(client, parentPageId, title) {
       start_cursor: cursor,
     });
     for (const block of resp.results || []) {
-      if (block.type === "child_database" &&
-          block.child_database &&
-          block.child_database.title === title) {
+      if (
+        block.type === "child_database" &&
+        block.child_database &&
+        block.child_database.title === title
+      ) {
         return block.id;
       }
     }
@@ -68,7 +70,11 @@ async function findDbByTitle(client, parentPageId, title) {
 function injectCompaniesDbId(schema, companiesDataSourceId) {
   const out = {};
   for (const [field, body] of Object.entries(schema)) {
-    if (body.type === "relation" && body.relation && body.relation.database_id === "__COMPANIES_DB__") {
+    if (
+      body.type === "relation" &&
+      body.relation &&
+      body.relation.database_id === "__COMPANIES_DB__"
+    ) {
       out[field] = {
         type: "relation",
         relation: {
@@ -124,9 +130,7 @@ async function main() {
     }
   }
   if (!companiesDbId && args.apply) {
-    fatal(new Error(
-      "Companies DB id unknown. Run create_companies_db.js --apply first."
-    ));
+    fatal(new Error("Companies DB id unknown. Run create_companies_db.js --apply first."));
   }
 
   const propertyMap = resolvePropertyMap(intake);
@@ -157,7 +161,9 @@ async function main() {
   }
 
   if (!dbId) {
-    console.log(`  will create "${title}" (${Object.keys(propertyMap).length} properties) under ${workspacePageId}`);
+    console.log(
+      `  will create "${title}" (${Object.keys(propertyMap).length} properties) under ${workspacePageId}`
+    );
     if (!args.apply) {
       done("create_jobs_db", { db_id: "<dry-run>" });
       return;

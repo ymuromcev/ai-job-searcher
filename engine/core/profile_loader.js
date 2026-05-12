@@ -93,9 +93,7 @@ function loadProfile(id, options = {}) {
     result.resumeVersions = readJsonIfExists(path.join(root, profile.resume.versions_file));
   }
   if (profile.cover_letter && profile.cover_letter.config_file) {
-    result.coverLetterConfig = readJsonIfExists(
-      path.join(root, profile.cover_letter.config_file)
-    );
+    result.coverLetterConfig = readJsonIfExists(path.join(root, profile.cover_letter.config_file));
   }
   if (profile.cover_letter && profile.cover_letter.template_file) {
     result.coverLetterTemplate = readFileIfExists(
@@ -210,7 +208,9 @@ function normalizeFilterRules(raw) {
 
   const cb = raw.company_blocklist;
   if (Array.isArray(cb)) {
-    out.company_blocklist = cb.map((x) => (typeof x === "string" ? x : x && x.name)).filter(Boolean);
+    out.company_blocklist = cb
+      .map((x) => (typeof x === "string" ? x : x && x.name))
+      .filter(Boolean);
   } else if (cb && Array.isArray(cb.companies)) {
     out.company_blocklist = cb.companies.map((c) => c && c.name).filter(Boolean);
   } else {
@@ -338,17 +338,13 @@ function normalizeGeo(raw) {
     );
   }
 
-  const cities = Array.isArray(raw.cities)
-    ? raw.cities.map((c) => String(c)).filter(Boolean)
-    : [];
-  const states = Array.isArray(raw.states)
-    ? raw.states.map((s) => String(s)).filter(Boolean)
-    : [];
+  const cities = Array.isArray(raw.cities) ? raw.cities.map((c) => String(c)).filter(Boolean) : [];
+  const states = Array.isArray(raw.states) ? raw.states.map((s) => String(s)).filter(Boolean) : [];
   const countries = Array.isArray(raw.countries)
     ? raw.countries.map((c) => String(c)).filter(Boolean)
     : mode === "us-wide"
-    ? ["US"]
-    : [];
+      ? ["US"]
+      : [];
   const remote_ok = raw.remote_ok === true;
   const blocklist = Array.isArray(raw.blocklist)
     ? raw.blocklist.map((b) => String(b)).filter(Boolean)

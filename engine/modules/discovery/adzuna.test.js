@@ -141,8 +141,7 @@ test("adzuna: handles HTTP error gracefully and continues other keywords", async
 });
 
 test("adzuna: skips listings missing id", async () => {
-  const fetchFn = async () =>
-    makeRes({ results: [LISTING, { title: "Bad job no id" }] });
+  const fetchFn = async () => makeRes({ results: [LISTING, { title: "Bad job no id" }] });
 
   const jobs = await discover([], {
     fetchFn,

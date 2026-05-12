@@ -21,7 +21,12 @@ const FIXTURE = {
       location: "Remote",
       dates: "2020\u20132022",
       description: "Built stuff",
-      bullets: [[{ text: "Shipped ", bold: false }, { text: "v1", bold: true }]],
+      bullets: [
+        [
+          { text: "Shipped ", bold: false },
+          { text: "v1", bold: true },
+        ],
+      ],
     },
   ],
   sharedSections: {

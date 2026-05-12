@@ -15,9 +15,15 @@ function makeDeps(overrides = {}) {
         if (existing[p] === undefined) throw new Error(`no file: ${p}`);
         return existing[p];
       },
-      writeFile: async (p, data) => { written[p] = data; },
+      writeFile: async (p, data) => {
+        written[p] = data;
+      },
       mkdirp: async () => {},
-      fetchFn: overrides.fetchFn || (async () => { throw new Error("network disabled"); }),
+      fetchFn:
+        overrides.fetchFn ||
+        (async () => {
+          throw new Error("network disabled");
+        }),
     },
   };
 }
@@ -30,13 +36,27 @@ function makeFetchFn(responses) {
     return {
       ok: entry.status >= 200 && entry.status < 300,
       status: entry.status,
-      async json() { return entry.body; },
+      async json() {
+        return entry.body;
+      },
     };
   };
 }
 
-const GH_JOB = { source: "greenhouse", slug: "affirm", jobId: "12345", title: "Senior PM", companyName: "Affirm" };
-const LEVER_JOB = { source: "lever", slug: "stripe", jobId: "abc-123", title: "Lead PM", companyName: "Stripe" };
+const GH_JOB = {
+  source: "greenhouse",
+  slug: "affirm",
+  jobId: "12345",
+  title: "Senior PM",
+  companyName: "Affirm",
+};
+const LEVER_JOB = {
+  source: "lever",
+  slug: "stripe",
+  jobId: "abc-123",
+  title: "Lead PM",
+  companyName: "Stripe",
+};
 const CACHE_DIR = "/fake/cache";
 
 // --- cacheKey ----------------------------------------------------------------
@@ -151,7 +171,13 @@ test("second call for same job returns cached (write once)", async () => {
   const { deps, written } = makeDeps({
     fetchFn: async (u, o) => {
       fetchCount++;
-      return { ok: true, status: 200, async json() { return ghData; } };
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return ghData;
+        },
+      };
     },
   });
 

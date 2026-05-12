@@ -60,10 +60,11 @@ test("normalizeLocation rejects non-primitive inputs", () => {
 });
 
 test("dedupeLocations removes case-duplicates and empties", () => {
-  assert.deepEqual(
-    dedupeLocations(["SF", "sf", "New York", "", null, "Remote", "remote"]),
-    ["SF", "New York", "Remote"]
-  );
+  assert.deepEqual(dedupeLocations(["SF", "sf", "New York", "", null, "Remote", "remote"]), [
+    "SF",
+    "New York",
+    "Remote",
+  ]);
 });
 
 test("safeJoinUrl joins path to base", () => {

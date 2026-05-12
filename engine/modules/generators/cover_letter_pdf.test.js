@@ -31,16 +31,10 @@ test("generateCoverLetterPdf writes a non-empty file with %PDF magic bytes", asy
 
 test("generateCoverLetterPdf rejects on empty paragraphs", async () => {
   const tmp = path.join(os.tmpdir(), `cl-empty-${process.pid}-${Date.now()}.pdf`);
-  await assert.rejects(
-    () => generateCoverLetterPdf({ paragraphs: [] }, tmp),
-    /non-empty array/
-  );
+  await assert.rejects(() => generateCoverLetterPdf({ paragraphs: [] }, tmp), /non-empty array/);
 });
 
 test("generateCoverLetterPdf rejects on missing paragraphs", async () => {
   const tmp = path.join(os.tmpdir(), `cl-missing-${process.pid}-${Date.now()}.pdf`);
-  await assert.rejects(
-    () => generateCoverLetterPdf({}, tmp),
-    /non-empty array/
-  );
+  await assert.rejects(() => generateCoverLetterPdf({}, tmp), /non-empty array/);
 });

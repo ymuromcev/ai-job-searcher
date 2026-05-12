@@ -47,8 +47,19 @@ function rowToJob(parts, lineNo) {
   if (parts.length < HEADER.length) {
     throw new Error(`jobs.tsv line ${lineNo}: expected ${HEADER.length} cols, got ${parts.length}`);
   }
-  const [source, slug, jobId, companyName, title, url, locations, team, postedAt, discoveredAt, rawExtra] =
-    parts;
+  const [
+    source,
+    slug,
+    jobId,
+    companyName,
+    title,
+    url,
+    locations,
+    team,
+    postedAt,
+    discoveredAt,
+    rawExtra,
+  ] = parts;
   let extra = {};
   if (rawExtra && rawExtra !== "{}") {
     try {
@@ -78,10 +89,7 @@ function load(filePath) {
   const lines = raw.split(/\r?\n/).filter((l) => l.length > 0);
   if (!lines.length) return { jobs: [], path: filePath };
   const headerCols = lines[0].split("\t").map((s) => s.trim());
-  if (
-    headerCols.length !== HEADER.length ||
-    !headerCols.every((c, i) => c === HEADER[i])
-  ) {
+  if (headerCols.length !== HEADER.length || !headerCols.every((c, i) => c === HEADER[i])) {
     throw new Error(
       `jobs.tsv header mismatch: expected [${HEADER.join(", ")}], got [${headerCols.join(", ")}]`
     );

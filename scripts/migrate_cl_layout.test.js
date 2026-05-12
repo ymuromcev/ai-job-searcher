@@ -48,39 +48,26 @@ test("planRow: PDF already at canonical path + no MD → skipped (idempotent)", 
 test("planRow: PDF flat in cover_letters/, MD flat too → plans both moves + canonical cl_path", () => {
   const flatPdf = `${ROOT}/cover_letters/Affirm_senior_pm_20260505.pdf`;
   const flatMd = `${ROOT}/cover_letters/Affirm_senior_pm_20260505.md`;
-  const plan = planRow(
-    makeApp({ cl_path: "Affirm_senior_pm_20260505.md" }),
-    ROOT,
-    { fileExists: existsSetFn(new Set([flatPdf, flatMd])) }
-  );
+  const plan = planRow(makeApp({ cl_path: "Affirm_senior_pm_20260505.md" }), ROOT, {
+    fileExists: existsSetFn(new Set([flatPdf, flatMd])),
+  });
   assert.equal(plan.skip, undefined);
   assert.equal(plan.pdfMove.from, flatPdf);
-  assert.equal(
-    plan.pdfMove.to,
-    `${ROOT}/cover_letters/Affirm/Affirm_senior_pm_20260505.pdf`
-  );
+  assert.equal(plan.pdfMove.to, `${ROOT}/cover_letters/Affirm/Affirm_senior_pm_20260505.pdf`);
   assert.equal(plan.mdMove.from, flatMd);
-  assert.equal(
-    plan.mdMove.to,
-    `${ROOT}/cover_letters_md/Affirm/Affirm_senior_pm_20260505.md`
-  );
+  assert.equal(plan.mdMove.to, `${ROOT}/cover_letters_md/Affirm/Affirm_senior_pm_20260505.md`);
   assert.equal(plan.newClPath, "cover_letters/Affirm/Affirm_senior_pm_20260505.pdf");
   assert.equal(plan.warnings.length, 0);
 });
 
 test("planRow: only MD exists → plans PDF generation from MD", () => {
   const flatMd = `${ROOT}/cover_letters/Affirm_senior_pm_20260505.md`;
-  const plan = planRow(
-    makeApp({ cl_path: "Affirm_senior_pm_20260505.md" }),
-    ROOT,
-    { fileExists: existsSetFn(new Set([flatMd])) }
-  );
+  const plan = planRow(makeApp({ cl_path: "Affirm_senior_pm_20260505.md" }), ROOT, {
+    fileExists: existsSetFn(new Set([flatMd])),
+  });
   assert.ok(plan.pdfGenerate, "should plan PDF generation");
   assert.equal(plan.pdfGenerate.from, flatMd);
-  assert.equal(
-    plan.pdfGenerate.to,
-    `${ROOT}/cover_letters/Affirm/Affirm_senior_pm_20260505.pdf`
-  );
+  assert.equal(plan.pdfGenerate.to, `${ROOT}/cover_letters/Affirm/Affirm_senior_pm_20260505.pdf`);
   assert.ok(plan.mdMove, "MD must move to canonical");
 });
 
@@ -102,10 +89,7 @@ test("planRow: PDF nested under '<Company>/' (secondary profile layout, 'cover_l
     plan.pdfMove.to,
     `${ROOT}/cover_letters/Dignity_Health/CL_profile_role_location.pdf`
   );
-  assert.equal(
-    plan.newClPath,
-    "cover_letters/Dignity_Health/CL_profile_role_location.pdf"
-  );
+  assert.equal(plan.newClPath, "cover_letters/Dignity_Health/CL_profile_role_location.pdf");
 });
 
 test("planRow: PDF already in cover_letters/<otherSlug>/ (TSV company drift) → moves to canonical slug", () => {
@@ -123,14 +107,8 @@ test("planRow: PDF already in cover_letters/<otherSlug>/ (TSV company drift) →
     { fileExists: existsSetFn(new Set([oldNested])) }
   );
   // Note: "Bristol-Myers Squibb" slugifies to "Bristol_Myers_Squibb".
-  assert.equal(
-    plan.pdfMove.to,
-    `${ROOT}/cover_letters/Bristol_Myers_Squibb/role_20260420.pdf`
-  );
-  assert.equal(
-    plan.newClPath,
-    "cover_letters/Bristol_Myers_Squibb/role_20260420.pdf"
-  );
+  assert.equal(plan.pdfMove.to, `${ROOT}/cover_letters/Bristol_Myers_Squibb/role_20260420.pdf`);
+  assert.equal(plan.newClPath, "cover_letters/Bristol_Myers_Squibb/role_20260420.pdf");
 });
 
 test("planRow: TSV cl_path with '<Company>/file.md' (Jared older format) resolves to canonical", () => {
@@ -155,21 +133,15 @@ test("planRow: TSV cl_path with '<Company>/file.md' (Jared older format) resolve
 
 test("planRow: company with '&' is slugified to 'and' in folder name", () => {
   const flatPdf = `${ROOT}/cover_letters/key.pdf`;
-  const plan = planRow(
-    makeApp({ companyName: "Procter & Gamble", cl_path: "key.md" }),
-    ROOT,
-    { fileExists: existsSetFn(new Set([flatPdf])) }
-  );
+  const plan = planRow(makeApp({ companyName: "Procter & Gamble", cl_path: "key.md" }), ROOT, {
+    fileExists: existsSetFn(new Set([flatPdf])),
+  });
   assert.match(plan.pdfMove.to, /\/Procter_and_Gamble\//);
   assert.equal(plan.newClPath, "cover_letters/Procter_and_Gamble/key.pdf");
 });
 
 test("planRow: no source file found anywhere → warning + still canonicalises TSV pointer", () => {
-  const plan = planRow(
-    makeApp({ cl_path: "ghost_file.md" }),
-    ROOT,
-    { fileExists: () => false }
-  );
+  const plan = planRow(makeApp({ cl_path: "ghost_file.md" }), ROOT, { fileExists: () => false });
   assert.equal(plan.warnings.length, 1);
   assert.match(plan.warnings[0], /no source file found/);
   // We still update the TSV pointer so it's at least pointing at the
@@ -195,11 +167,9 @@ test("planRow: sentinel cl_path (no extension, no file) → skipped, TSV pointer
 test("planRow: PDF at canonical, MD outside canonical → only MD move planned", () => {
   const targetPdf = `${ROOT}/cover_letters/Affirm/key.pdf`;
   const flatMd = `${ROOT}/cover_letters/key.md`;
-  const plan = planRow(
-    makeApp({ cl_path: "cover_letters/Affirm/key.pdf" }),
-    ROOT,
-    { fileExists: existsSetFn(new Set([targetPdf, flatMd])) }
-  );
+  const plan = planRow(makeApp({ cl_path: "cover_letters/Affirm/key.pdf" }), ROOT, {
+    fileExists: existsSetFn(new Set([targetPdf, flatMd])),
+  });
   assert.equal(plan.skip, undefined);
   assert.equal(plan.pdfMove, undefined);
   assert.ok(plan.mdMove);
@@ -241,16 +211,80 @@ test("migrate: end-to-end on synthetic profile — moves files, updates TSV, bac
   // Build TSV with these 3 rows.
   const tsv = path.join(profileRoot, "applications.tsv");
   const headers = [
-    "key", "source", "jobId", "companyName", "title", "url", "location",
-    "status", "notion_page_id", "resume_ver", "cl_key", "salary_min",
-    "salary_max", "cl_path", "createdAt", "updatedAt",
+    "key",
+    "source",
+    "jobId",
+    "companyName",
+    "title",
+    "url",
+    "location",
+    "status",
+    "notion_page_id",
+    "resume_ver",
+    "cl_key",
+    "salary_min",
+    "salary_max",
+    "cl_path",
+    "createdAt",
+    "updatedAt",
   ];
   const row = (vals) => vals.join("\t");
   const lines = [
     row(headers),
-    row(["gh:1", "greenhouse", "1", "Affirm", "PM", "http://x", "Remote", "To Apply", "", "v1", "", "", "", "Affirm_role_20260505.md", "2026-05-05", "2026-05-05"]),
-    row(["gh:2", "greenhouse", "2", "Stripe", "PM", "http://y", "Remote", "To Apply", "", "v1", "", "", "", "Stripe_role_20260505.md", "2026-05-05", "2026-05-05"]),
-    row(["gh:3", "greenhouse", "3", "Adyen", "PM", "http://z", "Remote", "To Apply", "", "v1", "", "", "", "cover_letters/Adyen/Adyen_role_20260505.pdf", "2026-05-05", "2026-05-05"]),
+    row([
+      "gh:1",
+      "greenhouse",
+      "1",
+      "Affirm",
+      "PM",
+      "http://x",
+      "Remote",
+      "To Apply",
+      "",
+      "v1",
+      "",
+      "",
+      "",
+      "Affirm_role_20260505.md",
+      "2026-05-05",
+      "2026-05-05",
+    ]),
+    row([
+      "gh:2",
+      "greenhouse",
+      "2",
+      "Stripe",
+      "PM",
+      "http://y",
+      "Remote",
+      "To Apply",
+      "",
+      "v1",
+      "",
+      "",
+      "",
+      "Stripe_role_20260505.md",
+      "2026-05-05",
+      "2026-05-05",
+    ]),
+    row([
+      "gh:3",
+      "greenhouse",
+      "3",
+      "Adyen",
+      "PM",
+      "http://z",
+      "Remote",
+      "To Apply",
+      "",
+      "v1",
+      "",
+      "",
+      "",
+      "cover_letters/Adyen/Adyen_role_20260505.pdf",
+      "2026-05-05",
+      "2026-05-05",
+    ]),
   ];
   fs.writeFileSync(tsv, lines.join("\n") + "\n");
 
@@ -327,23 +361,52 @@ test("migrate: dry-run does not mutate filesystem or TSV", async () => {
   const profilesDir = path.join(tmp, "profiles");
   const profileRoot = path.join(profilesDir, "synthtest");
   fs.mkdirSync(path.join(profileRoot, "cover_letters"), { recursive: true });
-  fs.writeFileSync(
-    path.join(profileRoot, "profile.json"),
-    JSON.stringify({ id: "synthtest" })
-  );
+  fs.writeFileSync(path.join(profileRoot, "profile.json"), JSON.stringify({ id: "synthtest" }));
 
   const flatMd = path.join(profileRoot, "cover_letters", "Affirm_x.md");
   fs.writeFileSync(flatMd, "para");
   const tsv = path.join(profileRoot, "applications.tsv");
   const headers = [
-    "key", "source", "jobId", "companyName", "title", "url", "location",
-    "status", "notion_page_id", "resume_ver", "cl_key", "salary_min",
-    "salary_max", "cl_path", "createdAt", "updatedAt",
+    "key",
+    "source",
+    "jobId",
+    "companyName",
+    "title",
+    "url",
+    "location",
+    "status",
+    "notion_page_id",
+    "resume_ver",
+    "cl_key",
+    "salary_min",
+    "salary_max",
+    "cl_path",
+    "createdAt",
+    "updatedAt",
   ];
   fs.writeFileSync(
     tsv,
-    headers.join("\t") + "\n" +
-      ["gh:1", "greenhouse", "1", "Affirm", "PM", "http://x", "Remote", "To Apply", "", "v1", "", "", "", "Affirm_x.md", "2026-05-05", "2026-05-05"].join("\t") + "\n"
+    headers.join("\t") +
+      "\n" +
+      [
+        "gh:1",
+        "greenhouse",
+        "1",
+        "Affirm",
+        "PM",
+        "http://x",
+        "Remote",
+        "To Apply",
+        "",
+        "v1",
+        "",
+        "",
+        "",
+        "Affirm_x.md",
+        "2026-05-05",
+        "2026-05-05",
+      ].join("\t") +
+      "\n"
   );
 
   const before = fs.readFileSync(tsv, "utf8");
@@ -358,9 +421,7 @@ test("migrate: dry-run does not mutate filesystem or TSV", async () => {
 
   assert.equal(fs.existsSync(flatMd), true, "flat MD must still exist");
   assert.equal(
-    fs.existsSync(
-      path.join(profileRoot, "cover_letters", "Affirm", "Affirm_x.pdf")
-    ),
+    fs.existsSync(path.join(profileRoot, "cover_letters", "Affirm", "Affirm_x.pdf")),
     false,
     "no PDF generated in dry-run"
   );

@@ -58,7 +58,10 @@ function loadProfileCompanies(repoRoot, profileId) {
     const cols = line.split("\t");
     const name = cols[0];
     const profCol = cols[4] || "";
-    const profiles = profCol.split(",").map((s) => s.trim()).filter(Boolean);
+    const profiles = profCol
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
     if (profiles.includes(profileId)) out.add(String(name).toLowerCase());
   }
   return out;
@@ -123,9 +126,7 @@ function main() {
     _job: j,
     company: j.companyName,
     role: j.title,
-    location: (Array.isArray(j.locations) && j.locations.length > 0
-      ? String(j.locations[0])
-      : ""),
+    location: Array.isArray(j.locations) && j.locations.length > 0 ? String(j.locations[0]) : "",
   }));
   const activeCounts = buildActiveCounts(rows, rules);
   const result = filterJobs(inputs, rules, activeCounts);
@@ -180,7 +181,9 @@ function main() {
   }
 
   apps.save(tsvPath, next);
-  process.stdout.write(`wrote ${next.length} rows to ${tsvPath} (was ${rows.length}, +${next.length - rows.length})\n`);
+  process.stdout.write(
+    `wrote ${next.length} rows to ${tsvPath} (was ${rows.length}, +${next.length - rows.length})\n`
+  );
 }
 
 main();

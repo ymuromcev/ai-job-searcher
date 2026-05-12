@@ -27,8 +27,5 @@ test("jobsDbTitle composes from full_name or falls back to profile_id", () => {
     jobsDbTitle({ identity: { full_name: "Pat Example", profile_id: "profile_b" } }),
     "Pat Example — Jobs Pipeline"
   );
-  assert.equal(
-    jobsDbTitle({ identity: { profile_id: "profile_b" } }),
-    "profile_b — Jobs Pipeline"
-  );
+  assert.equal(jobsDbTitle({ identity: { profile_id: "profile_b" } }), "profile_b — Jobs Pipeline");
 });

@@ -32,19 +32,17 @@ const DEFAULT_RESULTS_PER_KEYWORD = 50;
 const DEFAULT_MAX_AGE_DAYS = 30;
 
 function companySlug(name) {
-  return String(name || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "") || "unknown";
+  return (
+    String(name || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "unknown"
+  );
 }
 
 function mapJob(listing) {
-  const company = sanitizeText(
-    (listing.company && listing.company.display_name) || "Unknown"
-  );
-  const location = sanitizeText(
-    (listing.location && listing.location.display_name) || ""
-  );
+  const company = sanitizeText((listing.company && listing.company.display_name) || "Unknown");
+  const location = sanitizeText((listing.location && listing.location.display_name) || "");
   const job = {
     source: SOURCE,
     slug: companySlug(company),
@@ -56,9 +54,8 @@ function mapJob(listing) {
     team: null,
     postedAt: parseIsoDate(listing.created),
     rawExtra: {
-      description: typeof listing.description === "string"
-        ? listing.description.slice(0, 1000)
-        : null,
+      description:
+        typeof listing.description === "string" ? listing.description.slice(0, 1000) : null,
       contractType: listing.contract_type || null,
     },
   };
@@ -66,7 +63,16 @@ function mapJob(listing) {
   return job;
 }
 
-async function fetchKeyword(fetchFn, appId, appKey, keyword, location, maxDays, resultsPerPage, logger) {
+async function fetchKeyword(
+  fetchFn,
+  appId,
+  appKey,
+  keyword,
+  location,
+  maxDays,
+  resultsPerPage,
+  logger
+) {
   const qs = new URLSearchParams({
     app_id: appId,
     app_key: appKey,
@@ -117,12 +123,14 @@ async function discover(targets, ctx = {}) {
     return [];
   }
 
-  const keywords = Array.isArray(kwConfig.keywords) && kwConfig.keywords.length > 0
-    ? kwConfig.keywords
-    : DEFAULT_KEYWORDS;
-  const location = (typeof kwConfig.location === "string" && kwConfig.location)
-    ? kwConfig.location
-    : DEFAULT_LOCATION;
+  const keywords =
+    Array.isArray(kwConfig.keywords) && kwConfig.keywords.length > 0
+      ? kwConfig.keywords
+      : DEFAULT_KEYWORDS;
+  const location =
+    typeof kwConfig.location === "string" && kwConfig.location
+      ? kwConfig.location
+      : DEFAULT_LOCATION;
   const resultsPerKeyword = Number.isFinite(Number(kwConfig.results_per_keyword))
     ? Math.min(Number(kwConfig.results_per_keyword), 50) // Adzuna max per page
     : DEFAULT_RESULTS_PER_KEYWORD;
@@ -135,7 +143,14 @@ async function discover(targets, ctx = {}) {
   const seenIds = new Set();
   for (const keyword of keywords) {
     const jobs = await fetchKeyword(
-      fetchFn, appId, appKey, keyword, location, maxAgeDays, resultsPerKeyword, logger
+      fetchFn,
+      appId,
+      appKey,
+      keyword,
+      location,
+      maxAgeDays,
+      resultsPerKeyword,
+      logger
     );
     for (const job of jobs) {
       if (!seenIds.has(job.jobId)) {

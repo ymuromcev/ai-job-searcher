@@ -188,7 +188,11 @@ async function main() {
 
   if (!args.apply) {
     console.log("\n  (dry-run — pass --apply to perform)");
-    done("reset_hub_layout", { dry_run: true, archived: subpageBlocksToArchive.length, deleted: bodyBlocksToDelete.length });
+    done("reset_hub_layout", {
+      dry_run: true,
+      archived: subpageBlocksToArchive.length,
+      deleted: bodyBlocksToDelete.length,
+    });
     return;
   }
 

@@ -215,9 +215,7 @@ test("applyPrepareFilter: title_requirelist blocks non-PM title", () => {
 });
 
 test("applyPrepareFilter: title_requirelist passes PM abbreviation (word boundary)", () => {
-  const apps = [
-    makeApp({ key: "gh:1", title: "Sr. PM, Payments" }),
-  ];
+  const apps = [makeApp({ key: "gh:1", title: "Sr. PM, Payments" })];
   const rules = {
     title_requirelist: [{ pattern: "PM", reason: "PM abbreviation" }],
   };
@@ -250,7 +248,10 @@ test("filterAlreadyEvaluated: drops fit_score=Weak rows with reason already_eval
   ];
   const { passed, skipped } = filterAlreadyEvaluated(apps);
   assert.equal(passed.length, 3);
-  assert.deepEqual(passed.map((a) => a.key), ["gh:1", "gh:2", "gh:4"]);
+  assert.deepEqual(
+    passed.map((a) => a.key),
+    ["gh:1", "gh:2", "gh:4"]
+  );
   assert.equal(skipped.length, 1);
   assert.equal(skipped[0].key, "gh:3");
   assert.equal(skipped[0].reason, "already_evaluated_weak");
@@ -259,9 +260,7 @@ test("filterAlreadyEvaluated: drops fit_score=Weak rows with reason already_eval
 test("filterAlreadyEvaluated: drops skip_reason=weak_fit (legacy alias for fit_score=Weak)", () => {
   // SKILL writes both fit_score=Weak AND skip_reason=weak_fit; either signal
   // alone must produce the same skip outcome (defensive against partial writes).
-  const apps = [
-    makeApp({ key: "gh:1", fit_score: "", skip_reason: "weak_fit" }),
-  ];
+  const apps = [makeApp({ key: "gh:1", fit_score: "", skip_reason: "weak_fit" })];
   const { passed, skipped } = filterAlreadyEvaluated(apps);
   assert.equal(passed.length, 0);
   assert.equal(skipped.length, 1);
@@ -269,10 +268,7 @@ test("filterAlreadyEvaluated: drops skip_reason=weak_fit (legacy alias for fit_s
 });
 
 test("filterAlreadyEvaluated: drops skip_reason=duplicate with reason already_evaluated_duplicate", () => {
-  const apps = [
-    makeApp({ key: "gh:1", skip_reason: "duplicate" }),
-    makeApp({ key: "gh:2" }),
-  ];
+  const apps = [makeApp({ key: "gh:1", skip_reason: "duplicate" }), makeApp({ key: "gh:2" })];
   const { passed, skipped } = filterAlreadyEvaluated(apps);
   assert.equal(passed.length, 1);
   assert.equal(passed[0].key, "gh:2");
@@ -311,7 +307,9 @@ function makePrepDeps(apps, overrides = {}) {
     calcSalary: () => null,
     fetchFn: async () => ({ ok: true, status: 200 }),
     readFile: () => "",
-    writeFile: (p, data) => { written[p] = data; },
+    writeFile: (p, data) => {
+      written[p] = data;
+    },
     now: () => "2026-04-20T12:00:00.000Z",
     _written: written,
     ...overrides,
@@ -355,8 +353,8 @@ test("prepare --phase pre: only picks fresh apps (status='To Apply' AND no notio
   // pre-apply triage stage.
   const apps = [
     makeApp({ key: "gh:1", status: "To Apply", notion_page_id: "abc" }), // already pushed
-    makeApp({ key: "gh:2", status: "To Apply", notion_page_id: "" }),    // fresh — picked
-    makeApp({ key: "gh:3", status: "Applied", notion_page_id: "" }),     // past triage
+    makeApp({ key: "gh:2", status: "To Apply", notion_page_id: "" }), // fresh — picked
+    makeApp({ key: "gh:3", status: "Applied", notion_page_id: "" }), // past triage
   ];
   const deps = makePrepDeps(apps);
   const cmd = makePrepareCommand(deps);
@@ -395,10 +393,7 @@ test("prepare --phase pre (BL-9): already-evaluated rows skip URL-check and do n
   assert.equal(result.batch[0].key, "gh:3");
   // Both already-evaluated rows show up in skipped[] with distinct reasons.
   const reasons = result.skipped.map((s) => s.reason).sort();
-  assert.deepEqual(
-    reasons,
-    ["already_evaluated_duplicate", "already_evaluated_weak"]
-  );
+  assert.deepEqual(reasons, ["already_evaluated_duplicate", "already_evaluated_weak"]);
   assert.equal(result.stats.alreadyEvaluated, 2);
   assert.equal(result.stats.skipReasons.already_evaluated_weak, 1);
   assert.equal(result.stats.skipReasons.already_evaluated_duplicate, 1);
@@ -409,9 +404,7 @@ test("prepare --phase pre: dead URLs go to skipped, NOT batch (G-12: alive-only 
   const dead = makeApp({ key: "gh:2", url: "https://dead.example.com/jobs/2" });
   const deps = makePrepDeps([alive, dead], {
     checkUrls: async (rows) =>
-      rows.map((r) =>
-        r.key === "gh:1" ? makeAliveUrl(r) : makeDeadUrl(r)
-      ),
+      rows.map((r) => (r.key === "gh:1" ? makeAliveUrl(r) : makeDeadUrl(r))),
   });
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx();
@@ -430,9 +423,7 @@ test("prepare --phase pre: dead URLs go to skipped, NOT batch (G-12: alive-only 
 });
 
 test("prepare --phase pre: respects batchSize", async () => {
-  const apps = Array.from({ length: 10 }, (_, i) =>
-    makeApp({ key: `gh:${i}`, jobId: String(i) })
-  );
+  const apps = Array.from({ length: 10 }, (_, i) => makeApp({ key: `gh:${i}`, jobId: String(i) }));
   const deps = makePrepDeps(apps);
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx({ flags: { phase: "pre", batch: 3, dryRun: false } });
@@ -445,7 +436,17 @@ test("prepare --phase pre: respects batchSize", async () => {
 test("prepare --phase pre: includes salary when company_tiers known", async () => {
   const apps = [makeApp({ companyName: "Stripe", title: "Senior PM" })];
   const deps = makePrepDeps(apps, {
-    calcSalary: (co, title) => (co === "Stripe" ? { tier: "S", level: "Senior", min: 220000, max: 300000, mid: 260000, expectation: "$220-300K TC (midpoint $260K)" } : null),
+    calcSalary: (co, title) =>
+      co === "Stripe"
+        ? {
+            tier: "S",
+            level: "Senior",
+            min: 220000,
+            max: 300000,
+            mid: 260000,
+            expectation: "$220-300K TC (midpoint $260K)",
+          }
+        : null,
   });
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx();
@@ -488,7 +489,8 @@ test("prepare --phase pre: flags unknown-tier companies, dedupes across batch", 
 
 test("prepare --phase pre (L-5): extracts schedule + requirements from jdText into batch entries", async () => {
   const apps = [makeApp({ key: "gh:1", companyName: "Kaiser", title: "Medical Receptionist" })];
-  const jdText = "Schedule: Full-time, day shift. Requirements: HS diploma required. BLS preferred.";
+  const jdText =
+    "Schedule: Full-time, day shift. Requirements: HS diploma required. BLS preferred.";
   const deps = makePrepDeps(apps, {
     fetchJds: async () => [{ key: "gh:1", status: "fetched", text: jdText }],
   });
@@ -622,9 +624,7 @@ test("prepare --phase pre (G-12): fills batch to target by pulling more from pas
 test("prepare --phase pre (G-12): does NOT URL-check beyond what's needed (deferred count)", async () => {
   // 30 candidates, batchSize=5, all alive. Loop should consume only 5
   // (first chunk size = max(remaining=5, floor=5) = 5), leaving 25 deferred.
-  const apps = Array.from({ length: 30 }, (_, i) =>
-    makeApp({ key: `gh:${i}`, jobId: String(i) })
-  );
+  const apps = Array.from({ length: 30 }, (_, i) => makeApp({ key: `gh:${i}`, jobId: String(i) }));
   const deps = makePrepDeps(apps);
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx({ flags: { phase: "pre", batch: 5, dryRun: false } });
@@ -637,9 +637,7 @@ test("prepare --phase pre (G-12): does NOT URL-check beyond what's needed (defer
 
 test("prepare --phase pre (G-12): pool exhausted — batch smaller than target", async () => {
   // Only 3 candidates, all alive; batchSize=10. Result: 3 in batch, 0 deferred.
-  const apps = Array.from({ length: 3 }, (_, i) =>
-    makeApp({ key: `gh:${i}`, jobId: String(i) })
-  );
+  const apps = Array.from({ length: 3 }, (_, i) => makeApp({ key: `gh:${i}`, jobId: String(i) }));
   const deps = makePrepDeps(apps);
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx({ flags: { phase: "pre", batch: 10, dryRun: false } });
@@ -651,11 +649,11 @@ test("prepare --phase pre (G-12): pool exhausted — batch smaller than target",
 
 test("prepare --phase pre (G-12): skipReasons aggregates across cap + blocklist + url_dead", async () => {
   const apps = [
-    makeApp({ key: "gh:1", title: "VP of Engineering" }),  // title_blocklist
-    makeApp({ key: "gh:2", title: "Director of PM" }),     // title_blocklist
-    makeApp({ key: "gh:3", companyName: "BadCo" }),        // company_blocklist
+    makeApp({ key: "gh:1", title: "VP of Engineering" }), // title_blocklist
+    makeApp({ key: "gh:2", title: "Director of PM" }), // title_blocklist
+    makeApp({ key: "gh:3", companyName: "BadCo" }), // company_blocklist
     makeApp({ key: "gh:4", url: "https://dead.example.com/jobs/4" }), // url_dead
-    makeApp({ key: "gh:5" }),                              // alive
+    makeApp({ key: "gh:5" }), // alive
   ];
   const deps = makePrepDeps(apps, {
     loadProfile: () => ({
@@ -763,9 +761,7 @@ test("computeInboxHealth: boundary remaining_viable === target → healthy (stri
 test("prepare --phase pre (RFC 024): writes inbox_health=healthy when deferredQueue >= target", async () => {
   // 40 fresh inbox rows, batch=5, all URLs alive → 5 in batch, 35 deferred.
   // Next prepare run has plenty (35 >= 5), so inbox_health.status = "healthy".
-  const apps = Array.from({ length: 40 }, (_, i) =>
-    makeApp({ key: `gh:${i}`, jobId: String(i) })
-  );
+  const apps = Array.from({ length: 40 }, (_, i) => makeApp({ key: `gh:${i}`, jobId: String(i) }));
   const deps = makePrepDeps(apps);
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx({ flags: { phase: "pre", batch: 5, dryRun: false } });
@@ -790,9 +786,7 @@ test("prepare --phase pre (RFC 024): writes inbox_health=low when deferredQueue 
   ];
   const deps = makePrepDeps(apps, {
     checkUrls: async (rows) =>
-      rows.map((r) =>
-        r.key === "gh:2" ? makeDeadUrl(r) : makeAliveUrl(r)
-      ),
+      rows.map((r) => (r.key === "gh:2" ? makeDeadUrl(r) : makeAliveUrl(r))),
   });
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx({ flags: { phase: "pre", batch: 5, dryRun: false } });
@@ -810,10 +804,10 @@ test("prepare --phase pre (RFC 024): writes inbox_health=low when deferredQueue 
 
 test("prepare --phase pre (RFC 024): drops_this_run aggregates filter + URL drops", async () => {
   const apps = [
-    makeApp({ key: "gh:1", title: "VP of Engineering" }),  // title_blocklist
-    makeApp({ key: "gh:2", companyName: "BadCo" }),        // company_blocklist
+    makeApp({ key: "gh:1", title: "VP of Engineering" }), // title_blocklist
+    makeApp({ key: "gh:2", companyName: "BadCo" }), // company_blocklist
     makeApp({ key: "gh:3", url: "https://dead.example.com/jobs/3" }), // url_dead
-    makeApp({ key: "gh:4" }),                              // alive
+    makeApp({ key: "gh:4" }), // alive
   ];
   const deps = makePrepDeps(apps, {
     loadProfile: () => ({
@@ -900,7 +894,9 @@ function makeCommitDeps(apps, overrides = {}) {
     },
     loadSecrets: () => ({ NOTION_TOKEN: "secret_test" }),
     loadApplications: () => ({ apps }),
-    saveApplications: (_, updated) => { savedApps = updated; },
+    saveApplications: (_, updated) => {
+      savedApps = updated;
+    },
     checkUrls: async () => [],
     fetchJds: async () => [],
     calcSalary: () => null,
@@ -931,14 +927,22 @@ test("prepare --phase commit: to_apply sets status and fields", async () => {
   const results = {
     profileId: "testuser",
     results: [
-      { key: "gh:1", decision: "to_apply", clKey: "stripe_spm_cl", resumeVer: "v3", notionPageId: "notion-abc" },
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "stripe_spm_cl",
+        resumeVer: "v3",
+        notionPageId: "notion-abc",
+      },
     ],
   };
   const deps = makeCommitDeps(apps, {
     readFile: () => JSON.stringify(results),
   });
   const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/fake/results.json", dryRun: false } });
+  const ctx = makeCtx({
+    flags: { phase: "commit", resultsFile: "/fake/results.json", dryRun: false },
+  });
   const code = await cmd(ctx);
   assert.equal(code, 0);
   const saved = deps._getSaved();
@@ -989,9 +993,7 @@ test("prepare --phase commit (RFC 022): to_apply with clKey but no clParagraphs 
   const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
   const results = {
     profileId: "testuser",
-    results: [
-      { key: "gh:1", decision: "to_apply", clKey: "just_a_key", resumeVer: "v" },
-    ],
+    results: [{ key: "gh:1", decision: "to_apply", clKey: "just_a_key", resumeVer: "v" }],
   };
   const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
   const cmd = makePrepareCommand(deps);
@@ -1141,9 +1143,7 @@ test("prepare --phase commit (BL-9): invalid fitScore warns and is not persisted
   const apps = [makeApp({ key: "gh:1", status: "To Apply", fit_score: "" })];
   const results = {
     profileId: "testuser",
-    results: [
-      { key: "gh:1", decision: "skip", fitScore: "MaybeStrong", skipReason: "weak_fit" },
-    ],
+    results: [{ key: "gh:1", decision: "skip", fitScore: "MaybeStrong", skipReason: "weak_fit" }],
   };
   const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
   const cmd = makePrepareCommand(deps);
@@ -1161,9 +1161,7 @@ test("prepare --phase commit (BL-9): invalid skipReason warns and is not persist
   const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
   const results = {
     profileId: "testuser",
-    results: [
-      { key: "gh:1", decision: "skip", fitScore: "Weak", skipReason: "not_a_pm_role" },
-    ],
+    results: [{ key: "gh:1", decision: "skip", fitScore: "Weak", skipReason: "not_a_pm_role" }],
   };
   const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
   const cmd = makePrepareCommand(deps);
@@ -1305,9 +1303,7 @@ test("prepare --phase commit: unknown resumeVer warns and skips when validArchet
   const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
   const results = {
     profileId: "testuser",
-    results: [
-      { key: "gh:1", decision: "to_apply", resumeVer: "made-up-key", notionPageId: "p1" },
-    ],
+    results: [{ key: "gh:1", decision: "to_apply", resumeVer: "made-up-key", notionPageId: "p1" }],
   };
   const deps = makeCommitDeps(apps, {
     readFile: () => JSON.stringify(results),
@@ -1382,7 +1378,9 @@ test("prepare --phase commit: does NOT call saveProfile when companyTiers absent
   const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
   const results = {
     profileId: "testuser",
-    results: [{ key: "gh:1", decision: "to_apply", clKey: "x", resumeVer: "v1", notionPageId: "p1" }],
+    results: [
+      { key: "gh:1", decision: "to_apply", clKey: "x", resumeVer: "v1", notionPageId: "p1" },
+    ],
   };
   const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
   const cmd = makePrepareCommand(deps);
@@ -1396,7 +1394,9 @@ test("prepare --phase commit: skips already-known tiers (no spurious write)", as
   const results = {
     profileId: "testuser",
     companyTiers: { Stripe: "S", NewCo: "B" }, // Stripe already known
-    results: [{ key: "gh:1", decision: "to_apply", clKey: "x", resumeVer: "v1", notionPageId: "p1" }],
+    results: [
+      { key: "gh:1", decision: "to_apply", clKey: "x", resumeVer: "v1", notionPageId: "p1" },
+    ],
   };
   const profile = {
     id: "testuser",
@@ -1424,7 +1424,9 @@ test("prepare --phase commit: rejects invalid tier values, warns, continues", as
   const results = {
     profileId: "testuser",
     companyTiers: { GoodCo: "B", BadCo: "Z", AnotherBad: "" },
-    results: [{ key: "gh:1", decision: "to_apply", clKey: "x", resumeVer: "v1", notionPageId: "p1" }],
+    results: [
+      { key: "gh:1", decision: "to_apply", clKey: "x", resumeVer: "v1", notionPageId: "p1" },
+    ],
   };
   const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
   const cmd = makePrepareCommand(deps);
@@ -1433,10 +1435,7 @@ test("prepare --phase commit: rejects invalid tier values, warns, continues", as
   const saved = deps._getSavedProfile();
   assert.ok(saved);
   assert.deepEqual(saved.patch.company_tiers, { GoodCo: "B" });
-  assert.equal(
-    ctx._errLines.filter((l) => /invalid tier/.test(l)).length,
-    2
-  );
+  assert.equal(ctx._errLines.filter((l) => /invalid tier/.test(l)).length, 2);
 });
 
 test("prepare --phase commit: dry-run does not call saveProfile", async () => {
@@ -1444,7 +1443,9 @@ test("prepare --phase commit: dry-run does not call saveProfile", async () => {
   const results = {
     profileId: "testuser",
     companyTiers: { NewCo: "B" },
-    results: [{ key: "gh:1", decision: "to_apply", clKey: "x", resumeVer: "v1", notionPageId: "p1" }],
+    results: [
+      { key: "gh:1", decision: "to_apply", clKey: "x", resumeVer: "v1", notionPageId: "p1" },
+    ],
   };
   const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
   const cmd = makePrepareCommand(deps);
@@ -1459,7 +1460,9 @@ test("prepare --phase commit: lowercase tier value is normalized to uppercase", 
   const results = {
     profileId: "testuser",
     companyTiers: { NewCo: "b", OtherCo: "a" },
-    results: [{ key: "gh:1", decision: "to_apply", clKey: "x", resumeVer: "v1", notionPageId: "p1" }],
+    results: [
+      { key: "gh:1", decision: "to_apply", clKey: "x", resumeVer: "v1", notionPageId: "p1" },
+    ],
   };
   const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
   const cmd = makePrepareCommand(deps);
@@ -1552,9 +1555,7 @@ test("prepare --phase commit (BL-14): to_apply with clParagraphs writes MD + PDF
   assert.deepEqual(rec.pdfs[0].paragraphs, results.results[0].clParagraphs);
 
   // PDF dir was mkdir'd before generation.
-  assert.ok(
-    rec.mkdirs.includes("/fake/profiles/testuser/cover_letters/Affirm")
-  );
+  assert.ok(rec.mkdirs.includes("/fake/profiles/testuser/cover_letters/Affirm"));
 
   // TSV cl_path = canonical relative PDF path.
   const saved = deps._getSaved();
@@ -1622,10 +1623,7 @@ test("prepare --phase commit (BL-14): slugifies company with ampersand into fold
   assert.match(rec.writes[0].path, /cover_letters_md\/Procter_and_Gamble\//);
   assert.match(rec.pdfs[0].path, /cover_letters\/Procter_and_Gamble\//);
   const saved = deps._getSaved();
-  assert.equal(
-    saved[0].cl_path,
-    "cover_letters/Procter_and_Gamble/PG_PM_20260505.pdf"
-  );
+  assert.equal(saved[0].cl_path, "cover_letters/Procter_and_Gamble/PG_PM_20260505.pdf");
 });
 
 test("prepare --phase commit (BL-14): dry-run does not write files but plans cl_path", async () => {
@@ -1758,9 +1756,7 @@ test("prepare --phase commit (BL-14): to_apply WITHOUT clParagraphs warns (regre
   assert.equal(rec.writes.length, 0);
   assert.equal(rec.pdfs.length, 0);
   assert.ok(
-    ctx._errLines.some((l) =>
-      /to_apply row\(s\) missing clParagraphs/.test(l)
-    ),
+    ctx._errLines.some((l) => /to_apply row\(s\) missing clParagraphs/.test(l)),
     `expected legacy-row warning, got: ${ctx._errLines.join(" | ")}`
   );
 });
@@ -1899,9 +1895,7 @@ test("prepare --phase pre fresh (BL-9 Step 4): writes deferredQueue + mode=fresh
   // 10 apps, batchSize=5, all alive. Iter 1: chunk=max(5,5)=5, consumed=5,
   // 5 alive → aliveResults=5 (target met). deferredQueue = passed.slice(5) =
   // 5 remaining keys, in order.
-  const apps = Array.from({ length: 10 }, (_, i) =>
-    makeApp({ key: `gh:${i}`, jobId: String(i) })
-  );
+  const apps = Array.from({ length: 10 }, (_, i) => makeApp({ key: `gh:${i}`, jobId: String(i) }));
   const deps = makePrepDeps(apps);
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx({ flags: { phase: "pre", batch: 5, dryRun: false } });
@@ -1928,8 +1922,26 @@ test("prepare --phase pre topup (BL-9 Step 4): appends new entries to existing b
     mode: "fresh",
     batchSize: 4,
     batch: [
-      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
-      { key: "gh:1", source: "greenhouse", jobId: "1", companyName: "Stripe", title: "PM", url: "https://example.com/1", urlAlive: true, urlStatus: 200 },
+      {
+        key: "gh:0",
+        source: "greenhouse",
+        jobId: "0",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/0",
+        urlAlive: true,
+        urlStatus: 200,
+      },
+      {
+        key: "gh:1",
+        source: "greenhouse",
+        jobId: "1",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/1",
+        urlAlive: true,
+        urlStatus: 200,
+      },
     ],
     skipped: [],
     deferredQueue: ["gh:2", "gh:3"],
@@ -1974,8 +1986,26 @@ test("prepare --phase pre topup (RFC 024): writes inbox_health to merged context
     mode: "fresh",
     batchSize: 4,
     batch: [
-      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
-      { key: "gh:1", source: "greenhouse", jobId: "1", companyName: "Stripe", title: "PM", url: "https://example.com/1", urlAlive: true, urlStatus: 200 },
+      {
+        key: "gh:0",
+        source: "greenhouse",
+        jobId: "0",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/0",
+        urlAlive: true,
+        urlStatus: 200,
+      },
+      {
+        key: "gh:1",
+        source: "greenhouse",
+        jobId: "1",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/1",
+        urlAlive: true,
+        urlStatus: 200,
+      },
     ],
     skipped: [],
     deferredQueue: ["gh:2", "gh:3"],
@@ -2010,8 +2040,26 @@ test("prepare --phase pre topup (BL-9 Step 4): drops keys that have moved out of
     mode: "fresh",
     batchSize: 4,
     batch: [
-      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
-      { key: "gh:1", source: "greenhouse", jobId: "1", companyName: "Stripe", title: "PM", url: "https://example.com/1", urlAlive: true, urlStatus: 200 },
+      {
+        key: "gh:0",
+        source: "greenhouse",
+        jobId: "0",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/0",
+        urlAlive: true,
+        urlStatus: 200,
+      },
+      {
+        key: "gh:1",
+        source: "greenhouse",
+        jobId: "1",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/1",
+        urlAlive: true,
+        urlStatus: 200,
+      },
     ],
     skipped: [],
     deferredQueue: ["gh:2", "gh:3"],
@@ -2048,8 +2096,26 @@ test("prepare --phase pre topup (BL-9 Step 4): drops keys whose commit added fit
     mode: "fresh",
     batchSize: 4,
     batch: [
-      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
-      { key: "gh:1", source: "greenhouse", jobId: "1", companyName: "Stripe", title: "PM", url: "https://example.com/1", urlAlive: true, urlStatus: 200 },
+      {
+        key: "gh:0",
+        source: "greenhouse",
+        jobId: "0",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/0",
+        urlAlive: true,
+        urlStatus: 200,
+      },
+      {
+        key: "gh:1",
+        source: "greenhouse",
+        jobId: "1",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/1",
+        urlAlive: true,
+        urlStatus: 200,
+      },
     ],
     skipped: [],
     deferredQueue: ["gh:2", "gh:3"],
@@ -2085,10 +2151,14 @@ test("prepare --phase pre topup (BL-9 Step 4): empty deferredQueue is a no-op (n
   let writeCalls = 0;
   const deps = makePrepDeps(apps, {
     readFile: () => JSON.stringify(prevContext),
-    writeFile: () => { writeCalls++; },
+    writeFile: () => {
+      writeCalls++;
+    },
   });
   const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({ flags: { phase: "pre", mode: "topup", need: 5, batch: 30, dryRun: false } });
+  const ctx = makeCtx({
+    flags: { phase: "pre", mode: "topup", need: 5, batch: 30, dryRun: false },
+  });
   const code = await cmd(ctx);
   assert.equal(code, 0);
   assert.equal(writeCalls, 0);
@@ -2097,9 +2167,7 @@ test("prepare --phase pre topup (BL-9 Step 4): empty deferredQueue is a no-op (n
 test("prepare --phase pre topup (BL-9 Step 4): default --need is batchSize - currentBatch (deficit)", async () => {
   // batchSize=30, currentBatch=20 → default need=10. Queue has 15 alive.
   // Topup adds 10, queue becomes 5.
-  const apps = Array.from({ length: 35 }, (_, i) =>
-    makeApp({ key: `gh:${i}`, jobId: String(i) })
-  );
+  const apps = Array.from({ length: 35 }, (_, i) => makeApp({ key: `gh:${i}`, jobId: String(i) }));
   const batchEntries = Array.from({ length: 20 }, (_, i) => ({
     key: `gh:${i}`,
     source: "greenhouse",
@@ -2135,10 +2203,14 @@ test("prepare --phase pre topup (BL-9 Step 4): default --need is batchSize - cur
 test("prepare --phase pre topup (BL-9 Step 4): missing prepare_context.json returns 1", async () => {
   const apps = [makeApp()];
   const deps = makePrepDeps(apps, {
-    readFile: () => { throw new Error("ENOENT"); },
+    readFile: () => {
+      throw new Error("ENOENT");
+    },
   });
   const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({ flags: { phase: "pre", mode: "topup", need: 5, batch: 30, dryRun: false } });
+  const ctx = makeCtx({
+    flags: { phase: "pre", mode: "topup", need: 5, batch: 30, dryRun: false },
+  });
   const code = await cmd(ctx);
   assert.equal(code, 1);
   assert.ok(ctx._errLines.some((l) => /cannot read prepare_context/.test(l)));
@@ -2155,7 +2227,18 @@ test("prepare --phase pre topup (BL-9 Step 4): dry-run does not write file", asy
     profileId: "testuser",
     mode: "fresh",
     batchSize: 30,
-    batch: [{ key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 }],
+    batch: [
+      {
+        key: "gh:0",
+        source: "greenhouse",
+        jobId: "0",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/0",
+        urlAlive: true,
+        urlStatus: 200,
+      },
+    ],
     skipped: [],
     deferredQueue: ["gh:1", "gh:2"],
     unknownTierCompanies: [],
@@ -2205,10 +2288,7 @@ test("isFreshInboxApp: true for legacy 'To Apply' without notion_page_id", () =>
 });
 
 test("isFreshInboxApp: false for committed To Apply (has notion_page_id)", () => {
-  assert.equal(
-    isFreshInboxApp(makeApp({ status: "To Apply", notion_page_id: "p1" })),
-    false
-  );
+  assert.equal(isFreshInboxApp(makeApp({ status: "To Apply", notion_page_id: "p1" })), false);
 });
 
 test("isFreshInboxApp: false for Applied / Rejected / Archived", () => {
@@ -2218,18 +2298,12 @@ test("isFreshInboxApp: false for Applied / Rejected / Archived", () => {
 });
 
 test("computeInboxExhausted: false when fresh-Inbox row exists outside batch", () => {
-  const apps = [
-    makeApp({ key: "a", status: "Inbox" }),
-    makeApp({ key: "b", status: "Inbox" }),
-  ];
+  const apps = [makeApp({ key: "a", status: "Inbox" }), makeApp({ key: "b", status: "Inbox" })];
   assert.equal(computeInboxExhausted(apps, new Set(["a"])), false);
 });
 
 test("computeInboxExhausted: true when all fresh rows are in batch", () => {
-  const apps = [
-    makeApp({ key: "a", status: "Inbox" }),
-    makeApp({ key: "b", status: "Inbox" }),
-  ];
+  const apps = [makeApp({ key: "a", status: "Inbox" }), makeApp({ key: "b", status: "Inbox" })];
   assert.equal(computeInboxExhausted(apps, new Set(["a", "b"])), true);
 });
 
@@ -2303,7 +2377,16 @@ test("prepare --phase pre weak-fallback (BL-9 Step 5): pulls already-Weak rows i
     mode: "topup",
     batchSize: 4,
     batch: [
-      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+      {
+        key: "gh:0",
+        source: "greenhouse",
+        jobId: "0",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/0",
+        urlAlive: true,
+        urlStatus: 200,
+      },
     ],
     skipped: [],
     deferredQueue: [],
@@ -2312,7 +2395,9 @@ test("prepare --phase pre weak-fallback (BL-9 Step 5): pulls already-Weak rows i
   };
   const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
   const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: false } });
+  const ctx = makeCtx({
+    flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: false },
+  });
   const code = await cmd(ctx);
   assert.equal(code, 0);
   const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
@@ -2353,7 +2438,16 @@ test("prepare --phase pre weak-fallback (RFC 024): inbox_health excludes already
     mode: "topup",
     batchSize: 4,
     batch: [
-      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+      {
+        key: "gh:0",
+        source: "greenhouse",
+        jobId: "0",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/0",
+        urlAlive: true,
+        urlStatus: 200,
+      },
     ],
     skipped: [],
     deferredQueue: ["gh:1"],
@@ -2362,7 +2456,9 @@ test("prepare --phase pre weak-fallback (RFC 024): inbox_health excludes already
   };
   const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
   const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 1, batch: 4, dryRun: false } });
+  const ctx = makeCtx({
+    flags: { phase: "pre", mode: "weak-fallback", need: 1, batch: 4, dryRun: false },
+  });
   await cmd(ctx);
   const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
   assert.ok(result.inbox_health, "weak-fallback must write inbox_health");
@@ -2376,8 +2472,8 @@ test("prepare --phase pre weak-fallback (RFC 024): inbox_health excludes already
       assert.ok(
         result.inbox_health.remaining_viable < result.deferredQueue.length,
         `already-Weak in deferredQueue (${key}) must NOT count toward remaining_viable; ` +
-        `got remaining_viable=${result.inbox_health.remaining_viable}, ` +
-        `deferredQueue.length=${result.deferredQueue.length}`
+          `got remaining_viable=${result.inbox_health.remaining_viable}, ` +
+          `deferredQueue.length=${result.deferredQueue.length}`
       );
       break;
     }
@@ -2405,7 +2501,16 @@ test("prepare --phase pre weak-fallback (BL-9 Step 5): combines deferredQueue + 
     mode: "topup",
     batchSize: 5,
     batch: [
-      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+      {
+        key: "gh:0",
+        source: "greenhouse",
+        jobId: "0",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/0",
+        urlAlive: true,
+        urlStatus: 200,
+      },
     ],
     skipped: [],
     deferredQueue: ["gh:1", "gh:3"],
@@ -2414,11 +2519,16 @@ test("prepare --phase pre weak-fallback (BL-9 Step 5): combines deferredQueue + 
   };
   const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
   const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 5, batch: 5, dryRun: false } });
+  const ctx = makeCtx({
+    flags: { phase: "pre", mode: "weak-fallback", need: 5, batch: 5, dryRun: false },
+  });
   await cmd(ctx);
   const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
   // Should pull all 3 distinct keys (gh:1, gh:2, gh:3).
-  const newKeys = result.batch.slice(1).map((e) => e.key).sort();
+  const newKeys = result.batch
+    .slice(1)
+    .map((e) => e.key)
+    .sort();
   assert.deepEqual(newKeys, ["gh:1", "gh:2", "gh:3"]);
   // gh:1 came from queue, NOT marked weak. gh:2 and gh:3 are weak.
   const e1 = result.batch.find((e) => e.key === "gh:1");
@@ -2441,7 +2551,16 @@ test("prepare --phase pre weak-fallback (BL-9 Step 5): drops duplicate-flagged r
     mode: "topup",
     batchSize: 4,
     batch: [
-      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+      {
+        key: "gh:0",
+        source: "greenhouse",
+        jobId: "0",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/0",
+        urlAlive: true,
+        urlStatus: 200,
+      },
     ],
     skipped: [],
     deferredQueue: ["gh:2"],
@@ -2450,26 +2569,37 @@ test("prepare --phase pre weak-fallback (BL-9 Step 5): drops duplicate-flagged r
   };
   const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
   const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: false } });
+  const ctx = makeCtx({
+    flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: false },
+  });
   await cmd(ctx);
   const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
   // Only gh:1 added; gh:2 dropped as duplicate.
   assert.equal(result.batch.length, 2);
   assert.equal(result.batch[1].key, "gh:1");
-  assert.ok(result.skipped.some((s) => s.key === "gh:2" && s.reason === "already_evaluated_duplicate"));
+  assert.ok(
+    result.skipped.some((s) => s.key === "gh:2" && s.reason === "already_evaluated_duplicate")
+  );
 });
 
 test("prepare --phase pre weak-fallback (BL-9 Step 5): empty pool — writes mode + stats, no batch growth", async () => {
-  const apps = [
-    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
-  ];
+  const apps = [makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" })];
   const prevContext = {
     version: 1,
     profileId: "testuser",
     mode: "topup",
     batchSize: 4,
     batch: [
-      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+      {
+        key: "gh:0",
+        source: "greenhouse",
+        jobId: "0",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/0",
+        urlAlive: true,
+        urlStatus: 200,
+      },
     ],
     skipped: [],
     deferredQueue: [],
@@ -2478,7 +2608,9 @@ test("prepare --phase pre weak-fallback (BL-9 Step 5): empty pool — writes mod
   };
   const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
   const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: false } });
+  const ctx = makeCtx({
+    flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: false },
+  });
   await cmd(ctx);
   const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
   assert.equal(result.mode, "weak-fallback");
@@ -2500,7 +2632,16 @@ test("prepare --phase pre weak-fallback (BL-9 Step 5): inboxExhausted=true after
     mode: "topup",
     batchSize: 4,
     batch: [
-      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+      {
+        key: "gh:0",
+        source: "greenhouse",
+        jobId: "0",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/0",
+        urlAlive: true,
+        urlStatus: 200,
+      },
     ],
     skipped: [],
     deferredQueue: [],
@@ -2509,7 +2650,9 @@ test("prepare --phase pre weak-fallback (BL-9 Step 5): inboxExhausted=true after
   };
   const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
   const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: false } });
+  const ctx = makeCtx({
+    flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: false },
+  });
   await cmd(ctx);
   const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
   assert.equal(result.stats.inboxExhausted, true);
@@ -2529,8 +2672,26 @@ test("prepare --phase pre weak-fallback (BL-9 Step 5): respects company cap (pre
     mode: "topup",
     batchSize: 5,
     batch: [
-      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
-      { key: "gh:1", source: "greenhouse", jobId: "1", companyName: "Stripe", title: "PM", url: "https://example.com/1", urlAlive: true, urlStatus: 200 },
+      {
+        key: "gh:0",
+        source: "greenhouse",
+        jobId: "0",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/0",
+        urlAlive: true,
+        urlStatus: 200,
+      },
+      {
+        key: "gh:1",
+        source: "greenhouse",
+        jobId: "1",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/1",
+        urlAlive: true,
+        urlStatus: 200,
+      },
     ],
     skipped: [],
     deferredQueue: [],
@@ -2551,7 +2712,9 @@ test("prepare --phase pre weak-fallback (BL-9 Step 5): respects company cap (pre
     }),
   });
   const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 5, dryRun: false } });
+  const ctx = makeCtx({
+    flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 5, dryRun: false },
+  });
   await cmd(ctx);
   const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
   // gh:2 must be skipped with company_cap.
@@ -2562,10 +2725,14 @@ test("prepare --phase pre weak-fallback (BL-9 Step 5): respects company cap (pre
 test("prepare --phase pre weak-fallback (BL-9 Step 5): missing prepare_context.json returns 1", async () => {
   const apps = [makeApp()];
   const deps = makePrepDeps(apps, {
-    readFile: () => { throw new Error("ENOENT"); },
+    readFile: () => {
+      throw new Error("ENOENT");
+    },
   });
   const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 5, dryRun: false } });
+  const ctx = makeCtx({
+    flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 5, dryRun: false },
+  });
   const code = await cmd(ctx);
   assert.equal(code, 1);
   assert.ok(ctx._errLines.some((l) => /cannot read prepare_context/.test(l)));
@@ -2582,7 +2749,16 @@ test("prepare --phase pre weak-fallback (BL-9 Step 5): dry-run does not write fi
     mode: "topup",
     batchSize: 4,
     batch: [
-      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+      {
+        key: "gh:0",
+        source: "greenhouse",
+        jobId: "0",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/0",
+        urlAlive: true,
+        urlStatus: 200,
+      },
     ],
     skipped: [],
     deferredQueue: [],
@@ -2591,7 +2767,9 @@ test("prepare --phase pre weak-fallback (BL-9 Step 5): dry-run does not write fi
   };
   const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
   const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: true } });
+  const ctx = makeCtx({
+    flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: true },
+  });
   await cmd(ctx);
   assert.equal(Object.keys(deps._written).length, 0);
   assert.ok(ctx._lines.some((l) => /dry-run/.test(l)));
@@ -2610,7 +2788,16 @@ test("prepare --phase pre topup (BL-9 Step 5): writes inboxExhausted to stats", 
     mode: "fresh",
     batchSize: 5,
     batch: [
-      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+      {
+        key: "gh:0",
+        source: "greenhouse",
+        jobId: "0",
+        companyName: "Stripe",
+        title: "PM",
+        url: "https://example.com/0",
+        urlAlive: true,
+        urlStatus: 200,
+      },
     ],
     skipped: [],
     deferredQueue: ["gh:1", "gh:2"],
@@ -2962,7 +3149,9 @@ function makeNotionRig(overrides = {}) {
 }
 
 test("RFC 022: happy path — to_apply with clParagraphs creates Notion page, writes page id to TSV", async () => {
-  const apps = [makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm", title: "Senior PM" })];
+  const apps = [
+    makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm", title: "Senior PM" }),
+  ];
   const results = {
     profileId: "testuser",
     results: [
@@ -3018,9 +3207,27 @@ test("RFC 022: Notion push failure reverts that row to Inbox, others continue", 
   const results = {
     profileId: "testuser",
     results: [
-      { key: "gh:1", decision: "to_apply", clKey: "Affirm_PM", resumeVer: "v1", clParagraphs: ["a"] },
-      { key: "gh:2", decision: "to_apply", clKey: "Stripe_PM", resumeVer: "v1", clParagraphs: ["b"] },
-      { key: "gh:3", decision: "to_apply", clKey: "Plaid_PM", resumeVer: "v1", clParagraphs: ["c"] },
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "Affirm_PM",
+        resumeVer: "v1",
+        clParagraphs: ["a"],
+      },
+      {
+        key: "gh:2",
+        decision: "to_apply",
+        clKey: "Stripe_PM",
+        resumeVer: "v1",
+        clParagraphs: ["b"],
+      },
+      {
+        key: "gh:3",
+        decision: "to_apply",
+        clKey: "Plaid_PM",
+        resumeVer: "v1",
+        clParagraphs: ["c"],
+      },
     ],
   };
   const rec = makeClRecorder();
@@ -3159,7 +3366,13 @@ test("RFC 022: missing NOTION_TOKEN reverts to_apply rows to Inbox with warning"
   const results = {
     profileId: "testuser",
     results: [
-      { key: "gh:1", decision: "to_apply", clKey: "Affirm_PM", resumeVer: "v1", clParagraphs: ["a"] },
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "Affirm_PM",
+        resumeVer: "v1",
+        clParagraphs: ["a"],
+      },
     ],
   };
   const rec = makeClRecorder();
@@ -3188,8 +3401,20 @@ test("RFC 022: --dry-run prints would-push count, no Notion calls", async () => 
   const results = {
     profileId: "testuser",
     results: [
-      { key: "gh:1", decision: "to_apply", clKey: "Affirm_PM", resumeVer: "v1", clParagraphs: ["a"] },
-      { key: "gh:2", decision: "to_apply", clKey: "Stripe_PM", resumeVer: "v1", clParagraphs: ["b"] },
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "Affirm_PM",
+        resumeVer: "v1",
+        clParagraphs: ["a"],
+      },
+      {
+        key: "gh:2",
+        decision: "to_apply",
+        clKey: "Stripe_PM",
+        resumeVer: "v1",
+        clParagraphs: ["b"],
+      },
     ],
   };
   const rec = makeClRecorder();
@@ -3212,7 +3437,13 @@ test("RFC 022: dedup hit (pushJobPage returns dedup=true) preserves existing pag
   const results = {
     profileId: "testuser",
     results: [
-      { key: "gh:1", decision: "to_apply", clKey: "Affirm_PM", resumeVer: "v1", clParagraphs: ["a"] },
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "Affirm_PM",
+        resumeVer: "v1",
+        clParagraphs: ["a"],
+      },
     ],
   };
   const rec = makeClRecorder();
@@ -3243,8 +3474,20 @@ test("RFC 022: data_source resolve failure reverts all to_apply rows", async () 
   const results = {
     profileId: "testuser",
     results: [
-      { key: "gh:1", decision: "to_apply", clKey: "Affirm_PM", resumeVer: "v1", clParagraphs: ["a"] },
-      { key: "gh:2", decision: "to_apply", clKey: "Stripe_PM", resumeVer: "v1", clParagraphs: ["b"] },
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "Affirm_PM",
+        resumeVer: "v1",
+        clParagraphs: ["a"],
+      },
+      {
+        key: "gh:2",
+        decision: "to_apply",
+        clKey: "Stripe_PM",
+        resumeVer: "v1",
+        clParagraphs: ["b"],
+      },
     ],
   };
   const rec = makeClRecorder();
@@ -3317,7 +3560,13 @@ test("RFC 022: missing prepare_context.json — engine continues, omits city/sta
   const results = {
     profileId: "testuser",
     results: [
-      { key: "gh:1", decision: "to_apply", clKey: "Affirm_PM", resumeVer: "v1", clParagraphs: ["a"] },
+      {
+        key: "gh:1",
+        decision: "to_apply",
+        clKey: "Affirm_PM",
+        resumeVer: "v1",
+        clParagraphs: ["a"],
+      },
     ],
   };
   const rec = makeClRecorder();

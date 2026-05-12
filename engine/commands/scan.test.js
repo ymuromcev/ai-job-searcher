@@ -104,10 +104,21 @@ function makeDeps(overrides = {}) {
       calls.appendRejectionsLog.push({ file, lines });
     },
     scan: async ({ targetsBySource, adapters, existing, ctx }) => {
-      calls.scan.push({ targetsBySource, adapters: Object.keys(adapters), existingCount: existing.length, ctx });
+      calls.scan.push({
+        targetsBySource,
+        adapters: Object.keys(adapters),
+        existingCount: existing.length,
+        ctx,
+      });
       return {
-        fresh: [fakeJob({ jobId: "1" }), fakeJob({ source: "lever", slug: "stripe", jobId: "2", companyName: "Stripe" })],
-        pool: [fakeJob({ jobId: "1" }), fakeJob({ source: "lever", slug: "stripe", jobId: "2", companyName: "Stripe" })],
+        fresh: [
+          fakeJob({ jobId: "1" }),
+          fakeJob({ source: "lever", slug: "stripe", jobId: "2", companyName: "Stripe" }),
+        ],
+        pool: [
+          fakeJob({ jobId: "1" }),
+          fakeJob({ source: "lever", slug: "stripe", jobId: "2", companyName: "Stripe" }),
+        ],
         summary: { greenhouse: { total: 1, error: null }, lever: { total: 1, error: null } },
         errors: [],
       };
@@ -220,8 +231,10 @@ test("modulesToSources extracts only discovery: entries", () => {
 
 test("redactor masks secret values in error messages and ignores short ones", () => {
   const r = redactor(["sk-abcd1234longtoken", "ab"]); // short value "ab" should be ignored
-  assert.equal(r("error: Authorization-Key sk-abcd1234longtoken invalid"),
-    "error: Authorization-Key *** invalid");
+  assert.equal(
+    r("error: Authorization-Key sk-abcd1234longtoken invalid"),
+    "error: Authorization-Key *** invalid"
+  );
   assert.equal(r("no abracadabra here"), "no abracadabra here"); // short value not redacted
   assert.equal(r(null), "");
   assert.equal(r(undefined), "");
@@ -311,7 +324,11 @@ test("scan is idempotent — second run without new jobs does not rewrite jobs.t
   assert.equal(code2, 0);
   const secondSnapshot = fs.readFileSync(jobsPath, "utf8");
   const secondMtime = fs.statSync(jobsPath).mtimeMs;
-  assert.equal(secondSnapshot, firstSnapshot, "jobs.tsv content must not change on idempotent scan");
+  assert.equal(
+    secondSnapshot,
+    firstSnapshot,
+    "jobs.tsv content must not change on idempotent scan"
+  );
   assert.equal(secondMtime, firstMtime, "jobs.tsv mtime must not change on idempotent scan");
   assert.match(second.out.all(), /no new jobs — nothing to write/);
 });
@@ -336,7 +353,10 @@ test("scan redacts secret values from adapter error messages", async () => {
 
 test("applyTargetFilters honours whitelist + blacklist", () => {
   const grouped = {
-    greenhouse: [{ name: "Affirm", slug: "affirm" }, { name: "Stripe", slug: "stripe" }],
+    greenhouse: [
+      { name: "Affirm", slug: "affirm" },
+      { name: "Stripe", slug: "stripe" },
+    ],
     lever: [{ name: "Plaid", slug: "plaid" }],
   };
   const wl = applyTargetFilters(grouped, {
@@ -359,9 +379,27 @@ test("scan gates companies by profile column (RFC 010 cross-profile isolation)",
   // BEFORE running adapters, replacing the brittle blacklist-on-Jared hack.
   const sharedRows = [
     { name: "PayPal", source: "workday", slug: "paypal", extra: null, profile: "jared" },
-    { name: "Capital One (WD)", source: "workday", slug: "capitalone", extra: null, profile: "jared" },
-    { name: "Sutter Health", source: "workday", slug: "sutterhealth", extra: null, profile: "lilia" },
-    { name: "SCAN Health Plan", source: "workday", slug: "scanhealthplan", extra: null, profile: "lilia" },
+    {
+      name: "Capital One (WD)",
+      source: "workday",
+      slug: "capitalone",
+      extra: null,
+      profile: "jared",
+    },
+    {
+      name: "Sutter Health",
+      source: "workday",
+      slug: "sutterhealth",
+      extra: null,
+      profile: "lilia",
+    },
+    {
+      name: "SCAN Health Plan",
+      source: "workday",
+      slug: "scanhealthplan",
+      extra: null,
+      profile: "lilia",
+    },
     { name: "Public Co", source: "workday", slug: "publicco", extra: null, profile: "" },
   ];
   const seenByProfile = {};

@@ -42,9 +42,18 @@ const JOB_ALERT_SENDERS = [
   // for completeness so isJobAlert() is the single source of truth).
   { fromIncludes: "jobalerts-noreply@linkedin.com" },
   // ZipRecruiter / Glassdoor / Monster digests
-  { fromIncludes: "@ziprecruiter.com", subjectMatches: /\b(new jobs?|matching jobs?|jobs? for you|job alert)\b/i },
-  { fromIncludes: "@glassdoor.com", subjectMatches: /\b(new jobs?|matching jobs?|jobs? for you|job alert)\b/i },
-  { fromIncludes: "@monster.com", subjectMatches: /\b(new jobs?|matching jobs?|jobs? for you|job alert)\b/i },
+  {
+    fromIncludes: "@ziprecruiter.com",
+    subjectMatches: /\b(new jobs?|matching jobs?|jobs? for you|job alert)\b/i,
+  },
+  {
+    fromIncludes: "@glassdoor.com",
+    subjectMatches: /\b(new jobs?|matching jobs?|jobs? for you|job alert)\b/i,
+  },
+  {
+    fromIncludes: "@monster.com",
+    subjectMatches: /\b(new jobs?|matching jobs?|jobs? for you|job alert)\b/i,
+  },
   // Generic subject patterns for any sender — "+ N more new jobs", saved
   // search digests, "X jobs matching your search"
   { subjectMatches: /\+\s*\d+\s+more\s+new\s+jobs?/i },
@@ -157,9 +166,7 @@ function isLevelBlocked(title, rules) {
 function isLocationBlocked(text, rules) {
   if (!rules || !Array.isArray(rules.location_blocklist)) return false;
   const t = (text || "").toLowerCase();
-  return rules.location_blocklist.some((p) =>
-    t.includes(String(p || "").toLowerCase())
-  );
+  return rules.location_blocklist.some((p) => t.includes(String(p || "").toLowerCase()));
 }
 
 // Deduplication against existing applications.tsv rows.

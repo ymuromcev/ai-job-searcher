@@ -12,9 +12,7 @@ function parseArgs(argv) {
     else if (a === "--baseline") args.basePath = argv[++i];
   }
   if (!args.newPath || !args.basePath) {
-    console.error(
-      "usage: node scripts/diff_replay.js --new <path> --baseline <path>"
-    );
+    console.error("usage: node scripts/diff_replay.js --new <path> --baseline <path>");
     process.exit(1);
   }
   return args;
@@ -109,9 +107,7 @@ function main() {
   if (byKind.typeChange.length) {
     console.log(`--- TYPE changes (${byKind.typeChange.length}) ---`);
     for (const d of byKind.typeChange) {
-      console.log(
-        `  ${d.id}  ${d.company} | ${d.role}`
-      );
+      console.log(`  ${d.id}  ${d.company} | ${d.role}`);
       console.log(
         `    baseline: type=${d.baseline.type} match=${d.baseline.match} action="${d.baseline.action}"`
       );
@@ -124,15 +120,9 @@ function main() {
   if (byKind.matchChange.length) {
     console.log(`--- MATCH changes (${byKind.matchChange.length}) ---`);
     for (const d of byKind.matchChange) {
-      console.log(
-        `  ${d.id}  ${d.company} | ${d.role} | type=${d.baseline.type}`
-      );
-      console.log(
-        `    baseline: match=${d.baseline.match} action="${d.baseline.action}"`
-      );
-      console.log(
-        `    replay:   match=${d.replay.match} action="${d.replay.action}"`
-      );
+      console.log(`  ${d.id}  ${d.company} | ${d.role} | type=${d.baseline.type}`);
+      console.log(`    baseline: match=${d.baseline.match} action="${d.baseline.action}"`);
+      console.log(`    replay:   match=${d.replay.match} action="${d.replay.action}"`);
     }
     console.log();
   }

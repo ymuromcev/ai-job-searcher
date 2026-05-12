@@ -72,10 +72,7 @@ test("plan: mixed batch — counts each bucket correctly", () => {
   assert.equal(counts.alreadyPrepared, 1);
   assert.equal(counts.other, 2);
   assert.equal(updates.length, 2);
-  assert.deepEqual(
-    updates.map((u) => u.key).sort(),
-    ["k1", "k2"]
-  );
+  assert.deepEqual(updates.map((u) => u.key).sort(), ["k1", "k2"]);
 });
 
 test("applyPlan: rewrites only the planned rows + bumps updatedAt", () => {

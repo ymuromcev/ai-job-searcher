@@ -1,8 +1,11 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { parseLinkedInSubject, parseRecruiterRole, extractSenderName } =
-  require("./email_parsers.js");
+const {
+  parseLinkedInSubject,
+  parseRecruiterRole,
+  extractSenderName,
+} = require("./email_parsers.js");
 
 test("parseLinkedInSubject: RU 'Role в компании Company'", () => {
   const r = parseLinkedInSubject("Senior Product Manager в компании Stripe");
@@ -37,14 +40,8 @@ test("parseLinkedInSubject: unrecognised → null", () => {
 
 test("parseRecruiterRole: 'Requirement for <role>'", () => {
   assert.equal(parseRecruiterRole("Requirement for Sr. Product Manager"), "Sr. Product Manager");
-  assert.equal(
-    parseRecruiterRole("Requirement for Product Manager :: Remote"),
-    "Product Manager"
-  );
-  assert.equal(
-    parseRecruiterRole("Requirement for Data PM, Remote in US"),
-    "Data PM"
-  );
+  assert.equal(parseRecruiterRole("Requirement for Product Manager :: Remote"), "Product Manager");
+  assert.equal(parseRecruiterRole("Requirement for Data PM, Remote in US"), "Data PM");
 });
 
 test("parseRecruiterRole: 'Immediate need - <region> - <role>'", () => {
@@ -55,10 +52,7 @@ test("parseRecruiterRole: 'Immediate need - <region> - <role>'", () => {
 });
 
 test("parseRecruiterRole: 'new opportunity for <role>'", () => {
-  assert.equal(
-    parseRecruiterRole("A new opportunity for a Staff PM"),
-    "Staff PM"
-  );
+  assert.equal(parseRecruiterRole("A new opportunity for a Staff PM"), "Staff PM");
 });
 
 test("parseRecruiterRole: generic subject → null", () => {
@@ -68,7 +62,7 @@ test("parseRecruiterRole: generic subject → null", () => {
 
 test("extractSenderName: 'Name <email>'", () => {
   assert.equal(extractSenderName("Jane Doe <jane@acme.com>"), "Jane Doe");
-  assert.equal(extractSenderName("\"Jane D.\" <jane@acme.com>"), "\"Jane D.\"");
+  assert.equal(extractSenderName('"Jane D." <jane@acme.com>'), '"Jane D."');
 });
 
 test("extractSenderName: bare email → local-part", () => {

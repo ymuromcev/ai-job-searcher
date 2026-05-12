@@ -1,11 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const {
-  makeValidateCommand,
-  checkCompanyCap,
-  pingAll,
-} = require("./validate.js");
+const { makeValidateCommand, checkCompanyCap, pingAll } = require("./validate.js");
 
 function captureOut() {
   const stdout = [];
@@ -262,7 +258,8 @@ test("validate reports SSRF-blocked URLs in applications.tsv", async () => {
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
     fetchFn: async (url) => {
-      if (url.includes("127.0.0.1")) throw new Error("fetchFn should not be called for blocked URL");
+      if (url.includes("127.0.0.1"))
+        throw new Error("fetchFn should not be called for blocked URL");
       hitGood += 1;
       return { ok: true, status: 200 };
     },
@@ -308,15 +305,41 @@ test("retro_sweep: no-op when filter_rules has no blocklists", async () => {
 
 test("retro_sweep: reports matches without --apply and exits 1", async () => {
   const apps = [
-    fakeApp({ key: "greenhouse:1", jobId: "1", status: "To Apply", companyName: "Toast", title: "Senior PM" }),
-    fakeApp({ key: "greenhouse:2", jobId: "2", status: "To Apply", companyName: "Stripe", title: "Associate PM" }),
-    fakeApp({ key: "greenhouse:3", jobId: "3", status: "Applied", companyName: "Toast", title: "Senior PM" }), // not swept
-    fakeApp({ key: "greenhouse:4", jobId: "4", status: "To Apply", companyName: "Stripe", title: "Senior PM" }), // passes
+    fakeApp({
+      key: "greenhouse:1",
+      jobId: "1",
+      status: "To Apply",
+      companyName: "Toast",
+      title: "Senior PM",
+    }),
+    fakeApp({
+      key: "greenhouse:2",
+      jobId: "2",
+      status: "To Apply",
+      companyName: "Stripe",
+      title: "Associate PM",
+    }),
+    fakeApp({
+      key: "greenhouse:3",
+      jobId: "3",
+      status: "Applied",
+      companyName: "Toast",
+      title: "Senior PM",
+    }), // not swept
+    fakeApp({
+      key: "greenhouse:4",
+      jobId: "4",
+      status: "To Apply",
+      companyName: "Stripe",
+      title: "Senior PM",
+    }), // passes
   ];
   let saved = null;
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
-    saveApplications: (_path, rows) => { saved = rows; },
+    saveApplications: (_path, rows) => {
+      saved = rows;
+    },
     loadProfile: () => ({
       paths: { root: "/tmp/profiles/jared" },
       filterRules: {
@@ -337,13 +360,30 @@ test("retro_sweep: reports matches without --apply and exits 1", async () => {
 
 test("retro_sweep: archives matches and writes TSV when --apply is set", async () => {
   const apps = [
-    fakeApp({ key: "greenhouse:1", jobId: "1", status: "To Apply", companyName: "Toast", title: "PM", updatedAt: "old" }),
-    fakeApp({ key: "greenhouse:2", jobId: "2", status: "To Apply", companyName: "Stripe", title: "PM", updatedAt: "old" }),
+    fakeApp({
+      key: "greenhouse:1",
+      jobId: "1",
+      status: "To Apply",
+      companyName: "Toast",
+      title: "PM",
+      updatedAt: "old",
+    }),
+    fakeApp({
+      key: "greenhouse:2",
+      jobId: "2",
+      status: "To Apply",
+      companyName: "Stripe",
+      title: "PM",
+      updatedAt: "old",
+    }),
   ];
   let savedPath, savedRows;
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
-    saveApplications: (p, rows) => { savedPath = p; savedRows = rows; },
+    saveApplications: (p, rows) => {
+      savedPath = p;
+      savedRows = rows;
+    },
     loadProfile: () => ({
       paths: { root: "/tmp/profiles/jared" },
       filterRules: { company_blocklist: ["Toast"] },
@@ -368,10 +408,34 @@ test("retro_sweep: archives matches and writes TSV when --apply is set", async (
 
 test("retro_sweep: only sweeps 'To Apply', not Applied/Interview/Offer", async () => {
   const apps = [
-    fakeApp({ key: "greenhouse:1", jobId: "1", status: "Applied", companyName: "Toast", title: "PM" }),
-    fakeApp({ key: "greenhouse:2", jobId: "2", status: "Interview", companyName: "Toast", title: "PM" }),
-    fakeApp({ key: "greenhouse:3", jobId: "3", status: "Offer", companyName: "Toast", title: "PM" }),
-    fakeApp({ key: "greenhouse:4", jobId: "4", status: "To Apply", companyName: "Toast", title: "PM" }),
+    fakeApp({
+      key: "greenhouse:1",
+      jobId: "1",
+      status: "Applied",
+      companyName: "Toast",
+      title: "PM",
+    }),
+    fakeApp({
+      key: "greenhouse:2",
+      jobId: "2",
+      status: "Interview",
+      companyName: "Toast",
+      title: "PM",
+    }),
+    fakeApp({
+      key: "greenhouse:3",
+      jobId: "3",
+      status: "Offer",
+      companyName: "Toast",
+      title: "PM",
+    }),
+    fakeApp({
+      key: "greenhouse:4",
+      jobId: "4",
+      status: "To Apply",
+      companyName: "Toast",
+      title: "PM",
+    }),
   ];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
@@ -392,9 +456,30 @@ test("retro_sweep: only sweeps 'To Apply', not Applied/Interview/Offer", async (
 
 test("retro_sweep: location_blocklist now exercised after schema v3 (G-5)", async () => {
   const apps = [
-    fakeApp({ key: "greenhouse:1", jobId: "1", status: "To Apply", companyName: "Acme", title: "PM", location: "Napa, CA" }),
-    fakeApp({ key: "greenhouse:2", jobId: "2", status: "To Apply", companyName: "Acme", title: "PM", location: "Sacramento, CA" }),
-    fakeApp({ key: "greenhouse:3", jobId: "3", status: "To Apply", companyName: "Acme", title: "PM", location: "" }),
+    fakeApp({
+      key: "greenhouse:1",
+      jobId: "1",
+      status: "To Apply",
+      companyName: "Acme",
+      title: "PM",
+      location: "Napa, CA",
+    }),
+    fakeApp({
+      key: "greenhouse:2",
+      jobId: "2",
+      status: "To Apply",
+      companyName: "Acme",
+      title: "PM",
+      location: "Sacramento, CA",
+    }),
+    fakeApp({
+      key: "greenhouse:3",
+      jobId: "3",
+      status: "To Apply",
+      companyName: "Acme",
+      title: "PM",
+      location: "",
+    }),
   ];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
@@ -444,12 +529,30 @@ const LILIA_GEO = {
 
 test("retro_sweep (L-4): metro geo flags out-of-metro 'To Apply' rows", async () => {
   const apps = [
-    fakeApp({ key: "greenhouse:1", jobId: "1", status: "To Apply",
-      companyName: "Kaiser", title: "Medical Receptionist", location: "Sacramento, CA" }),
-    fakeApp({ key: "greenhouse:2", jobId: "2", status: "To Apply",
-      companyName: "Kaiser", title: "Medical Receptionist", location: "Houston, TX" }),
-    fakeApp({ key: "greenhouse:3", jobId: "3", status: "Applied",
-      companyName: "Kaiser", title: "Medical Receptionist", location: "Houston, TX" }), // not swept (Applied)
+    fakeApp({
+      key: "greenhouse:1",
+      jobId: "1",
+      status: "To Apply",
+      companyName: "Kaiser",
+      title: "Medical Receptionist",
+      location: "Sacramento, CA",
+    }),
+    fakeApp({
+      key: "greenhouse:2",
+      jobId: "2",
+      status: "To Apply",
+      companyName: "Kaiser",
+      title: "Medical Receptionist",
+      location: "Houston, TX",
+    }),
+    fakeApp({
+      key: "greenhouse:3",
+      jobId: "3",
+      status: "Applied",
+      companyName: "Kaiser",
+      title: "Medical Receptionist",
+      location: "Houston, TX",
+    }), // not swept (Applied)
   ];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
@@ -469,8 +572,14 @@ test("retro_sweep (L-4): metro geo flags out-of-metro 'To Apply' rows", async ()
 
 test("retro_sweep (L-4): unrestricted profile → no geo sweep activity", async () => {
   const apps = [
-    fakeApp({ key: "greenhouse:1", jobId: "1", status: "To Apply",
-      companyName: "Stripe", title: "PM", location: "London, UK" }),
+    fakeApp({
+      key: "greenhouse:1",
+      jobId: "1",
+      status: "To Apply",
+      companyName: "Stripe",
+      title: "PM",
+      location: "London, UK",
+    }),
   ];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
@@ -490,13 +599,21 @@ test("retro_sweep (L-4): unrestricted profile → no geo sweep activity", async 
 
 test("retro_sweep (L-4): metro geo with --apply archives geo-violating rows", async () => {
   const apps = [
-    fakeApp({ key: "greenhouse:1", jobId: "1", status: "To Apply",
-      companyName: "Kaiser", title: "Medical Receptionist", location: "Houston, TX" }),
+    fakeApp({
+      key: "greenhouse:1",
+      jobId: "1",
+      status: "To Apply",
+      companyName: "Kaiser",
+      title: "Medical Receptionist",
+      location: "Houston, TX",
+    }),
   ];
   let savedRows;
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
-    saveApplications: (_p, rows) => { savedRows = rows; },
+    saveApplications: (_p, rows) => {
+      savedRows = rows;
+    },
     loadProfile: () => ({
       paths: { root: "/tmp/profiles/lilia" },
       filterRules: {},
@@ -516,8 +633,14 @@ test("retro_sweep (L-4): metro geo with --apply archives geo-violating rows", as
 
 test("retro_sweep (L-4): geo_no_location surfaced separately for empty-location rows", async () => {
   const apps = [
-    fakeApp({ key: "greenhouse:1", jobId: "1", status: "To Apply",
-      companyName: "Kaiser", title: "Medical Receptionist", location: "" }),
+    fakeApp({
+      key: "greenhouse:1",
+      jobId: "1",
+      status: "To Apply",
+      companyName: "Kaiser",
+      title: "Medical Receptionist",
+      location: "",
+    }),
   ];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
@@ -598,7 +721,10 @@ test("validate --dedup (dry-run): reports collision but does not save", async ()
   ];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
-    saveApplications: () => { saved = true; return { count: 0 }; },
+    saveApplications: () => {
+      saved = true;
+      return { count: 0 };
+    },
   });
   const { ctx, out } = dedupCtx(); // apply=false → dry-run
   const code = await makeValidateCommand(deps)(ctx);
@@ -622,8 +748,15 @@ test("validate --dedup --apply: saves deduped rows + backs up TSV", async () => 
   ];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
-    saveApplications: (p, rows) => { savedPath = p; savedRows = rows; return { count: rows.length }; },
-    copyFileSync: (src, dst) => { copiedFrom = src; copiedTo = dst; },
+    saveApplications: (p, rows) => {
+      savedPath = p;
+      savedRows = rows;
+      return { count: rows.length };
+    },
+    copyFileSync: (src, dst) => {
+      copiedFrom = src;
+      copiedTo = dst;
+    },
     now: () => "2026-05-05T12:00:00Z",
   });
   const { ctx, out } = dedupCtx({ apply: true });
@@ -655,7 +788,9 @@ test("validate --dedup: suspicious group (different company) surfaced, not colla
 
 test("validate --dedup: parse error in TSV → exits 1 without crashing", async () => {
   const deps = makeDeps({
-    loadApplications: () => { throw new Error("bad header"); },
+    loadApplications: () => {
+      throw new Error("bad header");
+    },
   });
   const { ctx, out } = dedupCtx();
   const code = await makeValidateCommand(deps)(ctx);
@@ -668,7 +803,10 @@ test("validate --dedup: skips other validate steps (no URL ping, no retro sweep)
   const apps = [dedupRow({ key: "lever:a", jobId: "a", status: "Applied", url: "https://x" })];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
-    fetchFn: async () => { pinged += 1; return { ok: true, status: 200 }; },
+    fetchFn: async () => {
+      pinged += 1;
+      return { ok: true, status: 200 };
+    },
   });
   const { ctx, out } = dedupCtx();
   await makeValidateCommand(deps)(ctx);
@@ -738,7 +876,10 @@ test("validate --dedup --apply: BL-13 path remains unchanged (backwards-compat)"
   ];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
-    saveApplications: (_p, rows) => { savedRows = rows; return { count: rows.length }; },
+    saveApplications: (_p, rows) => {
+      savedRows = rows;
+      return { count: rows.length };
+    },
     copyFileSync: () => {},
     now: () => "2026-05-06T12:00:00Z",
   });
@@ -747,4 +888,125 @@ test("validate --dedup --apply: BL-13 path remains unchanged (backwards-compat)"
   assert.equal(code, 0);
   assert.equal(savedRows.length, 1);
   assert.match(out.all(), /TSV rewritten: 1 rows/);
+});
+
+// BL-18: Notion Status schema check ------------------------------------------
+
+function statusDS(optionNames, fieldName = "Status") {
+  return {
+    properties: {
+      [fieldName]: {
+        status: { options: optionNames.map((name) => ({ name })) },
+      },
+    },
+  };
+}
+
+const ALL_EXPECTED_STATUS = [
+  "To Apply",
+  "Applied",
+  "Interview",
+  "Offer",
+  "Rejected",
+  "No Response",
+  "Closed",
+  "Archived",
+];
+
+function notionDeps(overrides = {}) {
+  return {
+    loadProfile: () => ({
+      id: "jared",
+      paths: { root: "/tmp/profiles/jared" },
+      filterRules: {},
+      notion: { jobs_pipeline_db_id: "db_abc" },
+    }),
+    loadSecrets: () => ({ NOTION_TOKEN: "ntn_fake" }),
+    loadApplications: () => ({ apps: [] }),
+    loadJobs: () => ({ jobs: [] }),
+    fetchFn: async () => ({ ok: true, status: 200 }),
+    makeNotionClient: () => ({}),
+    fetchDataSourceSchema: overrides.fetchDataSourceSchema,
+    ...overrides,
+  };
+}
+
+test("BL-18 notion_status_schema: all expected options present → silent OK", async () => {
+  const { ctx, out } = makeCtx();
+  const deps = notionDeps({
+    fetchDataSourceSchema: async () => statusDS(ALL_EXPECTED_STATUS),
+  });
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.match(out.all(), /notion_status_schema: ok/);
+  assert.doesNotMatch(out.all(), /missing options/);
+});
+
+test("BL-18 notion_status_schema: 2 missing → stderr warn, validate still exits 0", async () => {
+  const { ctx, out } = makeCtx();
+  const deps = notionDeps({
+    fetchDataSourceSchema: async () =>
+      statusDS(ALL_EXPECTED_STATUS.filter((n) => n !== "Applied" && n !== "Closed")),
+  });
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 0);
+  const all = out.all();
+  assert.match(all, /notion_status_schema: missing options in Notion Status select/);
+  assert.match(all, /Applied/);
+  assert.match(all, /Closed/);
+});
+
+test("BL-18 notion_status_schema: extras (custom statuses) don't fail", async () => {
+  const { ctx, out } = makeCtx();
+  const deps = notionDeps({
+    fetchDataSourceSchema: async () =>
+      statusDS([...ALL_EXPECTED_STATUS, "Phone Screen", "Take-home"]),
+  });
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.match(out.all(), /notion_status_schema: ok/);
+  assert.doesNotMatch(out.all(), /missing options/);
+});
+
+test("BL-18 notion_status_schema: silently skipped when Notion not configured", async () => {
+  const { ctx, out } = makeCtx();
+  const deps = notionDeps({
+    loadProfile: () => ({ paths: { root: "/tmp/profiles/jared" }, filterRules: {} }),
+    fetchDataSourceSchema: async () => {
+      throw new Error("should not be called");
+    },
+  });
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.match(out.all(), /notion_status_schema: skipped \(notion not configured/);
+});
+
+test("BL-18 notion_status_schema: Notion fetch failure → warn but not fatal", async () => {
+  const { ctx, out } = makeCtx();
+  const deps = notionDeps({
+    fetchDataSourceSchema: async () => {
+      throw new Error("503 Service Unavailable");
+    },
+  });
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.match(out.all(), /notion_status_schema: skipped \(Notion fetch failed/);
+});
+
+test("BL-18 notion_status_schema: respects profile.notion.property_map.status.field override", async () => {
+  const { ctx, out } = makeCtx();
+  const deps = notionDeps({
+    loadProfile: () => ({
+      paths: { root: "/tmp/profiles/jared" },
+      filterRules: {},
+      notion: {
+        jobs_pipeline_db_id: "db_abc",
+        property_map: { status: { field: "Lifecycle", type: "status" } },
+      },
+    }),
+    fetchDataSourceSchema: async () => statusDS(ALL_EXPECTED_STATUS, "Lifecycle"),
+  });
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.match(out.all(), /notion_status_schema: ok/);
 });

@@ -36,7 +36,8 @@ function mapJob(target, raw) {
   const team = sanitizeText(raw.department && raw.department.label) || null;
   const idEnc = encodeURIComponent(String(raw.id));
   const titleSlug = slugifyTitle(raw.name);
-  const url = raw.applyUrl ||
+  const url =
+    raw.applyUrl ||
     `${PUBLIC_BASE}/${encodeURIComponent(target.slug)}/${idEnc}${titleSlug ? "-" + titleSlug : ""}`;
   const job = {
     source: SOURCE,

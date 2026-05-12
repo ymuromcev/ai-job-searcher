@@ -43,7 +43,8 @@ async function indexExistingByName(client, dataSourceId) {
         (row.properties &&
           row.properties.Name &&
           row.properties.Name.title &&
-          row.properties.Name.title.map((t) => t.plain_text).join("")) || "";
+          row.properties.Name.title.map((t) => t.plain_text).join("")) ||
+        "";
       if (title) byName.set(title.toLowerCase(), row.id);
     }
     cursor = resp.has_more ? resp.next_cursor : undefined;

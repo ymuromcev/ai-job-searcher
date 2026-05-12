@@ -12,7 +12,10 @@ const BASE = "https://api.lever.co/v0/postings";
 
 function mapJob(target, raw) {
   const cat = raw.categories || {};
-  const locations = dedupeLocations([cat.location, ...(Array.isArray(cat.allLocations) ? cat.allLocations : [])]);
+  const locations = dedupeLocations([
+    cat.location,
+    ...(Array.isArray(cat.allLocations) ? cat.allLocations : []),
+  ]);
   const team = sanitizeText(cat.team || cat.department) || null;
   const job = {
     source: SOURCE,

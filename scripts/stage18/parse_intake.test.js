@@ -249,11 +249,7 @@ test("parseIntake: full fixture round-trips all sections", () => {
   assert.ok(intake.notion.parent_page_url.includes("notion.so"));
 
   // Modules — array
-  assert.deepEqual(intake.modules, [
-    "discovery:greenhouse",
-    "discovery:lever",
-    "discovery:ashby",
-  ]);
+  assert.deepEqual(intake.modules, ["discovery:greenhouse", "discovery:lever", "discovery:ashby"]);
 
   // Env checks — booleans
   assert.equal(intake.env_checks.env_notion_token_set, true);

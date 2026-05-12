@@ -74,7 +74,10 @@ test("greenhouse.discover isolates per-target failures", async () => {
   });
   const logs = [];
   const jobs = await gh.discover(
-    [{ name: "Good", slug: "good" }, { name: "Bad", slug: "bad" }],
+    [
+      { name: "Good", slug: "good" },
+      { name: "Bad", slug: "bad" },
+    ],
     { fetchFn, logger: { warn: (m) => logs.push(m) } }
   );
   assert.equal(jobs.length, 2);

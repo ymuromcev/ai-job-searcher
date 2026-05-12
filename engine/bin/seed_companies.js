@@ -20,7 +20,8 @@ const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
 const DEFAULT_LEGACY = path.resolve(PROJECT_ROOT, "..", "Job Search", "find_jobs.js");
 const DEFAULT_OUT = path.resolve(PROJECT_ROOT, "data", "companies.tsv");
 
-const TARGET_RE = /\{\s*name:\s*"([^"]+)"\s*,\s*(?:platform:\s*"([^"]+)"\s*,\s*)?slug:\s*"([^"]+)"(?:\s*,\s*dc:\s*"([^"]+)")?(?:\s*,\s*site:\s*"([^"]+)")?\s*\}/g;
+const TARGET_RE =
+  /\{\s*name:\s*"([^"]+)"\s*,\s*(?:platform:\s*"([^"]+)"\s*,\s*)?slug:\s*"([^"]+)"(?:\s*,\s*dc:\s*"([^"]+)")?(?:\s*,\s*site:\s*"([^"]+)")?\s*\}/g;
 
 function extractFromGreenhouseLeverBlock(text) {
   // Lines like { name: "Affirm", platform: "greenhouse", slug: "affirm" }

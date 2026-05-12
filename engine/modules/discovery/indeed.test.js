@@ -59,10 +59,9 @@ test("indeed.discover warns + skips entries missing jk", async () => {
     { jk: "ok1", title: "Good", company: "B", location: "SF" },
   ]);
   const logs = [];
-  const jobs = await indeed.discover(
-    [{ name: "Idx", slug: "idx", ingestFile }],
-    { logger: { warn: (m) => logs.push(m) } }
-  );
+  const jobs = await indeed.discover([{ name: "Idx", slug: "idx", ingestFile }], {
+    logger: { warn: (m) => logs.push(m) },
+  });
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].jobId, "ok1");
   assert.equal(logs.length, 1);
@@ -82,18 +81,14 @@ test("indeed.discover warns when ingest file is missing", async () => {
 test("indeed.discover warns on malformed JSON", async () => {
   const ingestFile = mkTmp("{not valid json");
   const logs = [];
-  const jobs = await indeed.discover(
-    [{ name: "Bad", slug: "bad", ingestFile }],
-    { logger: { warn: (m) => logs.push(m) } }
-  );
+  const jobs = await indeed.discover([{ name: "Bad", slug: "bad", ingestFile }], {
+    logger: { warn: (m) => logs.push(m) },
+  });
   assert.deepEqual(jobs, []);
   assert.match(logs[0], /not valid JSON/);
 });
 
 test("indeed.discover skips targets without ingestFile", async () => {
-  const jobs = await indeed.discover(
-    [{ name: "Skip", slug: "skip" }, null],
-    {}
-  );
+  const jobs = await indeed.discover([{ name: "Skip", slug: "skip" }, null], {});
   assert.deepEqual(jobs, []);
 });

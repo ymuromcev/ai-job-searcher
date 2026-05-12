@@ -148,10 +148,7 @@ test("fromPropertyValue roundtrips basic types", () => {
   assert.equal(fromPropertyValue({ type: "number", number: 42 }), 42);
   assert.equal(fromPropertyValue({ type: "checkbox", checkbox: true }), true);
   assert.equal(fromPropertyValue({ type: "date", date: { start: "2026-01-01" } }), "2026-01-01");
-  assert.deepEqual(
-    fromPropertyValue({ type: "relation", relation: [{ id: "abc" }] }),
-    ["abc"]
-  );
+  assert.deepEqual(fromPropertyValue({ type: "relation", relation: [{ id: "abc" }] }), ["abc"]);
 });
 
 test("fromPropertyValue returns null for missing/empty props", () => {
@@ -347,10 +344,7 @@ test("updateCalloutBlock throws on missing blockId", async () => {
 
 test("updateCalloutBlock throws on missing text", async () => {
   const client = { blocks: { update: async () => {} } };
-  await assert.rejects(
-    () => updateCalloutBlock(client, "block-abc", ""),
-    /text is required/
-  );
+  await assert.rejects(() => updateCalloutBlock(client, "block-abc", ""), /text is required/);
 });
 
 // ---------- resolveDataSourceId ----------
@@ -518,12 +512,7 @@ function makeStrictV5Client(scripted = {}) {
 
 test("v5 shape: createJobPage → pages.create({ parent: { database_id }, properties })", async () => {
   const client = makeStrictV5Client();
-  await createJobPage(
-    client,
-    "db-xyz",
-    { role: "PM", status: "To Apply" },
-    PROPERTY_MAP
-  );
+  await createJobPage(client, "db-xyz", { role: "PM", status: "To Apply" }, PROPERTY_MAP);
   assert.equal(client.calls.length, 1);
   assert.equal(client.calls[0].method, "pages.create");
   const { params } = client.calls[0];
@@ -581,10 +570,7 @@ test("v5 shape: resolveDataSourceId throws if Notion returns 0 data_sources (def
       data_sources: [],
     }),
   });
-  await assert.rejects(
-    () => resolveDataSourceId(client, "db-empty"),
-    /has no data_sources/
-  );
+  await assert.rejects(() => resolveDataSourceId(client, "db-empty"), /has no data_sources/);
 });
 
 test("v5 shape: fetchJobsFromDatabase → databases.retrieve THEN dataSources.query (not databases.query)", async () => {
@@ -630,9 +616,7 @@ test("v5 shape: fetchJobsFromDatabase forwards filter + sorts when supplied", as
     property: "Status",
     select: { equals: "Applied" },
   });
-  assert.deepEqual(queryCall.params.sorts, [
-    { property: "Date Added", direction: "descending" },
-  ]);
+  assert.deepEqual(queryCall.params.sorts, [{ property: "Date Added", direction: "descending" }]);
 });
 
 test("v5 shape: addPageComment → comments.create({ parent: { page_id }, rich_text })", async () => {
@@ -699,10 +683,7 @@ test("v5 shape: high-level ops do NOT call any unsupported SDK method", async ()
   await fetchJobsFromDatabase(client, "db", PROPERTY_MAP);
   // All calls are inside the supported set.
   for (const c of client.calls) {
-    assert.ok(
-      SUPPORTED_V5_METHODS.has(c.method),
-      `unexpected SDK method: ${c.method}`
-    );
+    assert.ok(SUPPORTED_V5_METHODS.has(c.method), `unexpected SDK method: ${c.method}`);
   }
 });
 
@@ -710,9 +691,7 @@ test("v5 shape: package.json pins @notionhq/client to v5.x (no accidental downgr
   // Read the engine's pinned range. We use caret-on-major-5 (^5.x) so patch +
   // minor updates are picked up automatically, but a major bump (v6) requires
   // explicit human review (and a refresh of these wire-shape tests).
-  const pkg = JSON.parse(
-    fs.readFileSync(path.join(__dirname, "..", "..", "package.json"), "utf8")
-  );
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "package.json"), "utf8"));
   const range = (pkg.dependencies && pkg.dependencies["@notionhq/client"]) || "";
   assert.match(
     range,

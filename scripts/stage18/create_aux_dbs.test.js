@@ -116,7 +116,10 @@ test("buildPlatformPageProperties: produces Notion-shaped page properties", () =
   assert.equal(props.Platform.title[0].text.content, "Greenhouse");
   assert.equal(props.Type.select.name, "ATS");
   assert.equal(props.Status.select.name, "Active");
-  assert.equal(props["API URL Template"].rich_text[0].text.content, "https://api.example.com/{slug}");
+  assert.equal(
+    props["API URL Template"].rich_text[0].text.content,
+    "https://api.example.com/{slug}"
+  );
   assert.equal(props.Notes.rich_text[0].text.content, "An ATS");
 });
 

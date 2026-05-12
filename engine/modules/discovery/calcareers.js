@@ -159,7 +159,7 @@ function stateForm(curBody, extras) {
     __VIEWSTATE: getHidden(curBody, "__VIEWSTATE"),
     __VIEWSTATEGENERATOR: getHidden(curBody, "__VIEWSTATEGENERATOR"),
     __EVENTVALIDATION: getHidden(curBody, "__EVENTVALIDATION"),
-    "ctl00$cphMainContent$hdnSearchCriteria": "",
+    ctl00$cphMainContent$hdnSearchCriteria: "",
     ...extras,
   }).toString();
 }
@@ -180,7 +180,7 @@ async function scanKeyword(fetchFn, target, signal, delays, logger) {
   const search1Body = stateForm(initial.text, {
     __EVENTTARGET: "ctl00$cphMainContent$btnUpdateResults",
     __EVENTARGUMENT: "",
-    "ctl00$cphMainContent$txtKeyword": kw,
+    ctl00$cphMainContent$txtKeyword: kw,
   });
   const search1 = await fetchText(
     fetchFn,
@@ -214,8 +214,8 @@ async function scanKeyword(fetchFn, target, signal, delays, logger) {
     const denseBody = stateForm(curBody, {
       __EVENTTARGET: "ctl00$cphMainContent$ddlRowCount",
       __EVENTARGUMENT: "",
-      "ctl00$cphMainContent$txtKeyword": kw,
-      "ctl00$cphMainContent$ddlRowCount": String(PAGE_SIZE),
+      ctl00$cphMainContent$txtKeyword: kw,
+      ctl00$cphMainContent$ddlRowCount: String(PAGE_SIZE),
     });
     const dense = await fetchText(
       fetchFn,
@@ -248,8 +248,8 @@ async function scanKeyword(fetchFn, target, signal, delays, logger) {
     const pagedBody = stateForm(curBody, {
       __EVENTTARGET: `ctl00$cphMainContent$ucRepeaterPager$rptPager$ctl${btnIdx}$btnPagerItem`,
       __EVENTARGUMENT: "",
-      "ctl00$cphMainContent$txtKeyword": kw,
-      "ctl00$cphMainContent$ddlRowCount": String(PAGE_SIZE),
+      ctl00$cphMainContent$txtKeyword: kw,
+      ctl00$cphMainContent$ddlRowCount: String(PAGE_SIZE),
     });
     const paged = await fetchText(
       fetchFn,
@@ -285,9 +285,7 @@ async function discover(targets, ctx = {}) {
   const c = makeCtx({ ...ctx, source: SOURCE });
   const delays = {
     stepMs: Number.isFinite(ctx.stepDelayMs) ? ctx.stepDelayMs : DEFAULT_STEP_DELAY_MS,
-    keywordMs: Number.isFinite(ctx.keywordDelayMs)
-      ? ctx.keywordDelayMs
-      : DEFAULT_KEYWORD_DELAY_MS,
+    keywordMs: Number.isFinite(ctx.keywordDelayMs) ? ctx.keywordDelayMs : DEFAULT_KEYWORD_DELAY_MS,
   };
   const effectiveCtx = { ...c, concurrency: 1 };
   const out = await runTargets(targets, effectiveCtx, async (target) => {

@@ -81,7 +81,9 @@ test("copyDir: skips dotfiles + recursive + handles missing src", () => {
     assert.equal(r2.skipped, 2);
 
     // Missing src is handled gracefully.
-    const rMissing = copyDir(path.join(tmp, "does-not-exist"), path.join(tmp, "x"), { overwrite: false });
+    const rMissing = copyDir(path.join(tmp, "does-not-exist"), path.join(tmp, "x"), {
+      overwrite: false,
+    });
     assert.equal(rMissing.missing, true);
     assert.equal(rMissing.copied, 0);
   } finally {

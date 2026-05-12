@@ -90,7 +90,7 @@ function planRow(app, profileRoot, { fileExists, listKnownFiles = () => [] } = {
   //     `cover_letters/` because that's where Jared's older format lived
   const clAbs = path.isAbsolute(cl)
     ? cl
-    : (cl.startsWith("cover_letters/") || cl.startsWith("cover_letters_md/"))
+    : cl.startsWith("cover_letters/") || cl.startsWith("cover_letters_md/")
       ? path.join(profileRoot, cl)
       : path.join(profileRoot, "cover_letters", cl);
 
@@ -210,8 +210,7 @@ async function migrate({
     return 1;
   }
 
-  const dirs =
-    profilesDir || resolveProfilesDir({}, process.env);
+  const dirs = profilesDir || resolveProfilesDir({}, process.env);
   const profile = loadProfile(profileId, { profilesDir: dirs });
   const root = profile.paths.root;
   const applicationsPath = profile.paths.applicationsTsv;
@@ -259,14 +258,15 @@ async function migrate({
   const skipSummary = (() => {
     const parts = [];
     if (stats.skippedCanonical > 0) parts.push(`${stats.skippedCanonical} already canonical`);
-    if (stats.skippedSentinel > 0) parts.push(`${stats.skippedSentinel} sentinel(s) left untouched`);
+    if (stats.skippedSentinel > 0)
+      parts.push(`${stats.skippedSentinel} sentinel(s) left untouched`);
     return parts.length > 0 ? parts.join(", ") : "0 skipped";
   })();
 
   if (rowsToUpdate.length === 0) {
     stdout(
       `nothing to do — ${stats.rowsWithCl}/${stats.total} rows have cl_path, ` +
-      `${skipSummary} (${stats.warnings} warning(s))`
+        `${skipSummary} (${stats.warnings} warning(s))`
     );
     return 0;
   }
@@ -274,7 +274,7 @@ async function migrate({
   // Print plan first (always — dry-run readers and apply mode both want it).
   stdout(
     `plan: ${rowsToUpdate.length} row(s) need migration ` +
-    `(of ${stats.rowsWithCl} cl_path rows; ${skipSummary})`
+      `(of ${stats.rowsWithCl} cl_path rows; ${skipSummary})`
   );
   let planMoves = 0;
   let planGens = 0;
@@ -286,7 +286,7 @@ async function migrate({
   }
   stdout(
     `  ${planMoves} PDF move(s), ${planGens} PDF generate(s) from MD, ` +
-    `${planMdMoves} MD move(s), ${rowsToUpdate.length} TSV pointer update(s)`
+      `${planMdMoves} MD move(s), ${rowsToUpdate.length} TSV pointer update(s)`
   );
 
   if (!apply) {
@@ -325,8 +325,8 @@ async function migrate({
   applicationsTsv.save(applicationsPath, apps);
   stdout(
     `applied: ${stats.pdfMoved} PDF moved, ${stats.pdfGenerated} PDF generated, ` +
-    `${stats.mdMoved} MD moved, ${stats.tsvUpdated} TSV pointer(s) updated, ` +
-    `${stats.warnings} warning(s), ${stats.errors} error(s)`
+      `${stats.mdMoved} MD moved, ${stats.tsvUpdated} TSV pointer(s) updated, ` +
+      `${stats.warnings} warning(s), ${stats.errors} error(s)`
   );
   return stats.errors === 0 ? 0 : 1;
 }

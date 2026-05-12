@@ -32,7 +32,10 @@ test("classify: interview invites → INTERVIEW_INVITE", () => {
 });
 
 test("classify: assessments / challenges → INFO_REQUEST", () => {
-  const r1 = classify({ subject: "Assessment link", body: "Please complete the following assessment." });
+  const r1 = classify({
+    subject: "Assessment link",
+    body: "Please complete the following assessment.",
+  });
   assert.equal(r1.type, "INFO_REQUEST");
   const r2 = classify({ subject: "Take-home", body: "Here is your take-home coding challenge." });
   assert.equal(r2.type, "INFO_REQUEST");
@@ -191,7 +194,11 @@ test("classify: JD body 'interview process' (not invite) → OTHER (Lilia incide
   ];
   for (const body of fixtures) {
     const r = classify({ subject: "Medical Receptionist - Roseville", body });
-    assert.equal(r.type, "OTHER", `expected OTHER for: "${body}", got ${r.type} (evidence: "${r.evidence}")`);
+    assert.equal(
+      r.type,
+      "OTHER",
+      `expected OTHER for: "${body}", got ${r.type} (evidence: "${r.evidence}")`
+    );
   }
 });
 
@@ -203,7 +210,11 @@ test("classify: JD body 'availability' (shift/role context, not invite) → OTHE
   ];
   for (const body of fixtures) {
     const r = classify({ subject: "Front Desk - Sutter Health", body });
-    assert.equal(r.type, "OTHER", `expected OTHER for: "${body}", got ${r.type} (evidence: "${r.evidence}")`);
+    assert.equal(
+      r.type,
+      "OTHER",
+      `expected OTHER for: "${body}", got ${r.type} (evidence: "${r.evidence}")`
+    );
   }
 });
 
@@ -216,7 +227,11 @@ test("classify: JD body 'assessment' / 'questionnaire' (job context) → OTHER",
   ];
   for (const body of fixtures) {
     const r = classify({ subject: "Medical Office Coordinator", body });
-    assert.equal(r.type, "OTHER", `expected OTHER for: "${body}", got ${r.type} (evidence: "${r.evidence}")`);
+    assert.equal(
+      r.type,
+      "OTHER",
+      `expected OTHER for: "${body}", got ${r.type} (evidence: "${r.evidence}")`
+    );
   }
 });
 
@@ -231,7 +246,11 @@ test("classify: real interview invites still match after tightening", () => {
   ];
   for (const body of fixtures) {
     const r = classify({ subject: "Next steps", body });
-    assert.equal(r.type, "INTERVIEW_INVITE", `expected INTERVIEW_INVITE for: "${body}", got ${r.type} (evidence: "${r.evidence}")`);
+    assert.equal(
+      r.type,
+      "INTERVIEW_INVITE",
+      `expected INTERVIEW_INVITE for: "${body}", got ${r.type} (evidence: "${r.evidence}")`
+    );
   }
 });
 
@@ -246,6 +265,10 @@ test("classify: real assessment / take-home requests still match after tightenin
   ];
   for (const body of fixtures) {
     const r = classify({ subject: "Next steps", body });
-    assert.equal(r.type, "INFO_REQUEST", `expected INFO_REQUEST for: "${body}", got ${r.type} (evidence: "${r.evidence}")`);
+    assert.equal(
+      r.type,
+      "INFO_REQUEST",
+      `expected INFO_REQUEST for: "${body}", got ${r.type} (evidence: "${r.evidence}")`
+    );
   }
 });

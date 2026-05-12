@@ -63,12 +63,7 @@ const gmailImap = require("../modules/tracking/gmail_imap.js");
 // "Active" = still in flight from candidate's POV (we want to listen for
 // emails on these). `Inbox` is intentionally excluded — those rows haven't
 // been pushed to Notion, so no email thread can match them yet.
-const ACTIVE_STATUSES = new Set([
-  "To Apply",
-  "Applied",
-  "Interview",
-  "Offer",
-]);
+const ACTIVE_STATUSES = new Set(["To Apply", "Applied", "Interview", "Offer"]);
 const SKIP_STATUSES = new Set(["Inbox", "Rejected", "Closed", "Archived", "No Response"]);
 
 const BATCH_SIZE = 10;
@@ -144,16 +139,7 @@ function buildFailureComment(profileId, err, now) {
   );
 }
 
-async function notifyFailure({
-  profile,
-  profileId,
-  paths,
-  err,
-  now,
-  env,
-  deps,
-  stderr,
-}) {
+async function notifyFailure({ profile, profileId, paths, err, now, env, deps, stderr }) {
   // Always write to disk first — that's the durable signal.
   try {
     const stateDir = path.dirname(paths.failuresLogPath);
@@ -163,8 +149,7 @@ async function notifyFailure({
     stderr(`  failure-log write failed: ${logErr.message}`);
   }
 
-  const opsPageId =
-    profile && profile.notion && profile.notion.cron_ops_page_id;
+  const opsPageId = profile && profile.notion && profile.notion.cron_ops_page_id;
   if (!opsPageId) {
     stderr("  no cron_ops_page_id in profile.json — Notion notification skipped");
     return;
@@ -173,9 +158,7 @@ async function notifyFailure({
   const secrets = deps.loadSecrets(profileId, env);
   const token = secrets && secrets.NOTION_TOKEN;
   if (!token) {
-    stderr(
-      `  no ${secretEnvName(profileId, "NOTION_TOKEN")} in env — Notion notification skipped`
-    );
+    stderr(`  no ${secretEnvName(profileId, "NOTION_TOKEN")} in env — Notion notification skipped`);
     return;
   }
 
@@ -183,9 +166,7 @@ async function notifyFailure({
     const client = deps.makeClient(token);
     const text = buildFailureComment(profileId, err, now);
     const userId =
-      (profile.notion &&
-        (profile.notion.cron_ops_user_id || profile.notion.user_id)) ||
-      null;
+      (profile.notion && (profile.notion.cron_ops_user_id || profile.notion.user_id)) || null;
     await deps.addPageComment(client, opsPageId, text, userId);
   } catch (notifyErr) {
     // Swallow — never mask original.
@@ -221,15 +202,11 @@ function buildBatches(companies, searchWindow) {
   const batches = [];
   for (let i = 0; i < companies.length; i += BATCH_SIZE) {
     const slice = companies.slice(i, i + BATCH_SIZE);
-    const terms = [
-      ...new Set(slice.flatMap((c) => companyTokens(c).slice(0, 1))),
-    ]
+    const terms = [...new Set(slice.flatMap((c) => companyTokens(c).slice(0, 1)))]
       .filter(Boolean)
       .join(" OR ");
     if (!terms) continue;
-    batches.push(
-      `(from:(${terms}) OR subject:(${terms})) ${searchWindow} -from:me`
-    );
+    batches.push(`(from:(${terms}) OR subject:(${terms})) ${searchWindow} -from:me`);
   }
 
   batches.push(`from:jobalerts-noreply@linkedin.com ${searchWindow}`);
@@ -627,8 +604,7 @@ async function applyMutations({
     return { ok: false, notionErrors: 0 };
   }
 
-  const propertyMap =
-    (profile.notion && profile.notion.property_map) || DEFAULT_PROPERTY_MAP;
+  const propertyMap = (profile.notion && profile.notion.property_map) || DEFAULT_PROPERTY_MAP;
 
   let client = null;
   const getClient = () => {
@@ -757,9 +733,7 @@ async function runApply(ctx, deps) {
 
   const rawEmails = deps.loadRawEmails(paths.rawEmailsPath);
   const processedSet = new Set(context.processedIds || []);
-  const newEmails = rawEmails.filter(
-    (e) => e && e.messageId && !processedSet.has(e.messageId)
-  );
+  const newEmails = rawEmails.filter((e) => e && e.messageId && !processedSet.has(e.messageId));
 
   const { apps } = deps.loadApplications(profile.paths.applicationsTsv);
   const tsvCache = [...apps];
@@ -909,9 +883,7 @@ async function runAutoBody(ctx, deps, profile, paths) {
   });
 
   const processedSet = new Set((saved.processed || []).map((e) => e.id));
-  const newEmails = rawEmails.filter(
-    (e) => e && e.messageId && !processedSet.has(e.messageId)
-  );
+  const newEmails = rawEmails.filter((e) => e && e.messageId && !processedSet.has(e.messageId));
 
   const tsvCache = [...apps];
   const nowIso = now.toISOString();

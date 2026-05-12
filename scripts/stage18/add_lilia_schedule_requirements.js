@@ -227,4 +227,10 @@ if (require.main === module) {
   main().catch(fatal);
 }
 
-module.exports = { ensureSchema, ensurePropertyMap, planRowUpdate, backfillPages, SCHEDULE_OPTIONS };
+module.exports = {
+  ensureSchema,
+  ensurePropertyMap,
+  planRowUpdate,
+  backfillPages,
+  SCHEDULE_OPTIONS,
+};

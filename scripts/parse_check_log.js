@@ -39,8 +39,7 @@ function main() {
   // Slice from this header to the next "## Check: " or EOF.
   const after = txt.slice(idx + args.header.length);
   const nextHeaderIdx = after.indexOf("\n## Check:");
-  const section =
-    nextHeaderIdx >= 0 ? after.slice(0, nextHeaderIdx) : after;
+  const section = nextHeaderIdx >= 0 ? after.slice(0, nextHeaderIdx) : after;
 
   // Extract summary numbers from line like:
   //   **Emails found**: 58 | **Matched**: 53 | **Actions**: 15
@@ -86,9 +85,7 @@ function main() {
   };
   fs.writeFileSync(args.out, JSON.stringify(result, null, 2));
   console.log(`✓ wrote ${args.out}`);
-  console.log(
-    `  rows=${rows.length} summary=${JSON.stringify(summary)}`
-  );
+  console.log(`  rows=${rows.length} summary=${JSON.stringify(summary)}`);
 }
 
 main();
