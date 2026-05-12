@@ -148,6 +148,31 @@ test("checkOne marks alive=false when GET redirects to board root", async () => 
   assert.equal(result.finalUrl, boardRootUrl);
 });
 
+test("checkOne marks alive=false when HEAD follows redirects to 410 Gone (BL-22)", async () => {
+  // SumUp-style case: 308 trailing-slash normalization → final 410.
+  // With redirect: "follow" the HEAD fetch lands at the 410 directly.
+  const finalUrl = "https://www.sumup.com/en-us/careers/positions/123/?gh_jid=123";
+  const fetchFn = makeFetch({
+    [`HEAD:${JOB_URL}`]: { status: 410, finalUrl },
+    [`GET:${JOB_URL}`]: { status: 410, finalUrl },
+  });
+  const result = await checkOne({ url: JOB_URL }, fetchFn);
+  assert.equal(result.alive, false);
+  assert.equal(result.status, 410);
+});
+
+test("checkOne marks alive=false when HEAD follows redirects to 404 (BL-22)", async () => {
+  // Ripple-style case: 308 trailing-slash normalization → final 404.
+  const finalUrl = "https://ripple.com/careers/all-jobs/job/123/?gh_jid=123";
+  const fetchFn = makeFetch({
+    [`HEAD:${JOB_URL}`]: { status: 404, finalUrl },
+    [`GET:${JOB_URL}`]: { status: 404, finalUrl },
+  });
+  const result = await checkOne({ url: JOB_URL }, fetchFn);
+  assert.equal(result.alive, false);
+  assert.equal(result.status, 404);
+});
+
 test("checkOne does NOT flag as board-root when job id appears in final URL", async () => {
   // finalUrl contains the original job id (12345) → redirect is fine
   const finalUrl = "https://boards.greenhouse.io/affirm/jobs/12345/apply";

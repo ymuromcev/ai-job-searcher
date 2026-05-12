@@ -123,11 +123,13 @@ async function checkOne(row, fetchFn, opts = {}) {
   let finalUrl = url;
   let error = null;
 
-  // HEAD first: minimal data transfer, sufficient for liveness.
+  // HEAD first: minimal data transfer, sufficient for liveness. Follow
+  // redirects so a 3xx hop (e.g. trailing-slash normalization) doesn't
+  // mask a 410/404 on the real destination, and so finalUrl reflects
+  // the actual landing page for board-root detection below.
   try {
-    const res = await fetchFn(url, { method: "HEAD", timeoutMs, retries: 0, redirect: "manual" });
+    const res = await fetchFn(url, { method: "HEAD", timeoutMs, retries: 0, redirect: "follow" });
     status = res.status || 0;
-    // When redirect: "manual", res.url stays at the original; use it as-is.
     finalUrl = res.url || url;
   } catch (err) {
     error = err.message;
