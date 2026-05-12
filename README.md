@@ -46,14 +46,15 @@ engine/              shared code — no PII, no personal preferences
   modules/
     discovery/       ATS / board adapters (Greenhouse, Lever, Ashby,
                      SmartRecruiters, Workday, Oracle Recruiting Cloud,
-                     NLX Jobsyn, CalCareers, USAJOBS, RemoteOK, Indeed).
-                     Auto-registered.
+                     NLX Jobsyn, CalCareers, USAJOBS, RemoteOK, Indeed,
+                     Adzuna, The Muse). Auto-registered.
     generators/      Resume DOCX / PDF, cover letter PDF.
     tracking/        Gmail delegation (via Claude MCP, not OAuth-on-disk).
   core/              filter / dedup / validator / notion_sync /
                      company_resolver / salary_calc / url_check /
                      jd_cache / email_* / fit_prompt / profile_loader
-  commands/          scan · prepare · sync · validate · check
+  commands/          scan · prepare · sync · validate · check ·
+                     answer · indeed-prep
   cli.js             dispatch + arg parse
 profiles/
   _example/          template profile, synthetic data (committed)
@@ -70,7 +71,7 @@ lives in `profiles/<id>/`.
 
 ## Features
 
-- **Scan** — Poll ~11 ATS / job-board adapters for roles at target
+- **Scan** — Poll ~13 ATS / job-board adapters for roles at target
   companies. Dedup across profiles via shared `data/jobs.tsv`.
 - **Filter** — Rule-driven (title / company / location blocklists,
   level caps, per-company active caps). Retroactive sweeps via
@@ -169,7 +170,7 @@ node engine/cli.js <command> --profile <id> [flags]
 
 ## Discovery adapters
 
-Eleven adapters ship out of the box; enable them per profile in
+Thirteen adapters ship out of the box; enable them per profile in
 `profile.json.modules`:
 
 | Module | Source |
@@ -185,6 +186,8 @@ Eleven adapters ship out of the box; enable them per profile in
 | `discovery:usajobs` | USAJOBS API (federal jobs; needs free API key) |
 | `discovery:calcareers` | CalCareers (California state jobs) |
 | `discovery:indeed` | Indeed (manual login prep via `indeed-prep`) |
+| `discovery:adzuna` | Adzuna keyword-search aggregator (needs free app id + key) |
+| `discovery:the_muse` | The Muse public listings API |
 
 New adapters live under `engine/modules/discovery/` and auto-register
 via `index.js`.
