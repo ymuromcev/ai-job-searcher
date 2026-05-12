@@ -1,7 +1,7 @@
 ---
 title: "Incident log"
 status: live
-last_updated: 2026-05-08
+last_updated: 2026-05-12
 ---
 
 # Incidents
@@ -483,3 +483,74 @@ Healthcare-Hannah: not affected by this gap because her companies are tracked in
 `profile.json.discovery.companies_whitelist`, not `data/companies.tsv`.
 Backfill script reads `data/companies.tsv` profile column — would report
 0 candidates for her. Separate iteration needed if a similar gap surfaces.
+
+---
+
+## 2026-05-12 — Wasted a day writing `reclassify` on a stale worktree (drift from `main`)
+
+**Severity**: LOW (no production impact — work was on an unmerged branch,
+discarded before any commit landed on main; cost was operator time +
+tokens). **Surface**: developer workflow inside
+`.claude/worktrees/<name>/`. **Detected by**: operator memory — user
+noticed "we fixed IMAP today and even wrote a post about it" while
+agent was proposing a redo *spinoff* (BL-23 in worktree numbering) to
+add an IMAP adapter. agent did `git fetch` for the first time at
+that point and found `feat(check): switch Gmail transport OAuth→IMAP`
+already on `origin/main` along with 5 more sibling commits.
+
+### Cause
+
+Two concurrent lines of work in two worktrees:
+
+- `main` checkout (operator): RFC 021 / BL-21 (OAuth→IMAP), then
+  RFC 022–027 / BL-22…BL-43 (atomic-Notion-push, onboarding-skill,
+  iCIMS, oracle_cloud, jobsyn, etc.) — landed and pushed.
+- `.claude/worktrees/hardcore-pascal-a0dba3/` (agent session): RFC 020
+  (classifier-pattern widening) + RFC 021 / BL-22 (reclassify
+  command, OAuth-based) — never merged, BL/RFC numbering collided
+  with `main` (BL-21 meant two different things, RFC 021 meant two
+  different things).
+
+Agent worked in the worktree end-to-end without ever running
+`git fetch`. It assumed the local `main` it forked from was up to
+date. When `reclassify --profile lilia` failed on fly with
+`missing LILIA_GMAIL_CLIENT_ID`, agent's first instinct was to spin off
+a follow-up BL-23 to "find or build an IMAP fetch-by-id adapter" —
+based on `fly secrets list` showing IMAP creds, **not** on reading
+`engine/commands/check.js` (which would have shown that an IMAP
+adapter already existed on main). Agent then committed a "Decision:
+Option B (IMAP)" to a backlog file premised on infra inspection.
+
+### What changed
+
+`feat/reclassify-imap-bl44` branch was created fresh off `origin/main`.
+`reclassify.js` was rewritten on top of the existing `gmail_imap.js`
+transport (new `fetchMessagesByGmailIds` batch helper added there).
+RFC re-numbered to RFC 028. BL re-numbered to BL-44. Both reflect
+correct sibling numbering on main. The two outdated worktree commits
+(`d9ae568`, `733a6db`) remain on `origin/claude/hardcore-pascal-a0dba3`
+as archeology; not merged.
+
+### Prevention
+
+Workflow change applied in `CLAUDE.md` (agent rules):
+
+1. **First command in any `.claude/worktrees/<name>/` session**:
+   ```
+   git fetch origin && git log origin/main --oneline -20
+   ```
+   Read the output. If commits exist that touch the same areas the
+   current task plans to touch — STOP and report drift to operator
+   before planning. Cost: ~2 seconds. Saved: a day.
+2. **Before fixing a "Decision" in a backlog file**, verify the premise
+   in **code**, not in adjacent infra. Infra (fly secrets, env-var
+   files, runbooks) can lie about what code actually does. `grep -r
+   <symbol> engine/` is the source of truth for "does this code path
+   exist".
+3. **BL / RFC numbering**: when working in a worktree, fetch the
+   latest numbers from `origin/main`'s `private/backlog/` and `rfc/`
+   before reserving a new id. Two parallel branches both claiming
+   `BL-22` is the smell.
+4. **Operator-side hint**: if you start an agent session in a stale
+   worktree, mention what's been landing on main lately — agent has
+   no other channel to know that.

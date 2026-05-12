@@ -425,3 +425,136 @@ test("fetchMessageByGmailId: not found → null, lifecycle preserved", async () 
   assert.equal(calls.connect, 1);
   assert.equal(calls.logout, 1);
 });
+
+// ---------- fetchMessagesByGmailIds (batch) ----------
+
+test("fetchMessagesByGmailIds: one connect + one logout for N ids", async () => {
+  const fakeParse = async () => ({ text: "body", html: "" });
+  const decA = BigInt("0xaaaa").toString(10);
+  const decB = BigInt("0xbbbb").toString(10);
+  const msgA = {
+    uid: 1,
+    emailId: decA,
+    threadId: "1",
+    envelope: { subject: "A", from: [{ address: "a@b" }] },
+    internalDate: new Date("2026-05-01T00:00:00Z"),
+    source: Buffer.from("x"),
+  };
+  const msgB = {
+    uid: 2,
+    emailId: decB,
+    threadId: "1",
+    envelope: { subject: "B", from: [{ address: "b@c" }] },
+    internalDate: new Date("2026-05-02T00:00:00Z"),
+    source: Buffer.from("y"),
+  };
+  const { client, calls } = makeMockClient({
+    searchByQuery: { [decA]: [1], [decB]: [2] },
+    fetchByUid: { 1: msgA, 2: msgB },
+  });
+  const out = await imap.fetchMessagesByGmailIds(client, ["aaaa", "bbbb"], {
+    parseMessage: fakeParse,
+  });
+  assert.equal(out.length, 2);
+  assert.equal(out[0].id, "aaaa");
+  assert.equal(out[0].raw.subject, "A");
+  assert.equal(out[1].id, "bbbb");
+  assert.equal(out[1].raw.subject, "B");
+  // Critical: connection / logout / lock-release run exactly once for the batch.
+  assert.equal(calls.connect, 1, "single connect");
+  assert.equal(calls.logout, 1, "single logout");
+  assert.equal(calls.lockReleased, 1, "single lock release");
+});
+
+test("fetchMessagesByGmailIds: per-id 'not found' returns raw=null without error", async () => {
+  const fakeParse = async () => ({ text: "body", html: "" });
+  const decA = BigInt("0xaaaa").toString(10);
+  const msgA = {
+    uid: 1,
+    emailId: decA,
+    threadId: "1",
+    envelope: { subject: "A", from: [{ address: "a@b" }] },
+    internalDate: new Date("2026-05-01T00:00:00Z"),
+    source: Buffer.from("x"),
+  };
+  const { client } = makeMockClient({
+    searchByQuery: { [decA]: [1] }, // "bbbb" has no mapping → empty search
+    fetchByUid: { 1: msgA },
+  });
+  const out = await imap.fetchMessagesByGmailIds(client, ["aaaa", "bbbb"], {
+    parseMessage: fakeParse,
+  });
+  assert.equal(out[0].raw.subject, "A");
+  assert.equal(out[1].raw, null);
+  assert.equal(out[1].error, undefined); // 'not found' is silent — caller decides
+});
+
+test("fetchMessagesByGmailIds: per-id throw captured as {error}, batch continues", async () => {
+  const fakeParse = async () => ({ text: "body", html: "" });
+  const decA = BigInt("0xaaaa").toString(10);
+  const decB = BigInt("0xbbbb").toString(10);
+  const msgB = {
+    uid: 2,
+    emailId: decB,
+    threadId: "1",
+    envelope: { subject: "B", from: [{ address: "b@c" }] },
+    internalDate: new Date("2026-05-02T00:00:00Z"),
+    source: Buffer.from("y"),
+  };
+  // throwOnFetch fires on uid 1 → first id errors, second succeeds.
+  const { client, calls } = makeMockClient({
+    searchByQuery: { [decA]: [1], [decB]: [2] },
+    fetchByUid: { 2: msgB },
+    throwOnFetch: 1,
+  });
+  const out = await imap.fetchMessagesByGmailIds(client, ["aaaa", "bbbb"], {
+    parseMessage: fakeParse,
+  });
+  assert.equal(out.length, 2);
+  assert.equal(out[0].raw, null);
+  assert.match(out[0].error, /simulated fetch failure/);
+  assert.equal(out[1].raw.subject, "B", "batch continues past per-id failure");
+  assert.equal(calls.logout, 1, "logout still runs");
+});
+
+test("fetchMessagesByGmailIds: progress callback fires per id with ok/error", async () => {
+  const fakeParse = async () => ({ text: "body", html: "" });
+  const decA = BigInt("0xaaaa").toString(10);
+  const msgA = {
+    uid: 1,
+    emailId: decA,
+    threadId: "1",
+    envelope: { subject: "A", from: [{ address: "a@b" }] },
+    internalDate: new Date("2026-05-01T00:00:00Z"),
+    source: Buffer.from("x"),
+  };
+  const events = [];
+  const { client } = makeMockClient({
+    searchByQuery: { [decA]: [1] },
+    fetchByUid: { 1: msgA },
+  });
+  await imap.fetchMessagesByGmailIds(client, ["aaaa", "bbbb"], {
+    parseMessage: fakeParse,
+    onProgress: (e) => events.push({ index: e.index, ok: e.ok, error: e.error }),
+  });
+  assert.equal(events.length, 2);
+  assert.equal(events[0].ok, true);
+  assert.equal(events[1].ok, false);
+  assert.equal(events[1].error, "not found");
+});
+
+test("fetchMessagesByGmailIds: invalid hex id → {error: 'invalid id'}", async () => {
+  const { client } = makeMockClient();
+  const out = await imap.fetchMessagesByGmailIds(client, [""]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].raw, null);
+  assert.equal(out[0].error, "invalid id");
+});
+
+test("fetchMessagesByGmailIds: empty input → no work, lifecycle still runs", async () => {
+  const { client, calls } = makeMockClient();
+  const out = await imap.fetchMessagesByGmailIds(client, []);
+  assert.deepEqual(out, []);
+  assert.equal(calls.connect, 1);
+  assert.equal(calls.logout, 1);
+});
