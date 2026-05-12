@@ -55,7 +55,7 @@ Three invariants follow:
 | `company_resolver.js` | Lookup-or-create company in the per-profile Notion Companies DB; in-memory cache. | `commands/sync.js` (push) |
 | `notion_sync.js` | Hybrid Notion client wrapper. Direct API for fast ops (`updatePageStatus`, `addPageComment`, `createJobPage`), batch queue for bulk push. SDK v5 compliant — uses `dataSources.query` and skips empty values. | `commands/sync.js`, `commands/check.js`, `commands/prepare.js` |
 | `fit_prompt.js` | Assembles the per-profile fit-evaluation prompt. | `commands/prepare.js` |
-| `jd_cache.js` | JD fetch + cache for Greenhouse and Lever (others fall back to live fetch). | `commands/prepare.js`, `jd_extract.js` |
+| `jd_cache.js` | JD fetch + cache for Greenhouse, Lever, Workday (JSON), iCIMS (HTML scrape). Other sources surface `unsupported`. | `commands/prepare.js`, `jd_extract.js` |
 | `jd_extract.js` | Pulls structured fields out of a JD (title, level hints, salary band). | `commands/prepare.js` |
 | `url_check.js` | HEAD+GET probe with SSRF guard and board-root detection. | `validator.js`, `prepare.js` |
 | `salary_calc.js` | Pure tier × level salary calculator with cost-of-living adjustment. | `commands/prepare.js` |

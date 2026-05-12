@@ -1,6 +1,6 @@
 # RFC 030 — JD fetchers for Workday + iCIMS
 
-- **Status:** draft / Proposed
+- **Status:** Accepted (2026-05-12)
 - **Author:** @jared
 - **Created:** 2026-05-12
 - **Refs:** BL-46, RFC-025 (iCIMS adapter), `engine/core/jd_cache.js`,

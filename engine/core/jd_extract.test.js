@@ -174,6 +174,26 @@ test("extractSchedule: 'Full time' (no hyphen) also matches", () => {
   assert.equal(extractSchedule(text), "Full-time");
 });
 
+// Regression for RFC 030 — formatWorkday surfaces timeType as a labeled
+// SCHEDULE line. Pin the contract end-to-end so a future regex tweak that
+// breaks the labeled-line case is caught here.
+test("extractSchedule: Workday-shaped SCHEDULE line", () => {
+  const text = `TITLE: Ethics & Compliance Auditor II
+LOCATION: Sacramento, CA
+SCHEDULE: Full time
+
+Position summary.`;
+  assert.equal(extractSchedule(text), "Full-time");
+});
+
+test("extractSchedule: Workday Part-time tenant vocab", () => {
+  const text = `TITLE: Foo
+SCHEDULE: Part time
+
+Body.`;
+  assert.equal(extractSchedule(text), "Part-time");
+});
+
 // --- extractRequirements ----------------------------------------------------
 
 test("extractRequirements: Kaiser → HS diploma + 1+ years + Spanish + BLS + Epic", () => {

@@ -61,8 +61,9 @@ HEAD-then-GET probing, retries, and JD caching:
 
 - `engine/core/url_check.js` — URL liveness, board-root detection,
   SSRF defense.
-- `engine/core/jd_cache.js` — fetch a Greenhouse/Lever job description,
-  store under `data/jd_cache/`, reuse on the next run.
+- `engine/core/jd_cache.js` — fetch a Greenhouse/Lever/Workday/iCIMS
+  job description, store under `data/jd_cache/`, reuse on the next
+  run.
 - `engine/modules/discovery/_ats.js` — `fetchJson`, `runTargets`,
   `makeCtx` wrappers used by every adapter.
 
