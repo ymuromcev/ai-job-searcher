@@ -554,3 +554,127 @@ Workflow change applied in `CLAUDE.md` (agent rules):
 4. **Operator-side hint**: if you start an agent session in a stale
    worktree, mention what's been landing on main lately — agent has
    no other channel to know that.
+
+---
+
+## 2026-05-12 — `check` tick blind to ATS-aggregator senders (missed real interview invite)
+
+**Severity**: HIGH (real interview invite for Healthcare-Hannah went
+14 days without status update; operator only discovered the email
+chain by manually probing inbox while validating an unrelated feature).
+**Surface**: `engine/commands/check.js:buildBatches` — IMAP search
+queries scoped to pipeline company tokens, not sender domains.
+**Detected by**: While dry-running the new `reclassify` command
+(BL-44) on Healthcare-Hannah's data, the report came back with 0 candidates —
+classifier had nothing to flip. A probe via `from:dentemploy.com
+newer_than:35d` then surfaced 4 emails (29 Apr — 11 May) about a
+First Round Interview at one of her pipeline clinics, scheduled for
+12 May 12:30 PDT — none of which had ever been logged by check tick.
+
+### Cause
+
+`buildBatches` constructs Gmail X-GM-RAW queries like
+`(from:(<token>) OR subject:(<token>)) after:<ts> -from:me`, where
+`<token>` is the first word of each pipeline company name. Plus two
+fixed batches for LinkedIn job-alerts and recruiter-outreach subject
+patterns.
+
+ATS aggregators (dentemploy.com, greenhouse-mail.io, hire.lever.co,
+myworkdayjobs.com, ashbyhq.com, smartrecruiters.com, icims.com,
+applicantemails.com, etc.) write from their own domain. Subject
+typically describes the role ("Let's Chat - First Round Interview for
+Front Office"), not the company name. The company name lives in the
+body. None of those fields match the company-token query, so the
+emails are invisible — never fetched, never classified, never logged.
+
+For Healthcare-Hannah specifically: dental-industry ATS `dentemploy.com`
+is the channel for **all** First Round Interview invitations from her
+target clinics. Every single one would have been missed until either
+the candidate forwarded the email manually or it was promoted via a
+follow-up from the clinic's corporate domain (which often doesn't
+happen — DentEmploy handles the entire screening pipeline).
+
+The classifier had a related but secondary gap: `INTERVIEW_INVITE`
+pattern `/schedule (an? )?(interview|...)` only matched
+`schedule a interview` / `schedule an interview` / `schedule interview`.
+DentEmploy bodies say "Schedule your Interview" — `your` is not in
+the original `(an? )?` alternation, so even if the email had been
+fetched (via a hypothetical company-token match) it would have
+classified as ACKNOWLEDGMENT (matched "Thank you for your interest"
+earlier in the same email), not INTERVIEW_INVITE.
+
+### Trigger
+
+Always present since `check` was first written (RFC 002). Latent
+because Jared's pipeline is PM/fintech-focused and recruiters from
+those companies almost always have the company name in subject or
+sender. Surfaced only when Healthcare-Hannah's healthcare/dental
+pipeline activated — her industry uses ATS aggregators almost
+exclusively.
+
+### What changed
+
+1. **`engine/core/email_filters.js`** — extended `ATS_DOMAINS` with
+   `dentemploy.com`, `applicantemails.com` (+ `send.applicantemails.com`),
+   `paycomonline.com`, `breezy.hr`, `gem.com`, `paradox.ai`,
+   `eightfold.ai`, `myworkday.com`. Added `atsFromInclusions()` and
+   `atsFromExclusions()` helpers — single source of truth so a new
+   ATS becomes discoverable everywhere by appending to the list.
+2. **`engine/commands/check.js:buildBatches`** — added a new fixed
+   batch `${atsFromInclusions()} ${searchWindow} -from:me`. Replaced
+   the hardcoded `-from:greenhouse -from:lever -from:workday
+   -from:ashbyhq.com -from:smartrecruiters -from:icims` in the
+   recruiter batch with `${atsFromExclusions()}` (full-domain
+   exclusions derived from the same list).
+3. **`engine/core/classifier.js`** — relaxed
+   `/schedule (an? )?(interview|...)` to
+   `/schedule (?:(?:your|the|our|my|a|an)\s+)?(interview|...)`. The
+   whitelist of pre-words is explicit (not `[a-z]+`) to keep
+   false-positive risk on JD-body text ("schedule monthly meetings")
+   bounded. Added `/first[- ]round interview/i` and
+   `/round (one|1|two|2|three|3) interview/i` — unambiguous ATS subject
+   patterns.
+4. **Tests** — 10+ new across `email_filters.test.js`, `check.test.js`,
+   `classifier.test.js` covering the full dentemploy email body
+   fixture end-to-end, the helper functions round-trip, and negative
+   controls for JD-body "schedule" prose.
+5. **Backfill** — one-time `check --apply --profile <id>` per profile
+   after deploy. The new ATS batch retroactively fetches the 4
+   dentemploy emails (still in All Mail), classifies the lead email as
+   INTERVIEW_INVITE, matches "Make a Smile" via body, and updates the
+   Notion page to Interview with audit comments.
+
+### Prevention
+
+- **ATS coverage is non-negotiable**. Any production check tick must
+  include an explicit ATS-sender batch. The pipeline-company-token
+  query alone is not sufficient because ATS systems by design mediate
+  identity — the company name only appears in the body.
+- **Single source of truth for ATS domains**. `ATS_DOMAINS` in
+  `email_filters.js` is the only place to add. New domains discovered
+  via operator inbox triage get appended; `isATS()`, `atsFromInclusions()`,
+  `atsFromExclusions()` all derive from the same list. No hardcoded
+  per-call lists (the old `-from:greenhouse -from:lever ...` was an
+  example of drift waiting to happen).
+- **Per-profile distribution audit at first activation**. When a new
+  profile turns on `--auto`, the first manual `--apply` run should
+  include a probe step: scan the inbox for `from:<ats-domain>
+  newer_than:60d` across the full ATS list and verify all such emails
+  are present in `processed_messages.json`. If any are missing, that's
+  a coverage gap to file before enabling cron.
+- **Classifier-pattern relaxations are explicit-allowlist, not
+  open-ended**. The temptation to use `[a-z]+\s+` between trigger
+  words is high but unbounded — every JD body containing the trigger
+  noun risks a false positive. Explicit whitelists (`your|the|our|my|a|an`)
+  cover the real-world phrasings without opening the door.
+
+### Related
+
+- Discovery commit: incidents while validating BL-44 reclassify
+  (commit `58530b8`).
+- Fix commits (this incident): BL-45 / RFC 029.
+- Adjacent classifier-tightening: RFC 022 (Healthcare-Hannah false-positive
+  incident, 2026-05-02 in this file) — that fix narrowed
+  `INTERVIEW_INVITE` to avoid JD-body matches. This fix relaxes
+  `schedule X interview` along a strictly orthogonal axis (allowing
+  more pre-words inside the existing intent context).

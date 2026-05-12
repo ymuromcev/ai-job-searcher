@@ -2,7 +2,10 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  ATS_DOMAINS,
   isATS,
+  atsFromInclusions,
+  atsFromExclusions,
   isJobAlert,
   isNonPipelineSender,
   matchesRecruiterSubject,
@@ -17,6 +20,44 @@ test("isATS: detects known ATS domains", () => {
   assert.ok(isATS("jobs@affirm.ashbyhq.com"));
   assert.ok(!isATS("recruiter@acme.com"));
   assert.ok(!isATS(""));
+});
+
+// RFC 029 — ATS sender coverage. dentemploy and other small-business ATS
+// senders must be detected so check.js fetches them via the dedicated batch.
+test("isATS: dentemploy and other ATS additions (RFC 029)", () => {
+  assert.ok(isATS("interview@dentemploy.com"));
+  assert.ok(isATS("hello@send.applicantemails.com"));
+  assert.ok(isATS("notify@paycomonline.com"));
+  assert.ok(isATS("hr@breezy.hr"));
+  assert.ok(isATS("noreply@gem.com"));
+  assert.ok(isATS("ats@paradox.ai"));
+  assert.ok(isATS("hire@eightfold.ai"));
+  assert.ok(isATS("workday@myworkday.com"));
+});
+
+test("atsFromInclusions: returns from:() with all ATS_DOMAINS joined", () => {
+  const out = atsFromInclusions();
+  assert.ok(out.startsWith("from:("));
+  assert.ok(out.endsWith(")"));
+  // Parse OR-joined inner list — should round-trip back to ATS_DOMAINS exactly.
+  const inner = out.slice("from:(".length, -1);
+  const parsed = inner.split(" OR ");
+  assert.deepEqual(parsed, ATS_DOMAINS);
+});
+
+test("atsFromExclusions: returns -from:<each> for all ATS_DOMAINS", () => {
+  const out = atsFromExclusions();
+  for (const d of ATS_DOMAINS) {
+    assert.ok(out.includes(`-from:${d}`), `${d} should be excluded`);
+  }
+  // No bare "-from:greenhouse" — every entry must have the full domain.
+  assert.ok(!/-from:greenhouse(\s|$)/.test(out));
+  assert.ok(!/-from:lever(\s|$)/.test(out));
+});
+
+test("ATS_DOMAINS: no duplicates", () => {
+  const set = new Set(ATS_DOMAINS);
+  assert.equal(set.size, ATS_DOMAINS.length, "ATS_DOMAINS must be deduped");
 });
 
 test("matchesRecruiterSubject: recruiter outreach patterns", () => {

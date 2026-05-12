@@ -49,12 +49,22 @@ const PATTERNS = {
   // explicit invite verb (schedule/invite/like to interview) or interview-
   // intent phrasing (interview with us/your interview).
   INTERVIEW_INVITE: [
-    /schedule (an? )?(interview|phone screen|call|meeting|chat)/i,
+    // Relaxed 2026-05-12 (RFC 029) — original /(an? )?/ only matched
+    // "schedule interview" / "schedule a interview" / "schedule an interview".
+    // ATS scheduling emails (dentemploy + others) routinely say "schedule
+    // your interview" / "schedule the interview" / "schedule our interview".
+    // Whitelist of pre-words to avoid false-positives like "schedule monthly
+    // meetings" / "schedule team-wide calls".
+    /schedule (?:(?:your|the|our|my|a|an)\s+)?(interview|phone screen|call|meeting|chat)/i,
     /(would|we'd) like to (schedule|set up|interview)/i,
     /invite you (to|for) (an? )?(interview|phone screen|conversation|chat)/i,
     /your interview (is|with|on)/i,
     /interview with us/i,
     /interview (request|invitation|invite)/i,
+    // ATS subject lines for round-N invites. Added 2026-05-12 (RFC 029) —
+    // "First Round Interview" / "Round 2 interview" are unambiguous intent.
+    /first[- ]round interview/i,
+    /round (one|1|two|2|three|3) interview/i,
     /\bphone screen\b/i,
     /next steps in (the|our) (process|interview)/i,
     /would love to (chat|connect|meet|talk) (with you|to discuss)/i,

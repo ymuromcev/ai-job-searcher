@@ -272,3 +272,88 @@ test("classify: real assessment / take-home requests still match after tightenin
     );
   }
 });
+
+// RFC 029 — relaxed `schedule X interview` pattern. ATS scheduling emails
+// (dentemploy + others) routinely say "schedule your interview" with a
+// possessive word between schedule and interview. Original `(an? )?` only
+// matched a/an/empty, missing all real-world variants.
+test("classify: 'schedule your/the/our interview' → INTERVIEW_INVITE (RFC 029)", () => {
+  const fixtures = [
+    "Please schedule your interview using the link below.",
+    "Click here to schedule the interview at a time that works.",
+    "Once the assessment is done, schedule our interview.",
+    "Schedule my interview as soon as possible.",
+    "Schedule a interview", // baseline no-regression
+    "Schedule an interview", // baseline no-regression
+    "Schedule interview at your convenience", // baseline no-regression (bare)
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Next steps", body });
+    assert.equal(
+      r.type,
+      "INTERVIEW_INVITE",
+      `expected INTERVIEW_INVITE for: "${body}", got ${r.type}`
+    );
+  }
+});
+
+// RFC 029 — Round-N invite subject lines. ATS systems (Greenhouse, Ashby,
+// dentemploy, others) emit subjects like "First Round Interview" or "Round 2
+// interview"; these are unambiguous intent and must classify as invites.
+test("classify: 'first round / round N interview' → INTERVIEW_INVITE (RFC 029)", () => {
+  const fixtures = [
+    { subject: "Let's Chat - First Round Interview for Front Office", body: "" },
+    { subject: "First-round interview at Acme", body: "" },
+    { subject: "Round 1 interview confirmation", body: "" },
+    { subject: "Round 2 interview - next steps", body: "" },
+    { subject: "Round three interview", body: "" },
+  ];
+  for (const f of fixtures) {
+    const r = classify(f);
+    assert.equal(
+      r.type,
+      "INTERVIEW_INVITE",
+      `expected INTERVIEW_INVITE for subject "${f.subject}", got ${r.type}`
+    );
+  }
+});
+
+// RFC 029 — dentemploy fixture: the actual body of the email Lilia got on
+// 2026-04-29 that check tick missed for 14 days. Must classify as
+// INTERVIEW_INVITE end-to-end (subject + body).
+test("classify: dentemploy First Round Interview body → INTERVIEW_INVITE (RFC 029)", () => {
+  const subject = "Let's Chat - First Round Interview for Front Office";
+  const body = [
+    "Hi Lilia,",
+    "Thank you for your interest in the Front Office role at Make a Smile!",
+    "We'd love to learn more about your background. Please follow these steps:",
+    "*Step 1: Complete our Application*",
+    "*Step 2: 15-minute assessment*",
+    "*Step 3: Schedule your Interview*",
+    "Once the form and assessment are completed, you can schedule your interview",
+    "by clicking the link below.",
+    "*Step 4: Join the Interview*",
+    "Best regards,",
+    "Ryan M — DentEmploy Recruiting Department",
+  ].join("\n");
+  const r = classify({ subject, body });
+  assert.equal(r.type, "INTERVIEW_INVITE", `got ${r.type} (evidence: ${r.evidence})`);
+});
+
+// Negative control — the relaxed pattern must NOT match JD body text that
+// happens to mention "schedule" without interview intent.
+test("classify: 'schedule flexibility' / 'schedule team interviews' → not INTERVIEW_INVITE", () => {
+  const fixtures = [
+    "Schedule flexibility required for evening shifts.",
+    "Must accommodate the team's busy schedule each week.",
+    "We schedule monthly all-hands meetings.",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Position details", body });
+    assert.notEqual(
+      r.type,
+      "INTERVIEW_INVITE",
+      `should NOT classify as INTERVIEW_INVITE: "${body}" (got ${r.type})`
+    );
+  }
+});

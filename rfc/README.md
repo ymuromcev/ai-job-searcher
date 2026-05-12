@@ -36,6 +36,7 @@ Status lives in each RFC's YAML frontmatter (`status: implemented`). The table b
 | [017](017-deel-adapter.md) | Deel adapter | draft | M | — |
 | [018](018-documentation-system.md) | Documentation system overhaul | draft | L | — |
 | [028](028-reclassify-historical-other.md) | Reclassify historical `OTHER` via IMAP | accepted | M | 2026-05-12 |
+| [029](029-ats-sender-coverage.md) | ATS-sender search coverage in `check` tick | accepted | M | 2026-05-12 |
 
 > Index reconciled with frontmatter on 2026-05-05 (RFC 018 phase 1.e back-fill); RFCs 019–027 not yet back-filled to this table — live frontmatter is canonical. To update: edit the frontmatter in the RFC file and reflect the change here.
 
