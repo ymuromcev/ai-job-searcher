@@ -165,6 +165,16 @@ test("isNonPipelineSender: banks/utilities/insurance must be skipped", () => {
   assert.ok(isNonPipelineSender("billing@xfinity.com"));
 });
 
+// Regression 2026-05-12: bot's own Notion comments cause feedback loop —
+// Notion mails the user about new comments, body quotes our "Subject:
+// ...First Round Interview..." line, classifier re-fires INTERVIEW_INVITE,
+// matcher cross-binds to a different pipeline row. Must skip upstream.
+test("isNonPipelineSender: Notion notification echoes must be skipped", () => {
+  assert.ok(isNonPipelineSender('"Notion Team" <notify@mail.notion.so>'));
+  assert.ok(isNonPipelineSender("notify@mail.notion.so"));
+  assert.ok(isNonPipelineSender("anyone@mail.notion.so"));
+});
+
 test("isNonPipelineSender: real recruiter / ATS senders are NOT skipped", () => {
   assert.ok(!isNonPipelineSender("recruiter@kaiser.org"));
   assert.ok(!isNonPipelineSender("noreply@greenhouse-mail.io"));

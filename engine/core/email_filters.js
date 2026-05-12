@@ -138,6 +138,15 @@ const NON_PIPELINE_SENDERS = [
   { fromIncludes: "@progressive.com" },
   { fromIncludes: "@statefarm.com" },
   { fromIncludes: "@allstate.com" },
+  // Notion notifications — added 2026-05-12 after a critical feedback loop:
+  // bot writes an INTERVIEW_INVITE comment to a Notion page → Notion emails
+  // the user about the comment → email body quotes our own "Subject: ...
+  // First Round Interview..." line → classifier matches /first round
+  // interview/i → bot tries to apply Interview status AGAIN on a different
+  // pipeline row (matcher cross-binds via body). Self-amplifying. Must be
+  // filtered upstream.
+  { fromIncludes: "@mail.notion.so" },
+  { fromIncludes: "notify@mail.notion.so" },
 ];
 
 const RECRUITER_SUBJECT_PATTERNS = [
