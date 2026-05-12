@@ -1781,8 +1781,27 @@ async function runCommit(ctx, deps) {
       const token = secrets.NOTION_TOKEN || null;
       const jobsDbId = profile.notion && profile.notion.jobs_pipeline_db_id;
       const companiesDbId = profile.notion && profile.notion.companies_db_id;
-      const propertyMap =
+      const rawPropertyMap =
         (profile.notion && profile.notion.property_map) || notionSync.DEFAULT_PROPERTY_MAP;
+      // Legacy-profile guard: early Stage 18 builds wrote
+      // `companyName: { field: "Company", type: "relation" }` instead of the
+      // canonical `companyRelation`. `pushJobPage` deletes payload.companyName
+      // and writes payload.companyRelation, so a legacy map silently drops the
+      // Company relation on every push. Auto-rename in-memory + warn.
+      let propertyMap = rawPropertyMap;
+      if (
+        rawPropertyMap.companyName &&
+        rawPropertyMap.companyName.type === "relation" &&
+        !rawPropertyMap.companyRelation
+      ) {
+        stderr(
+          `warn: profile.notion.property_map uses legacy "companyName: relation" ` +
+            `— remapping to "companyRelation" in-memory. Update profile.json to silence.`
+        );
+        propertyMap = { ...rawPropertyMap };
+        propertyMap.companyRelation = rawPropertyMap.companyName;
+        delete propertyMap.companyName;
+      }
 
       if (!token) {
         stderr(
