@@ -45,8 +45,9 @@ rewrite and carry personal data in their history.
 engine/              shared code — no PII, no personal preferences
   modules/
     discovery/       ATS / board adapters (Greenhouse, Lever, Ashby,
-                     SmartRecruiters, Workday, CalCareers, USAJOBS,
-                     RemoteOK). Auto-registered.
+                     SmartRecruiters, Workday, Oracle Recruiting Cloud,
+                     NLX Jobsyn, CalCareers, USAJOBS, RemoteOK, Indeed).
+                     Auto-registered.
     generators/      Resume DOCX / PDF, cover letter PDF.
     tracking/        Gmail delegation (via Claude MCP, not OAuth-on-disk).
   core/              filter / dedup / validator / notion_sync /
@@ -69,7 +70,7 @@ lives in `profiles/<id>/`.
 
 ## Features
 
-- **Scan** — Poll ~8 ATS / job-board adapters for roles at target
+- **Scan** — Poll ~11 ATS / job-board adapters for roles at target
   companies. Dedup across profiles via shared `data/jobs.tsv`.
 - **Filter** — Rule-driven (title / company / location blocklists,
   level caps, per-company active caps). Retroactive sweeps via
@@ -168,7 +169,7 @@ node engine/cli.js <command> --profile <id> [flags]
 
 ## Discovery adapters
 
-Nine adapters ship out of the box; enable them per profile in
+Eleven adapters ship out of the box; enable them per profile in
 `profile.json.modules`:
 
 | Module | Source |
@@ -178,6 +179,8 @@ Nine adapters ship out of the box; enable them per profile in
 | `discovery:ashby` | Ashby-hosted careers pages |
 | `discovery:smartrecruiters` | SmartRecruiters-hosted careers pages |
 | `discovery:workday` | Workday tenant feeds |
+| `discovery:oracle_cloud` | Oracle Recruiting Cloud / Fusion HCM CE sites (multi-tenant via `siteUrl`) |
+| `discovery:jobsyn` | NLX Jobsyn (Direct Employers Foundation; multi-tenant via `X-Origin` header) |
 | `discovery:remoteok` | RemoteOK public feed |
 | `discovery:usajobs` | USAJOBS API (federal jobs; needs free API key) |
 | `discovery:calcareers` | CalCareers (California state jobs) |
