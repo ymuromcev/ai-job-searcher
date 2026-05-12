@@ -78,6 +78,12 @@ const JOB_ALERT_SENDERS = [
   // LinkedIn job alerts (already short-circuited in check.js but listed here
   // for completeness so isJobAlert() is the single source of truth).
   { fromIncludes: "jobalerts-noreply@linkedin.com" },
+  // Jobot Alerts — proactive marketing digests on alerts.jobot.com subdomain
+  // ("New opportunity as a Product Manager", "12 New Jobs for your Job
+  // Search"). Distinct from genuine recruiter outreach on @jobot.com (no
+  // `alerts.`), which still flows through the normal recruiter branch.
+  // Added 2026-05-12 after Jared 30-day probe surfaced 3 such digests.
+  { fromIncludes: "@alerts.jobot.com" },
   // ZipRecruiter / Glassdoor / Monster digests
   {
     fromIncludes: "@ziprecruiter.com",

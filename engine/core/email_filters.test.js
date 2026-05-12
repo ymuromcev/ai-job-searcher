@@ -119,6 +119,26 @@ test("isJobAlert: LinkedIn job-alerts (consolidated source-of-truth)", () => {
   assert.ok(isJobAlert("jobalerts-noreply@linkedin.com", "New PM jobs in Sacramento"));
 });
 
+// Regression 2026-05-12: Jared 30-day probe surfaced 3 Jobot Alerts
+// digests on alerts.jobot.com — must be filtered upstream, not classified.
+// Real recruiter outreach on @jobot.com (no `alerts.`) still flows through.
+test("isJobAlert: Jobot Alerts proactive digests on alerts.jobot.com", () => {
+  assert.ok(
+    isJobAlert('"Jobot Alerts" <jobs@alerts.jobot.com>', "New opportunity as a Product Manager")
+  );
+  assert.ok(
+    isJobAlert("jobs@alerts.jobot.com", "Keep Going With More Jobs Like Account Executive")
+  );
+  assert.ok(
+    isJobAlert(
+      "jobs@alerts.jobot.com",
+      "Head of Enterprise Business Development opportunities need to be filled"
+    )
+  );
+  // Genuine recruiter on bare jobot.com → NOT a job alert
+  assert.ok(!isJobAlert("recruiter@jobot.com", "Reaching out about a PM role"));
+});
+
 test("isJobAlert: subject-only patterns (any sender)", () => {
   assert.ok(isJobAlert("anyone@example.com", "Medical Assistant + 12 more new jobs"));
   assert.ok(isJobAlert("anyone@example.com", "5 new jobs matching your search"));
