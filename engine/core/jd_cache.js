@@ -174,6 +174,112 @@ const TALENTBREW_DESC_RE =
 const TALENTBREW_DESC_FALLBACK_RE =
   /<div[^>]*class="[^"]*\bats-description\b[^"]*"[^>]*>([\s\S]*?)(?:<\/(?:section|main|body)>|<(?:footer|nav)\b)/i;
 
+// Taleo (TalentBrew) JD page. No public JSON API — scrape HTML. Pages
+// reliably carry a `<script type="application/ld+json">` block with
+// schema.org JobPosting metadata, plus a `<div class="ats-description">`
+// body container (same TalentBrew shape as CommonSpirit iCIMS — we
+// re-use TALENTBREW_DESC_RE / TALENTBREW_DESC_FALLBACK_RE above).
+const TALEO_HOST_ALLOW = new Set([
+  "www.kaiserpermanentejobs.org",
+]);
+
+function isAllowedTaleoHost(hostname) {
+  return TALEO_HOST_ALLOW.has(String(hostname || "").toLowerCase());
+}
+
+function extractJsonLdJob(html) {
+  if (typeof html !== "string" || !html) return null;
+  const SCRIPT_RE = /<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi;
+  let m;
+  while ((m = SCRIPT_RE.exec(html)) !== null) {
+    const raw = m[1].trim();
+    if (!raw) continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const candidates = Array.isArray(parsed) ? parsed : [parsed];
+    for (const c of candidates) {
+      if (c && typeof c === "object" && c["@type"] === "JobPosting") return c;
+    }
+  }
+  return null;
+}
+
+function formatTaleo(html, job) {
+  if (typeof html !== "string" || !html) return null;
+
+  const ld = extractJsonLdJob(html) || {};
+  const title =
+    (typeof ld.title === "string" && ld.title) || (job && job.title) || "";
+
+  // Location: JSON-LD jobLocation can be an object, array, or string. Be
+  // defensive — we only need a printable line.
+  let location = "";
+  if (typeof ld.jobLocation === "string") {
+    location = ld.jobLocation;
+  } else if (ld.jobLocation && typeof ld.jobLocation === "object") {
+    const arr = Array.isArray(ld.jobLocation) ? ld.jobLocation : [ld.jobLocation];
+    const addr = arr[0] && arr[0].address;
+    if (addr && typeof addr === "object") {
+      const parts = [addr.addressLocality, addr.addressRegion, addr.addressCountry]
+        .filter((s) => typeof s === "string" && s.trim().length > 0);
+      location = parts.join(", ");
+    }
+  }
+  if (!location && Array.isArray(job && job.locations) && job.locations.length > 0) {
+    location = job.locations[0];
+  }
+
+  // Schedule priority: listing-tile hint (from adapter rawExtra) > JSON-LD
+  // employmentType. Kaiser's employmentType is the useless "Standard" most
+  // of the time; the listing tile carries the real value ("Full-time" /
+  // "Per Diem" / "Part-time" etc.).
+  const hint = (job && job.rawExtra && job.rawExtra.scheduleHint) || "";
+  let scheduleLine = "";
+  if (hint && hint.toLowerCase() !== "standard") {
+    scheduleLine = hint;
+  } else if (
+    typeof ld.employmentType === "string" &&
+    ld.employmentType.toLowerCase() !== "standard"
+  ) {
+    scheduleLine = ld.employmentType;
+  }
+
+  // Body: JSON-LD description + qualifications joined wins. Fall back to
+  // ats-description container in the raw HTML if JSON-LD missing.
+  let body = "";
+  const ldDesc = typeof ld.description === "string" ? ld.description : "";
+  const ldQual = typeof ld.qualifications === "string" ? ld.qualifications : "";
+  if (ldDesc || ldQual) {
+    body = stripHtml(`${ldDesc}\n${ldQual}`);
+  } else {
+    const m =
+      TALENTBREW_DESC_RE.exec(html) || TALENTBREW_DESC_FALLBACK_RE.exec(html);
+    body = m ? stripHtml(m[1]) : "";
+  }
+  if (!body) return null;
+
+  const parts = [`TITLE: ${title}`];
+  if (location) parts.push(`LOCATION: ${location}`);
+  if (scheduleLine) parts.push(`SCHEDULE: ${scheduleLine}`);
+  if (typeof ld.identifier === "string" && ld.identifier) {
+    parts.push(`REQ ID: ${ld.identifier}`);
+  } else if (
+    ld.identifier &&
+    typeof ld.identifier === "object" &&
+    typeof ld.identifier.value === "string" &&
+    ld.identifier.value
+  ) {
+    parts.push(`REQ ID: ${ld.identifier.value}`);
+  }
+  parts.push("");
+  parts.push(body);
+  return parts.join("\n").trim();
+}
+
 function extractIcimsBody(html) {
   // Prefer the closed-container shape (anchored on the matching end-of-block
   // marker), then fall back to greedy if the page omits the closing comment.
@@ -249,7 +355,7 @@ async function fetchJd(job, cacheDir, deps = {}) {
 
   const { source, slug, jobId } = job;
 
-  const SUPPORTED = new Set(["greenhouse", "lever", "workday", "icims"]);
+  const SUPPORTED = new Set(["greenhouse", "lever", "workday", "icims", "taleo"]);
   if (!SUPPORTED.has(source)) {
     return { key, status: "unsupported" };
   }
@@ -293,6 +399,34 @@ async function fetchJd(job, cacheDir, deps = {}) {
       }
       const capped = html.length > MAX_HTML_BYTES ? html.slice(0, MAX_HTML_BYTES) : html;
       text = formatIcims(capped, job);
+    } else if (source === "taleo") {
+      // SSRF guard: only fetch from the explicit Taleo host allow-list. The
+      // adapter already wrote `job.url` with a vetted host, but we re-check
+      // here so an attacker-tampered TSV row can't redirect JD fetches.
+      if (!job.url || typeof job.url !== "string") {
+        return { key, status: "not_found" };
+      }
+      let parsed;
+      try {
+        parsed = new URL(job.url);
+      } catch {
+        return { key, status: "not_found" };
+      }
+      if (parsed.protocol !== "https:" || !isAllowedTaleoHost(parsed.hostname)) {
+        return { key, status: "not_found" };
+      }
+      const res = await d.fetchFn(job.url, {
+        timeoutMs: 15000,
+        retries: 1,
+        headers: { "User-Agent": HTML_UA },
+      });
+      if (!res.ok) return { key, status: "not_found" };
+      const html = await res.text();
+      if (typeof html !== "string" || html.length === 0) {
+        return { key, status: "not_found" };
+      }
+      const capped = html.length > MAX_HTML_BYTES ? html.slice(0, MAX_HTML_BYTES) : html;
+      text = formatTaleo(capped, job);
     }
   } catch (err) {
     return { key, status: "error", error: err.message };
@@ -330,5 +464,8 @@ module.exports = {
   formatLever,
   formatWorkday,
   formatIcims,
+  formatTaleo,
   buildWorkdayApiUrl,
+  extractJsonLdJob,
+  isAllowedTaleoHost,
 };

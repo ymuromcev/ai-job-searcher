@@ -194,6 +194,37 @@ Body.`;
   assert.equal(extractSchedule(text), "Part-time");
 });
 
+// RFC 031 — formatTaleo surfaces the listing-tile schedule (Kaiser uses
+// vocab "Full-time", "Part-time", "Per Diem" verbatim on tile <p> text).
+test("extractSchedule: Taleo Per Diem (Kaiser tile vocab)", () => {
+  const text = `TITLE: Medical Assistant PRN
+LOCATION: Roseville, CA, US
+SCHEDULE: Per Diem
+REQ ID: 1234567
+
+Body of the JD.`;
+  assert.equal(extractSchedule(text), "Per Diem");
+});
+
+test("extractSchedule: Taleo Full-time", () => {
+  const text = `TITLE: Physician Assistant
+SCHEDULE: Full-time
+
+Body.`;
+  assert.equal(extractSchedule(text), "Full-time");
+});
+
+test("extractSchedule: Taleo Part-time (with 32 Hours suffix on tile)", () => {
+  // Kaiser sometimes prints "Part-time 32 Hours" inline on the tile but
+  // formatTaleo writes the schedule field alone; verify the canonical
+  // form Part-time still resolves.
+  const text = `TITLE: Speech Therapist I
+SCHEDULE: Part-time
+
+Body.`;
+  assert.equal(extractSchedule(text), "Part-time");
+});
+
 // --- extractRequirements ----------------------------------------------------
 
 test("extractRequirements: Kaiser → HS diploma + 1+ years + Spanish + BLS + Epic", () => {

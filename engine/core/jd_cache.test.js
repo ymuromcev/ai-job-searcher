@@ -8,7 +8,10 @@ const {
   stripHtml,
   formatWorkday,
   formatIcims,
+  formatTaleo,
   buildWorkdayApiUrl,
+  extractJsonLdJob,
+  isAllowedTaleoHost,
 } = require("./jd_cache.js");
 
 // Build minimal I/O deps with controllable state.
@@ -505,4 +508,202 @@ test("iCIMS: iframes-only container yields not_found (no header-only cache)", as
   const result = await fetchJd(ICIMS_JOB, CACHE_DIR, deps);
   assert.equal(result.status, "not_found");
   assert.equal(Object.keys(written).length, 0, "must not write cache for header-only payload");
+});
+
+// --- Taleo (Kaiser) ---------------------------------------------------------
+
+const TALEO_JOB = {
+  source: "taleo",
+  slug: "kaiser-641",
+  jobId: "94858333792",
+  title: "Speech Therapist I, Pediatrics, Part Time 32 Hours",
+  companyName: "Kaiser Permanente",
+  url: "https://www.kaiserpermanentejobs.org/job/sacramento/speech-therapist-i-pediatrics-part-time-32-hours/641/94858333792",
+  rawExtra: { scheduleHint: "Part-time", workSetting: "Onsite", shift: "Day" },
+};
+
+const TALEO_HTML_FULL = `<!doctype html><html><head>
+<script type="application/ld+json">
+{"@context":"http://schema.org","@type":"JobPosting",
+ "title":"Speech Therapist I, Pediatrics, Part Time 32 Hours",
+ "datePosted":"2026-5-8",
+ "identifier":"1422687",
+ "employmentType":"Standard",
+ "jobLocation":{"@type":"Place","address":{"@type":"PostalAddress","addressLocality":"Sacramento","addressRegion":"CA","addressCountry":"US"}},
+ "description":"<div><b>Job Summary:</b></div><p>Provides diagnosis and treatment of communication disorders.</p>",
+ "qualifications":"<div><b>Basic Qualifications:</b></div><ul><li>Completion of CFY.</li></ul>"}
+</script></head><body>
+<section><div class="ats-description">
+<div><b>Job Summary:</b></div><p>Provides diagnosis and treatment.</p>
+</div></section></body></html>`;
+
+test("formatTaleo: JSON-LD path produces TITLE / LOCATION / SCHEDULE / REQ ID + body", () => {
+  const text = formatTaleo(TALEO_HTML_FULL, TALEO_JOB);
+  assert.ok(text);
+  assert.ok(text.startsWith("TITLE: Speech Therapist I"), `unexpected: ${text.slice(0, 80)}`);
+  assert.ok(text.includes("LOCATION: Sacramento, CA, US"));
+  // Adapter hint "Part-time" wins over JSON-LD "Standard"
+  assert.ok(text.includes("SCHEDULE: Part-time"));
+  assert.ok(text.includes("REQ ID: 1422687"));
+  assert.ok(text.includes("Provides diagnosis"));
+  assert.ok(text.includes("Basic Qualifications"));
+});
+
+test("formatTaleo: filters out useless employmentType:'Standard' when no listing hint", () => {
+  const job = { ...TALEO_JOB, rawExtra: {} };
+  const text = formatTaleo(TALEO_HTML_FULL, job);
+  assert.ok(text);
+  assert.ok(!/^SCHEDULE:/m.test(text), "Standard alone should not produce SCHEDULE line");
+});
+
+test("formatTaleo: prefers listing scheduleHint over JSON-LD employmentType", () => {
+  // employmentType present and not "Standard", but the listing hint differs.
+  const html = TALEO_HTML_FULL.replace('"employmentType":"Standard"', '"employmentType":"Full-time"');
+  const job = { ...TALEO_JOB, rawExtra: { scheduleHint: "Per Diem" } };
+  const text = formatTaleo(html, job);
+  assert.ok(text.includes("SCHEDULE: Per Diem"));
+  assert.ok(!text.includes("SCHEDULE: Full-time"));
+});
+
+test("formatTaleo: falls back to ats-description when JSON-LD missing", () => {
+  const html = `<html><body>
+<section><div class="ats-description">
+<div><b>Job Summary:</b></div><p>Fallback body text.</p>
+</div></section></body></html>`;
+  const job = { ...TALEO_JOB, rawExtra: { scheduleHint: "Full-time" } };
+  const text = formatTaleo(html, job);
+  assert.ok(text);
+  assert.ok(text.includes("TITLE: Speech Therapist I"));
+  assert.ok(text.includes("SCHEDULE: Full-time"));
+  assert.ok(text.includes("Fallback body text"));
+});
+
+test("formatTaleo: returns null when there's no body anywhere (no cache poison)", () => {
+  const html = `<html><body><h1>nothing useful</h1></body></html>`;
+  assert.equal(formatTaleo(html, TALEO_JOB), null);
+});
+
+test("formatTaleo: tolerates non-string / empty input", () => {
+  assert.equal(formatTaleo("", TALEO_JOB), null);
+  assert.equal(formatTaleo(null, TALEO_JOB), null);
+});
+
+test("extractJsonLdJob: returns the JobPosting payload when present", () => {
+  const ld = extractJsonLdJob(TALEO_HTML_FULL);
+  assert.ok(ld);
+  assert.equal(ld["@type"], "JobPosting");
+  assert.equal(ld.identifier, "1422687");
+});
+
+test("extractJsonLdJob: ignores non-JobPosting JSON-LD", () => {
+  const html = `<script type="application/ld+json">{"@type":"Organization","name":"Kaiser"}</script>`;
+  assert.equal(extractJsonLdJob(html), null);
+});
+
+test("extractJsonLdJob: handles array-shaped JSON-LD", () => {
+  const html = `<script type="application/ld+json">[{"@type":"BreadcrumbList"},{"@type":"JobPosting","title":"X"}]</script>`;
+  const ld = extractJsonLdJob(html);
+  assert.ok(ld);
+  assert.equal(ld.title, "X");
+});
+
+test("extractJsonLdJob: skips malformed JSON safely", () => {
+  const html = `<script type="application/ld+json">{not valid json</script>`;
+  assert.equal(extractJsonLdJob(html), null);
+});
+
+test("isAllowedTaleoHost: only kaiserpermanentejobs.org allowed", () => {
+  assert.equal(isAllowedTaleoHost("www.kaiserpermanentejobs.org"), true);
+  assert.equal(isAllowedTaleoHost("kp.taleo.net"), false);
+  assert.equal(isAllowedTaleoHost("internal"), false);
+});
+
+test("Taleo: fetchJd writes cache on first call (status=fetched)", async () => {
+  const { deps, written } = makeDeps({
+    fetchFn: makeFetchFn({ [TALEO_JOB.url]: { status: 200, html: TALEO_HTML_FULL } }),
+  });
+  const result = await fetchJd(TALEO_JOB, CACHE_DIR, deps);
+  assert.equal(result.status, "fetched");
+  assert.ok(result.text.includes("SCHEDULE: Part-time"));
+  assert.ok(result.text.includes("Provides diagnosis"));
+  assert.equal(written[`${CACHE_DIR}/${cacheKey(TALEO_JOB)}`], result.text);
+});
+
+test("Taleo: 404 returns status=not_found, no cache write", async () => {
+  const { deps, written } = makeDeps({
+    fetchFn: makeFetchFn({ [TALEO_JOB.url]: { status: 404, html: "" } }),
+  });
+  const result = await fetchJd(TALEO_JOB, CACHE_DIR, deps);
+  assert.equal(result.status, "not_found");
+  assert.equal(Object.keys(written).length, 0);
+});
+
+test("Taleo: passes User-Agent header to fetchFn", async () => {
+  let seenOpts = null;
+  const { deps } = makeDeps({
+    fetchFn: async (url, opts) => {
+      seenOpts = opts;
+      return {
+        ok: true,
+        status: 200,
+        async text() { return TALEO_HTML_FULL; },
+        async json() { return {}; },
+      };
+    },
+  });
+  await fetchJd(TALEO_JOB, CACHE_DIR, deps);
+  assert.ok(seenOpts && seenOpts.headers && /Mozilla/.test(seenOpts.headers["User-Agent"]));
+});
+
+test("Taleo: SSRF — non-allowed host returns not_found without fetching", async () => {
+  let fetched = false;
+  const badJob = { ...TALEO_JOB, url: "https://kp.taleo.net/careersection/external/x.ftl" };
+  const { deps } = makeDeps({
+    fetchFn: async () => {
+      fetched = true;
+      return { ok: true, status: 200, async text() { return TALEO_HTML_FULL; } };
+    },
+  });
+  const result = await fetchJd(badJob, CACHE_DIR, deps);
+  assert.equal(result.status, "not_found");
+  assert.equal(fetched, false, "must short-circuit before network");
+});
+
+test("Taleo: SSRF — http:// (non-TLS) returns not_found", async () => {
+  const badJob = { ...TALEO_JOB, url: "http://www.kaiserpermanentejobs.org/job/x/y/641/123" };
+  let fetched = false;
+  const { deps } = makeDeps({
+    fetchFn: async () => {
+      fetched = true;
+      return { ok: true, status: 200, async text() { return TALEO_HTML_FULL; } };
+    },
+  });
+  const result = await fetchJd(badJob, CACHE_DIR, deps);
+  assert.equal(result.status, "not_found");
+  assert.equal(fetched, false);
+});
+
+test("Taleo: missing job.url returns not_found", async () => {
+  const badJob = { ...TALEO_JOB };
+  delete badJob.url;
+  const { deps } = makeDeps({ fetchFn: async () => { throw new Error("nope"); } });
+  const result = await fetchJd(badJob, CACHE_DIR, deps);
+  assert.equal(result.status, "not_found");
+});
+
+test("Taleo: empty HTML response returns not_found", async () => {
+  const { deps } = makeDeps({
+    fetchFn: makeFetchFn({ [TALEO_JOB.url]: { status: 200, html: "" } }),
+  });
+  const result = await fetchJd(TALEO_JOB, CACHE_DIR, deps);
+  assert.equal(result.status, "not_found");
+});
+
+test("Taleo: cache hit on second call (no second fetch)", async () => {
+  const cachedText = "TITLE: Speech Therapist I\nSCHEDULE: Part-time\n\nBody.";
+  const cachePath = `${CACHE_DIR}/${cacheKey(TALEO_JOB)}`;
+  const { deps } = makeDeps({ existing: { [cachePath]: cachedText } });
+  const result = await fetchJd(TALEO_JOB, CACHE_DIR, deps);
+  assert.equal(result.status, "cached");
+  assert.equal(result.text, cachedText);
 });
