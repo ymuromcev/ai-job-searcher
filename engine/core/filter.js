@@ -45,6 +45,18 @@ function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Word-boundary match that also handles patterns whose first or last char is
+// a non-word character (comma, dot, space). Plain `\b...\b` fails for those
+// because `\b` requires a word/non-word transition — it never fires between
+// two non-word chars (e.g. between `,` and ` `). When the pattern edge is
+// already a non-word char, the boundary is intrinsic and `\b` is omitted.
+function makeBoundaryRegex(needle) {
+  const lower = String(needle).toLowerCase();
+  const startB = /\w/.test(lower[0]) ? "\\b" : "";
+  const endB = /\w/.test(lower[lower.length - 1]) ? "\\b" : "";
+  return new RegExp(`${startB}${escapeRegex(lower)}${endB}`, "i");
+}
+
 // Returns a reason object for the first matching blocklist (company / title /
 // location) or null if nothing matches. Content-only: does NOT consult
 // company_cap. Used by:
@@ -90,10 +102,9 @@ function matchBlocklists(job, rules) {
     if (Array.isArray(rules.title_requirelist) && rules.title_requirelist.length > 0) {
       const anyPartMatches = parts.some((part) =>
         rules.title_requirelist.some((pat) => {
-          const needle = String(pat.pattern || "").toLowerCase();
+          const needle = String(pat.pattern || "");
           if (!needle) return false;
-          const re = new RegExp(`\\b${escapeRegex(needle)}\\b`, "i");
-          return re.test(part);
+          return makeBoundaryRegex(needle).test(part);
         })
       );
       if (!anyPartMatches) {
@@ -106,10 +117,9 @@ function matchBlocklists(job, rules) {
     for (const part of parts) {
       let partHit = null;
       for (const pat of rules.title_blocklist || []) {
-        const needle = String(pat.pattern || "").toLowerCase();
+        const needle = String(pat.pattern || "");
         if (!needle) continue;
-        const re = new RegExp(`\\b${escapeRegex(needle)}\\b`, "i");
-        if (re.test(part)) {
+        if (makeBoundaryRegex(needle).test(part)) {
           partHit = { kind: "title_blocklist", pattern: pat.pattern, why: pat.reason };
           break;
         }
