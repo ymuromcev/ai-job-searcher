@@ -567,6 +567,74 @@ test("classify: closure beats rejection wording when both present (priority)", (
   assert.equal(r.type, "POSITION_CLOSED", `got ${r.type} (evidence: "${r.evidence}")`);
 });
 
+// Regression 2026-05-12 (BL-50, follow-up Q-2 from BL-44) — Deel ACK
+// 14-apr on Jared (gmail id 19d8e1ad638ccebb). ATS confirmation body
+// contained a conditional forward-looking line "If your profile is a
+// match, we will schedule a call to discuss next steps." which the
+// previous regex /schedule (?:...)?(call|meeting|chat)/ caught as
+// INTERVIEW_INVITE. That mis-classification then cross-bound to Next
+// Insurance through the matcher and required a manual revert. After
+// tightening, only `interview`/`phone screen` remain in the trailing
+// alternation; "schedule a call/chat/meeting" in ACK context falls
+// through to ACKNOWLEDGMENT (via "thank you for applying"/"we have
+// received your application") or OTHER.
+test("classify: ACK 'we will schedule a call' → ACKNOWLEDGMENT (Deel 2026-04-14, BL-50)", () => {
+  const subject = "Thank you for applying to Deel";
+  const body =
+    "Hi Jared,\n\n" +
+    "Thank you for applying to Deel and for your interest in joining our " +
+    "team! We have received your application for Senior Product Manager " +
+    "and will review it carefully.\n\n" +
+    "If your background is a good fit, we will schedule a call to discuss " +
+    "the role in more detail. Otherwise, you will hear back from us " +
+    "within 2 weeks.\n\n" +
+    "Best,\nThe Deel Talent Team";
+  const r = classify({ subject, body });
+  assert.equal(
+    r.type,
+    "ACKNOWLEDGMENT",
+    `expected ACKNOWLEDGMENT, got ${r.type} (evidence: "${r.evidence}")`
+  );
+});
+
+// Companion negative controls for BL-50 — bare "schedule a call/meeting/chat"
+// without explicit invite intent must NOT classify as INTERVIEW_INVITE.
+// These fixtures are constructed (no "thank you for applying", no ACK
+// boilerplate) so the only signal is the schedule phrase; we expect OTHER.
+test("classify: bare 'schedule a call/meeting/chat' without invite intent → not INTERVIEW_INVITE (BL-50)", () => {
+  const fixtures = [
+    "Happy to schedule a call once you have a chance to review.",
+    "Let me know if you'd like to schedule a meeting later this month.",
+    "We typically schedule a chat after the initial screening is complete.",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Re: update", body });
+    assert.notEqual(
+      r.type,
+      "INTERVIEW_INVITE",
+      `should NOT classify as INTERVIEW_INVITE: "${body}" (got ${r.type})`
+    );
+  }
+});
+
+// Positive control — explicit invite intent with "schedule a call" must
+// STILL classify as INTERVIEW_INVITE via the surviving patterns
+// (`(would|we'd) like to (schedule|set up|interview)`, `book a time`, etc).
+test("classify: 'we'd like to schedule a call' → still INTERVIEW_INVITE (BL-50 no-regression)", () => {
+  const fixtures = [
+    "We'd like to schedule a call with you next week to discuss the role.",
+    "Hi Jared, we would like to schedule a chat — please book a time on my calendar.",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Next steps", body });
+    assert.equal(
+      r.type,
+      "INTERVIEW_INVITE",
+      `expected INTERVIEW_INVITE for: "${body}", got ${r.type} (evidence: "${r.evidence}")`
+    );
+  }
+});
+
 // Negative control — generic "closed" without position context must NOT
 // match (e.g. "our office is closed for the holiday").
 test("classify: bare 'closed' without position/role context → not POSITION_CLOSED", () => {

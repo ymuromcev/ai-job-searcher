@@ -971,3 +971,75 @@ uses `engine/modules/tracking/gmail_imap.js`). Flag any row whose
 - Audit script: `/tmp/audit_echoes.js` (one-off, local; not
   committed). Result snapshot in
   `/tmp/audit_echoes_result.json`.
+
+## 2026-05-12 — Classifier `schedule a call/chat/meeting` over-matched ACK boilerplate (BL-50, follow-up Q-2 from BL-44)
+
+**Severity**: LOW (1 production case caught manually before incident
+escalation; cross-bind risk to wrong TSV row remained latent).
+**Surface**: `engine/core/classifier.js` INTERVIEW_INVITE patterns.
+
+### What happened
+
+BL-44 Jared dry-run (`reclassify --apply`, 2026-05-12) surfaced one
+case where a Deel ATS confirmation (gmail id `19d8e1ad638ccebb`,
+2026-04-14, body "If your profile is a match, we will schedule a
+call to discuss next steps") flipped from OTHER → INTERVIEW_INVITE.
+The mutation then cross-bound the result to a different TSV row
+(Next Insurance) via the company-from-body matcher and produced a
+phantom Interview status. Caught during the dry-run review and
+reverted manually before any `--notion` push happened.
+
+Root cause: the regex
+`/schedule (?:(?:your|the|our|my|a|an)\s+)?(interview|phone screen|call|meeting|chat)/i`
+treats "schedule a call" / "schedule a meeting" / "schedule a chat"
+as invite intent. ATS ACK boilerplate routinely uses these phrases
+as forward-looking conditionals ("If your background is a fit, we
+will schedule a call…") — not actual invites. The bare `call`,
+`meeting`, `chat` tokens in the alternation are too cheap relative
+to the false-positive rate.
+
+### What changed
+
+1. **`engine/core/classifier.js`** — `call|meeting|chat` dropped
+   from the trailing alternation; regex is now
+   `/schedule (?:(?:your|the|our|my|a|an)\s+)?(interview|phone screen)/i`.
+   Real invites that say "schedule a call/chat" are still caught by:
+   - `/(would|we'd) like to (schedule|set up|interview)/`
+   - `/invite you (to|for) (interview|phone screen|conversation|chat)/`
+   - `/book a time (on (my|the) calendar|with (me|us)|to (chat|meet|talk))/`
+   - `/would love to (chat|connect|meet|talk) (with you|to discuss)/`
+   - `/(your|let me know your) availability (for|to) (call|chat|conversation)/`
+2. **`engine/core/classifier.test.js`** — three new tests:
+   - Real Deel ACK body (constructed from the 14-apr template) →
+     ACKNOWLEDGMENT.
+   - Bare "schedule a call/meeting/chat" without invite intent →
+     not INTERVIEW_INVITE (3 fixtures).
+   - "We'd like to schedule a call" → still INTERVIEW_INVITE via
+     the surviving patterns (no-regression).
+3. Full suite: 1216/1216 green (1213 baseline + 3 net).
+
+### Prevention
+
+- **Cheap tokens in alternation need a co-occurrence guard.** The
+  pattern survives "schedule an interview" because `interview` is
+  itself a high-precision token. `call|meeting|chat` are ambiguous —
+  they need an additional intent signal (`would like to`, `book a
+  time`, `your availability for a`) before they classify as invite.
+  This is the same lesson as the dropped `/next steps in (the|our)
+  (process|interview)/i` from earlier today: forward-looking ACK
+  phrasing is the dominant context for these tokens in cold
+  pipelines; explicit invite verbs are the minority signal.
+- **Cross-bind matcher hardening is a separate follow-up.** Even
+  with the classifier fixed, the matcher attached the Deel email to
+  Next Insurance based on token overlap in the body. If the
+  classifier's first stage produces a wrong type, the matcher can
+  amplify it across TSV rows. Tracked separately; not in BL-50
+  scope.
+
+### Related
+
+- BL-44 (reclassify) — produced the dry-run that surfaced Deel.
+- BL-50 (this fix) — the classifier patch.
+- 2026-05-12 "next steps in the interview process" incident above —
+  same vendor-of-failure (ACK boilerplate matching cheap
+  alternations).

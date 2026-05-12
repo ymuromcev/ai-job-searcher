@@ -80,7 +80,21 @@ const PATTERNS = {
     // your interview" / "schedule the interview" / "schedule our interview".
     // Whitelist of pre-words to avoid false-positives like "schedule monthly
     // meetings" / "schedule team-wide calls".
-    /schedule (?:(?:your|the|our|my|a|an)\s+)?(interview|phone screen|call|meeting|chat)/i,
+    //
+    // Tightened 2026-05-12 (BL-50, Q-2 follow-up from BL-44): dropped
+    // `call|meeting|chat` from the trailing alternation. ATS ACK boilerplate
+    // routinely says "we will schedule a call to discuss" / "happy to
+    // schedule a chat" — forward-looking ACK language, NOT an invite. Real
+    // invites with those words are still caught by:
+    //   - /(would|we'd) like to (schedule|set up|interview)/ ("we'd like to
+    //     schedule a call")
+    //   - /invite you (to|for) (interview|phone screen|conversation|chat)/
+    //   - /book a time (on (my|the) calendar|with (me|us)|to (chat|meet|talk))/
+    //   - /would love to (chat|connect|meet|talk) (with you|to discuss)/
+    //   - /(your|let me know your) availability (for|to) (call|chat|conversation)/
+    // Real trigger: Deel ACK 14-apr (Jared dry-run, 2026-05-12), which
+    // also cross-bound to Next Insurance via matcher.
+    /schedule (?:(?:your|the|our|my|a|an)\s+)?(interview|phone screen)/i,
     /(would|we'd) like to (schedule|set up|interview)/i,
     /invite you (to|for) (an? )?(interview|phone screen|conversation|chat)/i,
     /your interview (is|with|on)/i,
