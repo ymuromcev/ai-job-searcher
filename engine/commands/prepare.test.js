@@ -7,6 +7,7 @@ const {
   filterAlreadyEvaluated,
   buildActiveCounts,
   computeInboxExhausted,
+  computeInboxHealth,
   isFreshInboxApp,
   runAutoDedup,
 } = require("./prepare.js");
@@ -696,6 +697,162 @@ test("prepare --phase pre (G-12): empty skipReasons when nothing skipped", async
   await cmd(ctx);
   const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
   assert.deepEqual(result.stats.skipReasons, {});
+});
+
+// --- RFC 024 (BL-28): inbox_health forward-looking signal -------------------
+//
+// SKILL `/job-pipeline` reads `inbox_health` at the end of a session to decide
+// whether to prompt the operator: "Inbox is dry — run scan before next prepare?".
+// status = "low" iff remaining_viable < target (no coefficient).
+
+test("computeInboxHealth: status=low when remaining_viable < target", () => {
+  const h = computeInboxHealth({
+    remainingViable: 12,
+    target: 30,
+    inBatch: 26,
+    dropsThisRun: { company_cap: 200, url_dead: 2 },
+  });
+  assert.equal(h.status, "low");
+  assert.equal(h.remaining_viable, 12);
+  assert.equal(h.target, 30);
+  assert.equal(h.short_by, 18);
+  assert.equal(h.in_batch, 26);
+  assert.deepEqual(h.drops_this_run, { company_cap: 200, url_dead: 2 });
+  assert.equal(h.recommendation, "run_scan");
+});
+
+test("computeInboxHealth: status=healthy when remaining_viable >= target", () => {
+  const h = computeInboxHealth({
+    remainingViable: 47,
+    target: 30,
+    inBatch: 30,
+    dropsThisRun: { url_dead: 1 },
+  });
+  assert.equal(h.status, "healthy");
+  assert.equal(h.short_by, 0);
+  assert.equal(h.recommendation, null);
+});
+
+test("computeInboxHealth: target=0 edge case → healthy vacuously, no crash", () => {
+  // Defensive: a future caller with --batch 0 shouldn't crash this helper.
+  const h = computeInboxHealth({
+    remainingViable: 0,
+    target: 0,
+    inBatch: 0,
+    dropsThisRun: {},
+  });
+  assert.equal(h.status, "healthy");
+  assert.equal(h.short_by, 0);
+  assert.equal(h.recommendation, null);
+});
+
+test("computeInboxHealth: boundary remaining_viable === target → healthy (strict <)", () => {
+  // Edge of the threshold: 30 viable for target 30 means next prepare CAN
+  // hit target. No prompt.
+  const h = computeInboxHealth({
+    remainingViable: 30,
+    target: 30,
+    inBatch: 30,
+    dropsThisRun: {},
+  });
+  assert.equal(h.status, "healthy");
+  assert.equal(h.short_by, 0);
+  assert.equal(h.recommendation, null);
+});
+
+test("prepare --phase pre (RFC 024): writes inbox_health=healthy when deferredQueue >= target", async () => {
+  // 40 fresh inbox rows, batch=5, all URLs alive → 5 in batch, 35 deferred.
+  // Next prepare run has plenty (35 >= 5), so inbox_health.status = "healthy".
+  const apps = Array.from({ length: 40 }, (_, i) =>
+    makeApp({ key: `gh:${i}`, jobId: String(i) })
+  );
+  const deps = makePrepDeps(apps);
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", batch: 5, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.ok(result.inbox_health, "inbox_health field must be present");
+  assert.equal(result.inbox_health.status, "healthy");
+  assert.equal(result.inbox_health.remaining_viable, 35);
+  assert.equal(result.inbox_health.target, 5);
+  assert.equal(result.inbox_health.short_by, 0);
+  assert.equal(result.inbox_health.in_batch, 5);
+  assert.equal(result.inbox_health.recommendation, null);
+});
+
+test("prepare --phase pre (RFC 024): writes inbox_health=low when deferredQueue < target (BL-28 scenario)", async () => {
+  // The exact shape of BL-28's smoke: passed === batch - 2, 2 dead URLs →
+  // batch comes out short, deferredQueue=0, status=low, recommendation=run_scan.
+  const apps = [
+    makeApp({ key: "gh:1" }),
+    makeApp({ key: "gh:2", url: "https://dead.example.com/jobs/2" }),
+    makeApp({ key: "gh:3" }),
+  ];
+  const deps = makePrepDeps(apps, {
+    checkUrls: async (rows) =>
+      rows.map((r) =>
+        r.key === "gh:2" ? makeDeadUrl(r) : makeAliveUrl(r)
+      ),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", batch: 5, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.inbox_health.status, "low");
+  assert.equal(result.inbox_health.remaining_viable, 0);
+  assert.equal(result.inbox_health.target, 5);
+  assert.equal(result.inbox_health.short_by, 5);
+  assert.equal(result.inbox_health.in_batch, 2);
+  assert.equal(result.inbox_health.recommendation, "run_scan");
+  // drops_this_run must echo the per-reason breakdown (mirrors stats.skipReasons).
+  assert.equal(result.inbox_health.drops_this_run.url_dead, 1);
+});
+
+test("prepare --phase pre (RFC 024): drops_this_run aggregates filter + URL drops", async () => {
+  const apps = [
+    makeApp({ key: "gh:1", title: "VP of Engineering" }),  // title_blocklist
+    makeApp({ key: "gh:2", companyName: "BadCo" }),        // company_blocklist
+    makeApp({ key: "gh:3", url: "https://dead.example.com/jobs/3" }), // url_dead
+    makeApp({ key: "gh:4" }),                              // alive
+  ];
+  const deps = makePrepDeps(apps, {
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: {
+        title_blocklist: [{ pattern: "vp of", reason: "vp" }],
+        company_blocklist: ["BadCo"],
+      },
+      company_tiers: { Stripe: "S" },
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+    }),
+    checkUrls: async (rows) =>
+      rows.map((r) => (r.key === "gh:3" ? makeDeadUrl(r) : makeAliveUrl(r))),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", batch: 30, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.inbox_health.drops_this_run.title_blocklist, 1);
+  assert.equal(result.inbox_health.drops_this_run.company_blocklist, 1);
+  assert.equal(result.inbox_health.drops_this_run.url_dead, 1);
+});
+
+test("prepare --phase pre (RFC 024): stdout includes 'inbox health:' summary line", async () => {
+  const apps = [makeApp({ key: "gh:1" })];
+  const deps = makePrepDeps(apps);
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", batch: 30, dryRun: false } });
+  await cmd(ctx);
+  // Standalone-CLI operator should see one human-readable line; SKILL reads
+  // the structured field. The line itself stays terse so it doesn't bury the
+  // existing summary; tests for exact wording would be brittle, so we just
+  // verify the line is present.
+  const hasInboxHealthLine = ctx._lines.some((l) => /^inbox health:/.test(l));
+  assert.ok(hasInboxHealthLine, "expected 'inbox health: ...' line in stdout");
 });
 
 test("prepare --phase pre: empty unknownTierCompanies when all companies tiered", async () => {
@@ -1800,6 +1957,44 @@ test("prepare --phase pre topup (BL-9 Step 4): appends new entries to existing b
   assert.equal(result.stats.inBatch, 4);
 });
 
+test("prepare --phase pre topup (RFC 024): writes inbox_health to merged context", async () => {
+  // Regression guard for code-review P1-2: if a future refactor drops the
+  // inbox_health field from runPreTopup's merged context, SKILL Step 13 would
+  // silently skip — this test fails loudly instead. After topup consumes the
+  // 2 deferred keys to fill batch=4, queue=0 → status="low" (0 < target=4).
+  const apps = [
+    makeApp({ key: "gh:0", jobId: "0" }),
+    makeApp({ key: "gh:1", jobId: "1" }),
+    makeApp({ key: "gh:2", jobId: "2" }),
+    makeApp({ key: "gh:3", jobId: "3" }),
+  ];
+  const prevContext = {
+    version: 1,
+    profileId: "testuser",
+    mode: "fresh",
+    batchSize: 4,
+    batch: [
+      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+      { key: "gh:1", source: "greenhouse", jobId: "1", companyName: "Stripe", title: "PM", url: "https://example.com/1", urlAlive: true, urlStatus: 200 },
+    ],
+    skipped: [],
+    deferredQueue: ["gh:2", "gh:3"],
+    unknownTierCompanies: [],
+    stats: { urlChecked: 2, urlAlive: 2, urlDead: 0, deferred: 2, skipReasons: {} },
+  };
+  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "topup", need: 2, batch: 4, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.ok(result.inbox_health, "topup must write inbox_health");
+  assert.equal(result.inbox_health.status, "low");
+  assert.equal(result.inbox_health.remaining_viable, 0);
+  assert.equal(result.inbox_health.target, 4);
+  assert.equal(result.inbox_health.in_batch, 4);
+  assert.equal(result.inbox_health.recommendation, "run_scan");
+});
+
 test("prepare --phase pre topup (BL-9 Step 4): drops keys that have moved out of Inbox", async () => {
   // gh:2 has been committed (status=Applied) since the fresh run wrote queue.
   // Topup must drop it with reason no_longer_fresh.
@@ -2129,6 +2324,69 @@ test("prepare --phase pre weak-fallback (BL-9 Step 5): pulls already-Weak rows i
   assert.equal(newEntry.priorFitScore, "Weak");
   assert.equal(newEntry.priorFitRationale, "no fintech overlap");
   assert.equal(result.stats.weakFallbackRuns, 1);
+});
+
+test("prepare --phase pre weak-fallback (RFC 024): inbox_health excludes already-Weak from remaining_viable", async () => {
+  // Regression guard for code-review P1-1: weak-fallback's stillQueuedKeys
+  // may include already-Weak rows pulled into the pool here. They would be
+  // dropped by filterAlreadyEvaluated on the next runPre (fresh mode), so
+  // they MUST NOT count toward "viable for next prepare". Otherwise
+  // weak-fallback runs report false-healthy and SKILL Step 13 stays silent
+  // when it shouldn't.
+  //
+  // Setup: 1 already-in-batch (gh:0). 1 fresh-not-yet-weak (gh:1) in queue.
+  // 3 already-Weak rows (gh:2/3/4). need=1, batchSize=4. weak-fallback pulls
+  // the most accessible — gh:1 (fresh) wins, but only 1 alive needed. So:
+  //   - 1 consumed (gh:1), going into batch.
+  //   - stillQueued may include gh:2/3/4 (already-Weak) if applyPrepareFilter
+  //     leaves them in passed.slice(consumed). Those MUST NOT count.
+  const apps = [
+    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
+    makeApp({ key: "gh:1", jobId: "1", status: "Inbox" }),
+    makeApp({ key: "gh:2", jobId: "2", status: "Inbox", fit_score: "Weak" }),
+    makeApp({ key: "gh:3", jobId: "3", status: "Inbox", fit_score: "Weak" }),
+    makeApp({ key: "gh:4", jobId: "4", status: "Inbox", fit_score: "Weak" }),
+  ];
+  const prevContext = {
+    version: 1,
+    profileId: "testuser",
+    mode: "topup",
+    batchSize: 4,
+    batch: [
+      { key: "gh:0", source: "greenhouse", jobId: "0", companyName: "Stripe", title: "PM", url: "https://example.com/0", urlAlive: true, urlStatus: 200 },
+    ],
+    skipped: [],
+    deferredQueue: ["gh:1"],
+    unknownTierCompanies: [],
+    stats: {},
+  };
+  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "weak-fallback", need: 1, batch: 4, dryRun: false } });
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.ok(result.inbox_health, "weak-fallback must write inbox_health");
+  // Even if stillQueuedKeys contains gh:2/3/4 (already-Weak), they don't
+  // count as viable — next fresh runPre would drop them. So remaining_viable
+  // must reflect ONLY non-weak still-queued rows.
+  for (const key of result.deferredQueue) {
+    const app = apps.find((a) => a.key === key);
+    if (app && app.fit_score === "Weak") {
+      // If weak appears in deferredQueue, remaining_viable must be < deferredQueue.length.
+      assert.ok(
+        result.inbox_health.remaining_viable < result.deferredQueue.length,
+        `already-Weak in deferredQueue (${key}) must NOT count toward remaining_viable; ` +
+        `got remaining_viable=${result.inbox_health.remaining_viable}, ` +
+        `deferredQueue.length=${result.deferredQueue.length}`
+      );
+      break;
+    }
+  }
+  // With gh:1 consumed and 3 already-Weak filtered out: remaining_viable=0,
+  // target=4 → status=low, recommendation=run_scan.
+  assert.equal(result.inbox_health.status, "low");
+  assert.equal(result.inbox_health.remaining_viable, 0);
+  assert.equal(result.inbox_health.recommendation, "run_scan");
 });
 
 test("prepare --phase pre weak-fallback (BL-9 Step 5): combines deferredQueue + already-Weak (dedupes)", async () => {

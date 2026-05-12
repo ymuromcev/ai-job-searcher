@@ -374,6 +374,40 @@ function computeSkipReasons(skipped) {
   return skipReasons;
 }
 
+// RFC 024 (BL-28): forward-looking Inbox-health signal for the SKILL.
+// "How many filter-passing rows are left in Inbox for the NEXT prepare run?"
+// Live smoke 2026-05-11 made the gap visible: target=30, got 26, but the
+// engine never said "your NEXT run will also be short — scan first." This
+// helper produces a structured field the SKILL reads at the end of
+// `/job-pipeline` to decide whether to prompt the operator to run `scan`.
+//
+// `remainingViable` is the count of rows that passed filters and
+// already-evaluated checks but were not consumed into this batch — for
+// `runPre` that's `deferredQueue.length` (passed.slice(consumed)); for
+// `runPreTopup` / `runPreWeakFallback` it's the rebuilt `stillQueuedKeys`
+// length after each merge. Rows filtered out by company_cap, blocklists,
+// etc. are NOT counted as viable — they'd be filtered again next time.
+//
+// Threshold is exactly `target` (no coefficient). `target` is the operator's
+// chosen `--batch`; an extra cushion knob would never get tuned in practice.
+function computeInboxHealth({ remainingViable, target, inBatch, dropsThisRun }) {
+  const safeRemaining = Number.isFinite(remainingViable) && remainingViable >= 0
+    ? remainingViable
+    : 0;
+  const safeTarget = Number.isFinite(target) && target > 0 ? target : 0;
+  // target=0 (defensive: no shortfall possible) → "healthy" vacuously.
+  const status = safeRemaining < safeTarget ? "low" : "healthy";
+  return {
+    status,
+    remaining_viable: safeRemaining,
+    target: safeTarget,
+    short_by: Math.max(0, safeTarget - safeRemaining),
+    in_batch: Number.isFinite(inBatch) && inBatch >= 0 ? inBatch : 0,
+    drops_this_run: dropsThisRun && typeof dropsThisRun === "object" ? dropsThisRun : {},
+    recommendation: status === "low" ? "run_scan" : null,
+  };
+}
+
 // RFC 014 + back-compat: a TSV row is "fresh / not yet committed to apply"
 // when status is "Inbox" (post-RFC014) OR status="To Apply" with no
 // notion_page_id (legacy rows from before the migration).
@@ -632,6 +666,16 @@ async function runPre(ctx, deps) {
   const batchKeys = new Set(batchOut.map((e) => e.key));
   const inboxExhausted = computeInboxExhausted(apps, batchKeys);
 
+  // RFC 024 (BL-28): forward-looking signal for SKILL `/job-pipeline` final
+  // step. `remaining_viable < target` → SKILL prompts operator to run `scan`
+  // before next prepare. See computeInboxHealth above for the contract.
+  const inbox_health = computeInboxHealth({
+    remainingViable: deferredQueue.length,
+    target: batchSize,
+    inBatch: batchOut.length,
+    dropsThisRun: skipReasons,
+  });
+
   // G-16: explicit schema version on the context file so future schema bumps
   // can migrate (or fail loudly) instead of silently re-using stale fields.
   // Bump only when shape changes break consumers; the SKILL must handle
@@ -661,6 +705,7 @@ async function runPre(ctx, deps) {
       inboxExhausted,
       skipReasons,
     },
+    inbox_health,
   };
 
   const skipBreakdown = Object.entries(skipReasons)
@@ -680,6 +725,12 @@ async function runPre(ctx, deps) {
       `unknown tiers: ${unknownTierCompanies.length} companies — SKILL Step 5.7 will auto-assign`
     );
   }
+
+  // RFC 024: one-line forward-looking summary. SKILL reads the structured
+  // field below; this stdout line is for the standalone-CLI operator.
+  stdout(
+    `inbox health: ${inbox_health.status} (${inbox_health.remaining_viable} viable for next run, target ${inbox_health.target})`
+  );
 
   const contextPath = path.join(profile.paths.root, "prepare_context.json");
 
@@ -878,6 +929,16 @@ async function runPreTopup(ctx, deps) {
   const mergedBatch = [...prevBatch, ...newEntries];
   const mergedBatchKeys = new Set(mergedBatch.map((e) => e.key));
   const inboxExhausted = computeInboxExhausted(apps, mergedBatchKeys);
+  const mergedSkipReasons = computeSkipReasons([...prevSkipped, ...newSkipped]);
+  // RFC 024 (BL-28): keep `inbox_health` written from every prepare_context.json
+  // writer so the SKILL contract is uniform regardless of which mode produced
+  // the final context (fresh / topup / weak-fallback).
+  const merged_inbox_health = computeInboxHealth({
+    remainingViable: stillQueuedKeys.length,
+    target: batchSize,
+    inBatch: mergedBatch.length,
+    dropsThisRun: mergedSkipReasons,
+  });
   const merged = {
     ...prev,
     mode: "topup",
@@ -897,8 +958,9 @@ async function runPreTopup(ctx, deps) {
       unknownTierCompanies: unknownTierSet.size,
       topupRuns: (prevStats.topupRuns || 0) + 1,
       inboxExhausted,
-      skipReasons: computeSkipReasons([...prevSkipped, ...newSkipped]),
+      skipReasons: mergedSkipReasons,
     },
+    inbox_health: merged_inbox_health,
   };
 
   if (flags.dryRun) {
@@ -910,6 +972,9 @@ async function runPreTopup(ctx, deps) {
   deps.writeFile(contextPath, JSON.stringify(merged, null, 2));
   stdout(
     `topup: appended ${newEntries.length} entries → batch=${merged.batch.length} (${contextPath})`
+  );
+  stdout(
+    `inbox health: ${merged_inbox_health.status} (${merged_inbox_health.remaining_viable} viable for next run, target ${merged_inbox_health.target})`
   );
   stdout(
     `next: re-run the SKILL prepare mode for the new keys: ${newEntries.map((e) => e.key).join(", ")}`
@@ -1135,6 +1200,27 @@ async function runPreWeakFallback(ctx, deps) {
   const mergedBatch = [...prevBatch, ...newEntries];
   const mergedBatchKeys = new Set(mergedBatch.map((e) => e.key));
   const inboxExhausted = computeInboxExhausted(apps, mergedBatchKeys);
+  const mergedSkipReasons = computeSkipReasons([...prevSkipped, ...newSkipped]);
+  // RFC 024 (BL-28): weak-fallback rewrites prepare_context.json too, so it
+  // also stamps `inbox_health` — SKILL reads the field uniformly regardless of
+  // which prepare mode produced the final context.
+  //
+  // Important (P1 from code review): in weak-fallback `stillQueuedKeys` may
+  // include already-Weak rows that were pulled into the pool here. The next
+  // `runPre` (mode fresh) drops those via `filterAlreadyEvaluated`, so they
+  // do NOT represent capacity for the next prepare. Exclude them from
+  // `remaining_viable` to keep semantics consistent with the fresh-writer
+  // and avoid false-healthy reports.
+  const viableStillQueued = stillQueuedKeys.filter((k) => {
+    const a = poolByKey[k];
+    return a && a.fit_score !== "Weak" && a.skip_reason !== "weak_fit";
+  });
+  const merged_inbox_health = computeInboxHealth({
+    remainingViable: viableStillQueued.length,
+    target: batchSize,
+    inBatch: mergedBatch.length,
+    dropsThisRun: mergedSkipReasons,
+  });
 
   const merged = {
     ...prev,
@@ -1154,8 +1240,9 @@ async function runPreWeakFallback(ctx, deps) {
       unknownTierCompanies: unknownTierSet.size,
       weakFallbackRuns: (prevStats.weakFallbackRuns || 0) + 1,
       inboxExhausted,
-      skipReasons: computeSkipReasons([...prevSkipped, ...newSkipped]),
+      skipReasons: mergedSkipReasons,
     },
+    inbox_health: merged_inbox_health,
   };
 
   if (flags.dryRun) {
@@ -1171,6 +1258,9 @@ async function runPreWeakFallback(ctx, deps) {
   stdout(
     `weak-fallback: appended ${newEntries.length} entries (${weakCount} already-Weak, ` +
     `${newEntries.length - weakCount} fresh) → batch=${merged.batch.length} (${contextPath})`
+  );
+  stdout(
+    `inbox health: ${merged_inbox_health.status} (${merged_inbox_health.remaining_viable} viable for next run, target ${merged_inbox_health.target})`
   );
   if (inboxExhausted) {
     stdout(`inbox-exhausted: no more fresh rows in TSV — SKILL loop should stop`);
@@ -1896,5 +1986,6 @@ module.exports.filterAlreadyEvaluated = filterAlreadyEvaluated;
 module.exports.buildActiveCounts = buildActiveCounts;
 module.exports.fillUpAliveBatch = fillUpAliveBatch;
 module.exports.computeInboxExhausted = computeInboxExhausted;
+module.exports.computeInboxHealth = computeInboxHealth;
 module.exports.isFreshInboxApp = isFreshInboxApp;
 module.exports.runAutoDedup = runAutoDedup;
