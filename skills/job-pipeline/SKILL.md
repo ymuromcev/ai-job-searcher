@@ -459,6 +459,48 @@ Summarize at the user level (BL-11 — what the user sees, not engine internals)
 - **Deferred queue**: `prepare_context.stats.deferred` — number of fresh rows that didn't make it into the batch. Mention only if non-zero AND inboxExhausted is false (otherwise queue's empty).
 - **Warnings / anomalies**: any invalid resumeVer, invalid tier, fit-validation warnings the engine logged.
 
+**Step 13 — Inbox-health prompt (RFC 024 / BL-28)**
+
+Read `prepare_context.inbox_health` from the same context file used in Steps 1–11. The field is:
+
+```js
+inbox_health: {
+  status: "healthy" | "low",
+  remaining_viable: <int>,        // Inbox rows that pass filters; available for next prepare.
+  target: <int>,                  // batchSize this run used.
+  short_by: <int>,                // max(0, target - remaining_viable).
+  in_batch: <int>,                // rows committed this run.
+  drops_this_run: { ... },        // per-reason drop counts (mirrors stats.skipReasons + url_dead).
+  recommendation: "run_scan" | null
+}
+```
+
+Decision rule:
+
+- `inbox_health.status === "healthy"` → **say nothing about scan**, end session.
+- `inbox_health.status === "low"` → print a one-screen prompt in the operator's working language (the SKILL ships English; the operator's session may be Russian or English — match what they've been using). Use this shape:
+
+  > Inbox высох — после этого батча подходящих кандидатов осталось `<remaining_viable>` при target=`<target>`. Следующий prepare стартует с недобором (`<short_by>`).
+  >
+  > Drops this run: `<comma-separated non-zero keys from drops_this_run with counts>`.
+  >
+  > Запустить `scan` сейчас, чтобы натащить новых вакансий? (y/n)
+
+  English fallback if the session is English:
+
+  > Inbox is low — only `<remaining_viable>` viable candidates remain for the next prepare (target `<target>`, short by `<short_by>`).
+  >
+  > Drops this run: `<...>`.
+  >
+  > Run `scan` now to top up Inbox? (y/n)
+
+- On `y` → run `node engine/cli.js scan --profile <id>`. Stream tail of stdout to the operator. Do NOT auto-rerun `prepare` afterward — that's the next session's decision.
+- On `n` / anything else → end session.
+
+**Why this step exists**: standalone `prepare` already prints a one-line `inbox health:` summary for CLI users, but a SKILL-driven session typically ends with the headline summary and the operator misses the structured signal. Step 13 forwards it as an explicit action prompt only when actionable (status="low"). False-positive cost is one y/n — `n` ends immediately.
+
+If `prepare_context.inbox_health` is **missing** (legacy context written before RFC 024 / engine downgraded mid-session) — skip Step 13 silently.
+
 ---
 
 ## Failure modes / how to recover (prepare-specific)
