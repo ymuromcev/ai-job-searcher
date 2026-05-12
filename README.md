@@ -46,8 +46,8 @@ engine/              shared code — no PII, no personal preferences
   modules/
     discovery/       ATS / board adapters (Greenhouse, Lever, Ashby,
                      SmartRecruiters, Workday, Oracle Recruiting Cloud,
-                     NLX Jobsyn, CalCareers, USAJOBS, RemoteOK, Indeed,
-                     Adzuna, The Muse). Auto-registered.
+                     NLX Jobsyn, iCIMS, CalCareers, USAJOBS, RemoteOK,
+                     Indeed, Adzuna, The Muse). Auto-registered.
     generators/      Resume DOCX / PDF, cover letter PDF.
     tracking/        Gmail delegation (via Claude MCP, not OAuth-on-disk).
   core/              filter / dedup / validator / notion_sync /
@@ -71,7 +71,7 @@ lives in `profiles/<id>/`.
 
 ## Features
 
-- **Scan** — Poll ~13 ATS / job-board adapters for roles at target
+- **Scan** — Poll ~14 ATS / job-board adapters for roles at target
   companies. Dedup across profiles via shared `data/jobs.tsv`.
 - **Filter** — Rule-driven (title / company / location blocklists,
   level caps, per-company active caps). Retroactive sweeps via
@@ -170,7 +170,7 @@ node engine/cli.js <command> --profile <id> [flags]
 
 ## Discovery adapters
 
-Thirteen adapters ship out of the box; enable them per profile in
+Fourteen adapters ship out of the box; enable them per profile in
 `profile.json.modules`:
 
 | Module | Source |
@@ -182,6 +182,7 @@ Thirteen adapters ship out of the box; enable them per profile in
 | `discovery:workday` | Workday tenant feeds |
 | `discovery:oracle_cloud` | Oracle Recruiting Cloud / Fusion HCM CE sites (multi-tenant via `siteUrl`) |
 | `discovery:jobsyn` | NLX Jobsyn (Direct Employers Foundation; multi-tenant via `X-Origin` header) |
+| `discovery:icims` | iCIMS-hosted boards (HTML; two modes: `icims-default` for direct `careers-{slug}.icims.com` and `talentbrew` for custom front-ends like CommonSpirit) |
 | `discovery:remoteok` | RemoteOK public feed |
 | `discovery:usajobs` | USAJOBS API (federal jobs; needs free API key) |
 | `discovery:calcareers` | CalCareers (California state jobs) |

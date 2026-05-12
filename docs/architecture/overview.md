@@ -128,6 +128,7 @@ run via the `modules: ["discovery:<name>", ...]` array.
 | `workday.js` | Workday tenant CXS endpoints (per-tenant slug list). |
 | `oracle_cloud.js` | Oracle Recruiting Cloud / Fusion HCM Candidate Experience sites; multi-tenant via per-row `siteUrl`. SSRF-guarded to `*.oraclecloud.com` over HTTPS. |
 | `jobsyn.js` | NLX Jobsyn (Direct Employers Foundation) public search API; multi-tenant via `X-Origin` header. Origin pattern-validated to prevent CRLF header injection. |
+| `icims.js` | iCIMS-hosted job boards (HTML scrape); two extractor modes via per-row `htmlMode` — `icims-default` for `careers-{slug}.icims.com` and `talentbrew` for custom front-ends (e.g. CommonSpirit). SSRF-guarded to HTTPS + slug-validated. |
 | `smartrecruiters.js` | SmartRecruiters posting API. |
 | `usajobs.js` | USAJOBS Search API. Requires API key + email in `.env`. |
 | `calcareers.js` | California state careers feed. |
