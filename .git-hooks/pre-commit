@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# pre-commit — PII + secret leak guard.
+# pre-commit — PII + secret leak guard + doc-update gate.
 #
 # Runs against the staged diff only. Exits non-zero if any pattern matches,
 # with a hint on what to do. Bypass (discouraged) with `git commit --no-verify`.
@@ -94,6 +94,40 @@ for f in $FILES; do
       ;;
   esac
 done
+
+# --- Doc-update gate --------------------------------------------------------
+# When a NEW adapter (engine/modules/discovery/X.js, not _helpers, not tests,
+# not index.js) or a NEW command (engine/commands/X.js, not tests) is added,
+# both README.md AND docs/architecture/overview.md must be staged in the same
+# commit. The adapter/command tables there are user-facing inventory and rot
+# fast otherwise (see CLAUDE.md — "README как живая документация").
+ADDED=$(git diff --cached --name-only --diff-filter=A)
+NEW_ADAPTERS=""
+NEW_COMMANDS=""
+for f in $ADDED; do
+  case "$f" in
+    engine/modules/discovery/_*.js) ;;
+    engine/modules/discovery/*.test.js) ;;
+    engine/modules/discovery/index.js) ;;
+    engine/modules/discovery/*.js) NEW_ADAPTERS="$NEW_ADAPTERS $f" ;;
+    engine/commands/*.test.js) ;;
+    engine/commands/*.js) NEW_COMMANDS="$NEW_COMMANDS $f" ;;
+  esac
+done
+
+if [ -n "$NEW_ADAPTERS$NEW_COMMANDS" ]; then
+  README_STAGED=$(echo "$STAGED" | grep -E '^README\.md$' || true)
+  OVERVIEW_STAGED=$(echo "$STAGED" | grep -E '^docs/architecture/overview\.md$' || true)
+  if [ -z "$README_STAGED" ] || [ -z "$OVERVIEW_STAGED" ]; then
+    MSG="new code under engine/{discovery,commands}/ without doc updates."
+    [ -n "$NEW_ADAPTERS" ] && MSG="$MSG"$'\n'"  new adapters:$NEW_ADAPTERS"
+    [ -n "$NEW_COMMANDS" ] && MSG="$MSG"$'\n'"  new commands:$NEW_COMMANDS"
+    [ -z "$README_STAGED" ] && MSG="$MSG"$'\n'"  missing: README.md (adapter/command table + dir-tree)"
+    [ -z "$OVERVIEW_STAGED" ] && MSG="$MSG"$'\n'"  missing: docs/architecture/overview.md (inventory table)"
+    MSG="$MSG"$'\n'"  update both, or land a separate docs: commit before push."
+    report "Doc-update gate" "$MSG"
+  fi
+fi
 
 if [ "$FAIL" -ne 0 ]; then
   echo ""
