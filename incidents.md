@@ -557,6 +557,106 @@ Workflow change applied in `CLAUDE.md` (agent rules):
 
 ---
 
+## 2026-05-12 — Self-amplifying feedback loop: bot Notion comments echoed to inbox as fake invites
+
+**Severity**: CRITICAL (would have moved an unrelated "To Apply" row to
+"Interview" status on every check tick — silent state corruption with no
+user-visible error). Caught during BL-45 validation by a user spot-check
+on the dry-run row before `--apply`.
+**Surface**: `engine/core/email_filters.js` NON_PIPELINE_SENDERS list +
+upstream filter pipeline in `engine/commands/check.js`.
+**Detected by**: User asked for the literal subject of the
+Healthcare-Hannah "Eye Center invite" surfaced by the 30-day dry-run. Probe via IMAP
+revealed `From: "Notion Team" <notify@mail.notion.so>`, subject
+"Someone commented in Customer Service Associate / Call Center", body
+containing our own bot's quoted line:
+"@Healthcare-Hannah 🔔 Subject: \"Let's Chat - First Round Interview for
+Front Office\". Classified as interview invitation → status set to
+Interview."
+
+### Cause
+
+When `check --apply` writes a status+comment action to Notion, the
+comment body quotes the original email subject verbatim (so a human
+operator can see what triggered the change). Example:
+
+> 🔔 Subject: "Let's Chat - First Round Interview for Front Office".
+> Classified as interview invitation → status set to Interview.
+
+Notion's default behavior is to email the workspace owner about new
+comments on pages they own. The notification body contains our quoted
+subject line. On the next check tick:
+
+1. The Notion-notification email is fetched from inbox.
+2. classifier matches `/first[- ]round interview/i` (RFC 029) on the
+   quoted subject inside the notification body → INTERVIEW_INVITE.
+3. `findCompany` doesn't find an exact pipeline company in the email
+   (the notification's headers reference Notion's page title, not the
+   actual company), but the matcher body-binds via shared tokens —
+   in this case it cross-attached to an unrelated "To Apply" row
+   (Eye Center in Roseville CA, where the operator had not received an
+   invite).
+4. Apply attempts a status-mutation on that row. Healthcare-Hannah's apply
+   coincidentally failed on a stale page-id (archived predecessor of
+   the visible page), which is what caused the user to inspect the
+   row and discover the phantom.
+
+Self-amplifying: every legitimate INTERVIEW_INVITE / REJECTION
+application spawns a Notion notification → next tick can fire a
+phantom of the same shape on a different row → spawns another
+notification, and so on.
+
+### What changed
+
+1. **`engine/core/email_filters.js`** — added two new entries to
+   NON_PIPELINE_SENDERS:
+   - `{ fromIncludes: "@mail.notion.so" }` (covers any Notion-mail
+     subdomain forms)
+   - `{ fromIncludes: "notify@mail.notion.so" }` (exact-from used by
+     Notion comment notifications)
+2. **`engine/core/email_filters.test.js`** — 3 regression fixtures:
+   `"Notion Team" <notify@mail.notion.so>` (from-header style), bare
+   `notify@mail.notion.so`, generic `anyone@mail.notion.so`. All must
+   classify as non-pipeline.
+3. **No code change in `check.js`** — `isNonPipelineSender` already
+   gates the pipeline at line 586 (between job-alert filter and
+   recruiter-outreach branch). The fix is data-only.
+
+### Prevention
+
+- **Sender-allowlist before content-pattern.** Anywhere the bot
+  writes user-visible content that could be quoted-back via
+  notifications (Notion, Slack, Jira, Linear comments), the source
+  domain of those notifications must be in NON_PIPELINE_SENDERS
+  before the feature ships. Treat outbound writes and inbound
+  classifier as a closed loop — every new write destination needs
+  the corresponding inbound-filter entry.
+- **Comment wording.** The bot's quoted-subject convention is useful
+  for operator debugging but is the literal trigger for this loop.
+  Long-term: consider quoting the subject in a code-block or with a
+  marker that classifier can detect (e.g. `[bot]` prefix) and skip
+  even if the sender filter is somehow bypassed.
+- **Dry-run-then-spot-check.** This bug was caught only because the
+  user manually inspected the single new invite surfaced by the
+  dry-run before approving --apply. With auto-apply via cron, it
+  would have run unchecked. Recommended: any new "first-time"
+  INTERVIEW_INVITE for a profile gets routed to a Notion comment
+  on a quarantine page instead of an immediate status flip, until
+  the user clears it once.
+
+### Related
+
+- BL-45 — ATS-sender coverage / classifier patch (this incident
+  surfaced during validation of that work).
+- RFC 029 — INTERVIEW_INVITE pattern relaxations (`/first round
+  interview/i` etc.) that this loop weaponized.
+- Apply error "Can't edit block that is archived" — secondary
+  symptom from a stale page-id in TSV. Fixed separately by manually
+  patching the row to the live page-id; the loop itself was the
+  primary issue.
+
+---
+
 ## 2026-05-12 — Classifier mis-fires on ACK boilerplate "next steps in the interview process" + missing closure semantics (BL-45 patch)
 
 **Severity**: HIGH (false INTERVIEW_INVITE on real ACK + closure-vs-rejection
