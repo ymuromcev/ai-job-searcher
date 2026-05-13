@@ -10,10 +10,10 @@ const fs = require("fs");
 // We swap them to ASCII fallbacks at render time; the source JSON stays
 // Unicode-clean so DOCX (which embeds full Unicode fonts) renders correctly.
 const PDF_CHAR_FALLBACKS = {
-  "→": "->",   // → rightwards arrow
-  "↔": "<->",  // ↔ left-right arrow
-  "←": "<-",   // ← leftwards arrow
-  "⇒": "=>",   // ⇒ rightwards double arrow
+  "→": "->", // → rightwards arrow
+  "↔": "<->", // ↔ left-right arrow
+  "←": "<-", // ← leftwards arrow
+  "⇒": "=>", // ⇒ rightwards double arrow
 };
 
 function sanitizeForPdf(text) {

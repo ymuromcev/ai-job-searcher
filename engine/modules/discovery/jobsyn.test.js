@@ -81,10 +81,16 @@ test("jobsyn.discover paginates and maps jobs (has_more_pages driven)", async ()
       [API_BASE]: (url) => {
         const page = parsePage(url);
         if (page === 1) {
-          return { status: 200, body: wrap(page1Jobs, pagination({ page: 1, has_more_pages: true, total: 150 })) };
+          return {
+            status: 200,
+            body: wrap(page1Jobs, pagination({ page: 1, has_more_pages: true, total: 150 })),
+          };
         }
         if (page === 2) {
-          return { status: 200, body: wrap(page2Jobs, pagination({ page: 2, has_more_pages: false, total: 150 })) };
+          return {
+            status: 200,
+            body: wrap(page2Jobs, pagination({ page: 2, has_more_pages: false, total: 150 })),
+          };
         }
         throw new Error(`unexpected page ${page}`);
       },
@@ -133,10 +139,9 @@ test("jobsyn.discover stops at page 1 when has_more_pages=false", async () => {
     },
     recorded
   );
-  const jobs = await jobsyn.discover(
-    [{ name: "DCI", slug: "dciinc", origin: DCI_ORIGIN }],
-    { fetchFn }
-  );
+  const jobs = await jobsyn.discover([{ name: "DCI", slug: "dciinc", origin: DCI_ORIGIN }], {
+    fetchFn,
+  });
   assert.equal(jobs.length, 30);
   assert.equal(recorded.length, 1, "should not request page 2 when has_more_pages is false");
 });
@@ -151,7 +156,10 @@ test("jobsyn.discover drops postings outside locationAllow", async () => {
     makeJob({ location_exact: "Albuquerque, NM" }),
   ];
   const fetchFn = makeFetch({
-    [API_BASE]: { status: 200, body: wrap(jobs, pagination({ page: 1, has_more_pages: false, total: 5 })) },
+    [API_BASE]: {
+      status: 200,
+      body: wrap(jobs, pagination({ page: 1, has_more_pages: false, total: 5 })),
+    },
   });
   const logs = [];
   const out = await jobsyn.discover(
@@ -178,7 +186,10 @@ test("jobsyn.discover locationAllow is case-insensitive and trims patterns", asy
     makeJob({ location_exact: "Houston, TX" }),
   ];
   const fetchFn = makeFetch({
-    [API_BASE]: { status: 200, body: wrap(jobs, pagination({ page: 1, has_more_pages: false, total: 2 })) },
+    [API_BASE]: {
+      status: 200,
+      body: wrap(jobs, pagination({ page: 1, has_more_pages: false, total: 2 })),
+    },
   });
   const out = await jobsyn.discover(
     [
@@ -199,10 +210,10 @@ test("jobsyn.discover returns [] when target has no origin", async () => {
   const recorded = [];
   const fetchFn = makeFetch({}, recorded);
   const logs = [];
-  const jobs = await jobsyn.discover(
-    [{ name: "Bad", slug: "bad" }],
-    { fetchFn, logger: { warn: (m) => logs.push(m) } }
-  );
+  const jobs = await jobsyn.discover([{ name: "Bad", slug: "bad" }], {
+    fetchFn,
+    logger: { warn: (m) => logs.push(m) },
+  });
   assert.equal(jobs.length, 0);
   assert.equal(recorded.length, 0, "fetchFn must not be called when origin is missing");
   assert.ok(logs.some((m) => m.includes("invalid origin")));
@@ -213,22 +224,22 @@ test("jobsyn.discover rejects malformed origins (header-injection guard)", async
   const fetchFn = makeFetch({}, recorded);
   const logs = [];
   const cases = [
-    "dciinc.jobs\r\nX-Injection: 1",   // CRLF header injection
-    "dciinc.jobs\nX-Injection: 1",     // LF only
-    " dciinc.jobs",                    // leading space
-    "dciinc.jobs ",                    // trailing space
-    "dciinc.jobs/path",                // path segment
-    "https://dciinc.jobs",             // scheme-prefixed
-    "",                                // empty
-    "a".repeat(300),                   // way too long
-    "  ",                              // whitespace-only
-    "\tdci.jobs",                      // tab
+    "dciinc.jobs\r\nX-Injection: 1", // CRLF header injection
+    "dciinc.jobs\nX-Injection: 1", // LF only
+    " dciinc.jobs", // leading space
+    "dciinc.jobs ", // trailing space
+    "dciinc.jobs/path", // path segment
+    "https://dciinc.jobs", // scheme-prefixed
+    "", // empty
+    "a".repeat(300), // way too long
+    "  ", // whitespace-only
+    "\tdci.jobs", // tab
   ];
   for (let i = 0; i < cases.length; i += 1) {
-    const out = await jobsyn.discover(
-      [{ name: `Bad ${i}`, slug: `bad${i}`, origin: cases[i] }],
-      { fetchFn, logger: { warn: (m) => logs.push(m) } }
-    );
+    const out = await jobsyn.discover([{ name: `Bad ${i}`, slug: `bad${i}`, origin: cases[i] }], {
+      fetchFn,
+      logger: { warn: (m) => logs.push(m) },
+    });
     assert.equal(out.length, 0, `case ${i} (${JSON.stringify(cases[i])}) should yield 0 jobs`);
   }
   assert.equal(recorded.length, 0, "no fetch may happen for any malformed origin");
@@ -245,7 +256,10 @@ test("jobsyn.discover drops target when mid-pagination page fails", async () => 
       [API_BASE]: (url) => {
         const page = parsePage(url);
         if (page === 1) {
-          return { status: 200, body: wrap(page1Jobs, pagination({ page: 1, has_more_pages: true, total: 500 })) };
+          return {
+            status: 200,
+            body: wrap(page1Jobs, pagination({ page: 1, has_more_pages: true, total: 500 })),
+          };
         }
         if (page === 2) return { status: 500, body: { error: "boom" } };
         throw new Error(`unexpected page ${page}`);
@@ -254,10 +268,10 @@ test("jobsyn.discover drops target when mid-pagination page fails", async () => 
     recorded
   );
   const logs = [];
-  const jobs = await jobsyn.discover(
-    [{ name: "DCI", slug: "dciinc", origin: DCI_ORIGIN }],
-    { fetchFn, logger: { warn: (m) => logs.push(m) } }
-  );
+  const jobs = await jobsyn.discover([{ name: "DCI", slug: "dciinc", origin: DCI_ORIGIN }], {
+    fetchFn,
+    logger: { warn: (m) => logs.push(m) },
+  });
   assert.equal(jobs.length, 0, "partial-page failures must NOT leak page-1 jobs into the pool");
   assert.equal(recorded.length, 2);
   assert.ok(
@@ -268,12 +282,14 @@ test("jobsyn.discover drops target when mid-pagination page fails", async () => 
 
 test("jobsyn.discover tolerates empty jobs array", async () => {
   const fetchFn = makeFetch({
-    [API_BASE]: { status: 200, body: wrap([], pagination({ page: 1, has_more_pages: false, total: 0 })) },
+    [API_BASE]: {
+      status: 200,
+      body: wrap([], pagination({ page: 1, has_more_pages: false, total: 0 })),
+    },
   });
-  const jobs = await jobsyn.discover(
-    [{ name: "DCI", slug: "dciinc", origin: DCI_ORIGIN }],
-    { fetchFn }
-  );
+  const jobs = await jobsyn.discover([{ name: "DCI", slug: "dciinc", origin: DCI_ORIGIN }], {
+    fetchFn,
+  });
   assert.equal(jobs.length, 0);
 });
 
@@ -287,10 +303,9 @@ test("jobsyn.discover stops on missing pagination block (defensive)", async () =
     },
     recorded
   );
-  const jobs = await jobsyn.discover(
-    [{ name: "DCI", slug: "dciinc", origin: DCI_ORIGIN }],
-    { fetchFn }
-  );
+  const jobs = await jobsyn.discover([{ name: "DCI", slug: "dciinc", origin: DCI_ORIGIN }], {
+    fetchFn,
+  });
   assert.equal(jobs.length, 1);
   assert.equal(recorded.length, 1, "should stop walking pages when pagination block is absent");
 });
@@ -304,13 +319,16 @@ test("jobsyn.discover drops postings without guid and warns", async () => {
     { guid: "   ", title_exact: "Whitespace GUID", location_exact: "Sacramento, CA" },
   ];
   const fetchFn = makeFetch({
-    [API_BASE]: { status: 200, body: wrap(jobs, pagination({ page: 1, has_more_pages: false, total: 4 })) },
+    [API_BASE]: {
+      status: 200,
+      body: wrap(jobs, pagination({ page: 1, has_more_pages: false, total: 4 })),
+    },
   });
   const logs = [];
-  const out = await jobsyn.discover(
-    [{ name: "DCI", slug: "dciinc", origin: DCI_ORIGIN }],
-    { fetchFn, logger: { warn: (m) => logs.push(m) } }
-  );
+  const out = await jobsyn.discover([{ name: "DCI", slug: "dciinc", origin: DCI_ORIGIN }], {
+    fetchFn,
+    logger: { warn: (m) => logs.push(m) },
+  });
   assert.equal(out.length, 1);
   assert.ok(logs.some((m) => m.includes("dropped 3 postings without guid")));
 });
@@ -323,7 +341,13 @@ test("jobsyn.discover isolates per-tenant failures", async () => {
     recorded.push({ url, headers: { ...(opts.headers || {}) } });
     const origin = (opts.headers || {})["X-Origin"];
     if (origin === DCI_ORIGIN) {
-      return { ok: false, status: 500, async json() { return {}; } };
+      return {
+        ok: false,
+        status: 500,
+        async json() {
+          return {};
+        },
+      };
     }
     return {
       ok: true,
@@ -354,7 +378,10 @@ test("jobsyn.discover falls back from location_exact to city+state", async () =>
     makeJob({ location_exact: null, city_exact: "Boston", state_short: "MA" }),
   ];
   const fetchFn = makeFetch({
-    [API_BASE]: { status: 200, body: wrap(jobs, pagination({ page: 1, has_more_pages: false, total: 3 })) },
+    [API_BASE]: {
+      status: 200,
+      body: wrap(jobs, pagination({ page: 1, has_more_pages: false, total: 3 })),
+    },
   });
   const out = await jobsyn.discover(
     [
@@ -380,12 +407,14 @@ test("jobsyn.discover prefers date_new over date_added; falls back when date_new
     makeJob({ date_new: undefined, date_added: undefined }),
   ];
   const fetchFn = makeFetch({
-    [API_BASE]: { status: 200, body: wrap(jobs, pagination({ page: 1, has_more_pages: false, total: 3 })) },
+    [API_BASE]: {
+      status: 200,
+      body: wrap(jobs, pagination({ page: 1, has_more_pages: false, total: 3 })),
+    },
   });
-  const out = await jobsyn.discover(
-    [{ name: "DCI", slug: "dciinc", origin: DCI_ORIGIN }],
-    { fetchFn }
-  );
+  const out = await jobsyn.discover([{ name: "DCI", slug: "dciinc", origin: DCI_ORIGIN }], {
+    fetchFn,
+  });
   assert.equal(out.length, 3);
   assert.equal(out[0].postedAt, "2026-05-05");
   assert.equal(out[1].postedAt, "2026-05-09");
@@ -397,12 +426,14 @@ test("jobsyn.discover apply URL composes from origin + guid", async () => {
   const myGuid = "CC6AB92478BD4F7DA804C46A786BE429";
   const jobs = [makeJob({ guid: myGuid, location_exact: "Sacramento, CA" })];
   const fetchFn = makeFetch({
-    [API_BASE]: { status: 200, body: wrap(jobs, pagination({ page: 1, has_more_pages: false, total: 1 })) },
+    [API_BASE]: {
+      status: 200,
+      body: wrap(jobs, pagination({ page: 1, has_more_pages: false, total: 1 })),
+    },
   });
-  const out = await jobsyn.discover(
-    [{ name: "DCI", slug: "dciinc", origin: DCI_ORIGIN }],
-    { fetchFn }
-  );
+  const out = await jobsyn.discover([{ name: "DCI", slug: "dciinc", origin: DCI_ORIGIN }], {
+    fetchFn,
+  });
   assert.equal(out.length, 1);
   assert.equal(out[0].jobId, myGuid);
   assert.equal(out[0].url, `https://${DCI_ORIGIN}/job/${myGuid}`);
@@ -419,14 +450,16 @@ test("jobsyn.discover stops at MAX_JOBS_PER_TENANT cap on runaway has_more_pages
       status: 200,
       async json() {
         // Always claims more pages — adapter must stop on its own.
-        return wrap(pageJobs, pagination({ page: parsePage(url), has_more_pages: true, total: 999999 }));
+        return wrap(
+          pageJobs,
+          pagination({ page: parsePage(url), has_more_pages: true, total: 999999 })
+        );
       },
     };
   };
-  const jobs = await jobsyn.discover(
-    [{ name: "DCI", slug: "dciinc", origin: DCI_ORIGIN }],
-    { fetchFn }
-  );
+  const jobs = await jobsyn.discover([{ name: "DCI", slug: "dciinc", origin: DCI_ORIGIN }], {
+    fetchFn,
+  });
   // Cap is 5000; with PAGE_SIZE=100 that's 50 fetches.
   assert.equal(jobs.length, 5000, `expected MAX_JOBS_PER_TENANT cap, got ${jobs.length}`);
   assert.equal(fetchCount, 50, `expected 50 fetches (cap/page_size), got ${fetchCount}`);

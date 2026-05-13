@@ -684,7 +684,9 @@ async function runPre(ctx, deps) {
   // acceptable and how to treat each (primary / bridge). Strip regex patterns
   // — the LLM doesn't need them (scan already enforced the title gate) and
   // they bloat the prompt. Treatments-prose only.
-  const roleTargets = buildRoleTargetsForContext(profile.filterRules && profile.filterRules.role_targets);
+  const roleTargets = buildRoleTargetsForContext(
+    profile.filterRules && profile.filterRules.role_targets
+  );
 
   // BL-9 Step 5: signal for the autonomous SKILL loop ("Inbox is empty, stop
   // iterating even if 30-target not yet hit").

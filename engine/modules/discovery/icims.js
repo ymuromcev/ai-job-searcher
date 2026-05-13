@@ -106,7 +106,10 @@ function extractIcimsDefault(html) {
 
 function parseIcimsDefaultRow(body) {
   // Title anchor: <a href="..." class="iCIMS_Anchor" title="..."><h3>{TITLE}</h3>
-  const anchor = /<a\s+[^>]*href="([^"]+)"[^>]*class="[^"]*\biCIMS_Anchor\b[^"]*"[^>]*>([\s\S]*?)<\/a>/.exec(body);
+  const anchor =
+    /<a\s+[^>]*href="([^"]+)"[^>]*class="[^"]*\biCIMS_Anchor\b[^"]*"[^>]*>([\s\S]*?)<\/a>/.exec(
+      body
+    );
   if (!anchor) return null;
   const href = decodeHtmlEntities(anchor[1]);
   const titleHtml = anchor[2];
@@ -139,8 +142,7 @@ function parseIcimsDefaultRow(body) {
 
   // Category (department-equivalent): <dt>Category</dt><dd>...<span>{CAT}</span></dd>
   let category = "";
-  const catMatch =
-    /<dt[^>]*>\s*Category\s*<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/i.exec(body);
+  const catMatch = /<dt[^>]*>\s*Category\s*<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/i.exec(body);
   if (catMatch) {
     category = sanitizeText(stripTags(catMatch[1]));
   }
@@ -280,9 +282,7 @@ async function fetchAllPages(fetchFn, base, mode, urlBase, signal) {
       html = html.slice(0, MAX_HTML_BYTES);
     }
     const pageJobs =
-      mode === "talentbrew"
-        ? extractTalentbrew(html, urlBase)
-        : extractIcimsDefault(html);
+      mode === "talentbrew" ? extractTalentbrew(html, urlBase) : extractIcimsDefault(html);
     if (pageJobs.length === 0) break;
     all.push(...pageJobs);
   }
@@ -336,9 +336,7 @@ async function discover(targets, ctx = {}) {
       return [];
     }
     if (parsed.protocol !== "https:") {
-      c.logger.warn(
-        `[${SOURCE}] ${target.slug}: urlBase must be https, got "${parsed.protocol}"`
-      );
+      c.logger.warn(`[${SOURCE}] ${target.slug}: urlBase must be https, got "${parsed.protocol}"`);
       return [];
     }
     // SSRF hardening: hosts outside `*.icims.com` must explicitly opt in via

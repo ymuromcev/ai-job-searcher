@@ -260,9 +260,7 @@ test("normalizeFilterRules: explicit title_requirelist wins over role_targets sy
   const out = normalizeFilterRules({
     title_requirelist: { patterns: [{ pattern: "explicit-pattern", reason: "kept" }] },
     role_targets: {
-      tracks: [
-        { id: "pm", name: "PM", patterns: [{ pattern: "synthesized", reason: "ignored" }] },
-      ],
+      tracks: [{ id: "pm", name: "PM", patterns: [{ pattern: "synthesized", reason: "ignored" }] }],
     },
   });
   // Explicit title_requirelist is preserved; synthesis is skipped.
@@ -300,9 +298,7 @@ test("normalizeFilterRules: empty title_requirelist + non-empty role_targets →
   const out = normalizeFilterRules({
     title_requirelist: [],
     role_targets: {
-      tracks: [
-        { id: "pm", name: "PM", patterns: [{ pattern: "product manager", reason: "PM" }] },
-      ],
+      tracks: [{ id: "pm", name: "PM", patterns: [{ pattern: "product manager", reason: "PM" }] }],
     },
   });
   // Synthesized — gate is preserved despite explicit empty list.
