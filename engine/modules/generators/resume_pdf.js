@@ -4,6 +4,38 @@
 const PDFDocument = require("pdfkit");
 const fs = require("fs");
 
+// PDFKit's built-in Helvetica uses WinAnsi encoding (Latin-1 + a few extras),
+// which lacks several Unicode chars used in our content (arrows in particular).
+// Without sanitization they render as mojibake (e.g., `→` → `!'`).
+// We swap them to ASCII fallbacks at render time; the source JSON stays
+// Unicode-clean so DOCX (which embeds full Unicode fonts) renders correctly.
+const PDF_CHAR_FALLBACKS = {
+  "→": "->",   // → rightwards arrow
+  "↔": "<->",  // ↔ left-right arrow
+  "←": "<-",   // ← leftwards arrow
+  "⇒": "=>",   // ⇒ rightwards double arrow
+};
+
+function sanitizeForPdf(text) {
+  if (typeof text !== "string") return text;
+  let out = text;
+  for (const [from, to] of Object.entries(PDF_CHAR_FALLBACKS)) {
+    if (out.includes(from)) out = out.split(from).join(to);
+  }
+  return out;
+}
+
+function deepSanitize(value) {
+  if (typeof value === "string") return sanitizeForPdf(value);
+  if (Array.isArray(value)) return value.map(deepSanitize);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const k of Object.keys(value)) out[k] = deepSanitize(value[k]);
+    return out;
+  }
+  return value;
+}
+
 function sectionHeader(doc, text) {
   doc.moveDown(0.35);
   doc.font("Helvetica-Bold").fontSize(10).text(text);
@@ -126,10 +158,9 @@ function renderProjects(doc, projects) {
   });
 }
 
-function generateResumePdf(
-  { contact, version, sharedExperience, sharedSections, certifications, projects },
-  outputPath
-) {
+function generateResumePdf(rawData, outputPath) {
+  const { contact, version, sharedExperience, sharedSections, certifications, projects } =
+    deepSanitize(rawData);
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: "LETTER",
@@ -163,4 +194,4 @@ function generateResumePdf(
   });
 }
 
-module.exports = { generateResumePdf };
+module.exports = { generateResumePdf, sanitizeForPdf, deepSanitize };
