@@ -79,7 +79,8 @@ function locationMatchesAllow(primaryLocation, allow) {
 function extract(body) {
   if (!body || typeof body !== "object") return { jobs: [], pagination: null };
   const jobs = Array.isArray(body.jobs) ? body.jobs : [];
-  const pagination = body.pagination && typeof body.pagination === "object" ? body.pagination : null;
+  const pagination =
+    body.pagination && typeof body.pagination === "object" ? body.pagination : null;
   return { jobs, pagination };
 }
 

@@ -29,9 +29,12 @@ Steps in detail:
 1. **Discovery**. Each enabled adapter fetches its source and emits
    normalized job records in memory. No filesystem writes yet.
 2. **Filter**. `engine/core/filter.js` applies the profile's
-   `filter_rules.json` (title / company / location blocklists). The
-   US-marker safeguard suppresses location blocklist when the JD asserts
-   "United States".
+   `filter_rules.json` (title / company / location blocklists, plus the
+   positive title gate). Since RFC 030 the title gate is sourced from
+   `role_targets.tracks[].patterns` — `profile_loader.normalizeFilterRules`
+   synthesizes the flat `title_requirelist` array filter.js consumes, so
+   the hot path is unchanged. The US-marker safeguard suppresses location
+   blocklist when the JD asserts "United States".
 3. **Dedup**. `engine/core/dedup.js` checks `(ats_source, job_id)`
    against the shared `data/jobs.tsv` and the profile's
    `applications.tsv`. Survivors are appended to `data/jobs.tsv`.

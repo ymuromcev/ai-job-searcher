@@ -754,14 +754,25 @@ Cap is enforced at **prepare time only** — scan always lets all jobs through. 
 
 ### Fit Score (domain fit only)
 
-Level does NOT affect fit score. Evaluate by domain match to the candidate's profile:
+**Role-track NEVER downgrades a Fit Score** (RFC 030). Acceptable role-tracks for this profile are in `prepare_context.roleTargets.tracks[]`. Every job in `batch[]` already passed the role-track gate at scan time — the title is, by construction, on a track the candidate accepts. Do **not** reduce a job's score because it's "not the primary track" (e.g. "Solutions Engineer instead of PM" / "TPM instead of PM" / "BizOps instead of PM"). The scan filter is the only authority on whether a track is acceptable; once a job is in `batch[]`, downgrading on track grounds is a bug.
+
+**Level NEVER downgrades a Fit Score** either. Evaluate by domain match to the candidate's profile:
 
 - **Strong** — core domain match (see `profiles/<id>/memory/user_resume_key_points.md` for domain specifics) plus a relevant tech or product component
 - **Medium** — adjacent domain, or right domain with lesser location/format fit, or outside core domain but with a key component overlap (AI/ML, data platform, payments)
 - **Weak** — outside core domain with no overlapping component
 - **Early-startup modifier** (pre-Series B, <50 people): downgrade one level (Strong→Medium, Medium→Weak)
 
+**Bridge-track upgrade (asymmetric).** Some tracks are tagged `fit_treatment: "bridge"` (BL-37 stepping-stone roles: FDE / Solutions / Implementation / TPM / Product Ops / BizOps). Bridge tracks can **upgrade** a score, never downgrade it:
+
+- If the **domain** is Strong, the score is Strong regardless of track. Bridge is a no-op (the upgrade is already implicit).
+- If the **domain** is Medium *and* the company is in a profile-Strong domain (per `user_resume_key_points.md`), and the track has `fit_treatment: "bridge"`, **upgrade to Strong**. This is the bridge override per `roleTargets.fit_treatments.bridge` (and any `track.bridge_note`).
+- If the **domain** is Weak, do not upgrade; report as Weak.
+
+Translated: bridge says "even though this is FDE not PM, if it's an AI-native company, count it as Strong". It NEVER says "this is FDE so downgrade".
+
 Profile-specific domain criteria: `profiles/<id>/memory/user_resume_key_points.md`.
+Acceptable role-tracks + treatments: `prepare_context.roleTargets` (sourced from `profiles/<id>/filter_rules.json → role_targets`).
 
 ### Salary Expectations (auto-fill at prepare time)
 
@@ -837,6 +848,10 @@ The defaults above describe Jared's tone. Other profiles (e.g. Lilia — warm, 5
 ### Final anti-AI check
 
 After writing, ask: "What makes this obviously AI-generated?" — fix any remaining tells before saving.
+
+### Final language-calque check (profile-specific)
+
+If `memory.writingStyle` contains an "Anti-russicism rules" / "language-calque" / "translation traps" section (e.g. Jared's profile lists 30+ banned patterns like `X direction`, `the volume of X`, `transfers directly to X`, `Comfortable with X, Y, Z`, `Ready to contribute to X priorities`), perform a **second pass specifically against those rules**. These are profile-specific translation traps from the candidate's L1 — a single hit is a recruiter screen-out flag for US-tech roles. Treat the section as a hard-gate, not a style preference: scan every paragraph for each banned pattern by name and rewrite before saving.
 
 ### Memory files (load before generating)
 

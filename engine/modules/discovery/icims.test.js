@@ -40,7 +40,17 @@ test("isValidSlug accepts standard tenant slugs", () => {
 });
 
 test("isValidSlug rejects garbage", () => {
-  for (const bad of ["", "../foo", "ab cd", "abc.def", "abc/def", null, undefined, "UPPER", "-leading"]) {
+  for (const bad of [
+    "",
+    "../foo",
+    "ab cd",
+    "abc.def",
+    "abc/def",
+    null,
+    undefined,
+    "UPPER",
+    "-leading",
+  ]) {
     assert.equal(_internals.isValidSlug(bad), false, `should reject ${JSON.stringify(bad)}`);
   }
 });
@@ -85,14 +95,8 @@ test("locationMatchesAllow — substring match is case-insensitive", () => {
     _internals.locationMatchesAllow("US-CA-Sacramento", ["Sacramento", "Roseville"]),
     true
   );
-  assert.equal(
-    _internals.locationMatchesAllow("Roseville, CA", ["sacramento"]),
-    false
-  );
-  assert.equal(
-    _internals.locationMatchesAllow("London, KY", ["Sacramento", "Roseville"]),
-    false
-  );
+  assert.equal(_internals.locationMatchesAllow("Roseville, CA", ["sacramento"]), false);
+  assert.equal(_internals.locationMatchesAllow("London, KY", ["Sacramento", "Roseville"]), false);
 });
 
 test("locationMatchesAllow — empty location with non-empty allow drops", () => {
@@ -175,7 +179,10 @@ test("extractTalentbrew falls back to URL-tail when data-job-id is missing", () 
 
 test("extractTalentbrew returns [] on empty page", () => {
   const html = readFixture("commonspirit-empty.html");
-  assert.deepEqual(_internals.extractTalentbrew(html, "https://www.commonspirit.careers/search-jobs"), []);
+  assert.deepEqual(
+    _internals.extractTalentbrew(html, "https://www.commonspirit.careers/search-jobs"),
+    []
+  );
 });
 
 // --- mapJob + assertJob -------------------------------------------------
@@ -239,10 +246,9 @@ function makeIcimsResponses({ slug, pages }) {
 test("discover — happy path returns jobs from page 1 (icims-default)", async () => {
   const html = readFixture("shriners-page0.html");
   const fetchFn = makeIcimsResponses({ slug: "shriners", pages: [html, ""] });
-  const jobs = await icims.discover(
-    [{ name: "Shriners Children's", slug: "shriners" }],
-    { fetchFn }
-  );
+  const jobs = await icims.discover([{ name: "Shriners Children's", slug: "shriners" }], {
+    fetchFn,
+  });
   assert.equal(jobs.length, 3);
   for (const j of jobs) {
     assert.doesNotThrow(() => assertJob(j));
@@ -254,10 +260,9 @@ test("discover — happy path returns jobs from page 1 (icims-default)", async (
 test("discover — pagination walks pages until empty", async () => {
   const html = readFixture("shriners-page0.html");
   const fetchFn = makeIcimsResponses({ slug: "shriners", pages: [html, html, ""] });
-  const jobs = await icims.discover(
-    [{ name: "Shriners Children's", slug: "shriners" }],
-    { fetchFn }
-  );
+  const jobs = await icims.discover([{ name: "Shriners Children's", slug: "shriners" }], {
+    fetchFn,
+  });
   assert.equal(jobs.length, 6, "two non-empty pages × 3 rows each");
   // fetched 3 pages total: pr=0 (jobs), pr=1 (jobs), pr=2 (empty → stop)
   assert.equal(fetchFn.calls.length, 3);
@@ -322,10 +327,10 @@ test("discover — talentbrew mode through urlBase", async () => {
 test("discover — invalid slug logs warn and returns []", async () => {
   const warns = [];
   const fetchFn = makeFetch(async () => makeResponse(""));
-  const jobs = await icims.discover(
-    [{ name: "Bad", slug: "../etc/passwd" }],
-    { fetchFn, logger: { warn: (m) => warns.push(m) } }
-  );
+  const jobs = await icims.discover([{ name: "Bad", slug: "../etc/passwd" }], {
+    fetchFn,
+    logger: { warn: (m) => warns.push(m) },
+  });
   assert.equal(jobs.length, 0);
   assert.equal(fetchFn.calls.length, 0, "no HTTP call for invalid slug");
   assert.equal(warns.length, 1);
@@ -335,10 +340,10 @@ test("discover — invalid slug logs warn and returns []", async () => {
 test("discover — unknown htmlMode is rejected", async () => {
   const warns = [];
   const fetchFn = makeFetch(async () => makeResponse(""));
-  const jobs = await icims.discover(
-    [{ name: "Bad", slug: "ok", htmlMode: "evil-mode" }],
-    { fetchFn, logger: { warn: (m) => warns.push(m) } }
-  );
+  const jobs = await icims.discover([{ name: "Bad", slug: "ok", htmlMode: "evil-mode" }], {
+    fetchFn,
+    logger: { warn: (m) => warns.push(m) },
+  });
   assert.equal(jobs.length, 0);
   assert.equal(fetchFn.calls.length, 0);
   assert.match(warns[0], /unknown htmlMode/);
@@ -359,25 +364,26 @@ test("discover — non-https urlBase is rejected (SSRF guard)", async () => {
 test("discover — malformed urlBase is rejected", async () => {
   const warns = [];
   const fetchFn = makeFetch(async () => makeResponse(""));
-  const jobs = await icims.discover(
-    [{ name: "Bad", slug: "ok", urlBase: "not a url" }],
-    { fetchFn, logger: { warn: (m) => warns.push(m) } }
-  );
+  const jobs = await icims.discover([{ name: "Bad", slug: "ok", urlBase: "not a url" }], {
+    fetchFn,
+    logger: { warn: (m) => warns.push(m) },
+  });
   assert.equal(jobs.length, 0);
   assert.match(warns[0], /invalid urlBase/);
 });
 
 test("discover — HTTP 500 throws and gets isolated by runTargets", async () => {
   const warns = [];
-  const fetchFn = makeFetch(async () =>
-    makeResponse("", { ok: false, status: 500 })
-  );
-  const jobs = await icims.discover(
-    [{ name: "Boom", slug: "shriners" }],
-    { fetchFn, logger: { warn: (m) => warns.push(m) } }
-  );
+  const fetchFn = makeFetch(async () => makeResponse("", { ok: false, status: 500 }));
+  const jobs = await icims.discover([{ name: "Boom", slug: "shriners" }], {
+    fetchFn,
+    logger: { warn: (m) => warns.push(m) },
+  });
   assert.equal(jobs.length, 0, "500 from page 0 kills this target only");
-  assert.ok(warns.some((w) => /HTTP 500/.test(w)), `expected HTTP 500 warning, got ${JSON.stringify(warns)}`);
+  assert.ok(
+    warns.some((w) => /HTTP 500/.test(w)),
+    `expected HTTP 500 warning, got ${JSON.stringify(warns)}`
+  );
 });
 
 test("discover — 404 on page > 0 terminates pagination cleanly", async () => {
@@ -388,10 +394,7 @@ test("discover — 404 on page > 0 terminates pagination cleanly", async () => {
     if (p === 0) return makeResponse(html);
     return makeResponse("", { ok: false, status: 404 });
   });
-  const jobs = await icims.discover(
-    [{ name: "Shriners", slug: "shriners" }],
-    { fetchFn }
-  );
+  const jobs = await icims.discover([{ name: "Shriners", slug: "shriners" }], { fetchFn });
   assert.equal(jobs.length, 3, "first page parsed; pr=1 404 ends pagination");
 });
 
@@ -465,10 +468,7 @@ test("discover — HTML response over MAX_HTML_BYTES gets truncated, not OOM'd",
     return makeResponse("<html></html>");
   });
   const t0 = Date.now();
-  const jobs = await icims.discover(
-    [{ name: "Test", slug: "test" }],
-    { fetchFn }
-  );
+  const jobs = await icims.discover([{ name: "Test", slug: "test" }], { fetchFn });
   const dt = Date.now() - t0;
   assert.equal(jobs.length, 1, "parses the one real row before the truncation cap");
   assert.ok(dt < 2000, `should complete fast even on huge input (took ${dt}ms)`);

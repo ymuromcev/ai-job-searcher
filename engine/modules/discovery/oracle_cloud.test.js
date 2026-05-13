@@ -218,10 +218,10 @@ test("oracle_cloud.discover handles invalid siteUrl gracefully", async () => {
   const recorded = [];
   const fetchFn = makeFetch({}, recorded);
   const logs = [];
-  const jobs = await oracle.discover(
-    [{ name: "Bad URL", slug: "badurl", siteUrl: "not-a-url" }],
-    { fetchFn, logger: { warn: (m) => logs.push(m) } }
-  );
+  const jobs = await oracle.discover([{ name: "Bad URL", slug: "badurl", siteUrl: "not-a-url" }], {
+    fetchFn,
+    logger: { warn: (m) => logs.push(m) },
+  });
   assert.equal(jobs.length, 0);
   assert.equal(recorded.length, 0);
   assert.ok(logs.some((m) => m.includes("invalid siteUrl")));
@@ -260,10 +260,10 @@ test("oracle_cloud.discover rejects siteUrl outside oraclecloud.com (SSRF guard)
     "https://oraclecloud.com.attacker.com/hcmUI/CandidateExperience/en/sites/CX/",
   ];
   for (let i = 0; i < cases.length; i += 1) {
-    const jobs = await oracle.discover(
-      [{ name: `Bad ${i}`, slug: `bad${i}`, siteUrl: cases[i] }],
-      { fetchFn, logger: { warn: (m) => logs.push(m) } }
-    );
+    const jobs = await oracle.discover([{ name: `Bad ${i}`, slug: `bad${i}`, siteUrl: cases[i] }], {
+      fetchFn,
+      logger: { warn: (m) => logs.push(m) },
+    });
     assert.equal(jobs.length, 0, `case ${i}: ${cases[i]} should yield 0 jobs`);
   }
   assert.equal(recorded.length, 0, "no fetch may happen for any disallowed host");
@@ -406,10 +406,9 @@ test("oracle_cloud.discover defaults siteNumber to CX when omitted", async () =>
     },
     recorded
   );
-  await oracle.discover(
-    [{ name: "Default Site", slug: "def", siteUrl: ADVENTIST_SITE }],
-    { fetchFn }
-  );
+  await oracle.discover([{ name: "Default Site", slug: "def", siteUrl: ADVENTIST_SITE }], {
+    fetchFn,
+  });
   assert.equal(recorded.length, 1);
   assert.ok(recorded[0].url.includes("finder=findReqs%3BsiteNumber%3DCX"));
 });

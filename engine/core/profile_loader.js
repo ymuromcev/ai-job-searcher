@@ -200,6 +200,10 @@ function normalizeSalaryConfig(raw) {
 //   title_requirelist:  { patterns: [{pattern,reason}] } | [{...}] → [{pattern,reason}]
 //   location_blocklist: { patterns: [strings] } | [strings] | location_rules.* → [strings]
 //   company_cap:        pass-through
+//   role_targets:       { tracks: [{id,name,patterns,fit_treatment,...}], fit_treatments }
+//                       — see RFC 030. When present, also synthesizes
+//                       title_requirelist from the union of all tracks[].patterns
+//                       if title_requirelist is null/absent (engine compat).
 // Everything else (domain_weak_fit, early_startup_modifier, priority_order)
 // is preserved verbatim for downstream consumers (e.g. fit_prompt).
 function normalizeFilterRules(raw) {
@@ -226,11 +230,46 @@ function normalizeFilterRules(raw) {
     out.title_blocklist = [];
   }
 
+  // RFC 030: role_targets is the single source of truth for acceptable
+  // role-tracks (scan title gate + LLM fit-score). Normalize tracks[] and,
+  // when title_requirelist is absent/null, synthesize it from the union of
+  // all tracks[].patterns so engine/core/filter.js keeps working unchanged.
+  const rt = raw.role_targets;
+  if (rt && typeof rt === "object" && Array.isArray(rt.tracks)) {
+    out.role_targets = {
+      tracks: rt.tracks
+        .filter((t) => t && typeof t === "object")
+        .map((t) => ({
+          id: t.id,
+          name: t.name,
+          patterns: Array.isArray(t.patterns) ? t.patterns.filter((p) => p && p.pattern) : [],
+          fit_treatment: t.fit_treatment || "primary",
+          ...(t.bridge_note ? { bridge_note: t.bridge_note } : {}),
+        })),
+      fit_treatments:
+        rt.fit_treatments && typeof rt.fit_treatments === "object" ? rt.fit_treatments : {},
+    };
+  } else {
+    out.role_targets = null;
+  }
+
   const tr = raw.title_requirelist;
+  let explicitTR = null;
   if (Array.isArray(tr)) {
-    out.title_requirelist = tr.filter((p) => p && p.pattern);
+    explicitTR = tr.filter((p) => p && p.pattern);
   } else if (tr && Array.isArray(tr.patterns)) {
-    out.title_requirelist = tr.patterns.filter((p) => p && p.pattern);
+    explicitTR = tr.patterns.filter((p) => p && p.pattern);
+  }
+  // "Explicit wins" must mean non-empty explicit wins. An empty explicit
+  // list (`title_requirelist: []` or `{patterns: []}`) would silently
+  // disable the positive gate even when role_targets is non-empty — RFC 030
+  // §10 R1 footgun. Fall through to synthesis whenever explicit is empty.
+  if (explicitTR && explicitTR.length > 0) {
+    out.title_requirelist = explicitTR;
+  } else if (out.role_targets) {
+    // Synthesize from role_targets.tracks[].patterns when title_requirelist
+    // is null/absent/empty — filter.js keeps reading the flat array unchanged.
+    out.title_requirelist = out.role_targets.tracks.flatMap((t) => t.patterns);
   } else {
     out.title_requirelist = [];
   }

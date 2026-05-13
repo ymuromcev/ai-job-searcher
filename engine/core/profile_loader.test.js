@@ -116,6 +116,7 @@ test("loadProfile returns normalized object with paths and loaded sub-configs", 
       company_cap: { max_active: 3 },
       company_blocklist: [],
       title_blocklist: [],
+      role_targets: null,
       title_requirelist: [],
       location_blocklist: [],
     });
@@ -209,6 +210,125 @@ test("normalizeFilterRules: missing keys default to empty arrays", () => {
   assert.deepEqual(out.company_blocklist, []);
   assert.deepEqual(out.title_blocklist, []);
   assert.deepEqual(out.location_blocklist, []);
+  assert.deepEqual(out.title_requirelist, []);
+  assert.equal(out.role_targets, null);
+});
+
+// --- RFC 030: role_targets (single source of truth for acceptable tracks) ---
+
+test("normalizeFilterRules: role_targets present → synthesizes title_requirelist from tracks", () => {
+  const out = normalizeFilterRules({
+    role_targets: {
+      _description: "...",
+      fit_treatments: { primary: "p-prose", bridge: "b-prose" },
+      tracks: [
+        {
+          id: "pm",
+          name: "Product Manager",
+          fit_treatment: "primary",
+          patterns: [
+            { pattern: "product manager", reason: "PM role" },
+            { pattern: "PM", reason: "abbr" },
+          ],
+        },
+        {
+          id: "fde",
+          name: "Forward-Deployed Engineer",
+          fit_treatment: "bridge",
+          bridge_note: "treat as primary in AI-native",
+          patterns: [{ pattern: "forward deployed", reason: "FDE" }],
+        },
+      ],
+    },
+  });
+  // Patterns from all tracks flow into title_requirelist for filter.js compat.
+  assert.deepEqual(out.title_requirelist, [
+    { pattern: "product manager", reason: "PM role" },
+    { pattern: "PM", reason: "abbr" },
+    { pattern: "forward deployed", reason: "FDE" },
+  ]);
+  // role_targets is preserved (with normalized track entries) for prepare.js.
+  assert.equal(out.role_targets.tracks.length, 2);
+  assert.equal(out.role_targets.tracks[0].id, "pm");
+  assert.equal(out.role_targets.tracks[0].fit_treatment, "primary");
+  assert.equal(out.role_targets.tracks[1].fit_treatment, "bridge");
+  assert.equal(out.role_targets.tracks[1].bridge_note, "treat as primary in AI-native");
+  assert.equal(out.role_targets.fit_treatments.primary, "p-prose");
+});
+
+test("normalizeFilterRules: explicit title_requirelist wins over role_targets synthesis", () => {
+  const out = normalizeFilterRules({
+    title_requirelist: { patterns: [{ pattern: "explicit-pattern", reason: "kept" }] },
+    role_targets: {
+      tracks: [{ id: "pm", name: "PM", patterns: [{ pattern: "synthesized", reason: "ignored" }] }],
+    },
+  });
+  // Explicit title_requirelist is preserved; synthesis is skipped.
+  assert.deepEqual(out.title_requirelist, [{ pattern: "explicit-pattern", reason: "kept" }]);
+  // role_targets still exposed so prepare.js can read tracks/treatments.
+  assert.equal(out.role_targets.tracks.length, 1);
+});
+
+test("normalizeFilterRules: role_targets defaults fit_treatment to primary when omitted", () => {
+  const out = normalizeFilterRules({
+    role_targets: {
+      tracks: [{ id: "x", name: "X", patterns: [{ pattern: "x", reason: "x" }] }],
+    },
+  });
+  assert.equal(out.role_targets.tracks[0].fit_treatment, "primary");
+  assert.deepEqual(out.role_targets.fit_treatments, {});
+});
+
+test("normalizeFilterRules: role_targets with empty tracks → empty title_requirelist", () => {
+  const out = normalizeFilterRules({ role_targets: { tracks: [] } });
+  assert.deepEqual(out.title_requirelist, []);
+  assert.deepEqual(out.role_targets.tracks, []);
+});
+
+test("normalizeFilterRules: malformed role_targets (no tracks array) → role_targets: null", () => {
+  const out = normalizeFilterRules({ role_targets: { tracks: "not-array" } });
+  assert.equal(out.role_targets, null);
+  // Falls through to title_requirelist: [] since no synthesis possible.
+  assert.deepEqual(out.title_requirelist, []);
+});
+
+// Regression for RFC 030 §10 R1 footgun: explicit `title_requirelist: []`
+// alongside a non-empty role_targets must NOT silently disable the gate.
+test("normalizeFilterRules: empty title_requirelist + non-empty role_targets → falls through to synthesis", () => {
+  const out = normalizeFilterRules({
+    title_requirelist: [],
+    role_targets: {
+      tracks: [{ id: "pm", name: "PM", patterns: [{ pattern: "product manager", reason: "PM" }] }],
+    },
+  });
+  // Synthesized — gate is preserved despite explicit empty list.
+  assert.deepEqual(out.title_requirelist, [{ pattern: "product manager", reason: "PM" }]);
+});
+
+test("normalizeFilterRules: empty {patterns: []} title_requirelist + role_targets → synthesis", () => {
+  const out = normalizeFilterRules({
+    title_requirelist: { patterns: [] },
+    role_targets: {
+      tracks: [{ id: "x", name: "X", patterns: [{ pattern: "x-role", reason: "x" }] }],
+    },
+  });
+  assert.deepEqual(out.title_requirelist, [{ pattern: "x-role", reason: "x" }]);
+});
+
+test("normalizeFilterRules: track.patterns null/missing → empty patterns, no crash", () => {
+  const out = normalizeFilterRules({
+    role_targets: {
+      tracks: [
+        { id: "a", name: "A" }, // patterns absent
+        { id: "b", name: "B", patterns: null }, // patterns explicitly null
+        { id: "c", name: "C", patterns: [{ pattern: "c-pat", reason: "c" }] },
+      ],
+    },
+  });
+  assert.deepEqual(out.role_targets.tracks[0].patterns, []);
+  assert.deepEqual(out.role_targets.tracks[1].patterns, []);
+  // Only valid pattern from track C flows into the synthesized list.
+  assert.deepEqual(out.title_requirelist, [{ pattern: "c-pat", reason: "c" }]);
 });
 
 test("normalizeFilterRules: preserves auxiliary sections verbatim", () => {
