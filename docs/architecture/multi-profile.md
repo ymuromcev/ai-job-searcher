@@ -19,7 +19,7 @@ routes I/O accordingly.
 ```
 profiles/<id>/
   profile.json                # identity, modules, Notion DB ids, fit prompt
-  filter_rules.json           # title / company / location blocklists (flat shape)
+  filter_rules.json           # title / company / location blocklists + role_targets (RFC 030)
   resume_versions.json        # archetypes -> resume DOCX content blocks
   cover_letter_versions.json  # archetypes -> CL content blocks
   cover_letter_template.md    # template with {{placeholders}}
