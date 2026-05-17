@@ -43,10 +43,29 @@ test("load throws on malformed header", () => {
   assert.throws(() => companies.load(file), /header mismatch/);
 });
 
-test("load throws on missing required field", () => {
+test("load throws when ats_source is missing", () => {
   const file = tmpFile();
   fs.writeFileSync(file, "name\tats_source\tats_slug\textra_json\nAcme\t\tslug\t\n");
-  assert.throws(() => companies.load(file), /name\/ats_source\/ats_slug are all required/);
+  assert.throws(() => companies.load(file), /name and ats_source are required/);
+});
+
+test("load throws when ats_slug is missing for adapter-driven source", () => {
+  const file = tmpFile();
+  fs.writeFileSync(file, "name\tats_source\tats_slug\textra_json\nAcme\tgreenhouse\t\t\n");
+  assert.throws(() => companies.load(file), /ats_slug required for source="greenhouse"/);
+});
+
+test("load allows empty ats_slug for source=manual (metadata-only row)", () => {
+  const file = tmpFile();
+  fs.writeFileSync(
+    file,
+    "name\tats_source\tats_slug\textra_json\tprofile\n" + 'Virto\tmanual\t\t{"hq":"LA"}\tjared\n'
+  );
+  const { rows } = companies.load(file);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].source, "manual");
+  assert.equal(rows[0].slug, "");
+  assert.deepEqual(rows[0].extra, { hq: "LA" });
 });
 
 test("load throws on invalid JSON in extra_json", () => {
