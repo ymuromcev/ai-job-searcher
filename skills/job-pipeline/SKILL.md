@@ -388,6 +388,7 @@ Write `profiles/<id>/prepare_results_<YYYYMMDD_HHMMSS>.json` ONCE at the end of 
 Result entries:
 - `decision: "to_apply"` — the top-N the engine will commit + push to Notion. Carries `clKey`, `clParagraphs`, `clBaseKey`, `resumeVer`, `salaryMin`, `salaryMax`, plus `fitScore` / `fitRationale`. RFC 022: also include `city`, `state`, `workFormat` (extracted from JD text — SKILL is authoritative here). Engine writes the MD + PDF files from `clParagraphs`, creates the Notion page, and updates TSV atomically on commit (BL-14 / RFC 019 / RFC 022); do **not** include `clPath` (engine derives it from the company slug + `clKey`) and do **not** include `notionPageId` (engine creates the page itself).
 - `decision: "skip"` — every other judged row from the loop. Carries `fitScore: "Weak"` (or rarely Strong/Medium that didn't make the cut) + `fitRationale` so the engine commit phase persists the verdict and `filterAlreadyEvaluated` skips them on the next prepare run. (Strong/Medium that didn't make top-30 still get persisted; if they pass filter next time, they'll be picked up again.)
+- `decision: "archive"` — engine pre-filter rejects (rows in `prepare_context.skipped[]`). For every entry in `skipped[]` whose `reason ∈ {title_blocklist, url_dead, company_blocklist, geo_metro_miss, geo_country_miss, geo_remote_only_miss, geo_blocklist, geo_no_location}` emit `decision: "archive"` with `fitRationale: "engine pre-filter: <reason> (<details>)"` where `<details>` is `pattern` (title/company blocklist), `urlStatus` (url_dead), or `geo_matched_by` (geo). Engine commit sets `status="Archived"`. **Exclude** `reason: "company_cap"` (per-batch limit, row stays viable for next prepare) and `reason: "already_evaluated_weak"` (already has Weak verdict in TSV; weak-fallback needs it). This shrinks Inbox after every prepare so `inbox_health` reflects only triageable rows. No `fitScore` is required for archive entries.
 
 Format:
 
@@ -455,6 +456,7 @@ Summarize at the user level (BL-11 — what the user sees, not engine internals)
 - **Loop summary**: how many iterations ran, whether weak-fallback triggered. Example: `loop: 2 iterations + weak-fallback (15 already-Weak rows reused)`.
 - **CL reuse breakdown**: group by `clBaseKey` — `8 reused affirm_capital, 3 reused chime_growth, 1 written from scratch`.
 - **Pre-phase skips**: read from `prepare_context.stats.skipReasons` and surface the breakdown verbatim (e.g. `company_cap: 5, title_blocklist: 2, url_dead: 1`). Omit if `{}`.
+- **Archived (engine pre-filter)**: count of `decision: "archive"` entries written this run. Format: `archived (engine pre-filter): N (title_blocklist: X, url_dead: Y, geo_*: Z, …)`. Omit if 0.
 - **Auto-tier assignments**: only if Step 5.7 ran — list the company → tier mapping.
 - **Deferred queue**: `prepare_context.stats.deferred` — number of fresh rows that didn't make it into the batch. Mention only if non-zero AND inboxExhausted is false (otherwise queue's empty).
 - **Warnings / anomalies**: any invalid resumeVer, invalid tier, fit-validation warnings the engine logged.
