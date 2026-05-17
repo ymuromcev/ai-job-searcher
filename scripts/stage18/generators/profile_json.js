@@ -69,7 +69,6 @@ function buildProfileJson(intake) {
     identity: buildIdentity(intake),
     modules,
     discovery: {
-      companies_whitelist: null,
       companies_blacklist: [],
     },
     filter_rules_file: "filter_rules.json",

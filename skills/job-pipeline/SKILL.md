@@ -53,7 +53,7 @@ node engine/cli.js scan --profile <id> [--dry-run] [--verbose]
 
 1. Load `profiles/<id>/profile.json` → enabled discovery modules + filter rules.
 2. Load `data/companies.tsv` → group targets by adapter source.
-3. Apply per-profile `discovery.companies_whitelist/blacklist`.
+3. Filter targets by `data/companies.tsv` `profile` column (single source of truth — RFC 010 part B). Optionally subtract `discovery.companies_blacklist`. (Legacy `companies_whitelist` retired in BL-68 — see `engine/commands/scan.js`.)
 4. Invoke each enabled adapter via `engine/core/scan.js` orchestrator (errors per source isolated, do not block the run).
 5. Dedupe new jobs against `data/jobs.tsv` master pool by `(source, jobId)`.
 6. Atomically write `data/jobs.tsv` + append fresh rows to `profiles/<id>/applications.tsv` with `status="Inbox"` (RFC 014 — TSV-only state for fresh-after-scan rows; transitions to `To Apply` after `prepare --phase commit decision=to_apply`). Notion DBs never see `Inbox` — they keep the 8-status set.

@@ -13,7 +13,6 @@
     "discovery:ashby"
   ],
   "discovery": {
-    "companies_whitelist": null,
     "companies_blacklist": []
   },
   "filter_rules_file": "filter_rules.example.json",

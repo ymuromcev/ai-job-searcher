@@ -107,7 +107,7 @@ Per-profile config at `profiles/<id>/profile.json`. Top-level keys:
   "identity": { "name", "email", "phone", "location", "linkedin", "website" },
   "discovery": {
     "keywords": [...], "locations": [...], "results": N,
-    "companies_whitelist": [...], "companies_blacklist": [...]
+    "companies_blacklist": [...]
   },
   "modules": [ "discovery:greenhouse", "discovery:lever", ..., "tracking:gmail" ],
   "filter_rules_file": "filter_rules.json",
@@ -237,13 +237,16 @@ Discovery: run enabled adapters, normalize, filter, dedup, append.
 
 ### Target list resolution
 
-Two-stage filter on `data/companies.tsv`:
+Single-stage filter on `data/companies.tsv`:
 
 1. Profile visibility: row is visible to profile `<id>` if
    `row.profile === "<id>"` or `row.profile.split(",").includes("<id>")`.
-2. Per-profile whitelist / blacklist from `profile.discovery`
-   (`companies_whitelist` allowlist; `companies_blacklist` denylist).
-   If whitelist is non-empty, only whitelist entries pass.
+2. Optional subtractive `discovery.companies_blacklist` on top of (1).
+
+Legacy `discovery.companies_whitelist` retired in BL-68 (2026-05-17) —
+it was a divergent second source of truth that silently dropped rows
+added to TSV without a matching whitelist entry. The single source is
+now the TSV `profile` column.
 
 For feed adapters (RemoteOK, Adzuna, the_muse) a synthetic target
 `{ feedMode: true, ...profile.discovery }` is injected so the adapter

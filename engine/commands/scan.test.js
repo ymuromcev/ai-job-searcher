@@ -351,7 +351,7 @@ test("scan redacts secret values from adapter error messages", async () => {
   assert.match(joined, /\*\*\*/);
 });
 
-test("applyTargetFilters honours whitelist + blacklist", () => {
+test("applyTargetFilters applies blacklist (whitelist retired in BL-68)", () => {
   const grouped = {
     greenhouse: [
       { name: "Affirm", slug: "affirm" },
@@ -359,18 +359,32 @@ test("applyTargetFilters honours whitelist + blacklist", () => {
     ],
     lever: [{ name: "Plaid", slug: "plaid" }],
   };
-  const wl = applyTargetFilters(grouped, {
-    discovery: { companies_whitelist: ["Affirm", "Plaid"] },
-  });
-  assert.equal(wl.greenhouse.length, 1);
-  assert.equal(wl.greenhouse[0].name, "Affirm");
-  assert.equal(wl.lever.length, 1);
 
+  // Blacklist still subtracts and now records the drop.
   const bl = applyTargetFilters(grouped, {
     discovery: { companies_blacklist: ["stripe"] },
   });
   assert.equal(bl.greenhouse.length, 1);
   assert.equal(bl.greenhouse[0].name, "Affirm");
+  assert.equal(bl.lever.length, 1);
+  assert.equal(bl._dropped.length, 1);
+  assert.equal(bl._dropped[0].name, "Stripe");
+  assert.equal(bl._dropped[0].reason, "blacklist");
+
+  // No filters → everything passes, nothing dropped.
+  const open = applyTargetFilters(grouped, { discovery: {} });
+  assert.equal(open.greenhouse.length, 2);
+  assert.equal(open.lever.length, 1);
+  assert.equal(open._dropped.length, 0);
+
+  // companies_whitelist on the profile is now IGNORED — legacy field, no
+  // effect. Regression guard so it doesn't quietly start filtering again.
+  const legacyWl = applyTargetFilters(grouped, {
+    discovery: { companies_whitelist: ["Affirm"] },
+  });
+  assert.equal(legacyWl.greenhouse.length, 2);
+  assert.equal(legacyWl.lever.length, 1);
+  assert.equal(legacyWl._dropped.length, 0);
 });
 
 test("scan gates companies by profile column (RFC 010 cross-profile isolation)", async () => {
