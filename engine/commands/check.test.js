@@ -157,21 +157,52 @@ test("buildActiveJobsMap: excludes rows without notion_page_id", () => {
 
 // ---------- buildBatches ----------
 
-test("buildBatches: chunks 10 companies, always appends LinkedIn + recruiter fixed batches", () => {
+test("buildBatches: chunks 10 companies, appends LinkedIn + recruiter + ATS fixed batches", () => {
   const companies = [];
   for (let i = 0; i < 23; i++) companies.push(`Company${i}`);
   const batches = buildBatches(companies, "after:123");
-  // 3 company batches (10+10+3) + 2 fixed
-  assert.equal(batches.length, 5);
+  // 3 company batches (10+10+3) + 3 fixed (LinkedIn, recruiter, ATS)
+  assert.equal(batches.length, 6);
   assert.match(batches[3], /jobalerts-noreply@linkedin\.com/);
   assert.match(batches[4], /Requirement for/);
+  assert.match(batches[5], /^from:\(/); // ATS batch
 });
 
-test("buildBatches: empty company list still returns the two fixed batches", () => {
+test("buildBatches: empty company list still returns the three fixed batches", () => {
   const batches = buildBatches([], "after:123");
-  assert.equal(batches.length, 2);
+  assert.equal(batches.length, 3);
   assert.match(batches[0], /jobalerts-noreply/);
   assert.match(batches[1], /Immediate need/);
+  assert.match(batches[2], /^from:\(/);
+});
+
+// RFC 029 — ATS sender batch must include all ATS_DOMAINS and be the last
+// batch (so dedupe by messageId in downstream processing is deterministic).
+test("buildBatches: ATS batch contains all ATS_DOMAINS, ends with searchWindow + -from:me", () => {
+  const { ATS_DOMAINS } = require("../core/email_filters.js");
+  const batches = buildBatches([], "after:999");
+  const atsBatch = batches[batches.length - 1];
+  for (const d of ATS_DOMAINS) {
+    assert.ok(atsBatch.includes(d), `ATS batch missing ${d}`);
+  }
+  assert.match(atsBatch, /after:999/);
+  assert.match(atsBatch, /-from:me$/);
+});
+
+// RFC 029 — recruiter batch must use atsFromExclusions() (no hardcoded bare
+// `-from:greenhouse` style entries that drift from the ATS_DOMAINS list).
+test("buildBatches: recruiter batch excludes ATS senders via full domain", () => {
+  const { ATS_DOMAINS } = require("../core/email_filters.js");
+  const batches = buildBatches([], "after:123");
+  const recruiterBatch = batches[1];
+  // Full domain exclusions present.
+  for (const d of ATS_DOMAINS) {
+    assert.ok(recruiterBatch.includes(`-from:${d}`), `recruiter batch missing -from:${d}`);
+  }
+  // No drifty bare-prefix exclusions left over from the pre-RFC-029 hardcoded list.
+  assert.ok(!/-from:greenhouse(\s|$)/.test(recruiterBatch));
+  assert.ok(!/-from:lever(\s|$)/.test(recruiterBatch));
+  assert.ok(!/-from:workday(\s|$)/.test(recruiterBatch));
 });
 
 // ---------- processLinkedIn ----------

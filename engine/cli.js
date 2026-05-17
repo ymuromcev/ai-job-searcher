@@ -13,7 +13,16 @@
 
 const { parseArgs } = require("util");
 
-const KNOWN_COMMANDS = ["scan", "validate", "sync", "prepare", "check", "indeed-prep", "answer"];
+const KNOWN_COMMANDS = [
+  "scan",
+  "validate",
+  "sync",
+  "prepare",
+  "check",
+  "indeed-prep",
+  "answer",
+  "reclassify",
+];
 
 const PARSE_OPTIONS = {
   options: {
@@ -36,6 +45,8 @@ const PARSE_OPTIONS = {
     role: { type: "string" },
     question: { type: "string" },
     dedup: { type: "boolean", default: false },
+    notion: { type: "boolean", default: false },
+    limit: { type: "string" },
   },
   allowPositionals: true,
   strict: true,
@@ -60,6 +71,10 @@ Commands:
   answer     Two-phase application Q&A flow. See --phase. Searches the Notion
              Application Q&A DB for reuse before generation, pushes approved
              answers back. Per RFC 009.
+  reclassify Re-run the email classifier across historical OTHER entries in
+             processed_messages.json (last 30 days). Dry-run by default;
+             --apply mutates the JSON, --apply --notion adds per-row
+             interactive Notion page updates. See RFC 028 / BL-44.
 
 Flags:
   --profile <id>       Profile id (required for all commands). Lowercase, alphanum + - _.
@@ -104,6 +119,17 @@ check flags:
                          Generate an app-password at
                          myaccount.google.com/apppasswords (requires 2FA).
   --since <ISO>          Override cursor (clamped to 30 days max).
+
+reclassify flags:
+  --apply                Mutate processed_messages.json. Default: dry-run.
+  --notion               With --apply: per-row interactive prompt to update
+                         the matching Notion page status + add a bot
+                         comment. Terminal-status rows default to N (operator
+                         must explicitly type 'y').
+  --since <ISO>          Only consider OTHER entries with date >= ISO. Clamped
+                         to 30-day window (older entries are pruned anyway).
+  --limit <N>            Cap entries per run (smoke / dry-run friendly).
+  --verbose              Print per-id fetch progress + log "unchanged" rows.
 
 answer flags:
   --phase <search|push>  Required. "search" looks up existing Q&A by company+role+question
@@ -155,6 +181,7 @@ function defaultCommands() {
     check: require("./commands/check.js"),
     "indeed-prep": require("./commands/indeed_prepare.js"),
     answer: require("./commands/answer.js"),
+    reclassify: require("./commands/reclassify.js"),
   };
 }
 
@@ -213,6 +240,8 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
       role: parsed.values.role || "",
       question: parsed.values.question || "",
       dedup: Boolean(parsed.values.dedup),
+      notion: Boolean(parsed.values.notion),
+      limit: parsed.values.limit ? parseInt(parsed.values.limit, 10) : null,
     },
     env,
     stdout: writeOut,

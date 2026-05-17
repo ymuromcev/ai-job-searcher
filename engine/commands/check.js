@@ -44,6 +44,8 @@ const {
 } = require("../core/email_parsers.js");
 const {
   isATS,
+  atsFromInclusions,
+  atsFromExclusions,
   isJobAlert,
   isNonPipelineSender,
   matchesRecruiterSubject,
@@ -211,16 +213,23 @@ function buildBatches(companies, searchWindow) {
 
   batches.push(`from:jobalerts-noreply@linkedin.com ${searchWindow}`);
 
+  // Recruiter-outreach batch. Excludes ATS senders — those flow through the
+  // dedicated ATS-inclusion batch below.
   batches.push(
     `subject:("Requirement for" OR "Immediate need" OR "exciting opportunity" OR ` +
       `"job opportunity" OR "open position" OR "open role" OR "great fit" OR ` +
       `"perfect fit" OR "new role" OR "new opportunity" OR "came across your" OR ` +
       `"your background" OR "your profile" OR "I am reaching out" OR ` +
       `"contract role" OR "contract opportunity" OR "open to opportunities") ` +
-      `${searchWindow} -from:me -from:linkedin.com -from:jobot.com ` +
-      `-from:greenhouse -from:lever -from:workday -from:ashbyhq.com ` +
-      `-from:smartrecruiters -from:icims`
+      `${searchWindow} -from:me -from:linkedin.com ${atsFromExclusions()}`
   );
+
+  // ATS-sender batch (RFC 029). Catches interview invites, rejections, acks
+  // where the pipeline company name lives only in the email body — invisible
+  // to the per-company token batches above. The same email may also match a
+  // company-token batch (e.g. Greenhouse from-address with the company in
+  // subject); dedup downstream is by messageId so this is safe.
+  batches.push(`${atsFromInclusions()} ${searchWindow} -from:me`);
 
   return batches;
 }
@@ -463,6 +472,27 @@ function processPipeline(email, ctx, state) {
       date: email.date || new Date().toISOString(),
     };
     return { row, action, rejection };
+  }
+
+  // POSITION_CLOSED — added 2026-05-12. The *role* was withdrawn, candidate
+  // was not rejected. Distinct Notion status ("Closed") + distinct emoji /
+  // wording so the user can see at a glance "this didn't get a 'no' — the
+  // role evaporated". Does NOT contribute to rejection stats.
+  if (type === "POSITION_CLOSED") {
+    if (SKIP_STATUSES.has(job.status)) {
+      row.action = `Already ${job.status}, skipped`;
+      return { row };
+    }
+    const action = {
+      kind: "status+comment",
+      pageId: job.notion_id,
+      appKey: job.key,
+      newStatus: "Closed",
+      comment: `🔒 Subject: "${email.subject}". Position withdrawn by employer → status set to Closed.`,
+    };
+    row.action = "queued: Status → Closed";
+    row.comment = "✅ queued";
+    return { row, action };
   }
 
   if (type === "INTERVIEW_INVITE") {

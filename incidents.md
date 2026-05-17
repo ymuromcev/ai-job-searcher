@@ -1,7 +1,7 @@
 ---
 title: "Incident log"
 status: live
-last_updated: 2026-05-08
+last_updated: 2026-05-12
 ---
 
 # Incidents
@@ -483,3 +483,678 @@ Healthcare-Hannah: not affected by this gap because her companies are tracked in
 `profile.json.discovery.companies_whitelist`, not `data/companies.tsv`.
 Backfill script reads `data/companies.tsv` profile column — would report
 0 candidates for her. Separate iteration needed if a similar gap surfaces.
+
+---
+
+## 2026-05-12 — Wasted a day writing `reclassify` on a stale worktree (drift from `main`)
+
+**Severity**: LOW (no production impact — work was on an unmerged branch,
+discarded before any commit landed on main; cost was operator time +
+tokens). **Surface**: developer workflow inside
+`.claude/worktrees/<name>/`. **Detected by**: operator memory — user
+noticed "we fixed IMAP today and even wrote a post about it" while
+agent was proposing a redo *spinoff* (BL-23 in worktree numbering) to
+add an IMAP adapter. agent did `git fetch` for the first time at
+that point and found `feat(check): switch Gmail transport OAuth→IMAP`
+already on `origin/main` along with 5 more sibling commits.
+
+### Cause
+
+Two concurrent lines of work in two worktrees:
+
+- `main` checkout (operator): RFC 021 / BL-21 (OAuth→IMAP), then
+  RFC 022–027 / BL-22…BL-43 (atomic-Notion-push, onboarding-skill,
+  iCIMS, oracle_cloud, jobsyn, etc.) — landed and pushed.
+- `.claude/worktrees/hardcore-pascal-a0dba3/` (agent session): RFC 020
+  (classifier-pattern widening) + RFC 021 / BL-22 (reclassify
+  command, OAuth-based) — never merged, BL/RFC numbering collided
+  with `main` (BL-21 meant two different things, RFC 021 meant two
+  different things).
+
+Agent worked in the worktree end-to-end without ever running
+`git fetch`. It assumed the local `main` it forked from was up to
+date. When `reclassify --profile lilia` failed on fly with
+`missing LILIA_GMAIL_CLIENT_ID`, agent's first instinct was to spin off
+a follow-up BL-23 to "find or build an IMAP fetch-by-id adapter" —
+based on `fly secrets list` showing IMAP creds, **not** on reading
+`engine/commands/check.js` (which would have shown that an IMAP
+adapter already existed on main). Agent then committed a "Decision:
+Option B (IMAP)" to a backlog file premised on infra inspection.
+
+### What changed
+
+`feat/reclassify-imap-bl44` branch was created fresh off `origin/main`.
+`reclassify.js` was rewritten on top of the existing `gmail_imap.js`
+transport (new `fetchMessagesByGmailIds` batch helper added there).
+RFC re-numbered to RFC 028. BL re-numbered to BL-44. Both reflect
+correct sibling numbering on main. The two outdated worktree commits
+(`d9ae568`, `733a6db`) remain on `origin/claude/hardcore-pascal-a0dba3`
+as archeology; not merged.
+
+### Prevention
+
+Workflow change applied in `CLAUDE.md` (agent rules):
+
+1. **First command in any `.claude/worktrees/<name>/` session**:
+   ```
+   git fetch origin && git log origin/main --oneline -20
+   ```
+   Read the output. If commits exist that touch the same areas the
+   current task plans to touch — STOP and report drift to operator
+   before planning. Cost: ~2 seconds. Saved: a day.
+2. **Before fixing a "Decision" in a backlog file**, verify the premise
+   in **code**, not in adjacent infra. Infra (fly secrets, env-var
+   files, runbooks) can lie about what code actually does. `grep -r
+   <symbol> engine/` is the source of truth for "does this code path
+   exist".
+3. **BL / RFC numbering**: when working in a worktree, fetch the
+   latest numbers from `origin/main`'s `private/backlog/` and `rfc/`
+   before reserving a new id. Two parallel branches both claiming
+   `BL-22` is the smell.
+4. **Operator-side hint**: if you start an agent session in a stale
+   worktree, mention what's been landing on main lately — agent has
+   no other channel to know that.
+
+---
+
+## 2026-05-12 — Self-amplifying feedback loop: bot Notion comments echoed to inbox as fake invites
+
+**Severity**: CRITICAL (would have moved an unrelated "To Apply" row to
+"Interview" status on every check tick — silent state corruption with no
+user-visible error). Caught during BL-45 validation by a user spot-check
+on the dry-run row before `--apply`.
+**Surface**: `engine/core/email_filters.js` NON_PIPELINE_SENDERS list +
+upstream filter pipeline in `engine/commands/check.js`.
+**Detected by**: User asked for the literal subject of the
+Healthcare-Hannah "Eye Center invite" surfaced by the 30-day dry-run. Probe via IMAP
+revealed `From: "Notion Team" <notify@mail.notion.so>`, subject
+"Someone commented in Customer Service Associate / Call Center", body
+containing our own bot's quoted line:
+"@Healthcare-Hannah 🔔 Subject: \"Let's Chat - First Round Interview for
+Front Office\". Classified as interview invitation → status set to
+Interview."
+
+### Cause
+
+When `check --apply` writes a status+comment action to Notion, the
+comment body quotes the original email subject verbatim (so a human
+operator can see what triggered the change). Example:
+
+> 🔔 Subject: "Let's Chat - First Round Interview for Front Office".
+> Classified as interview invitation → status set to Interview.
+
+Notion's default behavior is to email the workspace owner about new
+comments on pages they own. The notification body contains our quoted
+subject line. On the next check tick:
+
+1. The Notion-notification email is fetched from inbox.
+2. classifier matches `/first[- ]round interview/i` (RFC 029) on the
+   quoted subject inside the notification body → INTERVIEW_INVITE.
+3. `findCompany` doesn't find an exact pipeline company in the email
+   (the notification's headers reference Notion's page title, not the
+   actual company), but the matcher body-binds via shared tokens —
+   in this case it cross-attached to an unrelated "To Apply" row
+   (Eye Center in Roseville CA, where the operator had not received an
+   invite).
+4. Apply attempts a status-mutation on that row. Healthcare-Hannah's apply
+   coincidentally failed on a stale page-id (archived predecessor of
+   the visible page), which is what caused the user to inspect the
+   row and discover the phantom.
+
+Self-amplifying: every legitimate INTERVIEW_INVITE / REJECTION
+application spawns a Notion notification → next tick can fire a
+phantom of the same shape on a different row → spawns another
+notification, and so on.
+
+### What changed
+
+1. **`engine/core/email_filters.js`** — added two new entries to
+   NON_PIPELINE_SENDERS:
+   - `{ fromIncludes: "@mail.notion.so" }` (covers any Notion-mail
+     subdomain forms)
+   - `{ fromIncludes: "notify@mail.notion.so" }` (exact-from used by
+     Notion comment notifications)
+2. **`engine/core/email_filters.test.js`** — 3 regression fixtures:
+   `"Notion Team" <notify@mail.notion.so>` (from-header style), bare
+   `notify@mail.notion.so`, generic `anyone@mail.notion.so`. All must
+   classify as non-pipeline.
+3. **No code change in `check.js`** — `isNonPipelineSender` already
+   gates the pipeline at line 586 (between job-alert filter and
+   recruiter-outreach branch). The fix is data-only.
+
+### Prevention
+
+- **Sender-allowlist before content-pattern.** Anywhere the bot
+  writes user-visible content that could be quoted-back via
+  notifications (Notion, Slack, Jira, Linear comments), the source
+  domain of those notifications must be in NON_PIPELINE_SENDERS
+  before the feature ships. Treat outbound writes and inbound
+  classifier as a closed loop — every new write destination needs
+  the corresponding inbound-filter entry.
+- **Comment wording.** The bot's quoted-subject convention is useful
+  for operator debugging but is the literal trigger for this loop.
+  Long-term: consider quoting the subject in a code-block or with a
+  marker that classifier can detect (e.g. `[bot]` prefix) and skip
+  even if the sender filter is somehow bypassed.
+- **Dry-run-then-spot-check.** This bug was caught only because the
+  user manually inspected the single new invite surfaced by the
+  dry-run before approving --apply. With auto-apply via cron, it
+  would have run unchecked. Recommended: any new "first-time"
+  INTERVIEW_INVITE for a profile gets routed to a Notion comment
+  on a quarantine page instead of an immediate status flip, until
+  the user clears it once.
+
+### Related
+
+- BL-45 — ATS-sender coverage / classifier patch (this incident
+  surfaced during validation of that work).
+- RFC 029 — INTERVIEW_INVITE pattern relaxations (`/first round
+  interview/i` etc.) that this loop weaponized.
+- Apply error "Can't edit block that is archived" — secondary
+  symptom from a stale page-id in TSV. Fixed separately by manually
+  patching the row to the live page-id; the loop itself was the
+  primary issue.
+
+---
+
+## 2026-05-12 — Classifier mis-fires on ACK boilerplate "next steps in the interview process" + missing closure semantics (BL-45 patch)
+
+**Severity**: HIGH (false INTERVIEW_INVITE on real ACK + closure-vs-rejection
+semantic gap; both produce wrong Notion statuses on user-visible cards).
+**Surface**: `engine/core/classifier.js` INTERVIEW_INVITE + REJECTION
+pattern sets; `engine/commands/check.js` and `engine/commands/reclassify.js`
+type→status mapping.
+**Detected by**: During Healthcare-Hannah 30-day dry-run validation of
+BL-45/RFC-029 (ATS-sender coverage), the unmatched-email probe surfaced
+4 emails that were either mis-classified or had no correct status target:
+
+- **Tyson & Mendes ACK** (`19d9d946a8271376`, Greenhouse, 2026-04-17) —
+  classified as INTERVIEW_INVITE. Real body says "our team will be in
+  touch regarding next steps in the interview process" — forward-looking
+  ACK boilerplate, not actual invite intent.
+- **Lyra Health closure** (`19dbcc95c93ca1af`, Lever, 2026-04-24) —
+  classified as ACKNOWLEDGMENT. Real body says "the Onboarding Support
+  Specialist position is now closed" — role withdrawn, candidate not
+  rejected. There was no `POSITION_CLOSED` type at all, and ACK won by
+  first-match because the letter opens with "Thank you for your interest".
+
+### Cause
+
+Two independent gaps:
+
+1. **INTERVIEW_INVITE pattern too broad.** Regex
+   `/next steps in (the|our) (process|interview)/i` was added during
+   RFC 020 to catch follow-up scheduling emails. It also fires on the
+   common ATS confirmation phrase "we will be in touch regarding next
+   steps in the interview process" — which is forward-looking ACK
+   language inside an application-received email, not invite intent.
+   First-match-wins meant INTERVIEW_INVITE beat ACKNOWLEDGMENT.
+
+2. **No `POSITION_CLOSED` type.** Classifier had no way to distinguish
+   "we are rejecting your application" from "the role itself has been
+   withdrawn". Both produced either REJECTION (if the wording happened
+   to match) or fell through to ACKNOWLEDGMENT/OTHER. Notion has had
+   the `Closed` Status option since RFC 014, but no classifier path
+   ever reached it.
+
+### What changed
+
+1. **`engine/core/classifier.js`** — INTERVIEW_INVITE: dropped
+   `/next steps in (the|our) (process|interview)/i` entirely. Real
+   invites still match via schedule/invite/phone-screen/book-a-time/
+   calendly/round-N/share-availability patterns. If we ever need this
+   phrase back, it must require an explicit invite verb in proximity.
+2. **`engine/core/classifier.js`** — new `POSITION_CLOSED` type with
+   7 patterns covering "position is now closed", "role is now closed",
+   "position has closed", "no longer accepting applications", "position
+   has been paused/put on hold", "role has been paused/put on hold",
+   "we've paused hiring". Priority is ABOVE REJECTION — if both signals
+   present, closure wins (the role evaporated, not the candidate
+   rejected).
+3. **`engine/commands/check.js`** — new handler for `type ===
+   "POSITION_CLOSED"` → action `status+comment` with `newStatus:
+   "Closed"`, emoji 🔒, wording "Position withdrawn by employer →
+   status set to Closed". Mirrors REJECTION handler but writes a
+   distinct Notion status.
+4. **`engine/commands/reclassify.js`** — `TYPE_TO_STATUS` map gains
+   `POSITION_CLOSED: "Closed"`, so the reclassify command also routes
+   closures correctly when re-grading historical OTHER emails.
+5. **`engine/core/classifier.test.js`** — 6 new regression cases:
+   - Tyson & Mendes ACK (real Apr-17 body) → ACKNOWLEDGMENT.
+   - Tyson & Mendes REJECTION (real Apr-27 body) → REJECTION
+     (positive control that the existing REJECTION pattern still
+     catches the genuine wording).
+   - Lyra Health closure (real Apr-24 body) → POSITION_CLOSED.
+   - "no longer accepting applications" → POSITION_CLOSED.
+   - paused/on-hold variants → POSITION_CLOSED.
+   - Priority test: "Unfortunately…position is now closed" →
+     POSITION_CLOSED (closure beats rejection wording).
+   - Negative control: bare "closed" without position context (office
+     closed for holiday, applications closed) → not POSITION_CLOSED.
+
+### Prevention
+
+- **Real bodies in fixtures.** Both Tyson & Mendes and Lyra fixtures
+  use the actual production email bodies (pulled via the IMAP probe
+  script, not invented). Synthetic fixtures are a leading source of
+  classifier regression incidents — see 2026-04-30 ATS-confirmation
+  fix where the bare `/not selected/i` pattern was caught by real
+  Greenhouse/Ashby/Lever ACK fixtures.
+- **Bias toward narrow patterns.** The dropped `/next steps in (the|
+  our) (process|interview)/i` is a cautionary tale: forward-looking
+  phrases inside ACK boilerplate look like invite intent in isolation.
+  Any new INTERVIEW_INVITE pattern should either require an explicit
+  invite verb in proximity, OR ship with at least one ATS-ACK
+  fixture proving it doesn't fire on confirmation emails.
+- **Semantic distinctions are first-class.** "Position closed" is not
+  "rejected" — different Notion status, different downstream signal
+  (closures do not count toward rejection rates). When a new state
+  emerges in the data, add a classifier type rather than overloading
+  an existing one.
+
+### Related
+
+- BL-45 — ATS-sender coverage in check tick (RFC 029).
+- BL-44 — `reclassify` command (re-grade historical OTHER emails).
+- 2026-04-30 incident — ATS-confirmation false REJECTIONs (same
+  general class: classifier over-broad pattern, ACK letters mis-typed).
+
+---
+
+## 2026-05-12 — `check` tick blind to ATS-aggregator senders (missed real interview invite)
+
+**Severity**: HIGH (real interview invite for Healthcare-Hannah went
+14 days without status update; operator only discovered the email
+chain by manually probing inbox while validating an unrelated feature).
+**Surface**: `engine/commands/check.js:buildBatches` — IMAP search
+queries scoped to pipeline company tokens, not sender domains.
+**Detected by**: While dry-running the new `reclassify` command
+(BL-44) on Healthcare-Hannah's data, the report came back with 0 candidates —
+classifier had nothing to flip. A probe via `from:dentemploy.com
+newer_than:35d` then surfaced 4 emails (29 Apr — 11 May) about a
+First Round Interview at one of her pipeline clinics, scheduled for
+12 May 12:30 PDT — none of which had ever been logged by check tick.
+
+### Cause
+
+`buildBatches` constructs Gmail X-GM-RAW queries like
+`(from:(<token>) OR subject:(<token>)) after:<ts> -from:me`, where
+`<token>` is the first word of each pipeline company name. Plus two
+fixed batches for LinkedIn job-alerts and recruiter-outreach subject
+patterns.
+
+ATS aggregators (dentemploy.com, greenhouse-mail.io, hire.lever.co,
+myworkdayjobs.com, ashbyhq.com, smartrecruiters.com, icims.com,
+applicantemails.com, etc.) write from their own domain. Subject
+typically describes the role ("Let's Chat - First Round Interview for
+Front Office"), not the company name. The company name lives in the
+body. None of those fields match the company-token query, so the
+emails are invisible — never fetched, never classified, never logged.
+
+For Healthcare-Hannah specifically: dental-industry ATS `dentemploy.com`
+is the channel for **all** First Round Interview invitations from her
+target clinics. Every single one would have been missed until either
+the candidate forwarded the email manually or it was promoted via a
+follow-up from the clinic's corporate domain (which often doesn't
+happen — DentEmploy handles the entire screening pipeline).
+
+The classifier had a related but secondary gap: `INTERVIEW_INVITE`
+pattern `/schedule (an? )?(interview|...)` only matched
+`schedule a interview` / `schedule an interview` / `schedule interview`.
+DentEmploy bodies say "Schedule your Interview" — `your` is not in
+the original `(an? )?` alternation, so even if the email had been
+fetched (via a hypothetical company-token match) it would have
+classified as ACKNOWLEDGMENT (matched "Thank you for your interest"
+earlier in the same email), not INTERVIEW_INVITE.
+
+### Trigger
+
+Always present since `check` was first written (RFC 002). Latent
+because Jared's pipeline is PM/fintech-focused and recruiters from
+those companies almost always have the company name in subject or
+sender. Surfaced only when Healthcare-Hannah's healthcare/dental
+pipeline activated — her industry uses ATS aggregators almost
+exclusively.
+
+### What changed
+
+1. **`engine/core/email_filters.js`** — extended `ATS_DOMAINS` with
+   `dentemploy.com`, `applicantemails.com` (+ `send.applicantemails.com`),
+   `paycomonline.com`, `breezy.hr`, `gem.com`, `paradox.ai`,
+   `eightfold.ai`, `myworkday.com`. Added `atsFromInclusions()` and
+   `atsFromExclusions()` helpers — single source of truth so a new
+   ATS becomes discoverable everywhere by appending to the list.
+2. **`engine/commands/check.js:buildBatches`** — added a new fixed
+   batch `${atsFromInclusions()} ${searchWindow} -from:me`. Replaced
+   the hardcoded `-from:greenhouse -from:lever -from:workday
+   -from:ashbyhq.com -from:smartrecruiters -from:icims` in the
+   recruiter batch with `${atsFromExclusions()}` (full-domain
+   exclusions derived from the same list).
+3. **`engine/core/classifier.js`** — relaxed
+   `/schedule (an? )?(interview|...)` to
+   `/schedule (?:(?:your|the|our|my|a|an)\s+)?(interview|...)`. The
+   whitelist of pre-words is explicit (not `[a-z]+`) to keep
+   false-positive risk on JD-body text ("schedule monthly meetings")
+   bounded. Added `/first[- ]round interview/i` and
+   `/round (one|1|two|2|three|3) interview/i` — unambiguous ATS subject
+   patterns.
+4. **Tests** — 10+ new across `email_filters.test.js`, `check.test.js`,
+   `classifier.test.js` covering the full dentemploy email body
+   fixture end-to-end, the helper functions round-trip, and negative
+   controls for JD-body "schedule" prose.
+5. **Backfill** — one-time `check --apply --profile <id>` per profile
+   after deploy. The new ATS batch retroactively fetches the 4
+   dentemploy emails (still in All Mail), classifies the lead email as
+   INTERVIEW_INVITE, matches "Make a Smile" via body, and updates the
+   Notion page to Interview with audit comments.
+
+### Prevention
+
+- **ATS coverage is non-negotiable**. Any production check tick must
+  include an explicit ATS-sender batch. The pipeline-company-token
+  query alone is not sufficient because ATS systems by design mediate
+  identity — the company name only appears in the body.
+- **Single source of truth for ATS domains**. `ATS_DOMAINS` in
+  `email_filters.js` is the only place to add. New domains discovered
+  via operator inbox triage get appended; `isATS()`, `atsFromInclusions()`,
+  `atsFromExclusions()` all derive from the same list. No hardcoded
+  per-call lists (the old `-from:greenhouse -from:lever ...` was an
+  example of drift waiting to happen).
+- **Per-profile distribution audit at first activation**. When a new
+  profile turns on `--auto`, the first manual `--apply` run should
+  include a probe step: scan the inbox for `from:<ats-domain>
+  newer_than:60d` across the full ATS list and verify all such emails
+  are present in `processed_messages.json`. If any are missing, that's
+  a coverage gap to file before enabling cron.
+- **Classifier-pattern relaxations are explicit-allowlist, not
+  open-ended**. The temptation to use `[a-z]+\s+` between trigger
+  words is high but unbounded — every JD body containing the trigger
+  noun risks a false positive. Explicit whitelists (`your|the|our|my|a|an`)
+  cover the real-world phrasings without opening the door.
+
+### Related
+
+- Discovery commit: incidents while validating BL-44 reclassify
+  (commit `58530b8`).
+- Fix commits (this incident): BL-45 / RFC 029.
+- Adjacent classifier-tightening: RFC 022 (Healthcare-Hannah false-positive
+  incident, 2026-05-02 in this file) — that fix narrowed
+  `INTERVIEW_INVITE` to avoid JD-body matches. This fix relaxes
+  `schedule X interview` along a strictly orthogonal axis (allowing
+  more pre-words inside the existing intent context).
+
+---
+
+## 2026-05-12 — Audit of historical `processed_messages` for echo and phantom mutations (post-fix verification)
+
+**Severity**: LOW (no live impact found — purely confirms the two
+earlier 2026-05-12 fixes are net-clean; no rollback needed).
+**Surface**: `profiles/<id>/.gmail-state/processed_messages.json` on
+both Healthcare-Hannah and PM-Pete (~30 days back).
+**Detected by**: Step 3 of the agreed feedback-loop fix plan — after
+landing the Notion-comment filter and the classifier patch, scan
+historical entries to see if any earlier classifier mistakes had
+already mutated Notion incorrectly.
+
+### Method
+
+For every `processed_messages` entry with type in {INTERVIEW_INVITE,
+REJECTION, POSITION_CLOSED} (the three types that mutate Notion
+status), pull the original sender via IMAP (`/tmp/audit_echoes.js`,
+uses `engine/modules/tracking/gmail_imap.js`). Flag any row whose
+`from` contains `@mail.notion.so` as a Notion-comment echo. Probed:
+
+- Healthcare-Hannah: 3 mutating entries (all REJECTION).
+- PM-Pete: 56 mutating entries (54 REJECTION, 2 INTERVIEW_INVITE).
+
+### Findings
+
+1. **Zero Notion-echo entries.** None of the 59 historical mutating
+   classifications were driven by `@mail.notion.so`. The
+   self-amplifying feedback loop documented earlier today existed in
+   theory and was caught live once (Healthcare-Hannah "Eye Center"
+   echo, 2026-05-12 incident above), but it did not silently corrupt
+   any earlier Notion states. Filter landing pre-empted further
+   damage.
+
+2. **Two historical INTERVIEW_INVITE false-positives on PM-Pete**
+   from the *same* dropped regex as the Tyson & Mendes case:
+
+   - Remote.com (`19d8e30054186932`, 2026-04-14, ATS:
+     `no-reply@talent.remote.com`, subject "Thank you for applying to
+     Remote") — body says "we will contact you soon to arrange the
+     first interview" inside a fit-conditional ACK paragraph.
+   - Hopper (`19de0043b5146fc4`, 2026-04-30, ATS:
+     `no-reply@ashbyhq.com`, subject "Jared, thanks for applying to
+     Hopper!") — body says "regarding the next steps in the process"
+     verbatim.
+
+   Both were classified as INTERVIEW_INVITE under the old regex.
+   Current Notion state on the corresponding TSV rows: **Rejected**
+   (Hopper, 2026-05-04 reject email overwrote) and **Rejected /
+   Archived** (all 5 Remote.com pipeline rows). The phantom Interview
+   status, if it was ever applied, was overwritten by the subsequent
+   legitimate REJECTION email — so the current pipeline view is
+   correct without intervention.
+
+### What changed
+
+1. **`engine/core/classifier.test.js`** — added two regression tests
+   pinning the real Remote.com and Hopper bodies as ACKNOWLEDGMENT,
+   companion to the existing Tyson & Mendes ACK fixture. Same root
+   cause, different ATS — having three independent fixtures from
+   three different vendors (Greenhouse / Remote talent / Ashby) makes
+   the protection meaningfully harder to accidentally regress. 31/31
+   classifier tests pass.
+2. **No production data touched.** No Notion update, no TSV edit, no
+   `processed_messages` mutation. The audit is observational.
+
+### Prevention
+
+- **After a classifier fix, audit the historical tail.** The
+  feedback-loop fix had a clear scope (one email caught live), but
+  the same logic could have already corrupted past entries silently.
+  Probing the last 30 days of mutating-type entries takes ~60s
+  (script is in `/tmp/audit_echoes.js`, can be promoted to
+  `scripts/` if we end up doing this often). Worth running after any
+  pattern change that affects INTERVIEW_INVITE / REJECTION /
+  POSITION_CLOSED.
+- **Real bodies catch related vendors automatically.** Pinning the
+  Remote.com and Hopper fixtures means the next time someone is
+  tempted to re-add a broad "next steps" pattern, it fails against
+  three different real ATS confirmations, not just one.
+
+### Related
+
+- Earlier today: feedback-loop incident (Notion-echo filter) and
+  Tyson & Mendes ACK + POSITION_CLOSED incidents, both above.
+- Audit script: `/tmp/audit_echoes.js` (one-off, local; not
+  committed). Result snapshot in
+  `/tmp/audit_echoes_result.json`.
+
+## 2026-05-12 — Classifier `schedule a call/chat/meeting` over-matched ACK boilerplate (BL-50, follow-up Q-2 from BL-44)
+
+**Severity**: LOW (1 production case caught manually before incident
+escalation; cross-bind risk to wrong TSV row remained latent).
+**Surface**: `engine/core/classifier.js` INTERVIEW_INVITE patterns.
+
+### What happened
+
+BL-44 Jared dry-run (`reclassify --apply`, 2026-05-12) surfaced one
+case where a Deel ATS confirmation (gmail id `19d8e1ad638ccebb`,
+2026-04-14, body "If your profile is a match, we will schedule a
+call to discuss next steps") flipped from OTHER → INTERVIEW_INVITE.
+The mutation then cross-bound the result to a different TSV row
+(Next Insurance) via the company-from-body matcher and produced a
+phantom Interview status. Caught during the dry-run review and
+reverted manually before any `--notion` push happened.
+
+Root cause: the regex
+`/schedule (?:(?:your|the|our|my|a|an)\s+)?(interview|phone screen|call|meeting|chat)/i`
+treats "schedule a call" / "schedule a meeting" / "schedule a chat"
+as invite intent. ATS ACK boilerplate routinely uses these phrases
+as forward-looking conditionals ("If your background is a fit, we
+will schedule a call…") — not actual invites. The bare `call`,
+`meeting`, `chat` tokens in the alternation are too cheap relative
+to the false-positive rate.
+
+### What changed
+
+1. **`engine/core/classifier.js`** — `call|meeting|chat` dropped
+   from the trailing alternation; regex is now
+   `/schedule (?:(?:your|the|our|my|a|an)\s+)?(interview|phone screen)/i`.
+   Real invites that say "schedule a call/chat" are still caught by:
+   - `/(would|we'd) like to (schedule|set up|interview)/`
+   - `/invite you (to|for) (interview|phone screen|conversation|chat)/`
+   - `/book a time (on (my|the) calendar|with (me|us)|to (chat|meet|talk))/`
+   - `/would love to (chat|connect|meet|talk) (with you|to discuss)/`
+   - `/(your|let me know your) availability (for|to) (call|chat|conversation)/`
+2. **`engine/core/classifier.test.js`** — three new tests:
+   - Real Deel ACK body (constructed from the 14-apr template) →
+     ACKNOWLEDGMENT.
+   - Bare "schedule a call/meeting/chat" without invite intent →
+     not INTERVIEW_INVITE (3 fixtures).
+   - "We'd like to schedule a call" → still INTERVIEW_INVITE via
+     the surviving patterns (no-regression).
+3. Full suite: 1216/1216 green (1213 baseline + 3 net).
+
+### Prevention
+
+- **Cheap tokens in alternation need a co-occurrence guard.** The
+  pattern survives "schedule an interview" because `interview` is
+  itself a high-precision token. `call|meeting|chat` are ambiguous —
+  they need an additional intent signal (`would like to`, `book a
+  time`, `your availability for a`) before they classify as invite.
+  This is the same lesson as the dropped `/next steps in (the|our)
+  (process|interview)/i` from earlier today: forward-looking ACK
+  phrasing is the dominant context for these tokens in cold
+  pipelines; explicit invite verbs are the minority signal.
+- **Cross-bind matcher hardening is a separate follow-up.** Even
+  with the classifier fixed, the matcher attached the Deel email to
+  Next Insurance based on token overlap in the body. If the
+  classifier's first stage produces a wrong type, the matcher can
+  amplify it across TSV rows. Tracked separately; not in BL-50
+  scope.
+
+### Related
+
+- BL-44 (reclassify) — produced the dry-run that surfaced Deel.
+- BL-50 (this fix) — the classifier patch.
+- 2026-05-12 "next steps in the interview process" incident above —
+  same vendor-of-failure (ACK boilerplate matching cheap
+  alternations).
+
+## 2026-05-12 — BL-26 revision: bare `/unfortunately/` + bare `/take.?home/` over-matched ACK boilerplate
+
+**Severity**: MEDIUM (4 documented production false-positives on
+Jared, status mutations applied in Notion before manual revert; new
+fixtures locked in to prevent regression).
+**Surface**: `engine/core/classifier.js` REJECTION + INFO_REQUEST
+patterns. **Caught by**: BL-26 revision probe — re-running classifier
+against the 5 gmail ids documented in BL-26 (created 2026-05-11)
+after today's earlier classifier fixes.
+
+### What happened
+
+BL-26 (created 2026-05-11) catalogued 4 live `--auto` mis-fires on
+Jared:
+
+| Case | Gmail id | Was | Should be |
+|------|----------|-----|-----------|
+| Hopper Sr PM Disruption | `19de0043b5146fc4` | INTERVIEW_INVITE | (see below) |
+| Duolingo Sr PM Score | `19e1897581413b89` | REJECTION | ACKNOWLEDGMENT |
+| Duolingo Sr PM DET | `19e1884021811520` | REJECTION | ACKNOWLEDGMENT |
+| Headway Sr PM Client Engagement (×2) | `19de00ba5c8385f0`, `19df4e1978faf2e2` | INFO_REQUEST | ACKNOWLEDGMENT |
+
+Probing the actual IMAP bodies of all 5 ids today:
+
+1. **Hopper case is misattributed in BL-26.** The body of
+   `19de0043b5146fc4` is *not* a rejection — it's the same ACK
+   boilerplate ("next steps in the process") that was already pinned
+   today as `Hopper 2026-04-30 → ACKNOWLEDGMENT` (commit `1d8c4fe`).
+   BL-26 likely conflated the ACK email with the genuine REJECTION
+   that arrived 1 day later (id `19df56b0ca7391ae`, also handled
+   correctly today). No further work needed here.
+2. **Duolingo (cases 2 + 3)** — both bodies open with "Thank you for
+   applying" then immediately pivot to a scam-warning paragraph:
+   > "Unfortunately, there is a rise in scammers pretending to be
+   > real Duolingo employees…"
+   The bare `/unfortunately/i` in REJECTION patterns fired on this
+   preamble. Pre-fix verdict: REJECTION; correct verdict:
+   ACKNOWLEDGMENT.
+3. **Headway (cases 4a + 4b)** — both bodies open with "Thank you
+   for your interest in Headway!" then include a future-process
+   description:
+   > "the typical interview process will take 2-3 weeks and will
+   > consist of: ... A take home assignment designed to assess
+   > technical abilities…"
+   Bare `/\btake.?home\b/i`, bare `/\bcoding challenge\b/i`, and
+   the article-less `/\btake.?home (test|assignment|project|challenge)\b/i`
+   all fired on this JD-future-steps language. Pre-fix verdict:
+   INFO_REQUEST; correct verdict: ACKNOWLEDGMENT.
+
+### What changed
+
+1. **`engine/core/classifier.js`**:
+   - REJECTION: dropped bare `/unfortunately/i`. Real rejections
+     always contain explicit action wording (`/not moving forward/`,
+     `/not a match/`, `/decided not to proceed/`, etc.) — removing
+     the softener costs no real-rejection coverage.
+   - INFO_REQUEST: dropped bare `/\btake.?home\b/i`, bare
+     `/\bcoding challenge\b/i`, and bare
+     `/\btake.?home (test|assignment|project|challenge)\b/i`.
+     Replaced with article-bound forms:
+     `/(your|the) take.?home (test|assignment|project|challenge)/i`
+     and `/(your|the) coding challenge/i`. Real candidate-facing
+     requests always use the article.
+   - INFO_REQUEST: extended `/(your|the) <noun> (is|link|attached|below|here)/i`
+     to handle the compound `(take.?home )?coding challenge`.
+   - INFO_REQUEST: added inverse-order pattern
+     `/(here|attached) (is|are|please find) (your|the) <noun>/i`
+     so "Here is your take-home coding challenge" still classifies.
+2. **`engine/core/classifier.test.js`**:
+   - Updated 2 existing tests that depended on bare `/unfortunately/i`
+     being the sole rejection signal (`evidence contains matched
+     phrase` + `rejection beats interview when both present`).
+   - Updated 1 fixture inside `real assessment / take-home
+     requests still match after tightening` ("Take-home assignment:
+     please submit by Friday." → "Your take-home assignment: please
+     submit by Friday." — same intent, article-bound).
+   - Added 4 regression fixtures from real IMAP bodies (Duolingo
+     Score, Duolingo DET, Headway CE) + 2 companion controls (bare
+     JD-style negative, article-bound positive). +7 net tests.
+3. **Test suite**: 1223/1223 green (1216 baseline + 7 net).
+4. **Production probe**: all 5 BL-26 gmail ids now classify
+   correctly (Hopper / Duolingo×2 / Headway×2 → ACKNOWLEDGMENT).
+
+### Prevention
+
+- **Bare softener / bare noun patterns are systematically dangerous.**
+  Today's three classifier tightenings (BL-45 next-steps drop,
+  BL-50 schedule-call drop, BL-26 unfortunately/take-home drop) all
+  share the same root cause: a single ambiguous token in REJECTION /
+  INFO_REQUEST / INTERVIEW_INVITE matched ACK boilerplate context.
+  Whenever a pattern is "just a noun" or "just an adverb", it needs
+  either co-occurring intent context (article, action verb, addressed
+  to candidate) or a high-precision compound (`phone screen`,
+  `calendly`, `position is now closed`).
+- **Audit fixtures from BL trackers as part of revision.** BL-26 sat
+  open for ~24 hours after partial closure (today's earlier fixes
+  closed Hopper). The remaining 4 cases were still live until
+  explicitly re-probed. Lesson: after each classifier change, audit
+  any open BL that lists classifier-related gmail ids — they're free
+  regression fodder.
+- **BL-26 misattribution is a BL-discipline issue.** The Hopper id
+  in BL-26 pointed at the ACK email but the BL quoted the REJECTION
+  body. When documenting classifier mis-fires, always paste the
+  actual body from IMAP, not what the operator remembered.
+
+### Related
+
+- BL-26 (this fix) — closed as `done` with all 4 documented cases
+  resolved and the Hopper misattribution clarified.
+- BL-45 (drop `/next steps in (the|our) (process|interview)/i`) +
+  BL-50 (drop `call|meeting|chat` from schedule regex) — same
+  failure family, earlier today.
+- 2026-05-02 Indeed-digest incident (bare `\binterview\b` / bare
+  `\bassessment\b`) — first instance of this lesson.

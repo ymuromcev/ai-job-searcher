@@ -186,6 +186,7 @@ test("KNOWN_COMMANDS lists exactly the supported commands", () => {
     "check",
     "indeed-prep",
     "prepare",
+    "reclassify",
     "scan",
     "sync",
     "validate",

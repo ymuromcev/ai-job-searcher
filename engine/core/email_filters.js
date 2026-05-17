@@ -2,14 +2,27 @@
 // Ported from ../../Job Search/check_emails.js:54-74, 224-267 (prototype).
 
 // ATS domains — senders on these platforms are job-application-system
-// notifications (acks, rejections, etc.), not recruiter outreach, so they
-// bypass the recruiter-outreach branch.
+// notifications (acks, rejections, interview invites, etc.). Used in three
+// places:
+//   1. `isATS(from)` bypass for the recruiter-outreach branch.
+//   2. `atsFromInclusions()` — explicit IMAP search batch in `check.js`
+//      (covers emails where the company name lives in the body, not in
+//      from/subject — see RFC 029).
+//   3. `atsFromExclusions()` — applied to the recruiter-outreach batch so
+//      these senders flow through the normal classify branch instead.
+//
+// Adding a new ATS: append the bare domain here. All three behaviors update
+// automatically. Use the canonical sending domain (e.g. `greenhouse-mail.io`
+// not the company-facing `greenhouse.io`).
 const ATS_DOMAINS = [
+  // Generic / tech-focused
   "greenhouse-mail.io",
   "us.greenhouse-mail.io",
   "hire.lever.co",
   "myworkdayjobs.com",
+  "myworkday.com",
   "ashbyhq.com",
+  "ashby.com",
   "smartrecruiters.com",
   "icims.com",
   "bamboohr.com",
@@ -17,8 +30,32 @@ const ATS_DOMAINS = [
   "workable.com",
   "taleo.net",
   "jobot.com",
-  "ashby.com",
+  "breezy.hr",
+  "paycomonline.com",
+  // Modern recruiting platforms
+  "gem.com",
+  "paradox.ai",
+  "eightfold.ai",
+  // Healthcare / dental
+  "dentemploy.com",
+  // Generic small-business ATS (Sacramento Natural Dentistry, etc.)
+  "applicantemails.com",
+  "send.applicantemails.com",
 ];
+
+// Returns `from:(d1 OR d2 OR ...)` for IMAP X-GM-RAW search. Used by
+// `check.js:buildBatches` to fetch ATS-mediated emails that would otherwise
+// be invisible to the per-company token search.
+function atsFromInclusions() {
+  return `from:(${ATS_DOMAINS.join(" OR ")})`;
+}
+
+// Returns `-from:d1 -from:d2 ...` to exclude ATS senders from the
+// recruiter-outreach batch. They flow through the normal classify branch
+// via the dedicated ATS inclusion batch instead.
+function atsFromExclusions() {
+  return ATS_DOMAINS.map((d) => `-from:${d}`).join(" ");
+}
 
 // Senders that produce JOB_ALERT noise (broadcasts of new openings, "N more
 // matching jobs", saved-search digests). These are NOT pipeline updates —
@@ -41,6 +78,12 @@ const JOB_ALERT_SENDERS = [
   // LinkedIn job alerts (already short-circuited in check.js but listed here
   // for completeness so isJobAlert() is the single source of truth).
   { fromIncludes: "jobalerts-noreply@linkedin.com" },
+  // Jobot Alerts — proactive marketing digests on alerts.jobot.com subdomain
+  // ("New opportunity as a Product Manager", "12 New Jobs for your Job
+  // Search"). Distinct from genuine recruiter outreach on @jobot.com (no
+  // `alerts.`), which still flows through the normal recruiter branch.
+  // Added 2026-05-12 after Jared 30-day probe surfaced 3 such digests.
+  { fromIncludes: "@alerts.jobot.com" },
   // ZipRecruiter / Glassdoor / Monster digests
   {
     fromIncludes: "@ziprecruiter.com",
@@ -95,6 +138,15 @@ const NON_PIPELINE_SENDERS = [
   { fromIncludes: "@progressive.com" },
   { fromIncludes: "@statefarm.com" },
   { fromIncludes: "@allstate.com" },
+  // Notion notifications — added 2026-05-12 after a critical feedback loop:
+  // bot writes an INTERVIEW_INVITE comment to a Notion page → Notion emails
+  // the user about the comment → email body quotes our own "Subject: ...
+  // First Round Interview..." line → classifier matches /first round
+  // interview/i → bot tries to apply Interview status AGAIN on a different
+  // pipeline row (matcher cross-binds via body). Self-amplifying. Must be
+  // filtered upstream.
+  { fromIncludes: "@mail.notion.so" },
+  { fromIncludes: "notify@mail.notion.so" },
 ];
 
 const RECRUITER_SUBJECT_PATTERNS = [
@@ -186,6 +238,8 @@ module.exports = {
   JOB_ALERT_SENDERS,
   NON_PIPELINE_SENDERS,
   isATS,
+  atsFromInclusions,
+  atsFromExclusions,
   isJobAlert,
   isNonPipelineSender,
   matchesRecruiterSubject,

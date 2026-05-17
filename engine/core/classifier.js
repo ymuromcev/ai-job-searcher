@@ -10,13 +10,26 @@
 
 const PATTERNS = {
   REJECTION: [
-    /unfortunately/i,
+    // Bare /unfortunately/i removed 2026-05-12 (BL-26 revision). Duolingo ACK
+    // confirmations (no-reply@duolingo.com, both Sr PM Score + Sr PM DET
+    // 2026-05-08) embed a scam-warning paragraph: "Unfortunately, there is a
+    // rise in scammers pretending to be real Duolingo employees..." Bare
+    // /unfortunately/i fired on this preamble and produced REJECTION. Real
+    // rejections always contain explicit action wording (not moving forward
+    // / decided not to proceed / not a match / etc.), all covered by the
+    // patterns below — removing the bare softener costs no real rejection
+    // coverage. Regression fixtures: Duolingo Score (19e1897581413b89) +
+    // Duolingo DET (19e1884021811520). See incidents.md 2026-05-12 BL-26
+    // revision.
     /not moving forward/i,
     /other candidates/i,
     /won.t be moving forward/i,
     /not a match/i,
-    /position has been filled/i,
-    /has been filled/i,
+    // /position has been filled/ and /has been filled/ moved to
+    // POSITION_CLOSED 2026-05-12 — "We just recently filled the role" is an
+    // employer-side closure signal (role evaporated), not a candidate-
+    // specific rejection. Notion gets "Closed", rejection-rate metric stays
+    // clean. See incidents 2026-05-12 audit follow-up.
     /decided not to proceed/i,
     /will not be proceeding/i,
     /we have chosen/i,
@@ -41,6 +54,28 @@ const PATTERNS = {
     /decided to move forward with candidates whose/i,
     /your application was not selected/i,
   ],
+  // POSITION_CLOSED — added 2026-05-12 (Lilia Lyra Health probe). Semantically
+  // distinct from REJECTION: the *role* was withdrawn, the candidate was not
+  // rejected. Mapped to Notion status "Closed" (not "Rejected"). Priority is
+  // ABOVE REJECTION — if a letter contains both "unfortunately" and "position
+  // is now closed", the closure is the concrete fact about the role; the
+  // rejection word may just be ACK-style softener. See incidents 2026-05-12.
+  POSITION_CLOSED: [
+    /position is (now )?closed/i,
+    /role is (now )?closed/i,
+    /position has closed/i,
+    /no longer accepting applications/i,
+    /position has been (paused|put on hold)/i,
+    /role has been (paused|put on hold)/i,
+    /we('ve| have) paused hiring/i,
+    // "We've just recently filled the role" (Attentive) / "The position has
+    // been filled". Employer-side closure: role gone for everyone, not a
+    // candidate-specific reject. Moved here from REJECTION 2026-05-12.
+    // Patterns require role/position context — bare /has been filled/ used
+    // to live in REJECTION and matched "your cart has been filled" etc.
+    /(?:role|position) has been filled/i,
+    /filled (?:the|this) (?:role|position)/i,
+  ],
   // INTERVIEW_INVITE patterns must require interview-INTENT context. Bare
   // \binterview\b / \bavailability\b were removed 2026-05-02 after Lilia
   // incident: Indeed digest emails embed JD body text containing "interview
@@ -49,14 +84,44 @@ const PATTERNS = {
   // explicit invite verb (schedule/invite/like to interview) or interview-
   // intent phrasing (interview with us/your interview).
   INTERVIEW_INVITE: [
-    /schedule (an? )?(interview|phone screen|call|meeting|chat)/i,
+    // Relaxed 2026-05-12 (RFC 029) — original /(an? )?/ only matched
+    // "schedule interview" / "schedule a interview" / "schedule an interview".
+    // ATS scheduling emails (dentemploy + others) routinely say "schedule
+    // your interview" / "schedule the interview" / "schedule our interview".
+    // Whitelist of pre-words to avoid false-positives like "schedule monthly
+    // meetings" / "schedule team-wide calls".
+    //
+    // Tightened 2026-05-12 (BL-50, Q-2 follow-up from BL-44): dropped
+    // `call|meeting|chat` from the trailing alternation. ATS ACK boilerplate
+    // routinely says "we will schedule a call to discuss" / "happy to
+    // schedule a chat" — forward-looking ACK language, NOT an invite. Real
+    // invites with those words are still caught by:
+    //   - /(would|we'd) like to (schedule|set up|interview)/ ("we'd like to
+    //     schedule a call")
+    //   - /invite you (to|for) (interview|phone screen|conversation|chat)/
+    //   - /book a time (on (my|the) calendar|with (me|us)|to (chat|meet|talk))/
+    //   - /would love to (chat|connect|meet|talk) (with you|to discuss)/
+    //   - /(your|let me know your) availability (for|to) (call|chat|conversation)/
+    // Real trigger: Deel ACK 14-apr (Jared dry-run, 2026-05-12), which
+    // also cross-bound to Next Insurance via matcher.
+    /schedule (?:(?:your|the|our|my|a|an)\s+)?(interview|phone screen)/i,
     /(would|we'd) like to (schedule|set up|interview)/i,
     /invite you (to|for) (an? )?(interview|phone screen|conversation|chat)/i,
     /your interview (is|with|on)/i,
     /interview with us/i,
     /interview (request|invitation|invite)/i,
+    // ATS subject lines for round-N invites. Added 2026-05-12 (RFC 029) —
+    // "First Round Interview" / "Round 2 interview" are unambiguous intent.
+    /first[- ]round interview/i,
+    /round (one|1|two|2|three|3) interview/i,
     /\bphone screen\b/i,
-    /next steps in (the|our) (process|interview)/i,
+    // 2026-05-12 — Tyson & Mendes probe (Lilia unmatched set). The bare
+    // /next steps in (the|our) (process|interview)/i fired on ACK boilerplate
+    // "we'll be in touch regarding next steps in the interview process".
+    // This is forward-looking ACK language, not actual invite intent. Dropped
+    // entirely — real invites are still covered by schedule/invite/phone-screen
+    // /book-a-time/calendly/your-interview-is/round-N patterns. If we ever
+    // need this back, it must require an explicit invite verb in proximity.
     /would love to (chat|connect|meet|talk) (with you|to discuss)/i,
     /\bmeet with (the|our) (team|hiring|recruiting)/i,
     /share your availability/i,
@@ -72,17 +137,40 @@ const PATTERNS = {
   // as part of the role description, not as a request to the candidate.
   INFO_REQUEST: [
     /(complete|take|finish) (the|your|an?) (assessment|questionnaire|coding challenge|take.?home|exercise)/i,
-    /(your|the) (assessment|questionnaire|take.?home|coding challenge) (is|link|attached|below|here)/i,
+    // Compound "take-home coding challenge" needs an optional prefix on
+    // `coding challenge` so it still matches alongside the bare forms.
+    // Without this, "Your take-home coding challenge is attached" stalls
+    // because `take.?home` matches "take-home" but `(is|link|...)` doesn't
+    // line up with the following " coding". 2026-05-12 (BL-26 revision).
+    /(your|the) (assessment|questionnaire|take.?home(?:\s+coding\s+challenge)?|coding challenge) (is|link|attached|below|here)/i,
+    // Inverse word order: "Here is your <noun>" / "Attached is your <noun>"
+    // / "Please find your <noun>". Real coordinator emails routinely use
+    // this phrasing — the main /(your|the) … (is|attached|…)/i pattern
+    // only catches the forward order. Same noun alternation. Added
+    // 2026-05-12 (BL-26 revision) when bare /\btake.?home\b/i was removed.
+    /(?:here|attached) (?:is|are|please find) (?:your|the) (assessment|questionnaire|take.?home(?:\s+coding\s+challenge)?|coding challenge|exercise)/i,
     /(assessment|questionnaire|coding challenge|take.?home) (link|invitation|invite|deadline)/i,
     /(please|kindly) (complete|fill out|provide|share|submit)/i,
-    /\btake.?home (test|assignment|project|challenge)\b/i,
     /(send|submit|provide) (us )?(your|the) (additional|requested) (information|details|materials)/i,
     /(we|i) need (some )?additional (information|details) (from you|to proceed)/i,
     /complete the following (form|questionnaire|assessment|steps)/i,
-    // "coding challenge" and "take-home" are unambiguous — they only ever
-    // refer to candidate-facing exercises in hiring contexts.
-    /\bcoding challenge\b/i,
-    /\btake.?home\b/i,
+    // 2026-05-12 (BL-26 revision) — Headway ATS confirmations
+    // (no-reply@us.greenhouse-mail.io, Sr PM Client Engagement
+    // 19de00ba5c8385f0 + 19df4e1978faf2e2) describe the future hiring
+    // process inside the ACK body: "the typical interview process will
+    // take 2-3 weeks and will consist of: ... A take home assignment
+    // designed to assess technical abilities". Bare /\btake.?home\b/i,
+    // /\bcoding challenge\b/i, and the article-less
+    // /\btake.?home (test|assignment|project|challenge)\b/i all fired on
+    // this JD-future-steps description and produced INFO_REQUEST. Same
+    // failure mode as the 2026-05-02 Indeed-digest incident with bare
+    // /\binterview\b/, /\bavailability\b/, /\bassessment\b/.
+    //
+    // After fix: article-bound versions only. Real candidate-facing
+    // requests use "your take-home" / "the take-home" / "your coding
+    // challenge" / explicit complete-the-attached wording.
+    /(your|the) take.?home (test|assignment|project|challenge)/i,
+    /(your|the) coding challenge/i,
   ],
   ACKNOWLEDGMENT: [
     /received your application/i,
@@ -96,7 +184,16 @@ const PATTERNS = {
   ],
 };
 
-const ORDER = ["REJECTION", "INTERVIEW_INVITE", "INFO_REQUEST", "ACKNOWLEDGMENT"];
+// POSITION_CLOSED goes BEFORE REJECTION (2026-05-12). When both signals are
+// present ("unfortunately…the position is now closed"), the closure is the
+// concrete fact and we want the Notion card → "Closed", not "Rejected".
+const ORDER = [
+  "POSITION_CLOSED",
+  "REJECTION",
+  "INTERVIEW_INVITE",
+  "INFO_REQUEST",
+  "ACKNOWLEDGMENT",
+];
 
 function classify({ subject, body } = {}) {
   const text = `${subject || ""} ${body || ""}`;

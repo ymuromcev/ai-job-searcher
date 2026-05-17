@@ -328,6 +328,107 @@ async function fetchMessageByGmailId(client, gmailMessageIdHex, opts = {}) {
   }
 }
 
+// ---------- Batch fetch by Gmail message-ids (used by reclassify) ----------
+//
+// Same id resolution as `fetchMessageByGmailId`, but opens ONE IMAP connection
+// and ONE mailbox lock for the whole batch — much faster on fly cold-start
+// when we have ≥30 ids to look up (≈3-5s greeting × N would dominate cost).
+//
+// Returns Array<{ id: hexId, raw: rawEmail | null, error?: string }>:
+//   - raw is { messageId, threadId, subject, from, body, snippet, date }
+//     (same shape as fetchMessageByGmailId) on success.
+//   - raw is null when the message wasn't found by X-GM-MSGID (Gmail-deleted
+//     or never existed). `error` is set to a short reason on transient fetch
+//     errors — caller decides whether to skip or fail the batch.
+//
+// `opts.onProgress({ index, total, id, ok, error? })` fires per id.
+
+async function fetchMessagesByGmailIds(client, hexIds, opts = {}) {
+  if (!client) throw new Error("fetchMessagesByGmailIds: client required");
+  if (!Array.isArray(hexIds)) {
+    throw new Error("fetchMessagesByGmailIds: hexIds must be an array");
+  }
+  const onProgress = opts.onProgress || (() => {});
+  const parseMessage = opts.parseMessage || simpleParser;
+  const out = [];
+
+  await client.connect();
+  let lock;
+  try {
+    const mailboxPath = await resolveAllMailMailbox(client);
+    lock = await client.getMailboxLock(mailboxPath);
+
+    for (let i = 0; i < hexIds.length; i += 1) {
+      const id = hexIds[i];
+      const decimal = hexToGmailId(id);
+      if (!decimal) {
+        out.push({ id, raw: null, error: "invalid id" });
+        onProgress({ index: i, total: hexIds.length, id, ok: false, error: "invalid id" });
+        continue;
+      }
+      try {
+        const uids = await client.search({ emailId: decimal }, { uid: true });
+        if (!Array.isArray(uids) || uids.length === 0) {
+          out.push({ id, raw: null });
+          onProgress({ index: i, total: hexIds.length, id, ok: false, error: "not found" });
+          continue;
+        }
+        const uid = uids[0];
+        const msg = await client.fetchOne(
+          uid,
+          {
+            uid: true,
+            envelope: true,
+            internalDate: true,
+            source: true,
+            emailId: true,
+            threadId: true,
+          },
+          { uid: true }
+        );
+        if (!msg) {
+          out.push({ id, raw: null });
+          onProgress({
+            index: i,
+            total: hexIds.length,
+            id,
+            ok: false,
+            error: "fetch returned null",
+          });
+          continue;
+        }
+        const raw = await messageToRaw(msg, { parseMessage });
+        out.push({ id, raw });
+        onProgress({ index: i, total: hexIds.length, id, ok: true });
+      } catch (err) {
+        // Per-message failure: log and continue. Don't drop the whole batch.
+        out.push({ id, raw: null, error: err && err.message ? err.message : String(err) });
+        onProgress({
+          index: i,
+          total: hexIds.length,
+          id,
+          ok: false,
+          error: err && err.message ? err.message : String(err),
+        });
+      }
+    }
+  } finally {
+    if (lock && typeof lock.release === "function") {
+      try {
+        lock.release();
+      } catch (_e) {
+        // best-effort
+      }
+    }
+    try {
+      await client.logout();
+    } catch (_e) {
+      // best-effort
+    }
+  }
+  return out;
+}
+
 module.exports = {
   IMAP_HOST,
   IMAP_PORT,
@@ -344,4 +445,5 @@ module.exports = {
   listUidsForQuery,
   fetchEmailsForBatches,
   fetchMessageByGmailId,
+  fetchMessagesByGmailIds,
 };

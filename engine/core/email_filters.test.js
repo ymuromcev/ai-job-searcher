@@ -2,7 +2,10 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  ATS_DOMAINS,
   isATS,
+  atsFromInclusions,
+  atsFromExclusions,
   isJobAlert,
   isNonPipelineSender,
   matchesRecruiterSubject,
@@ -17,6 +20,44 @@ test("isATS: detects known ATS domains", () => {
   assert.ok(isATS("jobs@affirm.ashbyhq.com"));
   assert.ok(!isATS("recruiter@acme.com"));
   assert.ok(!isATS(""));
+});
+
+// RFC 029 — ATS sender coverage. dentemploy and other small-business ATS
+// senders must be detected so check.js fetches them via the dedicated batch.
+test("isATS: dentemploy and other ATS additions (RFC 029)", () => {
+  assert.ok(isATS("interview@dentemploy.com"));
+  assert.ok(isATS("hello@send.applicantemails.com"));
+  assert.ok(isATS("notify@paycomonline.com"));
+  assert.ok(isATS("hr@breezy.hr"));
+  assert.ok(isATS("noreply@gem.com"));
+  assert.ok(isATS("ats@paradox.ai"));
+  assert.ok(isATS("hire@eightfold.ai"));
+  assert.ok(isATS("workday@myworkday.com"));
+});
+
+test("atsFromInclusions: returns from:() with all ATS_DOMAINS joined", () => {
+  const out = atsFromInclusions();
+  assert.ok(out.startsWith("from:("));
+  assert.ok(out.endsWith(")"));
+  // Parse OR-joined inner list — should round-trip back to ATS_DOMAINS exactly.
+  const inner = out.slice("from:(".length, -1);
+  const parsed = inner.split(" OR ");
+  assert.deepEqual(parsed, ATS_DOMAINS);
+});
+
+test("atsFromExclusions: returns -from:<each> for all ATS_DOMAINS", () => {
+  const out = atsFromExclusions();
+  for (const d of ATS_DOMAINS) {
+    assert.ok(out.includes(`-from:${d}`), `${d} should be excluded`);
+  }
+  // No bare "-from:greenhouse" — every entry must have the full domain.
+  assert.ok(!/-from:greenhouse(\s|$)/.test(out));
+  assert.ok(!/-from:lever(\s|$)/.test(out));
+});
+
+test("ATS_DOMAINS: no duplicates", () => {
+  const set = new Set(ATS_DOMAINS);
+  assert.equal(set.size, ATS_DOMAINS.length, "ATS_DOMAINS must be deduped");
 });
 
 test("matchesRecruiterSubject: recruiter outreach patterns", () => {
@@ -78,6 +119,26 @@ test("isJobAlert: LinkedIn job-alerts (consolidated source-of-truth)", () => {
   assert.ok(isJobAlert("jobalerts-noreply@linkedin.com", "New PM jobs in Sacramento"));
 });
 
+// Regression 2026-05-12: Jared 30-day probe surfaced 3 Jobot Alerts
+// digests on alerts.jobot.com — must be filtered upstream, not classified.
+// Real recruiter outreach on @jobot.com (no `alerts.`) still flows through.
+test("isJobAlert: Jobot Alerts proactive digests on alerts.jobot.com", () => {
+  assert.ok(
+    isJobAlert('"Jobot Alerts" <jobs@alerts.jobot.com>', "New opportunity as a Product Manager")
+  );
+  assert.ok(
+    isJobAlert("jobs@alerts.jobot.com", "Keep Going With More Jobs Like Account Executive")
+  );
+  assert.ok(
+    isJobAlert(
+      "jobs@alerts.jobot.com",
+      "Head of Enterprise Business Development opportunities need to be filled"
+    )
+  );
+  // Genuine recruiter on bare jobot.com → NOT a job alert
+  assert.ok(!isJobAlert("recruiter@jobot.com", "Reaching out about a PM role"));
+});
+
 test("isJobAlert: subject-only patterns (any sender)", () => {
   assert.ok(isJobAlert("anyone@example.com", "Medical Assistant + 12 more new jobs"));
   assert.ok(isJobAlert("anyone@example.com", "5 new jobs matching your search"));
@@ -102,6 +163,16 @@ test("isNonPipelineSender: banks/utilities/insurance must be skipped", () => {
   assert.ok(isNonPipelineSender("statements@bankofamerica.com"));
   assert.ok(isNonPipelineSender("noreply@geico.com"));
   assert.ok(isNonPipelineSender("billing@xfinity.com"));
+});
+
+// Regression 2026-05-12: bot's own Notion comments cause feedback loop —
+// Notion mails the user about new comments, body quotes our "Subject:
+// ...First Round Interview..." line, classifier re-fires INTERVIEW_INVITE,
+// matcher cross-binds to a different pipeline row. Must skip upstream.
+test("isNonPipelineSender: Notion notification echoes must be skipped", () => {
+  assert.ok(isNonPipelineSender('"Notion Team" <notify@mail.notion.so>'));
+  assert.ok(isNonPipelineSender("notify@mail.notion.so"));
+  assert.ok(isNonPipelineSender("anyone@mail.notion.so"));
 });
 
 test("isNonPipelineSender: real recruiter / ATS senders are NOT skipped", () => {
