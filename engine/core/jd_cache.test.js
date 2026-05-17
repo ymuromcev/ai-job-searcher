@@ -558,7 +558,10 @@ test("formatTaleo: filters out useless employmentType:'Standard' when no listing
 
 test("formatTaleo: prefers listing scheduleHint over JSON-LD employmentType", () => {
   // employmentType present and not "Standard", but the listing hint differs.
-  const html = TALEO_HTML_FULL.replace('"employmentType":"Standard"', '"employmentType":"Full-time"');
+  const html = TALEO_HTML_FULL.replace(
+    '"employmentType":"Standard"',
+    '"employmentType":"Full-time"'
+  );
   const job = { ...TALEO_JOB, rawExtra: { scheduleHint: "Per Diem" } };
   const text = formatTaleo(html, job);
   assert.ok(text.includes("SCHEDULE: Per Diem"));
@@ -646,8 +649,12 @@ test("Taleo: passes User-Agent header to fetchFn", async () => {
       return {
         ok: true,
         status: 200,
-        async text() { return TALEO_HTML_FULL; },
-        async json() { return {}; },
+        async text() {
+          return TALEO_HTML_FULL;
+        },
+        async json() {
+          return {};
+        },
       };
     },
   });
@@ -661,7 +668,13 @@ test("Taleo: SSRF — non-allowed host returns not_found without fetching", asyn
   const { deps } = makeDeps({
     fetchFn: async () => {
       fetched = true;
-      return { ok: true, status: 200, async text() { return TALEO_HTML_FULL; } };
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return TALEO_HTML_FULL;
+        },
+      };
     },
   });
   const result = await fetchJd(badJob, CACHE_DIR, deps);
@@ -675,7 +688,13 @@ test("Taleo: SSRF — http:// (non-TLS) returns not_found", async () => {
   const { deps } = makeDeps({
     fetchFn: async () => {
       fetched = true;
-      return { ok: true, status: 200, async text() { return TALEO_HTML_FULL; } };
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return TALEO_HTML_FULL;
+        },
+      };
     },
   });
   const result = await fetchJd(badJob, CACHE_DIR, deps);
@@ -686,7 +705,11 @@ test("Taleo: SSRF — http:// (non-TLS) returns not_found", async () => {
 test("Taleo: missing job.url returns not_found", async () => {
   const badJob = { ...TALEO_JOB };
   delete badJob.url;
-  const { deps } = makeDeps({ fetchFn: async () => { throw new Error("nope"); } });
+  const { deps } = makeDeps({
+    fetchFn: async () => {
+      throw new Error("nope");
+    },
+  });
   const result = await fetchJd(badJob, CACHE_DIR, deps);
   assert.equal(result.status, "not_found");
 });

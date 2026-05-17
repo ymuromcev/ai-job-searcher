@@ -54,18 +54,10 @@ test("isAllowedHost — random hosts rejected", () => {
 });
 
 test("buildPageUrl — encodes location and uses 1-based ?p=", () => {
-  const u1 = _internals.buildPageUrl(
-    "https://www.kaiserpermanentejobs.org",
-    "Sacramento, CA",
-    0
-  );
+  const u1 = _internals.buildPageUrl("https://www.kaiserpermanentejobs.org", "Sacramento, CA", 0);
   assert.equal(u1, "https://www.kaiserpermanentejobs.org/search-jobs/Sacramento%2C%20CA?p=1");
 
-  const u2 = _internals.buildPageUrl(
-    "https://www.kaiserpermanentejobs.org/",
-    "",
-    4
-  );
+  const u2 = _internals.buildPageUrl("https://www.kaiserpermanentejobs.org/", "", 4);
   // trailing slash stripped, empty location → no path segment
   assert.equal(u2, "https://www.kaiserpermanentejobs.org/search-jobs?p=5");
 });
@@ -80,10 +72,7 @@ test("locationMatchesAllow — substring match is case-insensitive", () => {
     _internals.locationMatchesAllow("Sacramento, CA", ["sacramento", "Roseville"]),
     true
   );
-  assert.equal(
-    _internals.locationMatchesAllow("Oakland, CA", ["Sacramento", "Roseville"]),
-    false
-  );
+  assert.equal(_internals.locationMatchesAllow("Oakland, CA", ["Sacramento", "Roseville"]), false);
 });
 
 test("TALEO_HOST_ALLOW — only contains expected hosts (regression guard)", () => {
@@ -103,10 +92,7 @@ test("extractTaleo parses real Kaiser fixture", () => {
   const first = rows[0];
   assert.equal(first.jobId, "94867233376");
   assert.equal(first.companyId, "641");
-  assert.equal(
-    first.title,
-    "Physician Assistant - Sacramento - Addiction Medicine (Day/40)"
-  );
+  assert.equal(first.title, "Physician Assistant - Sacramento - Addiction Medicine (Day/40)");
   assert.equal(
     first.url,
     "https://www.kaiserpermanentejobs.org/job/sacramento/physician-assistant-sacramento-addiction-medicine-day-40/641/94867233376"
@@ -374,10 +360,7 @@ test("discover — missing companyId rejected before fetch", async () => {
 
 test("discover — invalid companyId (non-numeric) rejected", async () => {
   const fetchFn = makeFetch(async () => makeResponse("nope"));
-  const jobs = await taleo.discover(
-    [{ ...KAISER_TARGET, companyId: "abc" }],
-    { fetchFn }
-  );
+  const jobs = await taleo.discover([{ ...KAISER_TARGET, companyId: "abc" }], { fetchFn });
   assert.deepEqual(jobs, []);
   assert.equal(fetchFn.calls.length, 0);
 });

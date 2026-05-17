@@ -5,10 +5,18 @@
 // and patches the page. Run via: node scripts/oneoff_backfill_company_relation.js [--limit N]
 
 const path = require("path");
-const { loadProfile, loadSecrets } = require(path.resolve(__dirname, "../engine/core/profile_loader.js"));
-const { load: loadApplications } = require(path.resolve(__dirname, "../engine/core/applications_tsv.js"));
-const { makeClient, resolveDataSourceId } = require(path.resolve(__dirname, "../engine/core/notion_sync.js"));
-const { makeCompanyResolver } = require(path.resolve(__dirname, "../engine/core/company_resolver.js"));
+const { loadProfile, loadSecrets } = require(
+  path.resolve(__dirname, "../engine/core/profile_loader.js")
+);
+const { load: loadApplications } = require(
+  path.resolve(__dirname, "../engine/core/applications_tsv.js")
+);
+const { makeClient, resolveDataSourceId } = require(
+  path.resolve(__dirname, "../engine/core/notion_sync.js")
+);
+const { makeCompanyResolver } = require(
+  path.resolve(__dirname, "../engine/core/company_resolver.js")
+);
 
 (async () => {
   // Manually parse .env for LILIA_NOTION_TOKEN
@@ -56,7 +64,10 @@ const { makeCompanyResolver } = require(path.resolve(__dirname, "../engine/core/
     log: (m) => console.log(`  resolver: ${m}`),
   });
 
-  let checked = 0, missing = 0, patched = 0, failed = 0;
+  let checked = 0,
+    missing = 0,
+    patched = 0,
+    failed = 0;
   for (const app of rowsWithPage) {
     if (checked >= limit) break;
     checked++;
@@ -96,7 +107,9 @@ const { makeCompanyResolver } = require(path.resolve(__dirname, "../engine/core/
       failed++;
     }
   }
-  console.log(`\nresult: checked=${checked} missing=${missing} patched=${patched} failed=${failed}`);
+  console.log(
+    `\nresult: checked=${checked} missing=${missing} patched=${patched} failed=${failed}`
+  );
 })().catch((err) => {
   console.error("fatal:", err.message);
   process.exit(1);

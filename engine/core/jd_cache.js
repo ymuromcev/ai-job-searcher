@@ -179,9 +179,7 @@ const TALENTBREW_DESC_FALLBACK_RE =
 // schema.org JobPosting metadata, plus a `<div class="ats-description">`
 // body container (same TalentBrew shape as CommonSpirit iCIMS — we
 // re-use TALENTBREW_DESC_RE / TALENTBREW_DESC_FALLBACK_RE above).
-const TALEO_HOST_ALLOW = new Set([
-  "www.kaiserpermanentejobs.org",
-]);
+const TALEO_HOST_ALLOW = new Set(["www.kaiserpermanentejobs.org"]);
 
 function isAllowedTaleoHost(hostname) {
   return TALEO_HOST_ALLOW.has(String(hostname || "").toLowerCase());
@@ -212,8 +210,7 @@ function formatTaleo(html, job) {
   if (typeof html !== "string" || !html) return null;
 
   const ld = extractJsonLdJob(html) || {};
-  const title =
-    (typeof ld.title === "string" && ld.title) || (job && job.title) || "";
+  const title = (typeof ld.title === "string" && ld.title) || (job && job.title) || "";
 
   // Location: JSON-LD jobLocation can be an object, array, or string. Be
   // defensive — we only need a printable line.
@@ -224,8 +221,9 @@ function formatTaleo(html, job) {
     const arr = Array.isArray(ld.jobLocation) ? ld.jobLocation : [ld.jobLocation];
     const addr = arr[0] && arr[0].address;
     if (addr && typeof addr === "object") {
-      const parts = [addr.addressLocality, addr.addressRegion, addr.addressCountry]
-        .filter((s) => typeof s === "string" && s.trim().length > 0);
+      const parts = [addr.addressLocality, addr.addressRegion, addr.addressCountry].filter(
+        (s) => typeof s === "string" && s.trim().length > 0
+      );
       location = parts.join(", ");
     }
   }
@@ -256,8 +254,7 @@ function formatTaleo(html, job) {
   if (ldDesc || ldQual) {
     body = stripHtml(`${ldDesc}\n${ldQual}`);
   } else {
-    const m =
-      TALENTBREW_DESC_RE.exec(html) || TALENTBREW_DESC_FALLBACK_RE.exec(html);
+    const m = TALENTBREW_DESC_RE.exec(html) || TALENTBREW_DESC_FALLBACK_RE.exec(html);
     body = m ? stripHtml(m[1]) : "";
   }
   if (!body) return null;

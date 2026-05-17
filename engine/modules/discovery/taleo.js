@@ -41,9 +41,7 @@ const UA = "Mozilla/5.0 (compatible; ai-job-searcher/1.0)";
 const MAX_PAGES = 30;
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
 
-const TALEO_HOST_ALLOW = new Set([
-  "www.kaiserpermanentejobs.org",
-]);
+const TALEO_HOST_ALLOW = new Set(["www.kaiserpermanentejobs.org"]);
 
 const COMPANY_ID_RE = /^\d{1,8}$/;
 const JOB_ID_RE = /^\d{6,16}$/;
@@ -99,15 +97,13 @@ function decodeHtmlEntities(s) {
 
 // Scope the row search to the <section id="search-results-list"> block to
 // avoid pulling unrelated <li> from page chrome (nav menus, footer links).
-const SECTION_RE =
-  /<section[^>]*id="search-results-list"[^>]*>([\s\S]*?)<\/section>/i;
+const SECTION_RE = /<section[^>]*id="search-results-list"[^>]*>([\s\S]*?)<\/section>/i;
 
 // Match each <li>...<a href="...">{innerHTML}</a>... block. We capture
 // the *entire* <li> body (not just the anchor) so we can read the
 // optional sibling button's `data-org-id` for an extra companyId
 // cross-check. The non-greedy stop is on `</li>` to keep rows isolated.
-const ROW_RE =
-  /<li[^>]*>\s*<a\s+([^>]*)href="([^"]+)"([^>]*)>([\s\S]*?)<\/a>([\s\S]*?)<\/li>/g;
+const ROW_RE = /<li[^>]*>\s*<a\s+([^>]*)href="([^"]+)"([^>]*)>([\s\S]*?)<\/a>([\s\S]*?)<\/li>/g;
 
 function extractTaleo(html, target) {
   if (typeof html !== "string" || !html) return [];
@@ -261,7 +257,10 @@ async function fetchAllPages(fetchFn, siteUrl, loc, target, signal) {
     // Duplicate-content short-circuit: TalentBrew sometimes returns the
     // last page indefinitely for ?p=> total. If this page's jobId set
     // matches the previous page exactly, stop.
-    const pageIds = pageJobs.map((j) => j.jobId).sort().join(",");
+    const pageIds = pageJobs
+      .map((j) => j.jobId)
+      .sort()
+      .join(",");
     if (pageIds === prevPageIds) break;
     prevPageIds = pageIds;
 
@@ -333,9 +332,10 @@ async function discover(targets, ctx = {}) {
       return [];
     }
 
-    const searchLocations = Array.isArray(target.searchLocations) && target.searchLocations.length > 0
-      ? target.searchLocations
-      : [""];
+    const searchLocations =
+      Array.isArray(target.searchLocations) && target.searchLocations.length > 0
+        ? target.searchLocations
+        : [""];
 
     const seenJobIds = new Set();
     const out = [];
