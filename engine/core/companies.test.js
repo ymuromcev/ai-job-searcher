@@ -59,8 +59,7 @@ test("load allows empty ats_slug for source=manual (metadata-only row)", () => {
   const file = tmpFile();
   fs.writeFileSync(
     file,
-    'name\tats_source\tats_slug\textra_json\tprofile\n' +
-      'Virto\tmanual\t\t{"hq":"LA"}\tjared\n'
+    "name\tats_source\tats_slug\textra_json\tprofile\n" + 'Virto\tmanual\t\t{"hq":"LA"}\tjared\n'
   );
   const { rows } = companies.load(file);
   assert.equal(rows.length, 1);

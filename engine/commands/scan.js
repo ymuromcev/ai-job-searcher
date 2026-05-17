@@ -20,7 +20,6 @@ const { filterJobs } = require("../core/filter.js");
 const adapterRegistry = require("../modules/discovery/index.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 
-
 function appendRejectionsLogDefault(filePath, lines) {
   // jsonl append, one rejection per line. Caller provides full lines.
   if (!lines || lines.length === 0) return;
