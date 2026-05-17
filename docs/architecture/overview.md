@@ -55,7 +55,7 @@ Three invariants follow:
 | `company_resolver.js` | Lookup-or-create company in the per-profile Notion Companies DB; in-memory cache. | `commands/sync.js` (push) |
 | `notion_sync.js` | Hybrid Notion client wrapper. Direct API for fast ops (`updatePageStatus`, `addPageComment`, `createJobPage`), batch queue for bulk push. SDK v5 compliant — uses `dataSources.query` and skips empty values. | `commands/sync.js`, `commands/check.js`, `commands/prepare.js` |
 | `fit_prompt.js` | Assembles the per-profile fit-evaluation prompt. | `commands/prepare.js` |
-| `jd_cache.js` | JD fetch + cache for Greenhouse and Lever (others fall back to live fetch). | `commands/prepare.js`, `jd_extract.js` |
+| `jd_cache.js` | JD fetch + cache for Greenhouse, Lever, Workday (JSON), iCIMS (HTML scrape), Taleo (HTML scrape, JSON-LD-preferred). Other sources surface `unsupported`. | `commands/prepare.js`, `jd_extract.js` |
 | `jd_extract.js` | Pulls structured fields out of a JD (title, level hints, salary band). | `commands/prepare.js` |
 | `url_check.js` | HEAD+GET probe with SSRF guard and board-root detection. | `validator.js`, `prepare.js` |
 | `salary_calc.js` | Pure tier × level salary calculator with cost-of-living adjustment. | `commands/prepare.js` |
@@ -129,6 +129,7 @@ run via the `modules: ["discovery:<name>", ...]` array.
 | `oracle_cloud.js` | Oracle Recruiting Cloud / Fusion HCM Candidate Experience sites; multi-tenant via per-row `siteUrl`. SSRF-guarded to `*.oraclecloud.com` over HTTPS. |
 | `jobsyn.js` | NLX Jobsyn (Direct Employers Foundation) public search API; multi-tenant via `X-Origin` header. Origin pattern-validated to prevent CRLF header injection. |
 | `icims.js` | iCIMS-hosted job boards (HTML scrape); two extractor modes via per-row `htmlMode` — `icims-default` for `careers-{slug}.icims.com` and `talentbrew` for custom front-ends (e.g. CommonSpirit). SSRF-guarded to HTTPS + slug-validated. |
+| `taleo.js` | Taleo / TalentBrew careers sites (HTML scrape). Currently fronts Kaiser Permanente (`www.kaiserpermanentejobs.org`); adding more tenants is a code change in the code-level `TALEO_HOST_ALLOW` set (not a TSV row) to keep the SSRF surface explicit. Parses the `<section id="search-results-list">` block, requires anchor + sibling-button companyId tenancy match, and detects Kaiser's 5-field comma tile to land schedule on the correct field. |
 | `smartrecruiters.js` | SmartRecruiters posting API. |
 | `usajobs.js` | USAJOBS Search API. Requires API key + email in `.env`. |
 | `calcareers.js` | California state careers feed. |

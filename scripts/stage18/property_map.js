@@ -15,7 +15,7 @@
 // Core — always emitted.
 const CORE_FIELDS = {
   title: { field: "Title", type: "title" },
-  companyName: { field: "Company", type: "relation" },
+  companyRelation: { field: "Company", type: "relation" },
   source: { field: "Source", type: "select" },
   jobId: { field: "JobID", type: "rich_text" },
   url: { field: "URL", type: "url" },
