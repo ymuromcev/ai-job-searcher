@@ -17,6 +17,7 @@ profiles/*
 
 # Shared master pool (candidate-adjacent data)
 data/
+data
 
 # Wizard / migration state
 .stage*/
