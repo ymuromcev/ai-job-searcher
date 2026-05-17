@@ -151,6 +151,41 @@ test("filterJobs title_blocklist does NOT split on comma (department modifier st
   assert.equal(rejected[0].reason.pattern, "supervisor");
 });
 
+test("filterJobs title_blocklist patterns ending in non-word char (comma, space) match", () => {
+  // 2026-05-12 fix: `\b<needle>\b` fails when <needle> ends in a non-word
+  // character (e.g. "Director,") because `\b` requires a word/non-word
+  // transition and never fires between two non-word chars. Patterns must
+  // still match the role text in that case.
+  const dirComma = { ...BASE_JOB, role: "Director, Product Operations" };
+  const { rejected: r1 } = filterJobs([dirComma], {
+    title_blocklist: [{ pattern: "Director,", reason: "over-level" }],
+  });
+  assert.equal(r1.length, 1);
+  assert.equal(r1[0].reason.pattern, "Director,");
+
+  // Trailing space: "VP " must match "VP Engineering" but NOT "Supervp".
+  const vpEng = { ...BASE_JOB, role: "VP Engineering" };
+  const { rejected: r2 } = filterJobs([vpEng], {
+    title_blocklist: [{ pattern: "VP ", reason: "VP level" }],
+  });
+  assert.equal(r2.length, 1);
+
+  const supervp = { ...BASE_JOB, role: "Supervp Engineer" };
+  const { passed: p3 } = filterJobs([supervp], {
+    title_blocklist: [{ pattern: "VP ", reason: "VP level" }],
+  });
+  assert.equal(p3.length, 1);
+});
+
+test("filterJobs title_requirelist patterns ending in non-word char still match", () => {
+  // Symmetric to the title_blocklist fix above.
+  const role = { ...BASE_JOB, role: "Strategy & Operations Manager" };
+  const { passed } = filterJobs([role], {
+    title_requirelist: [{ pattern: "strategy & operations", reason: "S&O" }],
+  });
+  assert.equal(passed.length, 1);
+});
+
 test("filterJobs rejects by location_blocklist substring", () => {
   const job = { ...BASE_JOB, location: "London, UK" };
   const { rejected } = filterJobs([job], { location_blocklist: ["UK"] });

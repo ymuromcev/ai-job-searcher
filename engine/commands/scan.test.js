@@ -633,9 +633,11 @@ test("scan filter: adapter shape (companyName/title/locations[]) maps to filter 
   assert.equal(observed[0]._job.companyName, "AcmeCo");
 });
 
-test("scan filter: company_cap counts active rows from existing apps (active_statuses)", async () => {
-  // Two existing apps for AcmeCo — one Applied (active), one Rejected (not active).
-  // Cap=1 → next AcmeCo job rejected with kind=company_cap.
+test("scan filter: company_cap does NOT fire at scan stage (apply-time only)", async () => {
+  // Pre-2026-05-15 a cap=1 with one Applied row blocked the new AcmeCo job at
+  // scan time. Now company_cap is stripped from scan-stage filtering — the
+  // job must pass through to Inbox so the user sees the full hiring picture.
+  // The cap is still enforced in prepare.js when promoting Inbox → To Apply.
   const existingApps = [
     {
       key: "greenhouse:0",
@@ -655,24 +657,6 @@ test("scan filter: company_cap counts active rows from existing apps (active_sta
       createdAt: "",
       updatedAt: "",
     },
-    {
-      key: "greenhouse:99",
-      source: "greenhouse",
-      jobId: "99",
-      companyName: "AcmeCo",
-      title: "Old PM",
-      url: "",
-      location: "",
-      status: "Rejected", // not in active_statuses → does not count
-      notion_page_id: "",
-      resume_ver: "",
-      cl_key: "",
-      salary_min: "",
-      salary_max: "",
-      cl_path: "",
-      createdAt: "",
-      updatedAt: "",
-    },
   ];
   const { deps, calls } = makeDeps({
     loadProfile: () => ({
@@ -680,7 +664,7 @@ test("scan filter: company_cap counts active rows from existing apps (active_sta
       modules: ["discovery:greenhouse"],
       discovery: {},
       filter_rules: {
-        company_cap: { max_active: 1 }, // active_statuses defaulted
+        company_cap: { max_active: 1 },
       },
       paths: { root: "/tmp/profiles/jared" },
     }),
@@ -696,8 +680,8 @@ test("scan filter: company_cap counts active rows from existing apps (active_sta
   await makeScanCommand(deps)(ctx);
 
   const log = out.lines.join("\n");
-  assert.match(log, /company_cap=1/);
-  // Only the Applied row counts as active; if the Rejected row had counted,
-  // the cap=1 would already be reached even without the new job.
-  assert.equal(calls.appendRejectionsLog[0].lines[0].kind, "company_cap");
+  assert.doesNotMatch(log, /company_cap=/);
+  const allRejects = (calls.appendRejectionsLog || []).flatMap((c) => c.lines || []);
+  const capRejects = allRejects.filter((l) => l.kind === "company_cap");
+  assert.equal(capRejects.length, 0, "company_cap rejections must not be emitted by scan");
 });

@@ -20,8 +20,6 @@ const { filterJobs } = require("../core/filter.js");
 const adapterRegistry = require("../modules/discovery/index.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 
-const DEFAULT_ACTIVE_STATUSES = ["Applied", "To Apply", "Interview", "Offer"];
-
 function appendRejectionsLogDefault(filePath, lines) {
   // jsonl append, one rejection per line. Caller provides full lines.
   if (!lines || lines.length === 0) return;
@@ -241,18 +239,6 @@ function makeScanCommand(overrides = {}) {
     // profile_loader normalizes rules onto `filterRules` (camelCase). Some
     // callers/tests still pass `filter_rules` (snake_case) — accept both.
     const filterRules = profile.filterRules || profile.filter_rules || {};
-    const cap = filterRules.company_cap || {};
-    const activeStatuses = new Set(
-      Array.isArray(cap.active_statuses) && cap.active_statuses.length > 0
-        ? cap.active_statuses
-        : DEFAULT_ACTIVE_STATUSES
-    );
-    const activeCounts = {};
-    for (const app of existingApps) {
-      if (activeStatuses.has(app.status)) {
-        activeCounts[app.companyName] = (activeCounts[app.companyName] || 0) + 1;
-      }
-    }
 
     // Adapter shape uses companyName/title/locations[]; filter expects
     // company/role/location. Map and keep a back-ref to the original job so
@@ -271,8 +257,15 @@ function makeScanCommand(overrides = {}) {
     }));
     // L-4: inject profile.geo into filter rules. Default unrestricted block
     // means the geo check is a no-op for Jared (back-compat).
-    const filterRulesWithGeo = { ...filterRules, geo: profile.geo };
-    const filterResult = deps.filterJobs(filterInputs, filterRulesWithGeo, activeCounts);
+    //
+    // BL-XX (2026-05-15): company_cap intentionally stripped here. The cap is
+    // an apply-time safeguard against ATS deprioritization, not a discovery
+    // gate. Letting the cap fire at scan time hid too much frontier hiring
+    // (AI-native labs typically post 50-500 roles; capping them at 3 per
+    // scan blocked the entire pipeline from surfacing FDE/SE/AI PM signal).
+    // The cap is still enforced in prepare.js when promoting Inbox → To Apply.
+    const filterRulesWithGeo = { ...filterRules, geo: profile.geo, company_cap: null };
+    const filterResult = deps.filterJobs(filterInputs, filterRulesWithGeo, {});
     const passedJobs = filterResult.passed.map((p) => p._job);
     const rejectedEntries = filterResult.rejected.map((r) => ({
       job: r.job._job,

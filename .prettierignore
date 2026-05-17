@@ -16,3 +16,7 @@ package-lock.json
 **/*.md
 **/*.json
 **/*.css
+
+# Test fixtures are byte-sensitive — icims/talentbrew parsers look at exact
+# whitespace. Reformatting changes test outcomes.
+engine/modules/discovery/fixtures/**/*.html

@@ -384,6 +384,24 @@ function computeSkipReasons(skipped) {
   return skipReasons;
 }
 
+// RFC 030: surface role_targets to the SKILL via prepare_context.json.
+// Strips regex patterns — scan already applied them; the LLM only needs
+// (id, name, fit_treatment) per track plus the treatments-prose to reason
+// about Fit Score. Returns null if no role_targets configured (back-compat
+// for profiles that pre-date RFC 030 — SKILL falls back to memory cues).
+function buildRoleTargetsForContext(rt) {
+  if (!rt || !Array.isArray(rt.tracks) || rt.tracks.length === 0) return null;
+  return {
+    tracks: rt.tracks.map((t) => ({
+      id: t.id,
+      name: t.name,
+      fit_treatment: t.fit_treatment || "primary",
+      ...(t.bridge_note ? { bridge_note: t.bridge_note } : {}),
+    })),
+    fit_treatments: rt.fit_treatments || {},
+  };
+}
+
 // RFC 024 (BL-28): forward-looking Inbox-health signal for the SKILL.
 // "How many filter-passing rows are left in Inbox for the NEXT prepare run?"
 // Live smoke 2026-05-11 made the gap visible: target=30, got 26, but the
@@ -662,6 +680,14 @@ async function runPre(ctx, deps) {
   // the SKILL falls back to resume_versions.json / cover_letter_template.md.
   const memory = profile.memory || { writingStyle: null, resumeKeyPoints: null, feedback: [] };
 
+  // RFC 030: surface role_targets so SKILL Fit Score knows which tracks are
+  // acceptable and how to treat each (primary / bridge). Strip regex patterns
+  // — the LLM doesn't need them (scan already enforced the title gate) and
+  // they bloat the prompt. Treatments-prose only.
+  const roleTargets = buildRoleTargetsForContext(
+    profile.filterRules && profile.filterRules.role_targets
+  );
+
   // BL-9 Step 5: signal for the autonomous SKILL loop ("Inbox is empty, stop
   // iterating even if 30-target not yet hit").
   const batchKeys = new Set(batchOut.map((e) => e.key));
@@ -687,6 +713,7 @@ async function runPre(ctx, deps) {
     generatedAt: deps.now(),
     mode: "fresh",
     memory,
+    roleTargets,
     salaryConfig: profile.salaryConfig || null,
     batchSize,
     batch: batchOut,

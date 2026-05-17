@@ -66,15 +66,21 @@ function parseLine(line, lineNo) {
     throw new Error(`line ${lineNo}: expected ≥3 tab-separated fields, got ${parts.length}`);
   }
   const [name, source, slug, extraRaw, profileRaw] = parts;
-  if (!name || !source || !slug) {
-    throw new Error(`line ${lineNo}: name/ats_source/ats_slug are all required`);
+  const sourceNorm = (source || "").trim().toLowerCase();
+  if (!name || !sourceNorm) {
+    throw new Error(`line ${lineNo}: name and ats_source are required`);
+  }
+  // ats_slug required for adapter-driven sources. source=manual rows are
+  // metadata-only (no adapter exists) and may legitimately have empty slug.
+  if (sourceNorm !== "manual" && !slug) {
+    throw new Error(`line ${lineNo}: ats_slug required for source="${sourceNorm}"`);
   }
   const extra = parseExtra(extraRaw);
   const profile = parseProfile(profileRaw);
   return {
     name: name.trim(),
-    source: source.trim().toLowerCase(),
-    slug: slug.trim(),
+    source: sourceNorm,
+    slug: (slug || "").trim(),
     extra,
     profile,
   };

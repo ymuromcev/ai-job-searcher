@@ -335,6 +335,72 @@ test("prepare --phase pre: writes prepare_context.json with correct shape", asyn
   assert.equal(ctx2.stats.inboxTotal, 1);
 });
 
+// RFC 030: roleTargets surface in prepare_context.json (with patterns stripped)
+
+test("prepare --phase pre: emits roleTargets in context with regex patterns stripped", async () => {
+  const apps = [makeApp()];
+  const deps = makePrepDeps(apps, {
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: {
+        role_targets: {
+          fit_treatments: { primary: "p-prose", bridge: "b-prose" },
+          tracks: [
+            {
+              id: "pm",
+              name: "Product Manager",
+              fit_treatment: "primary",
+              patterns: [{ pattern: "product manager", reason: "PM" }],
+            },
+            {
+              id: "fde",
+              name: "Forward-Deployed Engineer",
+              fit_treatment: "bridge",
+              bridge_note: "treat as primary at AI-native",
+              patterns: [{ pattern: "forward deployed", reason: "FDE" }],
+            },
+          ],
+        },
+      },
+      company_tiers: { Stripe: "S" },
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+    }),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+
+  const written = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.ok(written.roleTargets, "context should expose roleTargets");
+  assert.equal(written.roleTargets.tracks.length, 2);
+  // Patterns are stripped — LLM doesn't need regex, scan already applied it.
+  for (const t of written.roleTargets.tracks) {
+    assert.equal(t.patterns, undefined, `track ${t.id} should not carry patterns`);
+  }
+  // Treatments + bridge_note preserved.
+  assert.equal(written.roleTargets.tracks[0].fit_treatment, "primary");
+  assert.equal(written.roleTargets.tracks[1].fit_treatment, "bridge");
+  assert.equal(written.roleTargets.tracks[1].bridge_note, "treat as primary at AI-native");
+  assert.deepEqual(written.roleTargets.fit_treatments, { primary: "p-prose", bridge: "b-prose" });
+});
+
+test("prepare --phase pre: roleTargets is null when filterRules has no role_targets", async () => {
+  const apps = [makeApp()];
+  const deps = makePrepDeps(apps); // default loadProfile → filterRules: {}
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+
+  const written = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(written.roleTargets, null);
+});
+
 test("prepare --phase pre: dry-run does not write file", async () => {
   const apps = [makeApp()];
   const deps = makePrepDeps(apps);
