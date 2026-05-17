@@ -20,8 +20,6 @@ const { filterJobs } = require("../core/filter.js");
 const adapterRegistry = require("../modules/discovery/index.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 
-const DEFAULT_ACTIVE_STATUSES = ["Applied", "To Apply", "Interview", "Offer"];
-
 function appendRejectionsLogDefault(filePath, lines) {
   // jsonl append, one rejection per line. Caller provides full lines.
   if (!lines || lines.length === 0) return;
@@ -78,26 +76,43 @@ function modulesToSources(modules) {
   return out;
 }
 
+// BL-68 (2026-05-17): `discovery.companies_whitelist` was retired. The
+// `profile` column in `data/companies.tsv` (RFC 010 part B, see
+// `companies.filterByProfile`) is now the single source of truth for "which
+// companies does this profile see". Whitelist created a divergent second
+// source: a row in TSV with `profile=lilia` could still be dropped silently
+// if its name was missing from `profile.json`'s whitelist. That cost the
+// 2026-05-17 expansion 10 targets (UHG / Elevance / R1 RCM / Hims & Hers /
+// Carbon / Oak Street / One Medical / Sunrise SL / Atria SL / Brookdale).
+// Blacklist stays — it's a subtractive override on top of the join, which
+// has a real use case (temporary exclude without rewriting the TSV).
+//
+// The function also returns the rows it dropped so the caller can surface a
+// warn line per drop (no more silent drops).
 function applyTargetFilters(grouped, profile) {
   const discovery = (profile && profile.discovery) || {};
-  const whitelist = Array.isArray(discovery.companies_whitelist)
-    ? new Set(discovery.companies_whitelist.map((s) => String(s).toLowerCase()))
-    : null;
   const blacklist = new Set(
     Array.isArray(discovery.companies_blacklist)
       ? discovery.companies_blacklist.map((s) => String(s).toLowerCase())
       : []
   );
   const out = {};
+  const dropped = [];
   for (const [source, targets] of Object.entries(grouped)) {
-    const filtered = targets.filter((t) => {
+    const filtered = [];
+    for (const t of targets) {
       const name = String(t.name || "").toLowerCase();
-      if (whitelist && !whitelist.has(name)) return false;
-      if (blacklist.has(name)) return false;
-      return true;
-    });
+      if (blacklist.has(name)) {
+        dropped.push({ source, name: t.name, reason: "blacklist" });
+        continue;
+      }
+      filtered.push(t);
+    }
     if (filtered.length) out[source] = filtered;
   }
+  // Back-compat: callers that destructured `out[src]` directly still work
+  // because Object.entries / iteration skips the non-enumerable `_dropped`.
+  Object.defineProperty(out, "_dropped", { value: dropped, enumerable: false });
   return out;
 }
 
@@ -124,19 +139,57 @@ function makeScanCommand(overrides = {}) {
     const { rows: companyRows } = deps.loadCompanies(companiesPath);
 
     // Per-profile visibility (RFC 010 part B). `profile` column in
-    // companies.tsv gates rows BEFORE whitelist/blacklist. Public rows
-    // (profile="" / "both") are always visible. This is the structural
-    // replacement for the cross-profile blacklist hack.
+    // companies.tsv is the single gate for "which companies does this
+    // profile see". Public rows (profile="" / "both") are always visible.
+    // BL-68 (2026-05-17): the legacy `companies_whitelist` gate that used
+    // to live on top of this was removed — see applyTargetFilters comment.
+    // `companies_blacklist` is still applied (subtractive only).
     const visibleRows = deps.filterCompaniesByProfile
       ? deps.filterCompaniesByProfile(companyRows, profileId)
       : companyRows;
 
+    // BL-68 (2026-05-17): per-stage drop visibility.
+    // Three drop stages between TSV and adapter dispatch:
+    //   (a) profile-column filter        — rows owned by other profiles
+    //   (b) modules filter               — source not enabled in profile.modules
+    //   (c) blacklist (applyTargetFilters) — explicit subtractive override
+    // (a) is normally cross-profile noise (240 jared rows shouldn't spam
+    // lilia's scan), so the count goes to stdout as a summary; per-row
+    // details only on --verbose. (b) and (c) are usually small + actionable,
+    // so they always log to stderr.
+    const droppedByProfile =
+      deps.filterCompaniesByProfile && companyRows.length !== visibleRows.length
+        ? companyRows.length - visibleRows.length
+        : 0;
+    if (droppedByProfile > 0) {
+      stdout(
+        `profile filter: ${droppedByProfile} row(s) in companies.tsv owned by other profile(s) — not visible to "${profileId}"`
+      );
+      if (flags.verbose) {
+        const visibleKeys = new Set(visibleRows.map((r) => `${r.source}|${r.slug}`));
+        for (const r of companyRows) {
+          if (!visibleKeys.has(`${r.source}|${r.slug}`)) {
+            stdout(`  - "${r.name}" (${r.source}/${r.slug}) profile="${r.profile || "<empty>"}"`);
+          }
+        }
+      }
+    }
+
     const grouped = deps.groupBySource(visibleRows);
     const enabledGrouped = {};
     for (const src of Object.keys(grouped)) {
-      if (enabledSources.has(src)) enabledGrouped[src] = grouped[src];
+      if (enabledSources.has(src)) {
+        enabledGrouped[src] = grouped[src];
+      } else if (grouped[src].length > 0) {
+        ctx.stderr(
+          `warn: source "${src}" has ${grouped[src].length} target(s) visible to "${profileId}" but is not enabled in profile.modules — skipping`
+        );
+      }
     }
     const targetsBySource = applyTargetFilters(enabledGrouped, profile);
+    for (const d of targetsBySource._dropped || []) {
+      ctx.stderr(`warn: company "${d.name}" (${d.source}) dropped by ${d.reason}`);
+    }
 
     // Feed-based adapters (e.g. remoteok) have no entries in companies.tsv, so
     // they never appear in targetsBySource after the company-pool grouping.
@@ -241,18 +294,6 @@ function makeScanCommand(overrides = {}) {
     // profile_loader normalizes rules onto `filterRules` (camelCase). Some
     // callers/tests still pass `filter_rules` (snake_case) — accept both.
     const filterRules = profile.filterRules || profile.filter_rules || {};
-    const cap = filterRules.company_cap || {};
-    const activeStatuses = new Set(
-      Array.isArray(cap.active_statuses) && cap.active_statuses.length > 0
-        ? cap.active_statuses
-        : DEFAULT_ACTIVE_STATUSES
-    );
-    const activeCounts = {};
-    for (const app of existingApps) {
-      if (activeStatuses.has(app.status)) {
-        activeCounts[app.companyName] = (activeCounts[app.companyName] || 0) + 1;
-      }
-    }
 
     // Adapter shape uses companyName/title/locations[]; filter expects
     // company/role/location. Map and keep a back-ref to the original job so
@@ -271,8 +312,15 @@ function makeScanCommand(overrides = {}) {
     }));
     // L-4: inject profile.geo into filter rules. Default unrestricted block
     // means the geo check is a no-op for Jared (back-compat).
-    const filterRulesWithGeo = { ...filterRules, geo: profile.geo };
-    const filterResult = deps.filterJobs(filterInputs, filterRulesWithGeo, activeCounts);
+    //
+    // BL-XX (2026-05-15): company_cap intentionally stripped here. The cap is
+    // an apply-time safeguard against ATS deprioritization, not a discovery
+    // gate. Letting the cap fire at scan time hid too much frontier hiring
+    // (AI-native labs typically post 50-500 roles; capping them at 3 per
+    // scan blocked the entire pipeline from surfacing FDE/SE/AI PM signal).
+    // The cap is still enforced in prepare.js when promoting Inbox → To Apply.
+    const filterRulesWithGeo = { ...filterRules, geo: profile.geo, company_cap: null };
+    const filterResult = deps.filterJobs(filterInputs, filterRulesWithGeo, {});
     const passedJobs = filterResult.passed.map((p) => p._job);
     const rejectedEntries = filterResult.rejected.map((r) => ({
       job: r.job._job,
