@@ -169,9 +169,7 @@ function makeScanCommand(overrides = {}) {
         const visibleKeys = new Set(visibleRows.map((r) => `${r.source}|${r.slug}`));
         for (const r of companyRows) {
           if (!visibleKeys.has(`${r.source}|${r.slug}`)) {
-            stdout(
-              `  - "${r.name}" (${r.source}/${r.slug}) profile="${r.profile || "<empty>"}"`
-            );
+            stdout(`  - "${r.name}" (${r.source}/${r.slug}) profile="${r.profile || "<empty>"}"`);
           }
         }
       }
