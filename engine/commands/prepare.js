@@ -209,23 +209,31 @@ function applyPrepareFilter(apps, rules, activeCounts) {
 
     // L-4 (RFC 013): profile-level geo enforcement at prepare time.
     // app.location comes from TSV (schema v3, G-5). Empty location in metro
-    // mode → geo_no_location reject. The check is gated on rules.geo.mode
-    // !== "unrestricted" so Jared sees zero behavior change.
-    if (rules && rules.geo && rules.geo.mode && rules.geo.mode !== "unrestricted") {
+    // mode → geo_no_location reject. Restrictive-mode failures filter the
+    // row out; unrestricted always passes (no behavior change for Jared).
+    //
+    // BL-102: cache the enforceGeo result on the passing app as `_geoResult`
+    // so `buildBatchEntry` doesn't recompute it. The field flows through the
+    // URL-check pipeline via spread (`{ ...row, ... }` in url_check.js) and
+    // reaches `urlRes` intact.
+    let geoResultForApp = null;
+    if (rules && rules.geo) {
       const locsForGeo = app.location ? [app.location] : [];
-      const geoResult = enforceGeo(locsForGeo, rules.geo);
-      if (!geoResult.ok) {
+      geoResultForApp = enforceGeo(locsForGeo, rules.geo);
+      const mode = rules.geo.mode;
+      if (!geoResultForApp.ok && mode && mode !== "unrestricted") {
         skipped.push({
           key: app.key,
-          reason: geoResult.reason,
-          mode: rules.geo.mode,
+          reason: geoResultForApp.reason,
+          mode,
           url: app.url,
         });
         continue;
       }
     }
 
-    passed.push(app);
+    const passedApp = geoResultForApp ? { ...app, _geoResult: geoResultForApp } : app;
+    passed.push(passedApp);
     counts[app.companyName] = current + 1;
   }
 
@@ -331,9 +339,12 @@ function buildBatchEntry(
   // applyPrepareFilter geo check, so geo_decision is "allowed" by construction.
   // We still surface the field on every entry so SKILL Step 3 has a
   // deterministic source-of-truth. matchedBy describes WHY it passed.
-  if (profile.geo) {
-    const locsForGeo = urlRes.location ? [urlRes.location] : [];
-    const geoResult = enforceGeo(locsForGeo, profile.geo);
+  //
+  // BL-102: read the cached `_geoResult` attached by `applyPrepareFilter`
+  // instead of recomputing. The cache flows through url_check.js via the
+  // `{ ...row, ... }` spread.
+  if (profile.geo && urlRes._geoResult) {
+    const geoResult = urlRes._geoResult;
     entry.geo_decision = geoResult.ok ? "allowed" : "rejected";
     if (geoResult.matchedBy) entry.geo_matched_by = geoResult.matchedBy;
     if (geoResult.reason) entry.geo_reason = geoResult.reason;

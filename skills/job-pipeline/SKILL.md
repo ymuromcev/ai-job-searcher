@@ -262,14 +262,9 @@ Read profiles/<id>/prepare_context.json
 
 Report stats: `inboxTotal` / `afterFilter` / `inBatch` / `urlAlive` / `urlDead`. Proceed without confirmation — the CLI's `--batch N` flag already gates batch size; Claude does not re-prompt the user. Default is 30; adjust by re-running pre-phase with a different `--batch`.
 
-**Step 3 — Geo decision (now profile-driven, L-4 / RFC 013)**
+**Step 3 — Geo decision**
 
-The engine pre-phase already enforces `profile.geo` policy and surfaces the result on every batch entry. **Read `prepare_context.batch[i].geo_decision` — do NOT WebFetch for geo.**
-
-For each job in `batch`:
-- `geo_decision === "allowed"` → proceed to Step 4. The `geo_matched_by` field describes WHY it passed (`"city:Sacramento"` / `"remote"` / `"country:US"` / `"unrestricted"`) — useful when generating the fit rationale.
-- `geo_decision === "rejected"` → already pruned by engine. You won't see it in `batch[]` (it's in `prepare_context.skipped[]` with reason `"geo_metro_miss"` / `"geo_country_miss"` / `"geo_remote_only_miss"` / `"geo_blocklist"` / `"geo_no_location"`). The `stats.skipReasons` breakdown shown in Step 12 includes geo-counters.
-- `geo_decision` field absent (legacy `prepare_context.json` from before L-4 migration, or profile without `profile.geo` block) → fallback: WebFetch JD location, apply simple US-policy as before. Engine version post-2026-05-04 always populates `geo_decision`.
+Read `prepare_context.batch[i].geo_decision` — pass through as-is. Engine has already computed; do NOT WebFetch for geo.
 
 **Step 4 — Fit scoring (per job)**
 
@@ -311,12 +306,9 @@ If `prepare_context.unknownTierCompanies` is non-empty, assign each company a ti
 
 After tiering, the engine will persist the assignments to `profile.json.company_tiers` on commit (one-shot per company). It also uses them to set the Notion Companies DB `Tier` field on first push.
 
-**Step 6 — Salary (auto-fill)**
+**Step 6 — Salary**
 
-For each remaining job:
-- If `prepare_context.batch[i].salary` is non-null: use it as-is.
-- If `salary` is null AND the entry has `unknownTier: true`: look up the tier you just assigned in Step 5.7, then use `prepare_context.salaryConfig` (per-profile matrix + level parser + COL config from `profile.json.salary`). When `salaryConfig` is null the engine's default fintech-PM matrix in `engine/core/salary_calc.js` applies. Pick the row at Tier × Level (level = engine `parseLevel(title, salaryConfig.levelParser)`). Compute `salaryMin` / `salaryMax` from the matrix and apply the COL adjustment defined in `salaryConfig.colAdjustment` (defaults: SF/NYC +7.5% unless Remote).
-- If `salary` is null AND `unknownTier` is **not** true: this means the tier is known but the matrix doesn't cover the level — flag to user with the company name and title, do NOT invent a range.
+Read `prepare_context.batch[i].salary` — pass through. Engine computes via `salary_calc.js`.
 
 **Step 7 — Archetype selection (per job)**
 

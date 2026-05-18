@@ -14,10 +14,21 @@
 // Free tier: https://developer.adzuna.com/ — 250 searches/month, no credit card.
 //
 // Discovery config (from ctx.discovery.keyword_search in profile.json):
-//   keywords         string[]  default: ["Product Manager", "Senior Product Manager"]
+//   keywords         string[]  default: derived from filterRules.role_targets
+//                               (RFC 030/033 single source of truth) when
+//                               absent/empty; otherwise the hardcoded fallback
+//                               ["Product Manager", "Senior Product Manager"].
 //   location         string    default: "United States"
 //   results_per_keyword number default: 50
 //   max_age_days     number    default: 30
+//
+// Keyword derivation (BL-87, 2026-05-18):
+//   When `keyword_search.keywords` is absent or empty, read
+//   `ctx.filterRules.role_targets.tracks[].patterns[].pattern`,
+//   flatten + dedupe (case-insensitive, preserve original casing),
+//   strip regex anchors (^, $, \b), expand simple `(a|b)` alternations,
+//   skip patterns too regex-y to convert. This keeps adzuna aligned with
+//   role_targets so a profile only edits one place.
 
 const { assertJob } = require("./_types.js");
 const { defaultFetch } = require("./_http.js");
@@ -30,6 +41,94 @@ const DEFAULT_KEYWORDS = ["Product Manager", "Senior Product Manager"];
 const DEFAULT_LOCATION = "United States";
 const DEFAULT_RESULTS_PER_KEYWORD = 50;
 const DEFAULT_MAX_AGE_DAYS = 30;
+
+// BL-87: regex tokens we don't try to query as plain keywords. If a pattern
+// contains any of these after anchor-stripping + alternation expansion, the
+// pattern is dropped (silent skip — fallback handles empty result).
+//   - character classes  : [ ]
+//   - backslash classes  : \w \d \s \b \W \D \S (after anchor strip we still
+//                          see \w-style remnants; treat anything `\<letter>`
+//                          as regex-y)
+//   - quantifiers        : ? * + { }
+//   - leftover parens    : ( )
+//   - alternation pipe   : | (only inside an unconverted group; bare top-level
+//                          pipes are unusual and we err on dropping)
+const REGEXY_RE = /[\[\]?*+{}()|]|\\[a-zA-Z]/;
+
+// Strip regex anchors from a single token (no parens involved).
+function stripAnchors(s) {
+  return String(s || "")
+    .replace(/\\b/g, "")
+    .replace(/^\^/, "")
+    .replace(/\$$/, "")
+    .trim();
+}
+
+// Expand a SINGLE top-level `(a|b|c)` group into multiple tokens.
+// Examples:
+//   "product (manager|owner)" -> ["product manager", "product owner"]
+//   "senior pm"               -> ["senior pm"] (no group, returned as-is)
+//   "(a|b) (c|d)"             -> [] (two groups — too complex, skipped)
+//   "(foo|bar)$"              -> ["foo", "bar"] (anchors already stripped)
+// Returns [] when the group is unbalanced or contains regex-y inner content.
+function expandSimpleAlternation(token) {
+  const open = token.indexOf("(");
+  if (open === -1) return [token];
+  const close = token.indexOf(")", open + 1);
+  if (close === -1) return [];
+  // Reject if there's a second `(` after the first group — multiple groups
+  // multiply combinatorially and we keep the conversion deliberate-small.
+  if (token.indexOf("(", close) !== -1) return [];
+  const before = token.slice(0, open);
+  const inner = token.slice(open + 1, close);
+  const after = token.slice(close + 1);
+  // Inner must be a flat `a|b|c` list — no nested groups, anchors, or
+  // regex meta in any alternative.
+  if (!inner.includes("|")) return [];
+  const alts = inner.split("|").map((s) => s.trim()).filter(Boolean);
+  if (alts.length === 0) return [];
+  if (alts.some((a) => REGEXY_RE.test(a))) return [];
+  // before/after must be plain text too.
+  if (REGEXY_RE.test(before) || REGEXY_RE.test(after)) return [];
+  return alts.map((a) => `${before}${a}${after}`.trim()).filter(Boolean);
+}
+
+// Convert a single role-target pattern string into zero or more keyword
+// strings. Returns [] when the pattern is too regex-y to safely query.
+function patternToKeywords(rawPattern) {
+  const stripped = stripAnchors(rawPattern);
+  if (!stripped) return [];
+  const expanded = expandSimpleAlternation(stripped);
+  // Drop any leftover regex-y tokens (e.g. quantifiers `?+*`, char classes,
+  // backslash escapes that aren't anchors). Anchors were already removed.
+  return expanded.filter((t) => t && !REGEXY_RE.test(t));
+}
+
+// Walk `filterRules.role_targets.tracks[].patterns[]`, convert each, dedupe
+// case-insensitively (preserving the original casing of the first occurrence),
+// and return a flat keyword list. Empty array when nothing usable was found.
+function deriveKeywordsFromRoleTargets(filterRules) {
+  const rt = filterRules && filterRules.role_targets;
+  const tracks = rt && Array.isArray(rt.tracks) ? rt.tracks : [];
+  if (tracks.length === 0) return [];
+  const seen = new Set();
+  const out = [];
+  for (const track of tracks) {
+    const patterns = track && Array.isArray(track.patterns) ? track.patterns : [];
+    for (const p of patterns) {
+      const raw = p && typeof p === "object" ? p.pattern : p;
+      if (!raw) continue;
+      const expanded = patternToKeywords(raw);
+      for (const kw of expanded) {
+        const key = kw.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(kw);
+      }
+    }
+  }
+  return out;
+}
 
 function companySlug(name) {
   return (
@@ -123,10 +222,17 @@ async function discover(targets, ctx = {}) {
     return [];
   }
 
-  const keywords =
-    Array.isArray(kwConfig.keywords) && kwConfig.keywords.length > 0
-      ? kwConfig.keywords
-      : DEFAULT_KEYWORDS;
+  // BL-87: when keyword_search.keywords is non-empty it wins (explicit
+  // override). Otherwise derive from role_targets so the profile only has
+  // to maintain one place. Final fallback = hardcoded PM defaults so
+  // older profiles / ad-hoc test ctx still work.
+  let keywords;
+  if (Array.isArray(kwConfig.keywords) && kwConfig.keywords.length > 0) {
+    keywords = kwConfig.keywords;
+  } else {
+    const derived = deriveKeywordsFromRoleTargets(ctx && ctx.filterRules);
+    keywords = derived.length > 0 ? derived : DEFAULT_KEYWORDS;
+  }
   const location =
     typeof kwConfig.location === "string" && kwConfig.location
       ? kwConfig.location
@@ -163,4 +269,10 @@ async function discover(targets, ctx = {}) {
   return allJobs;
 }
 
-module.exports = { source: SOURCE, discover, feedMode: true };
+module.exports = {
+  source: SOURCE,
+  discover,
+  feedMode: true,
+  // Exported for unit tests (BL-87). Not part of the adapter contract.
+  _internals: { deriveKeywordsFromRoleTargets, patternToKeywords },
+};

@@ -1,6 +1,21 @@
 // Email-source and content filters for the check command.
 // Ported from ../../Job Search/check_emails.js:54-74, 224-267 (prototype).
 
+const { findTitleBlocklistHit } = require("./filter.js");
+
+// Word-boundary regex mirroring filter.js#makeBoundaryRegex semantics.
+// Inlined (not imported) because filter.js does not export it and BL-100
+// requires using the same mechanism without modifying filter.js.
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function makeBoundaryRegex(needle) {
+  const lower = String(needle).toLowerCase();
+  const startB = /\w/.test(lower[0]) ? "\\b" : "";
+  const endB = /\w/.test(lower[lower.length - 1]) ? "\\b" : "";
+  return new RegExp(`${startB}${escapeRegex(lower)}${endB}`, "i");
+}
+
 // ATS domains — senders on these platforms are job-application-system
 // notifications (acks, rejections, interview invites, etc.). Used in three
 // places:
@@ -202,23 +217,36 @@ function matchesRecruiterSubject(subject) {
   return RECRUITER_SUBJECT_PATTERNS.some((p) => p.test(subject));
 }
 
-// Level blocklist uses substring match on the title (prototype behavior).
+// Level blocklist — word-boundary match on the title. BL-100: shares
+// semantics with filter.js#findTitleBlocklistHit so the same blocklist
+// behaves identically for jobs (scan/prepare) and for emails (check).
+// Prevents false hits like "rn" matching "PRN Coordinator".
 // rules arrives in the flat engine shape after profile_loader normalization:
 //   { title_blocklist: [{pattern, reason}, ...] }
 function isLevelBlocked(title, rules) {
   if (!rules || !Array.isArray(rules.title_blocklist)) return false;
-  const t = (title || "").toLowerCase();
-  return rules.title_blocklist.some((p) =>
-    t.includes(String((p && (p.pattern || p)) || "").toLowerCase())
-  );
+  const patterns = rules.title_blocklist
+    .map((p) => String((p && (p.pattern || p)) || ""))
+    .filter(Boolean);
+  return findTitleBlocklistHit(title || "", patterns) != null;
 }
 
-// Location blocklist uses substring match on free-text context (subject/body).
+// Location blocklist — word-boundary match on free-text context
+// (subject/body). BL-100: same word-boundary mechanism as title above so
+// patterns like "ny" don't fire inside "company". Different from
+// findTitleBlocklistHit: any blocklist hit anywhere in the text blocks
+// (no slash-split / "any clean part wins" logic — free text is not a
+// compound title).
 // rules arrives in the flat engine shape: { location_blocklist: [strings] }.
 function isLocationBlocked(text, rules) {
   if (!rules || !Array.isArray(rules.location_blocklist)) return false;
-  const t = (text || "").toLowerCase();
-  return rules.location_blocklist.some((p) => t.includes(String(p || "").toLowerCase()));
+  const t = String(text || "");
+  if (!t) return false;
+  return rules.location_blocklist.some((p) => {
+    const needle = String(p || "");
+    if (!needle) return false;
+    return makeBoundaryRegex(needle).test(t);
+  });
 }
 
 // Deduplication against existing applications.tsv rows.

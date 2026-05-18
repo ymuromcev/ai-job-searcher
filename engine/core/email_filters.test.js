@@ -90,6 +90,21 @@ test("isLocationBlocked: substring match", () => {
   assert.ok(!isLocationBlocked("San Francisco", rules));
 });
 
+// BL-100: word-boundary semantics shared with filter.js. A blocklist
+// pattern "rn" must not spuriously match "PRN" in an email subject —
+// same bug class as BL-79 (prepare.js title_blocklist).
+test("isLevelBlocked: word-boundary — 'rn' does NOT match 'PRN'", () => {
+  const rules = { title_blocklist: [{ pattern: "rn" }] };
+  assert.ok(!isLevelBlocked("PRN Coordinator", rules));
+  assert.ok(!isLevelBlocked("PRN Dental Hygienist Position", rules));
+});
+
+test("isLevelBlocked: word-boundary — exact word 'RN' IS blocked by 'rn'", () => {
+  const rules = { title_blocklist: [{ pattern: "rn" }] };
+  assert.ok(isLevelBlocked("RN Manager", rules));
+  assert.ok(isLevelBlocked("Senior RN, ICU", rules));
+});
+
 test("isTSVDup: matches by (company, role) composite", () => {
   const rows = [
     { companyName: "Affirm", title: "Product Manager, Risk" },

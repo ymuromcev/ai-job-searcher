@@ -23,6 +23,7 @@ Commands:
 | `check` | Two-phase Gmail response polling (status updates + comments). |
 | `answer` | Two-phase application Q&A reuse + push to Notion Application Q&A DB. |
 | `indeed-prep` | Print Indeed scan playbook for a browser MCP. Phase 1 of the Indeed ingest flow. |
+| `reclassify` | Re-run the email classifier across historical `OTHER` entries in `processed_messages.json` (30-day window). Dry-run by default. |
 
 The dispatcher also runs deterministic post-command hooks. Today the only hook is `scan → sync`: a successful `scan` automatically chains a `sync --apply` (suppressed by `--no-sync` or `--dry-run`).
 
@@ -309,6 +310,52 @@ node engine/cli.js indeed-prep --profile <id>
 Common errors:
 
 - `error: indeed config not found` — profile lacks the Indeed adapter config block.
+
+### reclassify
+
+Synopsis: `node engine/cli.js reclassify --profile <id> [--since <iso>] [--limit <n>] [--apply] [--notion] [--verbose]`
+
+Re-evaluates historical `OTHER` entries in `profiles/<id>/.gmail-state/processed_messages.json` through the current classifier (RFC 028 / BL-44). After classifier widening (e.g. for ATS multi-step interview invites), future `check` ticks catch the new patterns, but entries already persisted as `OTHER` are never re-judged. `reclassify` closes that gap: re-fetch each `OTHER` message body over IMAP (sharing the same app-password transport as `check --auto`), classify again, and report what changed. Window is 30 days (anything older is already pruned from `processed_messages.json`). Dry-run by default — `--apply` rewrites the JSON state, `--apply --notion` additionally walks each reclassified row interactively and updates the matching Notion page (status + bot comment).
+
+Flags:
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--profile <id>` | string | — | Required. |
+| `--since <iso>` | string | — | Only consider `OTHER` entries with `date >= ISO`. Clamped to a 30-day max window. |
+| `--limit <n>` | int | — | Cap entries per run. Useful for smoke / staged dry-runs. |
+| `--apply` | boolean | false | Rewrite `processed_messages.json` with new classifier types. Without it the command prints the plan only. |
+| `--notion` | boolean | false | With `--apply`: interactive per-row prompt to update the matching Notion page status and add a bot comment. Rows in a terminal status (`Inbox`, `Rejected`, `Closed`, `Archived`, `No Response`) default the prompt to `N` — operator must explicitly type `y` to overwrite. Accepts `y`, `n`, `skip-all`, `quit`. |
+| `--verbose` | boolean | false | Print per-id IMAP fetch progress to stderr and log `unchanged` rows alongside the reclassified ones. |
+
+Outputs and side effects:
+
+- Always prints a per-row report (`OTHER → <NewType>` with classifier evidence) and a summary line (`scanned · reclassified · unchanged · errors`).
+- `--apply`: writes a timestamped backup `processed_messages.json.<iso>.bak` next to the state file, then rewrites `processed_messages.json` with the new types. `last_check` is intentionally **not** bumped — `reclassify` is not a check tick.
+- `--apply --notion`: per accepted row, calls Notion `pages.update` for the proposed status transition and `comments.create` for a bot comment crediting BL-44. Type → status map: `INTERVIEW_INVITE → Interview`, `REJECTION → Rejected`, `POSITION_CLOSED → Closed`. `INFO_REQUEST` and `ACKNOWLEDGMENT` leave the page status alone (comment only).
+- Partial Notion failures (status moved, comment failed) are surfaced loudly on stderr with both `page <id>` and `source <messageId>` so the operator can grep for recovery.
+
+Example:
+
+```bash
+# Dry-run: see what the current classifier would change in the last 30 days
+node engine/cli.js reclassify --profile <id>
+
+# Smoke first 5 entries since a specific date
+node engine/cli.js reclassify --profile <id> --since 2026-04-15T00:00:00Z --limit 5
+
+# Commit JSON state only
+node engine/cli.js reclassify --profile <id> --apply
+
+# Commit JSON state + walk Notion updates interactively
+node engine/cli.js reclassify --profile <id> --apply --notion
+```
+
+Common errors:
+
+- `gmail credentials missing` — namespaced `<ID>_GMAIL_USER` or `<ID>_GMAIL_APP_PASSWORD` env vars absent. Same credentials as `check --auto`; generate the app-password at <https://myaccount.google.com/apppasswords>.
+- `error: IMAP batch fetch failed after retries` — transient IMAP failures retry with exponential backoff (up to 5 attempts); this surfaces only when the whole batch fails. Re-run later.
+- `error: missing <ID>_NOTION_TOKEN — Notion updates skipped` — `--apply --notion` was requested but no Notion token is configured. The JSON state has already been written; rerun with `--notion` once the token is set.
 
 ## Environment variables
 

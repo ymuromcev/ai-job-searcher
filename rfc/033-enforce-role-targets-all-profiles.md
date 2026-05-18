@@ -108,6 +108,16 @@ Add another track? (y/n)
 Update `_example/filter_rules.json` to include a one-track
 `role_targets` placeholder so future copies inherit the shape.
 
+### 2.5 Adapter defaults (BL-87, 2026-05-18)
+
+Keyword-search adapters default their query list from
+`filter_rules.role_targets.tracks[].patterns` when the profile does not set an
+explicit `discovery.keyword_search.keywords` override. First landing: adzuna
+(`engine/modules/discovery/adzuna.js`). Anchors (`^`, `$`, `\b`) are stripped
+and simple `(a|b)` alternations are expanded; patterns too regex-y to convert
+are silently skipped. Editing `role_targets` now also moves the adzuna query
+surface — one source of truth, end to end.
+
 ## 3. Non-goals
 
 - This RFC does **not** change the blocklist semantics. Both gates
