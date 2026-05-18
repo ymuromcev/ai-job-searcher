@@ -41,7 +41,13 @@ const HF_FIXTURE = {
       function: "Engineering",
       industry: "Computer Software",
       locations: [
-        { country: "France", countryCode: "FR", city: "Paris", region: "Île-de-France", hidden: false },
+        {
+          country: "France",
+          countryCode: "FR",
+          city: "Paris",
+          region: "Île-de-France",
+          hidden: false,
+        },
       ],
     },
     {
@@ -59,10 +65,9 @@ const HF_FIXTURE = {
 
 test("workable.discover maps fixture to normalized jobs", async () => {
   const fetchFn = makeFetch({ [HF_URL]: { status: 200, body: HF_FIXTURE } });
-  const jobs = await workable.discover(
-    [{ name: "Hugging Face", slug: "huggingface" }],
-    { fetchFn }
-  );
+  const jobs = await workable.discover([{ name: "Hugging Face", slug: "huggingface" }], {
+    fetchFn,
+  });
   assert.equal(jobs.length, 2);
   for (const j of jobs) assertJob(j);
 
@@ -101,18 +106,13 @@ test("workable.discover hides locations flagged hidden:true and falls back to le
             country: "USA",
             city: "San Francisco",
             state: "CA",
-            locations: [
-              { country: "USA", city: "Internal-Office", region: "CA", hidden: true },
-            ],
+            locations: [{ country: "USA", city: "Internal-Office", region: "CA", hidden: true }],
           },
         ],
       },
     },
   });
-  const [j] = await workable.discover(
-    [{ name: "Hugging Face", slug: "huggingface" }],
-    { fetchFn }
-  );
+  const [j] = await workable.discover([{ name: "Hugging Face", slug: "huggingface" }], { fetchFn });
   assertJob(j);
   assert.ok(!j.locations.some((l) => l.includes("Internal-Office")));
   assert.ok(j.locations.some((l) => l.includes("San Francisco") && l.includes("USA")));
@@ -139,20 +139,16 @@ test("workable.discover handles fully-remote job with empty locations[] + no leg
       },
     },
   });
-  const [j] = await workable.discover(
-    [{ name: "Hugging Face", slug: "huggingface" }],
-    { fetchFn }
-  );
+  const [j] = await workable.discover([{ name: "Hugging Face", slug: "huggingface" }], { fetchFn });
   assertJob(j);
   assert.deepEqual(j.locations, ["Remote"]);
 });
 
 test("workable.discover dedupes overlap between structured locations[] and legacy city/state/country", async () => {
   const fetchFn = makeFetch({ [HF_URL]: { status: 200, body: HF_FIXTURE } });
-  const [j1] = await workable.discover(
-    [{ name: "Hugging Face", slug: "huggingface" }],
-    { fetchFn }
-  );
+  const [j1] = await workable.discover([{ name: "Hugging Face", slug: "huggingface" }], {
+    fetchFn,
+  });
   // HF fixture: telecommuting:true (→ "Remote"), one structured location and a
   // matching legacy city/state/country triple — they MUST collapse into one
   // entry, so total length is 2 not 3.
@@ -177,10 +173,9 @@ test("workable.discover drops records with missing shortcode without aborting ba
       },
     },
   });
-  const jobs = await workable.discover(
-    [{ name: "Hugging Face", slug: "huggingface" }],
-    { fetchFn }
-  );
+  const jobs = await workable.discover([{ name: "Hugging Face", slug: "huggingface" }], {
+    fetchFn,
+  });
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].jobId, "OK01");
 });
@@ -201,10 +196,7 @@ test("workable.discover synthesizes url from shortcode when url + shortlink miss
       },
     },
   });
-  const [j] = await workable.discover(
-    [{ name: "Hugging Face", slug: "huggingface" }],
-    { fetchFn }
-  );
+  const [j] = await workable.discover([{ name: "Hugging Face", slug: "huggingface" }], { fetchFn });
   assertJob(j);
   assert.equal(j.url, "https://apply.workable.com/j/FALLBK1");
 });
