@@ -14,6 +14,8 @@ last_updated: 2026-05-18
 
 **Prevention**: The contract is now array-first; `scan.js` may eventually drop the redundant `location` scalar (separate follow-up). Tests pin every BL-24 case (multi-loc keep, multi-loc block, state-code coverage, country-name false-positive guard, single-string back-compat, locations[]-vs-scalar precedence) so a regression would be loud.
 
+**Cleanup (BL-77, 2026-05-18)**: `scripts/cleanup_non_us_jobs.js` reconciled pre-BL-24 rows still sitting in Jared's TSV. Dry-run found 13 candidates (all obviously non-US: Madrid, Montevideo, TLV, EU, Europe, Sofia, Bogota ×3, MENA, Chile, Krakow). `--apply` archived all 13 (5 Notion `pages.update`, 8 TSV-only) with `skip_reason="location_post_BL24"`. Backup at `applications.tsv.pre-bl77-2026-05-18T09-48-40-925Z`. Idempotent re-run confirmed (0 candidates, 13 already-marked). Note: BL-77 Q1 originally proposed status `Discarded`, which is not in `EXPECTED_STATUS_OPTIONS` — used `Archived` instead, audit trail preserved via TSV `skip_reason`. Schema mismatch caught during recon, not at runtime.
+
 ---
 
 
