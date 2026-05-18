@@ -170,7 +170,7 @@ node engine/cli.js <command> --profile <id> [flags]
 
 ## Discovery adapters
 
-Fourteen adapters ship out of the box; enable them per profile in
+Fifteen adapters ship out of the box; enable them per profile in
 `profile.json.modules`:
 
 | Module | Source |
@@ -179,6 +179,7 @@ Fourteen adapters ship out of the box; enable them per profile in
 | `discovery:lever` | Lever-hosted careers pages |
 | `discovery:ashby` | Ashby-hosted careers pages |
 | `discovery:smartrecruiters` | SmartRecruiters-hosted careers pages |
+| `discovery:workable` | Workable-hosted careers pages (AI tier-2, Hugging Face etc.) |
 | `discovery:workday` | Workday tenant feeds |
 | `discovery:oracle_cloud` | Oracle Recruiting Cloud / Fusion HCM CE sites (multi-tenant via `siteUrl`) |
 | `discovery:jobsyn` | NLX Jobsyn (Direct Employers Foundation; multi-tenant via `X-Origin` header) |

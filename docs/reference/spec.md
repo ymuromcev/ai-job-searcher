@@ -294,6 +294,7 @@ job. Adapters **may** early-drop on strong domain signals (Workday
 | `greenhouse` | `boards-api.greenhouse.io/v1/boards/<slug>/jobs` | none | numeric |
 | `lever` | `api.lever.co/v0/postings/<slug>?mode=json` | none | UUID |
 | `ashby` | `api.ashbyhq.com/posting-api/job-board/<slug>?includeCompensation=true` | none | UUID |
+| `workable` | `apply.workable.com/api/v1/widget/accounts/<slug>` | none | shortcode (10-char alphanum) |
 | `smartrecruiters` | `api.smartrecruiters.com/v1/companies/<slug>/postings` | none | numeric |
 | `workday` | `<tenant>/wday/cxs/<tenant>/<site>/jobs` (POST) | none for most tenants | `R\d{5,}` / `JR\d{5,}` |
 | `calcareers` | `jobs.ca.gov/CalHrPublic/Jobs/JobPosting.aspx` (form-post) | none | `<JobControlId>` |

@@ -57,8 +57,8 @@ Source: `CORE_FIELDS` in `scripts/stage18/property_map.js`.
 | `notes` | `Notes` | rich_text |
 
 `Source` ships with default options for every shipped adapter
-(`greenhouse`, `lever`, `ashby`, `smartrecruiters`, `workday`,
-`remoteok`, `calcareers`, `usajobs`, `manual`, `builtin`).
+(`greenhouse`, `lever`, `ashby`, `workable`, `smartrecruiters`,
+`workday`, `remoteok`, `calcareers`, `usajobs`, `manual`, `builtin`).
 
 ### `prepare`-gated
 
