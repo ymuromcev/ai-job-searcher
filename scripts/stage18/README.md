@@ -105,7 +105,7 @@ The current orchestrator stops short of the hub UI because those pieces are prof
 
 | File | Role |
 |---|---|
-| `../../profiles/_example/intake.template.md` | The questionnaire. Ten sections A–K. The skill or maintainer ships it to the candidate. |
+| `../../profiles/_example/intake.template.md` | The questionnaire. Eleven sections A–L. Section L (role targets) is required by RFC 033. The skill or maintainer ships it to the candidate. |
 | `parse_intake.js` | Markdown → `intake.json`. Lenient; EN/RU values OK. |
 | `property_map.js` | Feature-gated Notion property_map resolver (core + per-module gated fields). |
 | `generators/profile_json.js` | intake → `profile.json` (identity, modules, tiers, notion, property_map). |
@@ -150,11 +150,12 @@ See `parse_intake.js` — top-level keys track section letters:
   modules: ["discovery:greenhouse", ...],
   env_checks: { env_notion_token_set: bool, env_usajobs_set: bool },
   prototype: { has_prototype: bool, prototype_path?, import_*: bool, ... },
-  flags: { watcher_enabled?, include_companies_seed? }
+  flags: { watcher_enabled?, include_companies_seed? },
+  role_targets: [{ id, name?, fit_treatment?, bridge_note?, patterns: [string, ...] }, ...]
 }
 ```
 
-`validateIntake` requires: `identity.profile_id`, `identity.full_name`, `identity.email`, `notion.parent_page_url`, at least one resume archetype, and `env_checks.env_notion_token_set=true`.
+`validateIntake` requires: `identity.profile_id`, `identity.full_name`, `identity.email`, `notion.parent_page_url`, at least one resume archetype, `env_checks.env_notion_token_set=true`, and at least one role-track in `role_targets` with one or more title patterns (RFC 033).
 
 ## Feature-gated property_map
 

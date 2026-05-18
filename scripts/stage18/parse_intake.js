@@ -23,6 +23,7 @@ const SECTION_MAP = {
   I: "env_checks",
   J: "prototype",
   K: "flags",
+  L: "role_targets", // special-cased (sub-sections, RFC 033)
 };
 
 // Fields we want as numbers (if present and parseable).
@@ -225,6 +226,46 @@ function parseSectionH(events) {
   return modules;
 }
 
+// RFC 033: parse role-track sub-sections. Same shape as parseSectionE
+// (one sub-section per track) but the meaningful "list" key is `patterns`
+// instead of `bullets`. Each track ends up as:
+//   { id, name, fit_treatment?, bridge_note?, patterns: [string, ...] }
+// The generator (generators/filter_rules.js) wraps each string into the
+// engine's canonical { pattern, reason } shape.
+function parseSectionL(events) {
+  const tracks = [];
+  let current = null;
+  for (const ev of events) {
+    if (ev.kind === "subsection") {
+      if (current) tracks.push(current);
+      current = { id: ev.slug, _lines: [] };
+      continue;
+    }
+    if (ev.kind === "line" && current) {
+      current._lines.push(ev);
+    }
+  }
+  if (current) tracks.push(current);
+
+  const result = [];
+  for (const t of tracks) {
+    const folded = foldSectionLines(t._lines);
+    const coerced = coerceFields("L", folded);
+    if (!t.id || t.id.startsWith("<") || t.id === "<track_id>") continue;
+    // A track is meaningful only if it has at least one pattern. Skip
+    // sub-sections where the user left the patterns list empty so that
+    // half-filled templates don't slip through validation.
+    const patterns = Array.isArray(coerced.patterns) ? coerced.patterns : [];
+    if (patterns.length === 0) continue;
+    const entry = { id: t.id, patterns };
+    if (coerced.name) entry.name = coerced.name;
+    if (coerced.fit_treatment) entry.fit_treatment = coerced.fit_treatment;
+    if (coerced.bridge_note) entry.bridge_note = coerced.bridge_note;
+    result.push(entry);
+  }
+  return result;
+}
+
 function parseIntake(md) {
   if (typeof md !== "string" || !md.length) {
     throw new Error("parseIntake: input must be a non-empty string");
@@ -255,6 +296,10 @@ function parseIntake(md) {
       result[outKey] = parseSectionH(sec.events);
       continue;
     }
+    if (letter === "L") {
+      result[outKey] = parseSectionL(sec.events);
+      continue;
+    }
     const lines = sec.events.filter((e) => e.kind === "line");
     const folded = foldSectionLines(lines);
     result[outKey] = coerceFields(letter, folded);
@@ -278,6 +323,25 @@ function validateIntake(intake) {
   const archetypes = intake.resume_archetypes || [];
   if (!archetypes.length) {
     errors.push("at least one resume archetype (section E) is required");
+  }
+
+  // RFC 033: every profile MUST declare at least one role-track allowlist.
+  // Without it, the engine has no positive title gate and any non-blocked
+  // title enters the pipeline (2026-05-18 lilia incident).
+  const tracks = intake.role_targets || [];
+  if (!tracks.length) {
+    errors.push(
+      "at least one role-track (section L) with one or more title patterns " +
+        "is required — see RFC 033"
+    );
+  } else {
+    for (const t of tracks) {
+      if (!Array.isArray(t.patterns) || t.patterns.length === 0) {
+        errors.push(
+          `role-track "${t.id}" (section L) needs at least one title pattern`
+        );
+      }
+    }
   }
 
   const envs = intake.env_checks || {};
@@ -350,6 +414,7 @@ module.exports = {
   tokenize,
   foldSectionLines,
   coerceFields,
+  parseSectionL,
   toBool,
   isSkipValue,
   SECTION_MAP,

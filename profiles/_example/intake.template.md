@@ -142,3 +142,25 @@ Skip this section if you don't have an existing local prototype project.
 
 - watcher_enabled: <!-- yes/no; adds Notion "Watcher" person field. Default: no -->
 - include_companies_seed: <!-- yes/no — auto-seed tier_s/a/b/c companies into Companies DB on deploy. Default: yes -->
+
+## L. Role targets (acceptance list) — REQUIRED
+
+At least one track is required (RFC 033). Without a track, the engine has
+no positive title gate and the pipeline accepts anything that doesn't hit
+a blocklist — which is how Lilia ended up with phlebotomy / ED-tech rows
+in her Inbox (2026-05-18).
+
+Each track has an id (short slug), an optional display name, and one or
+more title patterns. Patterns are matched case-insensitively as substrings,
+so "product manager" matches "Senior Product Manager", "Product Manager II",
+etc. Repeat L.1, L.2, ... for each track.
+
+### L.1 <track_id>
+- name: <!-- display name, e.g. Product Manager -->
+- fit_treatment: <!-- one of: primary, bridge. Default: primary -->
+- bridge_note: <!-- optional prose shown to LLM when fit_treatment=bridge -->
+- patterns: <!-- title substrings; one per line -->
+  - <!-- e.g. product manager -->
+  - <!-- e.g. group product manager -->
+
+<!-- Add more: ### L.2 <track_id>, ### L.3 <track_id>, ... -->

@@ -1,10 +1,11 @@
 ---
 id: RFC-033
 title: Enforce role_targets / title_requirelist on every profile
-status: proposed
+status: accepted
 author: Claude (via Jared)
 tier: M
 created: 2026-05-18
+implemented: 2026-05-18
 refs:
   - RFC-030
 ---
@@ -157,4 +158,24 @@ fixed in RFC 030. `_example` needs the template update.
 
 ## 7. Decision
 
-(Pending review.)
+Accepted 2026-05-18. Phase-1 (warn + validate-issue + wizard refusal +
+template) shipped in this PR. Phase-2 (loader hard-fail) deferred to the
+next release after `_example` + `jared` + `lilia` clean.
+
+### Implementation notes
+
+- `engine/core/profile_loader.js` — `loadProfile` now accepts a `warn`
+  callback (defaults to writing the RFC-033 message to `process.stderr`).
+  Pure helper `checkPositiveGate(filterRules, profileId)` returns the
+  warning string or null.
+- `engine/commands/validate.js` — calls `checkPositiveGate` before
+  company_cap; missing positive gate → +1 issue + exit 1. Passes
+  `warn: () => {}` to `loadProfile` to avoid double-printing.
+- `scripts/stage18/parse_intake.js` — new section L parser; `validateIntake`
+  refuses to write `intake.json` without at least one populated track.
+- `scripts/stage18/generators/filter_rules.js` — throws if the intake
+  doesn't carry at least one valid track. Belt-and-suspenders.
+- `profiles/_example/intake.template.md` — section L added with usage
+  hints + RFC-033 reference.
+- `profiles/_example/filter_rules.example.json` — `role_targets.tracks`
+  now contains a placeholder track instead of an empty array.

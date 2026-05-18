@@ -16,12 +16,23 @@
     "patterns": []
   },
   "role_targets": {
-    "_description": "RFC 030 — single source of truth for acceptable role-tracks. Read by scan (title gate) and by LLM prepare (Fit Score). One block changes BOTH gates. Empty tracks[] means no positive title gate.",
+    "_description": "RFC 030 / RFC 033 — single source of truth for acceptable role-tracks. Read by scan (title gate) and by LLM prepare (Fit Score). At least one track with one or more patterns is REQUIRED (RFC 033) — without it the engine has no positive title gate.",
     "fit_treatments": {
       "primary": "Apply Fit Score by domain match only. Track is the candidate's main target.",
       "bridge": "Bridge/stepping-stone role. Apply standard domain logic but never downgrade purely for being on this track instead of the primary one."
     },
-    "tracks": []
+    "tracks": [
+      {
+        "_comment": "Replace this placeholder with one or more real tracks before running the engine. Substring match, case-insensitive.",
+        "id": "your_track",
+        "name": "Your Role Track",
+        "fit_treatment": "primary",
+        "patterns": [
+          { "pattern": "title-substring-1", "reason": "track: your_track" },
+          { "pattern": "title-substring-2", "reason": "track: your_track" }
+        ]
+      }
+    ]
   },
   "location_rules": {
     "_description": "Restrict to specific locations / remote-only. Empty = no location filter.",

@@ -12,8 +12,14 @@ const {
   loadMemory,
   normalizeSalaryConfig,
   normalizeGeo,
+  checkPositiveGate,
   ID_REGEX,
 } = require("./profile_loader.js");
+
+// Silence the RFC 033 positive-gate warning by default in this test file —
+// most fixtures are minimal and would otherwise spam stderr. Tests that
+// assert on the warning pass an explicit capturing function.
+const SILENT_OPTS = { warn: () => {} };
 
 function makeTempProfiles() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "aijs-profiles-"));
@@ -108,7 +114,7 @@ test("loadProfile returns normalized object with paths and loaded sub-configs", 
     }
   );
 
-  const profile = loadProfile("test", { profilesDir: dir });
+  const profile = loadProfile("test", { profilesDir: dir, ...SILENT_OPTS });
   try {
     assert.equal(profile.id, "test");
     assert.equal(profile.identity.email, "t@example.com");
@@ -404,7 +410,7 @@ test("saveProfile: handles empty current company_tiers", () => {
 test("loadProfile: surfaces empty memory block when profile.memory absent", () => {
   const dir = makeTempProfiles();
   writeProfile(dir, "p", { id: "p", identity: { name: "x", email: "x@x" }, modules: [] });
-  const profile = loadProfile("p", { profilesDir: dir });
+  const profile = loadProfile("p", { profilesDir: dir, ...SILENT_OPTS });
   assert.deepEqual(profile.memory, { writingStyle: null, resumeKeyPoints: null, feedback: [] });
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -428,7 +434,7 @@ test("loadProfile: loads memory files declared in profile.memory", () => {
   fs.writeFileSync(path.join(root, "memory/feedback_humanizer.md"), "no AI tells");
   fs.writeFileSync(path.join(root, "memory/notes.md"), "ignored — not feedback_*");
 
-  const profile = loadProfile("p", { profilesDir: dir });
+  const profile = loadProfile("p", { profilesDir: dir, ...SILENT_OPTS });
   assert.equal(profile.memory.writingStyle, "warm 5/10");
   assert.equal(profile.memory.resumeKeyPoints, "front-desk strong fit");
   assert.equal(profile.memory.feedback.length, 2);
@@ -448,7 +454,7 @@ test("loadProfile: missing memory files come back as null without throwing", () 
       resume_key_points_file: "memory/key_points.md",
     },
   });
-  const profile = loadProfile("p", { profilesDir: dir });
+  const profile = loadProfile("p", { profilesDir: dir, ...SILENT_OPTS });
   assert.equal(profile.memory.writingStyle, null);
   assert.equal(profile.memory.resumeKeyPoints, null);
   assert.deepEqual(profile.memory.feedback, []);
@@ -488,7 +494,7 @@ test("normalizeSalaryConfig: maps snake_case to calcSalary opts", () => {
 test("loadProfile: surfaces salaryConfig=null when profile.salary absent (Jared parity)", () => {
   const dir = makeTempProfiles();
   writeProfile(dir, "jared", { id: "jared", identity: { name: "x", email: "x@x" }, modules: [] });
-  const profile = loadProfile("jared", { profilesDir: dir });
+  const profile = loadProfile("jared", { profilesDir: dir, ...SILENT_OPTS });
   assert.equal(profile.salaryConfig, null);
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -505,7 +511,7 @@ test("loadProfile: normalises profile.salary into salaryConfig", () => {
       matrix: { S: { MedAdmin: { min: 48000, max: 58000, mid: 53000 } } },
     },
   });
-  const profile = loadProfile("lilia", { profilesDir: dir });
+  const profile = loadProfile("lilia", { profilesDir: dir, ...SILENT_OPTS });
   assert.equal(profile.salaryConfig.levelParser, "healthcare");
   assert.equal(profile.salaryConfig.salaryMatrix.S.MedAdmin.min, 48000);
   fs.rmSync(dir, { recursive: true, force: true });
@@ -602,7 +608,7 @@ test("loadProfile: surfaces normalized geo block (Lilia metro)", () => {
       blocklist: ["Napa"],
     },
   });
-  const profile = loadProfile("lilia", { profilesDir: dir });
+  const profile = loadProfile("lilia", { profilesDir: dir, ...SILENT_OPTS });
   assert.equal(profile.geo.mode, "metro");
   assert.deepEqual(profile.geo.cities, ["Sacramento", "Roseville"]);
   assert.deepEqual(profile.geo.states, ["CA"]);
@@ -612,7 +618,7 @@ test("loadProfile: surfaces normalized geo block (Lilia metro)", () => {
 test("loadProfile: profile without geo block defaults to unrestricted", () => {
   const dir = makeTempProfiles();
   writeProfile(dir, "jared", { id: "jared" });
-  const profile = loadProfile("jared", { profilesDir: dir });
+  const profile = loadProfile("jared", { profilesDir: dir, ...SILENT_OPTS });
   assert.equal(profile.geo.mode, "unrestricted");
   assert.equal(profile.geo.remote_ok, false);
   fs.rmSync(dir, { recursive: true, force: true });
@@ -622,5 +628,103 @@ test("loadProfile: invalid geo block raises clean error", () => {
   const dir = makeTempProfiles();
   writeProfile(dir, "broken", { id: "broken", geo: { mode: "metro", cities: ["X"] } });
   assert.throws(() => loadProfile("broken", { profilesDir: dir }), /states is required/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- RFC 033: positive-gate enforcement ------------------------------------
+
+test("checkPositiveGate: returns null when role_targets has at least one track with patterns", () => {
+  const out = checkPositiveGate(
+    {
+      role_targets: {
+        tracks: [{ id: "pm", patterns: [{ pattern: "product manager", reason: "PM" }] }],
+      },
+      title_requirelist: [],
+    },
+    "jared"
+  );
+  assert.equal(out, null);
+});
+
+test("checkPositiveGate: returns null when title_requirelist is non-empty (no role_targets)", () => {
+  const out = checkPositiveGate(
+    {
+      role_targets: null,
+      title_requirelist: [{ pattern: "manager", reason: "..." }],
+    },
+    "jared"
+  );
+  assert.equal(out, null);
+});
+
+test("checkPositiveGate: warns when both role_targets and title_requirelist are empty", () => {
+  const out = checkPositiveGate(
+    { role_targets: null, title_requirelist: [] },
+    "lilia"
+  );
+  assert.ok(typeof out === "string");
+  assert.match(out, /profile "lilia"/);
+  assert.match(out, /role_targets/);
+  assert.match(out, /RFC 033/);
+});
+
+test("checkPositiveGate: warns when role_targets has only empty-pattern tracks", () => {
+  const out = checkPositiveGate(
+    {
+      role_targets: { tracks: [{ id: "x", patterns: [] }] },
+      title_requirelist: [],
+    },
+    "lilia"
+  );
+  assert.ok(typeof out === "string");
+  assert.match(out, /role_targets/);
+});
+
+test("checkPositiveGate: warns when filterRules is missing entirely", () => {
+  const out = checkPositiveGate(null, "lilia");
+  assert.ok(typeof out === "string");
+  assert.match(out, /no filter_rules/);
+  assert.match(out, /RFC 033/);
+});
+
+test("loadProfile: emits RFC 033 warning via injected warn callback when no positive gate", () => {
+  const dir = makeTempProfiles();
+  writeProfile(
+    dir,
+    "p",
+    { id: "p", filter_rules_file: "filter_rules.json" },
+    { "filter_rules.json": { company_cap: { max_active: 3 } } }
+  );
+  const warnings = [];
+  loadProfile("p", { profilesDir: dir, warn: (msg) => warnings.push(msg) });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /profile "p"/);
+  assert.match(warnings[0], /role_targets/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("loadProfile: does NOT warn when role_targets has at least one populated track", () => {
+  const dir = makeTempProfiles();
+  writeProfile(
+    dir,
+    "p",
+    { id: "p", filter_rules_file: "filter_rules.json" },
+    {
+      "filter_rules.json": {
+        role_targets: {
+          tracks: [
+            {
+              id: "pm",
+              name: "PM",
+              patterns: [{ pattern: "product manager", reason: "PM" }],
+            },
+          ],
+        },
+      },
+    }
+  );
+  const warnings = [];
+  loadProfile("p", { profilesDir: dir, warn: (msg) => warnings.push(msg) });
+  assert.equal(warnings.length, 0);
   fs.rmSync(dir, { recursive: true, force: true });
 });
