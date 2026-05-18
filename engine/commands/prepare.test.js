@@ -128,6 +128,33 @@ test("applyPrepareFilter: blocks title_blocklist substring", () => {
   assert.equal(skipped[0].reason, "title_blocklist");
 });
 
+// BL-79: title_blocklist must use word-boundary semantics matching filter.js
+// (scan-time matchBlocklists). Plain substring caused "rn" to match "PRN
+// Coordinator" — a job kept by scan would be archived by prepare.
+test("applyPrepareFilter: title_blocklist word-boundary — 'rn' does not match 'PRN'", () => {
+  const apps = [
+    makeApp({ key: "gh:1", title: "PRN Coordinator" }),
+    makeApp({ key: "gh:2", title: "RN Manager" }),
+  ];
+  const rules = { title_blocklist: [{ pattern: "rn", reason: "nursing" }] };
+  const { passed, skipped } = applyPrepareFilter(apps, rules, {});
+  assert.equal(passed.length, 1);
+  assert.equal(passed[0].title, "PRN Coordinator");
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].reason, "title_blocklist");
+  assert.equal(skipped[0].pattern, "rn");
+});
+
+// BL-79: slash-compound titles pass if any part is clean (parity with
+// filter.js matchBlocklists).
+test("applyPrepareFilter: title_blocklist slash-compound — clean part keeps title", () => {
+  const apps = [makeApp({ title: "Product Manager/Marketing Lead" })];
+  const rules = { title_blocklist: [{ pattern: "marketing", reason: "not PM" }] };
+  const { passed, skipped } = applyPrepareFilter(apps, rules, {});
+  assert.equal(passed.length, 1);
+  assert.equal(skipped.length, 0);
+});
+
 test("applyPrepareFilter: enforces company_cap", () => {
   const apps = [
     makeApp({ key: "gh:1", companyName: "Stripe" }),

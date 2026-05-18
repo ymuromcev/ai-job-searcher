@@ -264,6 +264,28 @@ test("BL-24: existing single-string location contract preserved", () => {
   assert.equal(rejected.length, 1);
 });
 
+test("BL-81: U.S.A marker (previously only in geo_enforcer set) now skips blocklist", () => {
+  // Pre-BL-81, filter.js US_MARKERS lacked "u.s.a" — geo_enforcer had it.
+  // Consolidated, both classify "U.S.A" as a US marker.
+  const job = { ...BASE_JOB, locations: ["U.S.A - Anywhere", "Warsaw, Poland"] };
+  const { passed } = filterJobs([job], { location_blocklist: ["Poland"] });
+  assert.equal(passed.length, 1);
+});
+
+test("BL-81 cross-fixture: Sacramento+Warsaw keeps (BL-24 regression)", () => {
+  const job = { ...BASE_JOB, locations: ["Sacramento, CA", "Warsaw, Poland"] };
+  const { passed, rejected } = filterJobs([job], { location_blocklist: ["Poland"] });
+  assert.equal(passed.length, 1);
+  assert.equal(rejected.length, 0);
+});
+
+test("BL-81 cross-fixture: Berlin+Moscow with no US marker is blocked", () => {
+  const job = { ...BASE_JOB, locations: ["Berlin, Germany", "Moscow, Russia"] };
+  const { rejected } = filterJobs([job], { location_blocklist: ["Germany"] });
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].reason.kind, "location_blocklist");
+});
+
 test("BL-24: locations[] is preferred over single-string location when both present", () => {
   // scan.js still emits both for back-compat. The array MUST win.
   const job = {

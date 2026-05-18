@@ -3,7 +3,8 @@
 const test = require("node:test");
 const assert = require("node:assert");
 
-const { enforceGeo, isRemoteLoc, hasUsMarker } = require("./geo_enforcer.js");
+const { enforceGeo, isRemoteLoc, hasUsMarker, US_MARKERS } = require("./geo_enforcer.js");
+const { hasUsMarker: hasUsMarkerFromFilter, US_MARKERS: US_MARKERS_FROM_FILTER } = require("./filter.js");
 
 // --- Mode: unrestricted ----------------------------------------------------
 
@@ -248,6 +249,55 @@ test("hasUsMarker detects US markers and state codes", () => {
   assert.strictEqual(hasUsMarker("munich, germany"), false);
   // Boundary check — "ca" should not match inside word
   assert.strictEqual(hasUsMarker("cairo, egypt"), false);
+});
+
+// --- BL-81: single source of truth + array input -------------------------
+
+test("BL-81: hasUsMarker accepts a single string", () => {
+  assert.strictEqual(hasUsMarker("USA"), true);
+  assert.strictEqual(hasUsMarker("U.S.A"), true);
+  assert.strictEqual(hasUsMarker("United States"), true);
+  assert.strictEqual(hasUsMarker("Remote, US"), true);
+  assert.strictEqual(hasUsMarker("Berlin, Germany"), false);
+});
+
+test("BL-81: hasUsMarker accepts an array — ANY element wins (BL-24 semantic)", () => {
+  // Cross-fixture from BL-81 DoD.
+  assert.strictEqual(hasUsMarker(["Sacramento, CA", "Warsaw, Poland"]), true);
+  assert.strictEqual(hasUsMarker(["Berlin, Germany", "Moscow, Russia"]), false);
+  // u.s.a marker (previously only in geo_enforcer's set) now also covered.
+  assert.strictEqual(hasUsMarker(["U.S.A", "Warsaw, Poland"]), true);
+});
+
+test("BL-81: hasUsMarker handles empty / null / mixed inputs", () => {
+  assert.strictEqual(hasUsMarker([]), false);
+  assert.strictEqual(hasUsMarker(""), false);
+  assert.strictEqual(hasUsMarker(null), false);
+  assert.strictEqual(hasUsMarker(undefined), false);
+  assert.strictEqual(hasUsMarker([null, "", "Sacramento, CA"]), true);
+});
+
+test("BL-81: filter.js re-exports the same hasUsMarker / US_MARKERS as geo_enforcer.js", () => {
+  // Single source of truth — both modules must agree on identity / behaviour.
+  assert.strictEqual(hasUsMarkerFromFilter, hasUsMarker);
+  assert.strictEqual(US_MARKERS_FROM_FILTER, US_MARKERS);
+  for (const probe of [
+    "USA",
+    "U.S.A",
+    "United States",
+    "Remote, US",
+    "Sacramento, CA",
+    "California",
+    "Berlin, Germany",
+    ["Sacramento, CA", "Warsaw, Poland"],
+    ["Berlin, Germany", "Moscow, Russia"],
+  ]) {
+    assert.strictEqual(
+      hasUsMarkerFromFilter(probe),
+      hasUsMarker(probe),
+      `divergence on ${JSON.stringify(probe)}`
+    );
+  }
 });
 
 // --- Single-string legacy fallback ----------------------------------------

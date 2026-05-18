@@ -30,7 +30,9 @@
 
 const REMOTE_MARKERS = ["remote", "anywhere", "work from home", "wfh"];
 
-// US markers — same set as filter.js US_MARKERS.
+// US markers — canonical single source of truth (BL-81). Union of the
+// previously divergent filter.js and geo_enforcer.js lists. `filter.js`
+// imports this constant; do not redefine it elsewhere.
 const US_MARKERS = ["united states", "usa", ", us", "(us)", "u.s.", "u.s.a"];
 
 // US state name → 2-letter code lookup. Used in "us-wide" mode and as
@@ -162,16 +164,38 @@ function isRemoteLoc(locLower) {
   return REMOTE_MARKERS.some((m) => locLower.includes(m));
 }
 
-function hasUsMarker(locLower) {
-  if (US_MARKERS.some((m) => locLower.includes(m))) return true;
-  // State code as standalone token: ", CA" / " CA " / trailing " CA"
-  for (const code of US_STATE_CODES) {
-    const re = new RegExp(`(^|[\\s,])${code.toLowerCase()}([\\s,]|$)`, "i");
-    if (re.test(locLower)) return true;
-  }
-  // Full state name substring.
-  for (const name of US_STATE_NAMES) {
-    if (locLower.includes(name)) return true;
+// Accepts either a single location string or an array of strings. Returns
+// true if ANY element has a US marker (BL-24 semantic: US-hireable in any
+// element wins). Inputs are lowercased internally — callers may pass mixed
+// case.
+function hasUsMarker(stringOrArray) {
+  const arr = Array.isArray(stringOrArray)
+    ? stringOrArray
+    : stringOrArray == null
+      ? []
+      : [stringOrArray];
+  for (const raw of arr) {
+    if (raw == null) continue;
+    const loc = String(raw).toLowerCase();
+    if (!loc) continue;
+    if (US_MARKERS.some((m) => loc.includes(m))) return true;
+    let stateCodeHit = false;
+    for (const code of US_STATE_CODES) {
+      const re = new RegExp(`(^|[\\s,])${code.toLowerCase()}([\\s,]|$)`, "i");
+      if (re.test(loc)) {
+        stateCodeHit = true;
+        break;
+      }
+    }
+    if (stateCodeHit) return true;
+    let stateNameHit = false;
+    for (const name of US_STATE_NAMES) {
+      if (loc.includes(name)) {
+        stateNameHit = true;
+        break;
+      }
+    }
+    if (stateNameHit) return true;
   }
   return false;
 }

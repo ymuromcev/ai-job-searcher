@@ -33,74 +33,10 @@
 //     NOTE: split is "/" only — not "," (e.g. "Supervisor, Medical" stays
 //     a single part: "Medical" is a department modifier, not a co-role).
 
-const { enforceGeo } = require("./geo_enforcer.js");
-
-const US_MARKERS = ["united states", "usa", ", us", "(us)", "u.s."];
-
-// 50 state codes + DC. Matched only when preceded by `, ` and at a word
-// boundary so `, AL` catches "Sacramento, CA" but NOT "Some Place, Algeria"
-// (Algeria starts with "Al" but the trailing word boundary fails). Mixed-case
-// is handled by lowercasing the input before the test. BL-24 / 2026-05-18.
-const US_STATE_CODES = [
-  "al",
-  "ak",
-  "az",
-  "ar",
-  "ca",
-  "co",
-  "ct",
-  "de",
-  "fl",
-  "ga",
-  "hi",
-  "id",
-  "il",
-  "in",
-  "ia",
-  "ks",
-  "ky",
-  "la",
-  "me",
-  "md",
-  "ma",
-  "mi",
-  "mn",
-  "ms",
-  "mo",
-  "mt",
-  "ne",
-  "nv",
-  "nh",
-  "nj",
-  "nm",
-  "ny",
-  "nc",
-  "nd",
-  "oh",
-  "ok",
-  "or",
-  "pa",
-  "ri",
-  "sc",
-  "sd",
-  "tn",
-  "tx",
-  "ut",
-  "vt",
-  "va",
-  "wa",
-  "wv",
-  "wi",
-  "wy",
-  "dc",
-];
-const US_STATE_RE = new RegExp(`,\\s*(?:${US_STATE_CODES.join("|")})\\b`, "i");
-
-function hasUsMarker(locLower) {
-  if (US_MARKERS.some((m) => locLower.includes(m))) return true;
-  if (US_STATE_RE.test(locLower)) return true;
-  return false;
-}
+// US-marker primitives live in geo_enforcer.js (BL-81 — single source of
+// truth). Importing keeps filter.js and geo_enforcer.js classification
+// aligned. US_MARKERS is re-exported for back-compat (filter.test.js).
+const { enforceGeo, hasUsMarker, US_MARKERS } = require("./geo_enforcer.js");
 
 function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -116,6 +52,44 @@ function makeBoundaryRegex(needle) {
   const startB = /\w/.test(lower[0]) ? "\\b" : "";
   const endB = /\w/.test(lower[lower.length - 1]) ? "\\b" : "";
   return new RegExp(`${startB}${escapeRegex(lower)}${endB}`, "i");
+}
+
+// BL-79: shared title_blocklist semantics for scan (matchBlocklists) and
+// prepare (applyPrepareFilter). Word-boundary regex + slash-split so:
+//   - "rn" does NOT match "PRN Coordinator"
+//   - "rn" DOES match "RN Manager"
+//   - a slash-compound title passes if ANY part is clean
+// `patterns` is a flat array of pattern strings (callers normalize their own
+// shapes first — keeps the helper neutral about {pattern,reason} vs raw).
+// Returns the first matching pattern string, or null if the title is clean.
+function findTitleBlocklistHit(title, patterns) {
+  if (!patterns || patterns.length === 0) return null;
+  const titleLower = String(title || "").toLowerCase();
+  if (!titleLower) return null;
+  const parts = titleLower
+    .split("/")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const titleParts = parts.length > 0 ? parts : [titleLower];
+
+  let firstHit = null;
+  for (const part of titleParts) {
+    let partHit = null;
+    for (const pat of patterns) {
+      const needle = String(pat || "");
+      if (!needle) continue;
+      if (makeBoundaryRegex(needle).test(part)) {
+        partHit = needle;
+        break;
+      }
+    }
+    if (partHit) {
+      if (firstHit == null) firstHit = partHit;
+    } else {
+      return null; // any clean part → title passes
+    }
+  }
+  return firstHit;
 }
 
 // Returns a reason object for the first matching blocklist (company / title /
@@ -173,26 +147,24 @@ function matchBlocklists(job, rules) {
       }
     }
 
-    let firstHit = null;
-    let cleanPartFound = false;
-    for (const part of parts) {
-      let partHit = null;
-      for (const pat of rules.title_blocklist || []) {
-        const needle = String(pat.pattern || "");
-        if (!needle) continue;
-        if (makeBoundaryRegex(needle).test(part)) {
-          partHit = { kind: "title_blocklist", pattern: pat.pattern, why: pat.reason };
-          break;
-        }
-      }
-      if (partHit) {
-        if (!firstHit) firstHit = partHit;
-      } else {
-        cleanPartFound = true;
-        break; // any clean part → title passes
-      }
+    // BL-79: delegate to findTitleBlocklistHit so prepare.js and scan.js
+    // share semantics. We still need the {pattern, reason} object for the
+    // returned reason, so we resolve back to the original entry after hit.
+    const blocklist = Array.isArray(rules.title_blocklist) ? rules.title_blocklist : [];
+    const patternStrs = blocklist
+      .map((p) => String((p && p.pattern) || ""))
+      .filter((s) => s.length > 0);
+    const hit = findTitleBlocklistHit(roleLower, patternStrs);
+    if (hit) {
+      const orig = blocklist.find(
+        (p) => String((p && p.pattern) || "").toLowerCase() === hit.toLowerCase()
+      );
+      return {
+        kind: "title_blocklist",
+        pattern: orig ? orig.pattern : hit,
+        why: orig ? orig.reason : undefined,
+      };
     }
-    if (!cleanPartFound && firstHit) return firstHit;
   }
 
   // BL-24 (2026-05-18): iterate the full locations[] array, not just the
@@ -209,7 +181,7 @@ function matchBlocklists(job, rules) {
         ? [String(job.location)]
         : [];
   const locsLower = locsArr.map((l) => l.toLowerCase());
-  if (locsLower.length > 0 && !locsLower.some(hasUsMarker)) {
+  if (locsLower.length > 0 && !hasUsMarker(locsLower)) {
     for (const blocked of rules.location_blocklist || []) {
       const needle = String(blocked).toLowerCase();
       if (!needle) continue;
@@ -280,4 +252,11 @@ function filterJobs(jobs, rules, currentCounts = {}) {
   return { passed, rejected, finalCounts: counts };
 }
 
-module.exports = { filterJobs, checkJob, matchBlocklists, US_MARKERS };
+module.exports = {
+  filterJobs,
+  checkJob,
+  matchBlocklists,
+  findTitleBlocklistHit,
+  US_MARKERS,
+  hasUsMarker,
+};

@@ -37,6 +37,7 @@ const { fetchAll: fetchAllJds } = require("../core/jd_cache.js");
 const { calcSalary } = require("../core/salary_calc.js");
 const { extractFromJd } = require("../core/jd_extract.js");
 const { enforceGeo } = require("../core/geo_enforcer.js");
+const { findTitleBlocklistHit } = require("../core/filter.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 const { slugifyCompany } = require("../core/company_slug.js");
@@ -187,15 +188,15 @@ function applyPrepareFilter(apps, rules, activeCounts) {
       }
     }
 
-    let blocked = false;
-    for (const pat of titlePatterns) {
-      if (titleLower.includes(pat)) {
-        skipped.push({ key: app.key, reason: "title_blocklist", pattern: pat, url: app.url });
-        blocked = true;
-        break;
-      }
+    // BL-79: word-boundary + slash-split semantics shared with filter.js.
+    // Raw `titleLower.includes(pat)` made "rn" match "PRN Coordinator" and
+    // diverged from scan-time matchBlocklists. findTitleBlocklistHit is the
+    // single source of truth for both stages.
+    const titleHit = findTitleBlocklistHit(titleLower, titlePatterns);
+    if (titleHit) {
+      skipped.push({ key: app.key, reason: "title_blocklist", pattern: titleHit, url: app.url });
+      continue;
     }
-    if (blocked) continue;
 
     const cap = Object.prototype.hasOwnProperty.call(capOverrides, app.companyName)
       ? Number(capOverrides[app.companyName])
