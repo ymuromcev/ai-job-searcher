@@ -37,9 +37,10 @@ TSV (9):    Inbox + the eight above
 ```
 
 `Inbox` rows by definition have `notion_page_id == ""` and are never
-replicated to Notion. `prepare --phase commit decision=to_apply`
-transitions `Inbox → To Apply` and creates the Notion page in the same
-step. Source: [RFC 014](../../rfc/014-status-split-new-vs-toapply.md).
+replicated to Notion. `prepare --phase commit` transitions every
+evaluated row `Inbox → To Apply` and creates the Notion page atomically.
+Source: [RFC 014](../../rfc/014-status-split-new-vs-toapply.md),
+[RFC 034](../../rfc/034-skill-output-contract-remove-decision.md).
 
 Canonical roles in code:
 
@@ -334,15 +335,15 @@ Two-phase fresh-row triage. For flag table see
 
 ```
 phase pre   → CLI, no LLM       → writes prepare_context.json
-phase skill → Claude (skill)    → writes results.json (decisions, CL, archetype)
-phase commit → CLI, no LLM      → mutates applications.tsv, generates artifacts, creates Notion page
+phase skill → Claude (skill)    → writes results.json (fitScore, fitRationale, clParagraphs, archetype)
+phase commit → CLI, no LLM      → mutates applications.tsv, generates artifacts, creates Notion page for every evaluated row
 ```
 
 ### Fresh-row gate (P-1)
 
 A row is "fresh" if `status === "Inbox"` (RFC 014 canonical) or
 `status === "To Apply" && notion_page_id === ""` (back-compat for
-pre-RFC014 rows). After `commit decision=to_apply` the row carries
+pre-RFC014 rows). After `commit` the row carries
 `status="To Apply"` plus a non-empty `notion_page_id`, and never
 re-enters `--phase pre`.
 
@@ -426,11 +427,13 @@ nine steps; for the prose flow see
 [`../../skills/job-pipeline/SKILL.md`](../../skills/job-pipeline/SKILL.md).
 Behavioral outputs the commit phase relies on:
 
-- `decision ∈ {"to_apply", "archive", "skip"}`. Anything else is
-  treated as `skip` and counted in `updates.invalidDecision`.
+- Per-row entry no longer carries `decision`. Engine pushes every
+  evaluated row to Notion as `To Apply`. If a legacy `results.json`
+  with a `decision` field is supplied, the engine logs a single warning
+  per run and ignores the field. (RFC 034 / BL-80.)
 - `archetype` (a.k.a. `resumeVer`) — must be a key in
-  `profile.resume_versions.versions`. Unknown values are rejected,
-  counted in `updates.invalidArchetype`, and downgraded to `skip`.
+  `profile.resume_versions.versions`. Unknown values are rejected and
+  counted in `updates.invalidArchetype`; the row is left untouched.
 - `clBaseKey` — id of the cover-letter template variant chosen
   (template-first flow). Recorded for audit.
 - `companyTiers` — map of newly-tiered companies. Persisted to
@@ -442,13 +445,13 @@ Behavioral outputs the commit phase relies on:
 
 ### Commit phase (P-8)
 
-Mutations are by `key`:
-
-| `decision` | TSV mutation |
-|---|---|
-| `to_apply` | `status="To Apply"`, set `cl_key`, `cl_path`, `resume_ver`, `notion_page_id`, `salary_min`, `salary_max`, `updatedAt=now`. |
-| `archive` | `status="Archived"`, `updatedAt=now`. |
-| `skip` (or unknown) | no mutation. |
+Mutations are by `key`. Since RFC 034 (BL-80), every entry in
+`results.evaluated[]` is treated as `to_apply` — the engine sets
+`status="To Apply"`, stamps `cl_key` / `cl_path` / `resume_ver` /
+`notion_page_id` / `salary_min` / `salary_max` / `updatedAt=now`, and
+creates the Notion page atomically. A legacy `decision` field is
+tolerated (one warning per run) and ignored. The old `archive` /
+`skip` dispatch branches are gone.
 
 `--dry-run` skips TSV write. `--results-file` is required.
 

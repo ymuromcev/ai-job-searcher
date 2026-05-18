@@ -12,7 +12,7 @@ Single engine, per-profile data. All commands take `--profile <id>`. Currently s
 - **`/job-pipeline scan`** — Discover new jobs across configured ATS adapters (greenhouse / lever / ashby / smartrecruiters / workday / calcareers / usajobs / indeed / remoteok). Append to shared pool + per-profile pipeline.
 - **`/job-pipeline validate`** — Pre-flight: TSV hygiene, company-cap check, URL liveness on active applications.
 - **`/job-pipeline sync`** — Reconcile per-profile applications with Notion. **Default = dry-run**, must pass `--apply` to commit.
-- **`/job-pipeline prepare`** — Two-phase processing of `Inbox` jobs (RFC 014): mechanical pre-phase (filter / URL check / JD fetch / salary) + Claude LLM phase (geo check / fit score / CL gen / Notion push). Commit transitions row from `Inbox` → `To Apply` (decision=to_apply) or `Inbox` → `Archived` (decision=archive).
+- **`/job-pipeline prepare`** — Two-phase processing of `Inbox` jobs (RFC 014): mechanical pre-phase (filter / URL check / JD fetch / salary) + Claude LLM phase (fit score / CL gen). Commit transitions every evaluated row from `Inbox` → `To Apply` and creates the Notion page. (RFC 034: SKILL is advisory — the engine pushes all evaluated rows, the operator triages Strong/Medium/Weak in Notion.)
 - **`/job-pipeline check`** — Two-phase Gmail response check: `--prepare` builds Gmail search batches for Claude MCP, `--apply` consumes Claude-written emails and updates Notion + TSV + logs.
 - **`/job-pipeline indeed-prep`** — Phase 1 of Indeed ingest. Prints scan URLs + JS extraction snippet + filter context for the Claude browser MCP session. Phase 2 (browser fetch) is manual via Chrome MCP. Phase 3 = standard `scan` (the indeed adapter ingests the file Claude wrote).
 - **`/job-pipeline answer`** — Generate or reuse application answers (Why join? / Influences? / Motivation? etc.). Three-phase: search Notion Q&A DB by dedup key → reuse if exact match else generate via Humanizer Rules → push answer back to Notion + write local `.md` backup. Per-profile DB at `profile.notion.application_qa_db_id`.
@@ -56,7 +56,7 @@ node engine/cli.js scan --profile <id> [--dry-run] [--verbose]
 3. Filter targets by `data/companies.tsv` `profile` column (single source of truth — RFC 010 part B). Optionally subtract `discovery.companies_blacklist`. (Legacy `companies_whitelist` retired in BL-68 — see `engine/commands/scan.js`.)
 4. Invoke each enabled adapter via `engine/core/scan.js` orchestrator (errors per source isolated, do not block the run).
 5. Dedupe new jobs against `data/jobs.tsv` master pool by `(source, jobId)`.
-6. Atomically write `data/jobs.tsv` + append fresh rows to `profiles/<id>/applications.tsv` with `status="Inbox"` (RFC 014 — TSV-only state for fresh-after-scan rows; transitions to `To Apply` after `prepare --phase commit decision=to_apply`). Notion DBs never see `Inbox` — they keep the 8-status set.
+6. Atomically write `data/jobs.tsv` + append fresh rows to `profiles/<id>/applications.tsv` with `status="Inbox"` (RFC 014 — TSV-only state for fresh-after-scan rows; transitions to `To Apply` after `prepare --phase commit`). Notion DBs never see `Inbox` — they keep the 8-status set.
 
 `--dry-run` prints planned writes without touching disk.
 
@@ -80,7 +80,7 @@ node engine/cli.js sync --profile <id> [--apply] [--verbose]
 
 Bidirectional reconcile with the profile's `notion.jobs_pipeline_db_id`:
 
-- **Push** — bare push from `sync` is **disabled** (legacy). Notion pages are created exclusively by `prepare --phase commit decision=to_apply`, which assembles fit + CL + salary + Notion page atomically. `sync` is pull-only.
+- **Push** — bare push from `sync` is **disabled** (legacy). Notion pages are created exclusively by `prepare --phase commit`, which assembles fit + CL + salary + Notion page atomically for every evaluated row. `sync` is pull-only.
 - **Pull** — fetch all Notion pages, match by `key` field (`<source>:<jobId>`), apply Notion's `status` and `notion_page_id` to local TSV (Notion wins on status).
 
 Default mode prints the plan and runs the read-only pull preview. **Pass `--apply` to actually mutate Notion and TSV.**
@@ -111,99 +111,73 @@ Default mode prints the plan and runs the read-only pull preview. **Pass `--appl
 
 ### prepare
 
-`prepare` is **autonomous** (BL-9 Step 5, 2026-05-05). The user invokes `/job-pipeline prepare` once. Claude orchestrates a multi-iteration loop that calls the CLI repeatedly and judges batches, until either the target (30 jobs in Notion) is met or the Inbox is exhausted. Then a single push to Notion finalizes the result.
+`prepare` is **autonomous** (BL-9 Step 5, 2026-05-05; simplified by RFC 034). The user invokes `/job-pipeline prepare` once. Claude orchestrates a multi-iteration loop that calls the CLI repeatedly and judges batches, until either Strong ≥ 30 is met or the Inbox is exhausted. Then a single push to Notion finalizes the result.
 
-The loop has three phases of CLI invocation, all using the same `prepare_context.json` file:
+The loop has two CLI phases (fresh + topup), both using the same `prepare_context.json` file. Weak rows go to Notion as-is — there is no weak-fallback re-evaluation phase. (RFC 034 removed `--mode weak-fallback`.)
 
 | Mode | Source pool | When |
 |---|---|---|
 | `--mode fresh` | Inbox rows that pass blocklist / cap / URL-check (the standard pipeline) | First iteration of every run |
-| `--mode topup` | `deferredQueue` (rows that passed filter but didn't fit the previous batch) | Iterations 2–3 if Strong+Medium < 30 |
-| `--mode weak-fallback` | `deferredQueue` + already-Weak Inbox rows in TSV | After 3 iterations if Strong+Medium still < 30 |
+| `--mode topup` | `deferredQueue` (rows that passed filter but didn't fit the previous batch) | Iterations 2–3 if Strong < 30 |
 
 #### Phase 1 — pre (CLI, called by Claude)
 
 ```
-node engine/cli.js prepare --profile <id> --phase pre --mode <fresh|topup|weak-fallback> [--batch 30] [--need K] [--dry-run]
+node engine/cli.js prepare --profile <id> --phase pre --mode <fresh|topup> [--batch 30] [--need K] [--dry-run]
 ```
 
 Runs without LLM cost. Outputs `profiles/<id>/prepare_context.json`:
-- `batch[]` — jobs ready for SKILL judgement (URL-checked, JD-fetched, salary computed). Topup / weak-fallback APPEND to this array.
-- `batch[i].wasAlreadyWeak: true` (weak-fallback only) — row was judged Weak in a prior run; carry over `priorFitScore` / `priorFitRationale` instead of re-judging.
-- `deferredQueue[]` — TSV keys that passed the filter pipeline but weren't URL-checked yet (used by the next topup / weak-fallback call).
+- `batch[]` — jobs ready for SKILL judgement (URL-checked, JD-fetched, salary computed). Topup APPENDS to this array.
+- `deferredQueue[]` — TSV keys that passed the filter pipeline but weren't URL-checked yet (used by the next topup call).
 - `skipped[]` — engine-level skip reasons (`company_cap` / `title_blocklist` / `url_dead` / `already_evaluated_weak` / etc.).
 - `stats.inboxExhausted: bool` — true when no more fresh rows remain in TSV outside the current batch (excluding `duplicate`-flagged rows). The loop must stop iterating when this flips true.
-- `stats.skipReasons` / `stats.deferred` / `stats.weakFallbackRuns` etc.
+- `stats.skipReasons` / `stats.deferred` etc.
 
 #### Phase 2 — autonomous loop (Claude orchestrates)
 
 When the user invokes `/job-pipeline prepare`, Claude runs the following loop. **Loop logic lives in the SKILL; the engine is stateless.**
 
 ```text
-Step A — initialize
+Step 5 — fresh mode (initialize)
   iteration = 0
-  verdicts = { strong: [], medium: [], weak: [] }    # per-job evaluation buckets
+  evaluated = []    # flat list of judged rows (each carries fitScore)
   Run: prepare --phase pre --mode fresh --batch 30
   Read: profiles/<id>/prepare_context.json
 
-Step B — per-iteration evaluation loop (chase Strong)
+Step 6 — topup mode (chase Strong)
   while True:
     iteration += 1
     new_entries = batch entries we haven't judged yet
     For each entry in new_entries:
-      run Steps 1, 3, 4, 5, 5.7, 6, 7, 8 (fit + CL gen, NOT Notion push)
-      append to verdicts[<fitScore-bucket>]
+      run Steps 1, 3, 4, 5, 5.7, 6, 7, 8 (fit + CL gen for Strong/Medium)
+      append to evaluated[]
 
     # Stop conditions — keep iterating to chase more Strong even if
-    # Medium is plentiful. Selection priority is Strong → Medium → Weak,
-    # so 30 pure Strong always beats 15 Strong + 15 Medium.
-    if len(verdicts.strong) >= 30: break
+    # Medium / Weak are plentiful. Selection priority for the chase is
+    # Strong; Mediums and Weaks do not satisfy the target.
+    strongCount = count of evaluated where fitScore === "Strong"
+    if strongCount >= 30: break
     if stats.inboxExhausted: break
     if iteration >= 3: break
 
-    # Topup — try to find more Strong (need = how many Strong we still want)
-    Run: prepare --phase pre --mode topup --need (30 - len(verdicts.strong))
+    # Topup — try to find more Strong
+    Run: prepare --phase pre --mode topup --need (30 - strongCount)
     Re-read prepare_context.json → continue
 
-Step C — weak fallback (only if needed)
-  strongMedium = len(verdicts.strong) + len(verdicts.medium)
-  if strongMedium < 30 AND NOT stats.inboxExhausted:
-    Run: prepare --phase pre --mode weak-fallback --need (30 - strongMedium)
-    Re-read prepare_context.json
-    new_entries = batch entries not yet judged
-    For each entry:
-      if entry.wasAlreadyWeak:
-        # Reuse saved verdict, do NOT spend tokens re-judging
-        fitScore = entry.priorFitScore  (always "Weak")
-        fitRationale = entry.priorFitRationale
-        skip Step 4
-        run Steps 7, 8 (CL gen) so the row is push-ready
-        append to verdicts.weak
-      else:
-        run Steps 1, 3, 4, 5, 5.7, 6, 7, 8 as usual
+  # Note: no weak-fallback. Weak rows already in `evaluated` are pushed to
+  # Notion as-is by the engine. The operator triages Strong / Medium / Weak
+  # in Notion. This is the contract change in RFC 034.
 
-Step D — push ALL evaluated to Notion (no top-N cap)
-  # User rule (locked 2026-05-18): everything we evaluated this run goes to Notion.
-  # `target=30` is a chase budget for STRONG (controls when iteration stops),
-  # not a cap on commit. User triages Strong/Medium/Weak themselves in Notion.
-  # The only `decision="skip"` case left is geo / hard-blocker discoveries that
-  # surfaced during evaluation (e.g. title encodes UK/EU/ME) — those go
-  # `decision="archive"` instead, NEVER `fitScore="Weak"`. Per BL-37 / memory
-  # rule `feedback_pipeline_fit_score_arch.md`: hard blockers are archived, not
-  # downgraded to Weak. If a job got through engine pre-filter but the title
-  # makes it non-viable (geo, level beyond filter, etc.) emit `decision="archive"`
-  # with `fitRationale: "manual: <reason>"`.
-  candidates = verdicts.strong + verdicts.medium + verdicts.weak  (in that order)
-  # No slice. Every candidate becomes `decision="to_apply"`.
-
-Step E — write results + commit
+Step 7 — push results + commit
   Step 10: write prepare_results_<timestamp>.json
-    decision = "to_apply" for EVERY entry in candidates (Strong + Medium + Weak)
-    decision = "archive" for entries where a hard blocker (geo, non-viable
-               level/role beyond filter) became clear during evaluation
+    Every entry in `evaluated` becomes a results.evaluated[] row carrying
+    fitScore + fitRationale (+ clParagraphs if Strong/Medium). No
+    `decision` field — the engine pushes every row.
   Step 11: prepare --phase commit --results-file <path>
-    Engine writes PDF + creates Notion page + updates TSV atomically per-row.
-    Notion-page-creation owned by engine since RFC 022 (BL-23).
+    Engine writes PDF (when clParagraphs present) + creates Notion page
+    + updates TSV atomically per-row. Notion-page-creation owned by
+    engine since RFC 022 (BL-23); all-evaluated push owned by engine
+    since RFC 034.
   Step 12: report to user
 ```
 
@@ -217,31 +191,23 @@ loop done: 15 Strong, 30 Medium, 33 Weak (target 30 Strong reached)
 pushing all 78 evaluated to Notion (15 Strong + 30 Medium + 33 Weak)
 ```
 
-If `weak-fallback` runs:
-
-```
-strong+medium below target (8+5=13 of 30); falling back to weak…
-weak-fallback: pulled 17 entries (12 already-Weak, 5 fresh)
-loop done: 8 Strong + 5 Medium + 17 Weak = 30 evaluated → push all to Notion
-```
-
 If `inboxExhausted`:
 
 ```
-loop done: 4 Strong, 7 Medium (Inbox exhausted)
-pushing all 11 evaluated to Notion (4 Strong + 7 Medium)
+loop done: 4 Strong, 7 Medium, 2 Weak (Inbox exhausted)
+pushing all 13 evaluated to Notion (4 Strong + 7 Medium + 2 Weak)
 ```
 
 #### Anti-patterns — do NOT
 
 - **Do not** create Notion pages inside the iteration loop or in any SKILL step. Notion-page creation is owned by `engine/commands/prepare.js` `runCommit` since RFC 022 (BL-23). The SKILL just writes `results.json` (Step 10) — the engine commit phase handles PDF + Notion + TSV atomically per-row.
-- **Do not** re-judge `entry.wasAlreadyWeak === true` rows in Step 4. The verdict is already in TSV; re-asking burns tokens. Carry `priorFitScore` / `priorFitRationale` straight into the verdict bucket.
-- **Do not** keep iterating past 3 even if Strong < 30 and Inbox isn't exhausted. The cap is by design — token budget protection. After 3, the SKILL falls back to weak.
-- **Do not** stop the loop just because Strong+Medium ≥ 30. Selection priority is Strong → Medium → Weak; we keep iterating to find more Strong (Mediums don't satisfy the target). Stop only on Strong ≥ 30, iter ≥ 3, or `inboxExhausted`.
+- **Do not** emit a `decision` field on results entries. RFC 034 removed it. Every evaluated row goes to Notion as `To Apply`; the engine owns the push. If a row should not reach Notion, fix the engine pre-filter (`applyPrepareFilter`) — never gate via SKILL prose.
+- **Do not** keep iterating past 3 even if Strong < 30 and Inbox isn't exhausted. The cap is by design — token budget protection.
+- **Do not** stop the loop just because Strong+Medium ≥ 30. Selection priority is Strong; Mediums don't satisfy the target. Stop only on Strong ≥ 30, iter ≥ 3, or `inboxExhausted`.
 - **Do not** terminate the loop early just because iteration N had 0 Strong. Strong from later iterations can still hit the target; keep going until one of the three stop conditions is true.
-- **Do not** invoke `--mode topup` or `--mode weak-fallback` directly without first running `--mode fresh` (or another mode) to seed `prepare_context.json`. Topup / weak-fallback exit 1 if the context file is missing.
+- **Do not** invoke `--mode topup` directly without first running `--mode fresh` to seed `prepare_context.json`. Topup exits 1 if the context file is missing.
 
-The reference for each Step (1, 3, 4, 5, 5.7, 6, 7, 8, 9, 10, 11, 12) is below — these describe the per-job evaluation logic that the loop above orchestrates.
+The reference for each Step (1, 2, 3, 4, 5, 5.7, 6, 7, 8, 9, 10, 11, 12) is below — these describe the per-job evaluation logic that the loop above orchestrates.
 
 After the CLI writes `prepare_context.json`, Claude then:
 
@@ -274,15 +240,13 @@ Write a 1-sentence fit rationale (concrete domain overlap, not generic praise). 
 
 Early-startup modifier: if company is pre-Series B or <50 employees — downgrade one level.
 
-**Step 5 — Bucket: fit (loop-aware)**
+**Step 5 — Track fitScore (loop-aware)**
 
 Geo filtering already happened in the engine pre-phase (Step 3 is read-only) — only entries with `geo_decision === "allowed"` reach the batch. The remaining gate is fit.
 
-In the autonomous loop (Step B above), assign every judged job to one of three in-memory buckets — `verdicts.strong` / `verdicts.medium` / `verdicts.weak` — based on `fitScore`. **Do NOT mark anything `decision="skip"`.** Per the locked rule in Step D, every evaluated job becomes `decision="to_apply"` regardless of Strong/Medium/Weak — the buckets exist only so the iteration loop can chase 30 Strong before stopping. Skip is reserved for nothing (deprecated); hard blockers found in title become `decision="archive"`.
+In the autonomous loop, attach `fitScore` (Strong / Medium / Weak) to every judged job. **Do NOT emit a `decision` field.** Per RFC 034, every evaluated row goes to Notion as `To Apply` — the engine pushes; the SKILL is advisory. The Strong / Medium / Weak count exists only so the iteration loop can chase 30 Strong before stopping.
 
-If the entry has `wasAlreadyWeak: true`, it goes straight to `verdicts.weak` with `fitScore="Weak"` carried over from `entry.priorFitScore`. No Step 4 re-judging.
-
-Report iteration counts to the user (per the stdout format in Phase 2 above): how many landed in each bucket per iteration, what the running total is.
+Report iteration counts to the user (per the stdout format in Phase 2 above): how many Strong / Medium / Weak landed per iteration, what the running totals are.
 
 **Step 5.7 — Auto-tier unknown companies**
 
@@ -321,6 +285,8 @@ Record `resumeVer` = archetype key (e.g. `"fintech-pm-v3"`).
 **Step 8 — Cover letter generation (template-first, per job)**
 
 Per G-17: do NOT write CLs from scratch. Reuse the profile's saved cover-letter library so proof paragraphs (achievements, metrics, candidate facts) stay locked across the batch and only company-specific copy is regenerated. This keeps tone consistent across same-batch letters and cuts token cost roughly in half.
+
+**Generate `clParagraphs` only when `fitScore` is `Strong` or `Medium`** (RFC 034 §5, option A). For `Weak` rows, skip Step 8 entirely — the row still goes to Notion (the operator triages there); if they decide to apply, CL generation happens on-demand later. This saves ~1k tokens per Weak row.
 
 **8a — Load base template.**
 
@@ -380,14 +346,18 @@ What you (SKILL) used to compute in Step 9 now goes into `results.json` `to_appl
 
 **Step 10 — Write results file**
 
-Write `profiles/<id>/prepare_results_<YYYYMMDD_HHMMSS>.json` ONCE at the end of the run, covering every job evaluated across all loop iterations. All evaluated jobs become `decision="to_apply"`; there is no top-N selection.
+Write `profiles/<id>/prepare_results_<YYYYMMDD_HHMMSS>.json` ONCE at the end of the run, covering every job evaluated across all loop iterations. Per RFC 034, **every evaluated row is emitted in `results[]` with no `decision` field**. The engine pushes all of them to Notion as `To Apply`.
 
-Result entries:
-- `decision: "to_apply"` — **every** evaluated row from the loop (Strong + Medium + Weak), per the locked rule above. Carries `clKey`, `clParagraphs`, `clBaseKey`, `resumeVer`, `salaryMin`, `salaryMax`, plus `fitScore` / `fitRationale`. RFC 022: also include `city`, `state`, `workFormat` (extracted from JD text — SKILL is authoritative here). Engine writes the MD + PDF files from `clParagraphs`, creates the Notion page, and updates TSV atomically on commit (BL-14 / RFC 019 / RFC 022); do **not** include `clPath` (engine derives it from the company slug + `clKey`) and do **not** include `notionPageId` (engine creates the page itself). User triages Strong/Medium/Weak in Notion themselves — SKILL does not filter.
-- `decision: "skip"` — **avoid emitting**. The previous "skip" cases (Medium/Weak bumped out of top-30, hard-blockers found in title) are now handled differently: real candidates go to `to_apply` regardless of Strong/Medium/Weak; hard blockers go to `archive`.
-- `decision: "archive"` — engine pre-filter rejects (rows in `prepare_context.skipped[]`) + hard blockers discovered during evaluation. For every entry in `skipped[]` whose `reason ∈ {title_blocklist, title_requirelist, url_dead, company_blocklist, geo_metro_miss, geo_country_miss, geo_remote_only_miss, geo_blocklist, geo_no_location}` emit `decision: "archive"` with `fitRationale: "engine pre-filter: <reason> (<details>)"` where `<details>` is `pattern` (title blocklist/requirelist/company blocklist), `urlStatus` (url_dead), or `geo_matched_by` (geo). Engine commit sets `status="Archived"`. **Also emit** `decision: "archive"` for evaluated rows where the title encodes a hard blocker the engine couldn't catch (e.g. `(UK/EU/ME)` geo in a posting without a `location` field) — use `fitRationale: "manual: <reason>"`. **Exclude** `reason: "company_cap"` (per-batch limit, row stays viable for next prepare) and `reason: "already_evaluated_weak"` (already has Weak verdict in TSV; weak-fallback needs it). This shrinks Inbox after every prepare so `inbox_health` reflects only triageable rows. No `fitScore` is required for archive entries.
+Per-row schema (`results[]` entry):
+- `key` — `"<source>:<jobId>"` (must match a row in `applications.tsv`).
+- `fitScore` — `"Strong" | "Medium" | "Weak"`.
+- `fitRationale` — substantive 1-3 sentence rationale, user-facing.
+- `flags` — optional array of advisory strings (e.g. `["bridge-track", "early-stage"]`). Engine does not act on these; they surface in Notion `Notes` for the operator.
+- `clKey` + `clParagraphs` + `clBaseKey` + `resumeVer` + `salaryMin` + `salaryMax` + `city` + `state` + `workFormat` — present **iff** `fitScore` is `"Strong"` or `"Medium"`. For `"Weak"`, omit `clParagraphs` (the cover letter is generated on-demand if the operator triages "actually I want to apply" — RFC 034 §5 option A). The row still goes to Notion; the Cover Letter field in Notion will be empty.
 
-> **Rule (locked 2026-05-18, BL-XX):** `title_requirelist` rejects MUST be archived by `prepare`. Scan already archives them at ingest, but Inbox accumulates stale `title_requirelist` rows from earlier scans when the role filter was looser. Letting them sit there inflates the Inbox count without value. Same applies to `title_blocklist`, `url_dead`, `company_blocklist`, and the geo reasons — `prepare` is the cleanup pass that mirrors scan-time fate to the legacy pool.
+Do **not** emit `decision` or `skipReason` — engines built against RFC 034 ignore the field with a warning; older engines may misroute the row. Do **not** include `clPath` (engine derives it) or `notionPageId` (engine creates the page itself).
+
+`companyTiers` (top-level) is required only when `prepare_context.unknownTierCompanies` was non-empty. List every company from that array with the tier you assigned in Step 5.7. Engine merges this into `profile.json.company_tiers` on commit and passes the merged map into the company-resolver, which writes the Tier field on new / unset Companies DB pages (RFC 022 — Notion writes now owned by engine, not SKILL).
 
 Format:
 
@@ -401,10 +371,8 @@ Format:
   "results": [
     {
       "key": "<source>:<jobId>",
-      "decision": "to_apply",
       "fitScore": "Strong",
       "fitRationale": "...",
-      "geo": "us-compatible",
       "clKey": "<Company>_<role-slug>_<YYYYMMDD>",
       "clParagraphs": [
         "P1 — company-specific hook ...",
@@ -422,21 +390,17 @@ Format:
     },
     {
       "key": "<source>:<jobId>",
-      "decision": "skip",
       "fitScore": "Weak",
-      "fitRationale": "...",
-      "geo": "us-compatible"
+      "fitRationale": "Outside core PM/fintech domain — no overlapping component."
     }
   ]
 }
 ```
 
 **`clParagraphs` schema notes**:
-- Required for `decision: "to_apply"`. If absent, the engine logs a warning and falls back to legacy behavior (no MD/PDF written this batch); the row still becomes "To Apply" in TSV/Notion but has no file. Always include it.
-- Absent for `decision: "skip"` and `decision: "archive"` — no CL needed.
+- Required when `fitScore` is `Strong` or `Medium`. If absent on such a row, the engine logs a warning and reverts the row to `Inbox` (RFC 022 — no CL → no Notion push). Always include it.
+- Absent when `fitScore` is `Weak` — by design. The row still goes to Notion as `To Apply` with an empty Cover Letter field.
 - Must be exactly 4 strings (P1/P2/P3/P4). Each string is one paragraph; no embedded blank lines, no markdown headers, no `\n\n` inside individual strings (engine inserts the spacing).
-
-`companyTiers` is required only when `prepare_context.unknownTierCompanies` was non-empty. List every company from that array with the tier you assigned in Step 5.7. Engine merges this into `profile.json.company_tiers` on commit and passes the merged map into the company-resolver, which writes the Tier field on new / unset Companies DB pages (RFC 022 — Notion writes now owned by engine, not SKILL).
 
 **Step 11 — Commit phase (CLI)**
 
@@ -445,17 +409,16 @@ node engine/cli.js prepare --profile <id> --phase commit \
   --results-file profiles/<id>/prepare_results_<timestamp>.json
 ```
 
-This updates `applications.tsv`: `to_apply` entries get `status="To Apply"`, `cl_key`, `cl_path`, `resume_ver`, `notion_page_id`, `salary_min`, `salary_max`. Run with `--dry-run` first to preview.
+This processes every entry in `results[]`: sets TSV `status="To Apply"`, writes `fit_score` / `fit_rationale` / `fit_evaluated_at`, generates MD + PDF (when `clParagraphs` present), creates a Notion page (RFC 022 atomic create). On Notion failure the row reverts to `Inbox` per existing RFC 022 contract. Run with `--dry-run` first to preview.
 
 **Step 12 — Report to user**
 
 Summarize at the user level (BL-11 — what the user sees, not engine internals):
 
 - **Headline**: `pushed N jobs to Notion (Strong: A, Medium: B, Weak: C)`. N = every evaluated row (no top-N cap). If A < 30, mention `loop stopped: <reason>` (`Inbox exhausted` or `iter limit reached`) but still push all evaluated.
-- **Loop summary**: how many iterations ran, whether weak-fallback triggered. Example: `loop: 2 iterations + weak-fallback (15 already-Weak rows reused)`.
-- **CL reuse breakdown**: group by `clBaseKey` — `8 reused affirm_capital, 3 reused chime_growth, 1 written from scratch`.
+- **Loop summary**: how many iterations ran. Example: `loop: 2 iterations of fresh+topup`.
+- **CL reuse breakdown**: group by `clBaseKey` — `8 reused affirm_capital, 3 reused chime_growth, 1 written from scratch`. (Weak rows have no CL — exclude from this breakdown.)
 - **Pre-phase skips**: read from `prepare_context.stats.skipReasons` and surface the breakdown verbatim (e.g. `company_cap: 5, title_blocklist: 2, url_dead: 1`). Omit if `{}`.
-- **Archived (engine pre-filter)**: count of `decision: "archive"` entries written this run. Format: `archived (engine pre-filter): N (title_blocklist: X, title_requirelist: Y, url_dead: Z, geo_*: W, …)`. Omit if 0.
 - **Auto-tier assignments**: only if Step 5.7 ran — list the company → tier mapping.
 - **Deferred queue**: `prepare_context.stats.deferred` — number of fresh rows that didn't make it into the batch. Mention only if non-zero AND inboxExhausted is false (otherwise queue's empty).
 - **Warnings / anomalies**: any invalid resumeVer, invalid tier, fit-validation warnings the engine logged.

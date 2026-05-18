@@ -17,12 +17,15 @@
 //
 // Phase `commit`:
 //   Read a results JSON file produced by the Claude SKILL (see SKILL.md) and
-//   update applications.tsv accordingly:
-//     decision "to_apply"  → status="To Apply" (transition from Inbox), set
-//                            cl_key / resume_ver / notion_page_id. Card is
-//                            now ready for the operator to actually submit.
-//     decision "skip"      → no change (still "Inbox", reappears next pre run)
-//     decision "archive"   → status="Archived"
+//   update applications.tsv accordingly. Per RFC 034, the SKILL no longer
+//   emits a `decision` field: every entry in `results[]` is treated as an
+//   evaluated row, gets `status="To Apply"`, has its fit verdict stamped,
+//   and is pushed to Notion. The operator triages Strong / Medium / Weak in
+//   Notion. On Notion failure the row reverts to "Inbox" (RFC 022).
+//
+//   Backwards-compat: a legacy `decision` field is logged with a one-line
+//   warning and ignored (the row is processed as an evaluated row regardless).
+//   This keeps one release of forward-compat for stale SKILL checkouts.
 //
 //   The factory `makePrepareCommand({ deps })` is exported so tests can inject
 //   fakes for all I/O.
@@ -92,7 +95,10 @@ function buildActiveCounts(apps) {
 // run before they hit `applyPrepareFilter` / URL-check / JD-fetch. Two cases:
 //
 //   * `fit_score === "Weak"` (or legacy `skip_reason === "weak_fit"`)
-//     → Claude already decided this isn't a fit. Re-asking just burns tokens.
+//     → Claude already decided this isn't a fit and the row was pushed to
+//       Notion already (RFC 034). Re-asking just burns tokens. If the
+//       operator wants a re-evaluation, that's a separate flag (out of scope
+//       here — would be a `prepare --re-evaluate` follow-up).
 //
 //   * `skip_reason === "duplicate"`
 //     → Claude flagged the row as a SKILL-level dupe (same posting under a
@@ -103,16 +109,14 @@ function buildActiveCounts(apps) {
 // the row and continue to be recomputed each run by `applyPrepareFilter` —
 // rule changes must take effect immediately. Only SKILL verdicts persist.
 //
-// BL-9 Step 5: `mode = "weak-fallback"` opts INTO including already-Weak rows
-// in the passed pool (the autonomous prepare loop pulls them as fallback when
-// Strong+Medium can't fill the batch). `duplicate` rows are still always
-// dropped — they're noise regardless of mode.
-function filterAlreadyEvaluated(apps, { mode = "default" } = {}) {
+// RFC 034 (BL-80) removed the `weak-fallback` mode entirely. Weak rows are
+// pushed to Notion at the commit-phase of the prior run; they don't need
+// re-surfacing here. `duplicate` rows are still always dropped.
+function filterAlreadyEvaluated(apps) {
   const passed = [];
   const skipped = [];
-  const includeWeak = mode === "weak-fallback";
   for (const app of apps) {
-    if (!includeWeak && (app.fit_score === "Weak" || app.skip_reason === "weak_fit")) {
+    if (app.fit_score === "Weak" || app.skip_reason === "weak_fit") {
       skipped.push({ key: app.key, reason: "already_evaluated_weak", url: app.url });
       continue;
     }
@@ -284,11 +288,6 @@ async function fillUpAliveBatch(passed, target, deps) {
 //
 // BL-9 Step 4: extracted so both fresh and topup modes produce identical
 // entry shape. No behavior change vs the inline block runPre had before.
-//
-// BL-9 Step 5: optional `wasAlreadyWeak` opts the entry into the SKILL's
-// weak-fallback path. The SKILL reads it as "the row was judged Weak in a
-// prior run, do not re-judge — carry over fit_score/fit_rationale from TSV
-// and proceed straight to CL gen + Notion push as a fallback candidate".
 function buildBatchEntry(
   urlRes,
   jd,
@@ -296,8 +295,7 @@ function buildBatchEntry(
   deps,
   companyTiers,
   salaryOpts,
-  unknownTierSet,
-  opts = {}
+  unknownTierSet
 ) {
   const entry = {
     key: urlRes.key,
@@ -309,12 +307,6 @@ function buildBatchEntry(
     urlAlive: urlRes.alive,
     urlStatus: urlRes.status,
   };
-
-  if (opts.wasAlreadyWeak) {
-    entry.wasAlreadyWeak = true;
-    if (opts.priorFitScore) entry.priorFitScore = opts.priorFitScore;
-    if (opts.priorFitRationale) entry.priorFitRationale = opts.priorFitRationale;
-  }
 
   if (urlRes.boardRoot) entry.urlBoardRoot = true;
 
@@ -424,9 +416,9 @@ function buildRoleTargetsForContext(rt) {
 // `remainingViable` is the count of rows that passed filters and
 // already-evaluated checks but were not consumed into this batch — for
 // `runPre` that's `deferredQueue.length` (passed.slice(consumed)); for
-// `runPreTopup` / `runPreWeakFallback` it's the rebuilt `stillQueuedKeys`
-// length after each merge. Rows filtered out by company_cap, blocklists,
-// etc. are NOT counted as viable — they'd be filtered again next time.
+// `runPreTopup` it's the rebuilt `stillQueuedKeys` length after each merge.
+// Rows filtered out by company_cap, blocklists, etc. are NOT counted as
+// viable — they'd be filtered again next time.
 //
 // Threshold is exactly `target` (no coefficient). `target` is the operator's
 // chosen `--batch`; an extra cushion knob would never get tuned in practice.
@@ -461,14 +453,19 @@ function isFreshInboxApp(app) {
 // stop iterating when this flips true, even if it hasn't reached its 30-job
 // target.
 //
-// Note: weak-flagged rows are NOT counted as exhausted in normal mode
-// (they're still picked up by `--mode weak-fallback`). They become exhausted
-// only after weak-fallback has pulled them into the batch.
+// RFC 034: weak-flagged rows are filtered out of subsequent prepare runs by
+// `filterAlreadyEvaluated` (they've already been pushed to Notion). They do
+// NOT count as "still pullable" here, since there is no longer a fallback
+// mode that re-pulls them.
 function computeInboxExhausted(apps, batchKeys) {
   for (const app of apps) {
     if (!isFreshInboxApp(app)) continue;
     if (batchKeys.has(app.key)) continue;
     if (app.skip_reason === "duplicate") continue;
+    // RFC 034: rows the SKILL judged Weak in a prior run are not pullable
+    // — `filterAlreadyEvaluated` drops them on the next prepare. Treat them
+    // the same as `duplicate` for exhaustion purposes.
+    if (app.fit_score === "Weak" || app.skip_reason === "weak_fit") continue;
     return false;
   }
   return true;
@@ -598,8 +595,8 @@ async function runPre(ctx, deps) {
   const apps = runAutoDedup(loaded.apps, applicationsPath, ctx, deps);
 
   // RFC 014 (2026-05-04): "Fresh / not triaged" = status "Inbox" (TSV-only).
-  // After commit, the row transitions to "To Apply" (decision=to_apply) or
-  // "Archived" (decision=archive) and stops appearing in this filter.
+  // After commit (RFC 034), every evaluated row transitions to "To Apply"
+  // and stops appearing in this filter.
   // Back-compat: pre-RFC014 rows with status="To Apply" + no notion_page_id
   // are also accepted — backfill script normally rewrites them, but the dual
   // filter protects against partial migrations / forgotten profiles.
@@ -972,7 +969,7 @@ async function runPreTopup(ctx, deps) {
   const mergedSkipReasons = computeSkipReasons([...prevSkipped, ...newSkipped]);
   // RFC 024 (BL-28): keep `inbox_health` written from every prepare_context.json
   // writer so the SKILL contract is uniform regardless of which mode produced
-  // the final context (fresh / topup / weak-fallback).
+  // the final context (fresh / topup; weak-fallback was removed in RFC 034).
   const merged_inbox_health = computeInboxHealth({
     remainingViable: stillQueuedKeys.length,
     target: batchSize,
@@ -1022,282 +1019,14 @@ async function runPreTopup(ctx, deps) {
   return 0;
 }
 
-// --- Phase: pre, mode weak-fallback ------------------------------------------
+// --- Phase: pre, mode weak-fallback (REMOVED) --------------------------------
 //
-// BL-9 Step 5: the fallback step of the autonomous prepare loop. After the
-// SKILL has run several `--mode topup` iterations and Strong + Medium
-// candidates still don't fill the batch (target = batchSize, e.g. 30), the
-// loop falls back to Weak candidates so the user gets a complete batch
-// instead of underfilling Notion.
-//
-// Source pool (deduped by key, neither bucket counted twice):
-//   1. Whatever's left in `context.deferredQueue` — rows that passed the
-//      filter pipeline in the original fresh run but never got URL-checked
-//      (target was already met).
-//   2. Already-Weak fresh-Inbox rows in the TSV. These are rows the SKILL
-//      previously judged Weak (decision=skip → status stays Inbox,
-//      fit_score="Weak" persisted). `filterAlreadyEvaluated({mode:"weak-fallback"})`
-//      lets them through; the SKILL reads the entry's `wasAlreadyWeak` flag
-//      and reuses the saved verdict instead of re-judging.
-//
-// Re-validation (same as topup): drop committed / no-longer-fresh keys,
-// re-apply `applyPrepareFilter` (rules may have tightened, cap pre-accounts
-// for prevBatch entries already going to Notion). Fill-up loop URL-checks
-// until `--need K` alive (or pool exhausted).
-//
-// Output: appends new entries to `context.batch[]` with `wasAlreadyWeak:true`
-// where applicable; carries `priorFitScore` + `priorFitRationale` from TSV
-// so the SKILL doesn't re-fetch them. Sets `context.mode = "weak-fallback"`
-// and stamps `stats.weakFallbackRuns`.
-async function runPreWeakFallback(ctx, deps) {
-  const { profileId, flags, stdout, stderr } = ctx;
-  const profilesDir = resolveProfilesDir(ctx, ctx.env || process.env);
-
-  const profile = deps.loadProfile(profileId, { profilesDir });
-  const filterRules = { ...(profile.filterRules || {}), geo: profile.geo };
-  const contextPath = path.join(profile.paths.root, "prepare_context.json");
-
-  // 1) Load existing context.
-  let prev;
-  try {
-    prev = JSON.parse(deps.readFile(contextPath));
-  } catch (err) {
-    stderr(`error: cannot read prepare_context.json at ${contextPath}: ${err.message}`);
-    stderr(`hint: run --mode fresh first (default mode) to create the context file`);
-    return 1;
-  }
-  if (!Array.isArray(prev.batch)) {
-    stderr(`error: prepare_context.json missing 'batch' array`);
-    return 1;
-  }
-  const prevQueue = Array.isArray(prev.deferredQueue) ? prev.deferredQueue : [];
-  const prevSkipped = Array.isArray(prev.skipped) ? prev.skipped : [];
-  const prevBatch = prev.batch;
-  const prevStats = prev.stats || {};
-  const prevUnknownTiers = Array.isArray(prev.unknownTierCompanies)
-    ? prev.unknownTierCompanies
-    : [];
-  const batchSize = Number.isFinite(prev.batchSize) ? prev.batchSize : DEFAULT_BATCH_SIZE;
-
-  // 2) Compute need.
-  const explicitNeed = Number.isFinite(flags.need) && flags.need > 0 ? flags.need : null;
-  const need = explicitNeed != null ? explicitNeed : Math.max(0, batchSize - prevBatch.length);
-  if (need === 0) {
-    stdout(
-      `weak-fallback: nothing to add (current batch ${prevBatch.length} already at batchSize ${batchSize})`
-    );
-    return 0;
-  }
-
-  // 3) Build the source pool.
-  const applicationsPath = profile.paths.applicationsTsv;
-  const { apps } = deps.loadApplications(applicationsPath);
-  const byKey = Object.fromEntries(apps.map((a) => [a.key, a]));
-  const inBatchKeys = new Set(prevBatch.map((e) => e.key));
-
-  // 3a) deferredQueue → live apps (drop committed / no-longer-fresh).
-  const seen = new Set();
-  const droppedFromQueue = [];
-  const liveQueueApps = [];
-  for (const key of prevQueue) {
-    if (inBatchKeys.has(key) || seen.has(key)) continue;
-    seen.add(key);
-    const app = byKey[key];
-    if (!app) {
-      droppedFromQueue.push({ key, reason: "not_in_tsv" });
-      continue;
-    }
-    if (!isFreshInboxApp(app)) {
-      droppedFromQueue.push({ key, reason: "no_longer_fresh", url: app.url });
-      continue;
-    }
-    liveQueueApps.push(app);
-  }
-
-  // 3b) Already-Weak fresh-inbox apps not yet in batch.
-  const alreadyWeakApps = [];
-  for (const app of apps) {
-    if (!isFreshInboxApp(app)) continue;
-    if (inBatchKeys.has(app.key) || seen.has(app.key)) continue;
-    if (app.fit_score !== "Weak" && app.skip_reason !== "weak_fit") continue;
-    seen.add(app.key);
-    alreadyWeakApps.push(app);
-  }
-
-  const pool = [...liveQueueApps, ...alreadyWeakApps];
-  stdout(
-    `weak-fallback: pool ${pool.length} (${liveQueueApps.length} from deferredQueue, ` +
-      `${alreadyWeakApps.length} already-Weak in TSV); need ${need}`
-  );
-
-  if (pool.length === 0) {
-    stdout(`weak-fallback: pool empty — nothing more to pull`);
-    // Still write inboxExhausted so SKILL loop sees the signal.
-    const noopMerged = {
-      ...prev,
-      mode: "weak-fallback",
-      generatedAt: deps.now(),
-      stats: {
-        ...prevStats,
-        weakFallbackRuns: (prevStats.weakFallbackRuns || 0) + 1,
-        inboxExhausted: computeInboxExhausted(apps, inBatchKeys),
-      },
-    };
-    if (!flags.dryRun) {
-      deps.writeFile(contextPath, JSON.stringify(noopMerged, null, 2));
-    }
-    return 0;
-  }
-
-  // 4) filterAlreadyEvaluated — keep weak rows, only drop duplicates.
-  const { passed: notDuplicate, skipped: duplicateSkips } = filterAlreadyEvaluated(pool, {
-    mode: "weak-fallback",
-  });
-  if (duplicateSkips.length > 0) {
-    stdout(`weak-fallback: ${duplicateSkips.length} duplicate-flagged dropped`);
-  }
-
-  // 5) applyPrepareFilter (rules + cap pre-account from prevBatch).
-  const activeCounts = buildActiveCounts(apps);
-  for (const e of prevBatch) {
-    const co = e.companyName;
-    if (co) activeCounts[co] = (activeCounts[co] || 0) + 1;
-  }
-  const { passed, skipped: filteredOut } = applyPrepareFilter(
-    notDuplicate,
-    filterRules,
-    activeCounts
-  );
-  stdout(`weak-fallback: after filter ${passed.length} passed, ${filteredOut.length} skipped`);
-
-  // 6) Fill-up.
-  stdout(`weak-fallback: checking URLs (target: ${need} alive)…`);
-  const { aliveResults, allUrlResults, consumed } = await fillUpAliveBatch(passed, need, deps);
-  const dead = allUrlResults.filter((r) => !r.alive);
-  stdout(
-    `weak-fallback: URLs checked ${allUrlResults.length}, ${aliveResults.length} alive ` +
-      `(target ${need}), ${dead.length} dead, ${passed.length - consumed} still queued`
-  );
-
-  // 7) JD fetch + entry construction.
-  const companyTiers = profile.company_tiers || {};
-  const salaryOpts = profile.salaryConfig || {};
-  const jdCacheDir = profile.paths.jdCacheDir;
-  const jdByAppKey = await fetchJdsByKey(aliveResults, jdCacheDir, deps);
-
-  // Lookup table for "was this row already Weak?" — needed because aliveResults
-  // come from the URL-check path which only carries app fields applyPrepareFilter
-  // forwarded; we re-key against the original TSV row to read fit_score / fit_rationale.
-  const poolByKey = Object.fromEntries(pool.map((a) => [a.key, a]));
-  const unknownTierSet = new Set(prevUnknownTiers);
-  const newEntries = aliveResults.map((urlRes) => {
-    const tsvRow = poolByKey[urlRes.key] || {};
-    const wasAlreadyWeak = tsvRow.fit_score === "Weak" || tsvRow.skip_reason === "weak_fit";
-    return buildBatchEntry(
-      urlRes,
-      jdByAppKey[urlRes.key],
-      profile,
-      deps,
-      companyTiers,
-      salaryOpts,
-      unknownTierSet,
-      {
-        wasAlreadyWeak,
-        priorFitScore: wasAlreadyWeak ? tsvRow.fit_score || "Weak" : "",
-        priorFitRationale: wasAlreadyWeak ? tsvRow.fit_rationale || "" : "",
-      }
-    );
-  });
-
-  // 8) Skip records.
-  const deadSkipped = dead.map((r) => ({
-    key: r.key,
-    reason: "url_dead",
-    url: r.url,
-    urlStatus: r.status,
-  }));
-  const newSkipped = [...duplicateSkips, ...filteredOut, ...deadSkipped, ...droppedFromQueue];
-
-  // 9) Rebuild deferred queue. Anything that passed but didn't fit `need`,
-  // plus the previously-queued items we couldn't push through (already-Weak
-  // residue and queue residue). Excluding URL-checked keys.
-  const checkedKeys = new Set(allUrlResults.map((r) => r.key));
-  const stillQueuedKeys = [];
-  for (const a of passed.slice(consumed)) {
-    if (!checkedKeys.has(a.key)) stillQueuedKeys.push(a.key);
-  }
-
-  // 10) Merge.
-  const mergedBatch = [...prevBatch, ...newEntries];
-  const mergedBatchKeys = new Set(mergedBatch.map((e) => e.key));
-  const inboxExhausted = computeInboxExhausted(apps, mergedBatchKeys);
-  const mergedSkipReasons = computeSkipReasons([...prevSkipped, ...newSkipped]);
-  // RFC 024 (BL-28): weak-fallback rewrites prepare_context.json too, so it
-  // also stamps `inbox_health` — SKILL reads the field uniformly regardless of
-  // which prepare mode produced the final context.
-  //
-  // Important (P1 from code review): in weak-fallback `stillQueuedKeys` may
-  // include already-Weak rows that were pulled into the pool here. The next
-  // `runPre` (mode fresh) drops those via `filterAlreadyEvaluated`, so they
-  // do NOT represent capacity for the next prepare. Exclude them from
-  // `remaining_viable` to keep semantics consistent with the fresh-writer
-  // and avoid false-healthy reports.
-  const viableStillQueued = stillQueuedKeys.filter((k) => {
-    const a = poolByKey[k];
-    return a && a.fit_score !== "Weak" && a.skip_reason !== "weak_fit";
-  });
-  const merged_inbox_health = computeInboxHealth({
-    remainingViable: viableStillQueued.length,
-    target: batchSize,
-    inBatch: mergedBatch.length,
-    dropsThisRun: mergedSkipReasons,
-  });
-
-  const merged = {
-    ...prev,
-    mode: "weak-fallback",
-    generatedAt: deps.now(),
-    batch: mergedBatch,
-    skipped: [...prevSkipped, ...newSkipped],
-    deferredQueue: stillQueuedKeys,
-    unknownTierCompanies: [...unknownTierSet].sort(),
-    stats: {
-      ...prevStats,
-      inBatch: mergedBatch.length,
-      urlChecked: (prevStats.urlChecked || 0) + allUrlResults.length,
-      urlAlive: (prevStats.urlAlive || 0) + aliveResults.length,
-      urlDead: (prevStats.urlDead || 0) + dead.length,
-      deferred: stillQueuedKeys.length,
-      unknownTierCompanies: unknownTierSet.size,
-      weakFallbackRuns: (prevStats.weakFallbackRuns || 0) + 1,
-      inboxExhausted,
-      skipReasons: mergedSkipReasons,
-    },
-    inbox_health: merged_inbox_health,
-  };
-
-  if (flags.dryRun) {
-    stdout(
-      `(dry-run) would append ${newEntries.length} weak-fallback entries → batch=${merged.batch.length}`
-    );
-    stdout(`(dry-run) stats: ${JSON.stringify(merged.stats)}`);
-    return 0;
-  }
-
-  deps.writeFile(contextPath, JSON.stringify(merged, null, 2));
-  const weakCount = newEntries.filter((e) => e.wasAlreadyWeak).length;
-  stdout(
-    `weak-fallback: appended ${newEntries.length} entries (${weakCount} already-Weak, ` +
-      `${newEntries.length - weakCount} fresh) → batch=${merged.batch.length} (${contextPath})`
-  );
-  stdout(
-    `inbox health: ${merged_inbox_health.status} (${merged_inbox_health.remaining_viable} viable for next run, target ${merged_inbox_health.target})`
-  );
-  if (inboxExhausted) {
-    stdout(`inbox-exhausted: no more fresh rows in TSV — SKILL loop should stop`);
-  }
-  return 0;
-}
+// RFC 034 (BL-80) removed `--mode weak-fallback`. After the contract change
+// that pushes every evaluated row to Notion regardless of fit_score, there is
+// no longer a "buried Weak" pool to re-surface — the operator triages Weak
+// rows in Notion directly. The autonomous prepare loop is now
+// `fresh → topup → push` (no third step). Passing `--mode weak-fallback` to
+// the CLI returns an error from the dispatcher below.
 
 // --- Notion-push helpers (RFC 022) -------------------------------------------
 
@@ -1505,11 +1234,10 @@ async function runCommit(ctx, deps) {
     Object.keys((profile.resumeVersions && profile.resumeVersions.versions) || {})
   );
 
-  const VALID_DECISIONS = new Set(["to_apply", "archive", "skip"]);
   // BL-9 (TSV v4): persist Claude's fit verdict on every result so future
   // prepare runs can short-circuit already-evaluated rows. Validators reject
   // typos rather than silently corrupting the column; the rest of the row
-  // still gets the decision-specific updates below.
+  // still gets the per-row updates below.
   const VALID_FIT_SCORES = new Set(["Strong", "Medium", "Weak"]);
   const VALID_SKIP_REASONS = new Set(["weak_fit", "duplicate"]);
 
@@ -1517,7 +1245,9 @@ async function runCommit(ctx, deps) {
   // from a SKILL result onto a TSV row. Mutates `app` in place. Stamps
   // fit_evaluated_at = now whenever a fit_score is written, so the engine has
   // a definitive "this row was judged on date X" signal independent of
-  // updatedAt (which moves for any reason).
+  // updatedAt (which moves for any reason). RFC 034: `skip_reason` from the
+  // SKILL is back-compat noise (the SKILL no longer emits it); we still
+  // accept the legacy `duplicate` / `weak_fit` values for one release.
   function applyFitFields(app, r) {
     if (r.fitScore !== undefined && r.fitScore !== "" && r.fitScore !== null) {
       if (VALID_FIT_SCORES.has(r.fitScore)) {
@@ -1549,15 +1279,17 @@ async function runCommit(ctx, deps) {
 
   const updates = {
     toApply: 0,
-    archive: 0,
-    skip: 0,
     notFound: 0,
-    invalidDecision: 0,
+    legacyDecision: 0,
     invalidArchetype: 0,
     invalidFitScore: 0,
     invalidSkipReason: 0,
     fitWritten: 0,
   };
+  // RFC 034: track whether we've already warned about a legacy `decision`
+  // field; we want exactly one stderr line per commit run regardless of how
+  // many rows carry the field, so the operator notices but doesn't drown.
+  let legacyDecisionWarned = false;
   for (const r of results) {
     const app = byKey[r.key];
     if (!app) {
@@ -1566,84 +1298,74 @@ async function runCommit(ctx, deps) {
       continue;
     }
 
-    if (!VALID_DECISIONS.has(r.decision)) {
-      updates.invalidDecision++;
-      stderr(
-        `warn: unknown decision "${r.decision}" for key ${r.key} — treating as skip ` +
-          `(valid: ${[...VALID_DECISIONS].join(", ")})`
-      );
-      updates.skip++;
-      continue;
+    // RFC 034 back-compat: a stale SKILL checkout may still emit a `decision`
+    // field. We log one warning per run and ignore the value — every entry in
+    // results.json is treated as an evaluated row going to "To Apply" + Notion.
+    if (r.decision !== undefined && r.decision !== null && r.decision !== "") {
+      updates.legacyDecision++;
+      if (!legacyDecisionWarned) {
+        stderr(
+          `warn: results.json contains legacy "decision" field (RFC 034 removed it); ` +
+            `ignoring — every row is treated as evaluated. First seen on key ${r.key}.`
+        );
+        legacyDecisionWarned = true;
+      }
     }
 
-    // BL-9: write fit verdict regardless of decision (to_apply / skip /
-    // archive). Only invalid-archetype to_apply rows are downgraded to skip
-    // BEFORE this point; for them we still want the verdict captured so the
-    // user doesn't see the row re-evaluated next run.
     const fitBeforeWrite = app.fit_score;
 
-    if (r.decision === "to_apply") {
-      if (r.resumeVer && validArchetypes.size > 0 && !validArchetypes.has(r.resumeVer)) {
-        updates.invalidArchetype++;
-        stderr(
-          `warn: unknown resumeVer "${r.resumeVer}" for key ${r.key} — treating as skip ` +
-            `(valid keys: ${[...validArchetypes].join(", ")})`
-        );
-        // Capture the verdict even on the downgraded path.
-        applyFitFields(app, r);
-        if (app.fit_score && app.fit_score !== fitBeforeWrite) updates.fitWritten++;
-        updates.skip++;
-        continue;
-      }
-      app.status = "To Apply";
-      if (r.clKey) app.cl_key = r.clKey;
-      if (r.resumeVer) app.resume_ver = r.resumeVer;
-      if (r.notionPageId) app.notion_page_id = r.notionPageId;
-      if (r.salaryMin !== undefined && r.salaryMin !== null && r.salaryMin !== "") {
-        app.salary_min = String(r.salaryMin);
-      }
-      if (r.salaryMax !== undefined && r.salaryMax !== null && r.salaryMax !== "") {
-        app.salary_max = String(r.salaryMax);
-      }
-      if (r.clPath) app.cl_path = r.clPath;
-      else if (r.clKey && !app.cl_path) app.cl_path = r.clKey;
-      app.updatedAt = now;
+    // RFC 034: every entry in results.evaluated[] becomes a "To Apply" row.
+    // resumeVer is still validated against the profile's archetype keys.
+    if (r.resumeVer && validArchetypes.size > 0 && !validArchetypes.has(r.resumeVer)) {
+      updates.invalidArchetype++;
+      stderr(
+        `warn: unknown resumeVer "${r.resumeVer}" for key ${r.key} — treating as skipped ` +
+          `(valid keys: ${[...validArchetypes].join(", ")})`
+      );
+      // Capture the verdict even on the downgraded path so the row gets
+      // filtered out on next prepare run.
       applyFitFields(app, r);
       if (app.fit_score && app.fit_score !== fitBeforeWrite) updates.fitWritten++;
-      updates.toApply++;
-    } else if (r.decision === "archive") {
-      app.status = "Archived";
-      app.updatedAt = now;
-      applyFitFields(app, r);
-      if (app.fit_score && app.fit_score !== fitBeforeWrite) updates.fitWritten++;
-      updates.archive++;
-    } else {
-      // "skip" — no status change, but persist the verdict so the row gets
-      // filtered out on next prepare run (filterAlreadyEvaluated, Step 2).
-      applyFitFields(app, r);
-      if (app.fit_score && app.fit_score !== fitBeforeWrite) updates.fitWritten++;
-      updates.skip++;
+      continue;
     }
+    app.status = "To Apply";
+    if (r.clKey) app.cl_key = r.clKey;
+    if (r.resumeVer) app.resume_ver = r.resumeVer;
+    if (r.notionPageId) app.notion_page_id = r.notionPageId;
+    if (r.salaryMin !== undefined && r.salaryMin !== null && r.salaryMin !== "") {
+      app.salary_min = String(r.salaryMin);
+    }
+    if (r.salaryMax !== undefined && r.salaryMax !== null && r.salaryMax !== "") {
+      app.salary_max = String(r.salaryMax);
+    }
+    if (r.clPath) app.cl_path = r.clPath;
+    else if (r.clKey && !app.cl_path) app.cl_path = r.clKey;
+    app.updatedAt = now;
+    applyFitFields(app, r);
+    if (app.fit_score && app.fit_score !== fitBeforeWrite) updates.fitWritten++;
+    updates.toApply++;
   }
 
   // BL-14 / RFC 019 — engine-owned CL file writes.
   //
-  // For every `to_apply` result that includes `clParagraphs: string[]`, write
+  // For every evaluated row that includes `clParagraphs: string[]`, write
   // the cover letter into both layouts:
   //   - MD:  profiles/<id>/cover_letters_md/<CompanySlug>/<clKey>.md
   //   - PDF: profiles/<id>/cover_letters/<CompanySlug>/<clKey>.pdf
-  // and override `app.cl_path` with the canonical relative PDF path. The
-  // SKILL no longer writes the .md file itself (Step 8e change). PDF writes
-  // are idempotent: if the file already exists we keep it (manual edits, or
-  // re-runs against unchanged content). MD is overwritten — fresh prepare
-  // run = fresh content. Failures are warned and skipped per row, never abort
-  // the whole commit; TSV save still runs so the rest of the batch lands.
+  // and override `app.cl_path` with the canonical relative PDF path. RFC 034:
+  // Weak rows arrive without `clParagraphs` by design — they still reach
+  // Notion as "To Apply" but with an empty Cover Letter field; the operator
+  // generates a CL on-demand later if they triage to apply. PDF writes are
+  // idempotent: existing PDFs are preserved (manual edits, or re-runs against
+  // unchanged content). MD is overwritten — fresh prepare run = fresh
+  // content. Failures are warned and skipped per row, never abort the whole
+  // commit; TSV save still runs so the rest of the batch lands.
   const clResults = results.filter(
     (r) =>
-      r.decision === "to_apply" &&
       Array.isArray(r.clParagraphs) &&
       r.clParagraphs.length > 0 &&
-      byKey[r.key] // already warned above for missing keys
+      byKey[r.key] &&
+      byKey[r.key].status === "To Apply" // skipped rows (invalid resumeVer) don't get a CL
   );
   const clStats = {
     mdWritten: 0,
@@ -1722,17 +1444,20 @@ async function runCommit(ctx, deps) {
       (clStats.failed > 0 ? `, ${clStats.failed} failed` : "");
     stdout(clMsg);
   } else {
-    // Engine warns when SKILL forgot the new field on a to_apply row, so a
-    // silent regression to "no PDF written" gets caught immediately.
+    // Engine warns when SKILL forgot clParagraphs on a Strong/Medium row.
+    // RFC 034: Weak rows are EXPECTED to omit clParagraphs (operator
+    // generates CL on-demand if they triage to apply); only Strong / Medium
+    // / unknown-fitScore rows trigger this warning.
     const toApplyMissingParagraphs = results.filter(
       (r) =>
-        r.decision === "to_apply" &&
         byKey[r.key] &&
+        byKey[r.key].status === "To Apply" &&
+        r.fitScore !== "Weak" &&
         (!Array.isArray(r.clParagraphs) || r.clParagraphs.length === 0)
     );
     if (toApplyMissingParagraphs.length > 0) {
       stderr(
-        `warn: ${toApplyMissingParagraphs.length} to_apply row(s) missing clParagraphs — ` +
+        `warn: ${toApplyMissingParagraphs.length} Strong/Medium row(s) missing clParagraphs — ` +
           `engine cannot generate MD/PDF (likely an old SKILL version; see RFC 019)`
       );
     }
@@ -1766,8 +1491,12 @@ async function runCommit(ctx, deps) {
     dryRunWouldPush: 0,
   };
 
+  // RFC 034: every evaluated row that landed on "To Apply" is push-eligible.
+  // The legacy `r.decision === "to_apply"` gate is gone; the TSV status is
+  // the source of truth (rows downgraded for invalid resumeVer stay Inbox
+  // and are not in this set).
   const toApplyResults = results.filter(
-    (r) => r.decision === "to_apply" && byKey[r.key] && byKey[r.key].status === "To Apply"
+    (r) => byKey[r.key] && byKey[r.key].status === "To Apply"
   );
 
   function revertToInbox(app, reason) {
@@ -1959,7 +1688,8 @@ async function runCommit(ctx, deps) {
   }
 
   const extras = [];
-  if (updates.invalidDecision > 0) extras.push(`${updates.invalidDecision} invalid decision`);
+  if (updates.legacyDecision > 0)
+    extras.push(`${updates.legacyDecision} legacy decision field(s) ignored`);
   if (updates.invalidArchetype > 0) extras.push(`${updates.invalidArchetype} invalid archetype`);
   if (updates.invalidFitScore > 0) extras.push(`${updates.invalidFitScore} invalid fit_score`);
   if (updates.invalidSkipReason > 0)
@@ -1973,8 +1703,7 @@ async function runCommit(ctx, deps) {
   const extraStr = extras.length > 0 ? `, ${extras.join(", ")}` : "";
 
   stdout(
-    `commit: ${updates.toApply} → To Apply, ${updates.archive} archived, ` +
-      `${updates.skip} skipped, ${updates.notFound} not found${extraStr}`
+    `commit: ${updates.toApply} → To Apply, ${updates.notFound} not found${extraStr}`
   );
   if (updates.fitWritten > 0) {
     stdout(
@@ -2004,9 +1733,19 @@ function makePrepareCommand(overrides = {}) {
 
     if (phase === "pre") {
       if (mode === "topup") return runPreTopup(ctx, deps);
-      if (mode === "weak-fallback") return runPreWeakFallback(ctx, deps);
       if (mode === "fresh" || mode === "") return runPre(ctx, deps);
-      ctx.stderr(`error: unknown --mode "${mode}" (valid: fresh, topup, weak-fallback)`);
+      // RFC 034: `weak-fallback` mode was removed. Reject the flag explicitly
+      // so a stale CLI invocation surfaces the migration rather than
+      // silently falling through to runPre.
+      if (mode === "weak-fallback") {
+        ctx.stderr(
+          `error: --mode "weak-fallback" was removed in RFC 034 (BL-80); ` +
+            `Weak rows now go to Notion via the standard fresh/topup loop. ` +
+            `Drop the flag; valid modes are: fresh, topup.`
+        );
+        return 1;
+      }
+      ctx.stderr(`error: unknown --mode "${mode}" (valid: fresh, topup)`);
       return 1;
     }
     if (phase === "commit") return runCommit(ctx, deps);

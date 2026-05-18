@@ -234,9 +234,9 @@ The Notion DB has eight statuses; the TSV has nine. The extra status
 is `Inbox`, used as the default for fresh `scan` rows that have not
 been triaged yet. Notion never sees `Inbox`. The transition `Inbox →
 To Apply` and the matching Notion page creation happen atomically in
-`prepare --phase commit decision=to_apply`, so a row is either
-`Inbox` (no Notion page) or `To Apply` (with a `notion_page_id`) —
-no race window. Source: [RFC 014](../../rfc/014-status-split-new-vs-toapply.md).
+`prepare --phase commit`, so a row is either `Inbox` (no Notion page)
+or `To Apply` (with a `notion_page_id`) — no race window. Source:
+[RFC 014](../../rfc/014-status-split-new-vs-toapply.md).
 
 ### Why `check` is two-phase
 

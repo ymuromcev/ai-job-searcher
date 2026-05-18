@@ -1015,14 +1015,15 @@ function makeCommitDeps(apps, overrides = {}) {
   };
 }
 
-test("prepare --phase commit: to_apply sets status and fields", async () => {
-  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+test("prepare --phase commit: evaluated row sets status=To Apply + fields", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
   const results = {
     profileId: "testuser",
     results: [
       {
         key: "gh:1",
-        decision: "to_apply",
+        fitScore: "Strong",
+        fitRationale: "good fit",
         clKey: "stripe_spm_cl",
         resumeVer: "v3",
         notionPageId: "notion-abc",
@@ -1098,45 +1099,205 @@ test("prepare --phase commit (RFC 022): to_apply with clKey but no clParagraphs 
   assert.equal(saved[0].notion_page_id || "", "", "no Notion page id");
 });
 
-test("prepare --phase commit: archive sets status", async () => {
-  const apps = [makeApp({ key: "gh:2", status: "To Apply" })];
-  const results = {
-    profileId: "testuser",
-    results: [{ key: "gh:2", decision: "archive" }],
-  };
-  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
-  const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
-  await cmd(ctx);
-  const saved = deps._getSaved();
-  assert.equal(saved[0].status, "Archived");
-});
+// RFC 034: `archive` and `skip` decision branches removed from the engine.
+// Both used to gate via `r.decision`; now every results[] entry is treated
+// as an evaluated row and pushed to Notion as "To Apply". Tests that
+// assert the old archive/skip semantics were removed (BL-80).
 
-test("prepare --phase commit: skip leaves app unchanged", async () => {
-  const apps = [makeApp({ key: "gh:3", status: "To Apply" })];
+// RFC 034 back-compat: results.json with a legacy `decision` field is
+// tolerated. The engine logs one warning per run and ignores the field.
+test("prepare --phase commit (RFC 034): legacy `decision` field is ignored with warning", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
   const results = {
     profileId: "testuser",
-    results: [{ key: "gh:3", decision: "skip" }],
+    results: [
+      {
+        key: "gh:1",
+        decision: "to_apply", // legacy field, must be tolerated
+        fitScore: "Strong",
+        fitRationale: "great fit",
+        clKey: "stripe_pm",
+        resumeVer: "v1",
+        notionPageId: "p1",
+      },
+    ],
   };
   const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
   await cmd(ctx);
+  // Row is processed normally — status promoted, fit captured.
   const saved = deps._getSaved();
-  // "skip" decision leaves status untouched.
   assert.equal(saved[0].status, "To Apply");
+  assert.equal(saved[0].fit_score, "Strong");
+  // Engine logged the back-compat warning exactly once.
+  assert.ok(
+    ctx._errLines.some((l) => /legacy "decision" field/.test(l)),
+    "should warn about legacy decision field"
+  );
+  assert.equal(
+    ctx._errLines.filter((l) => /legacy "decision" field/.test(l)).length,
+    1,
+    "should warn only once per run"
+  );
 });
 
-// --- BL-9: fit verdict persistence on commit --------------------------------
-
-test("prepare --phase commit (BL-9): to_apply persists fit_score=Strong + rationale + timestamp", async () => {
-  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+test("prepare --phase commit (RFC 034): legacy `decision` warning fires once even across many rows", async () => {
+  const apps = [
+    makeApp({ key: "gh:1", status: "Inbox" }),
+    makeApp({ key: "gh:2", status: "Inbox" }),
+    makeApp({ key: "gh:3", status: "Inbox" }),
+  ];
   const results = {
     profileId: "testuser",
     results: [
       {
         key: "gh:1",
         decision: "to_apply",
+        fitScore: "Strong",
+        clKey: "a",
+        resumeVer: "v",
+        clParagraphs: ["P1", "P2", "P3", "P4"],
+      },
+      { key: "gh:2", decision: "skip", fitScore: "Weak" }, // no CL — RFC 034 §5(A)
+      { key: "gh:3", decision: "archive", fitScore: "Weak" }, // no CL — RFC 034 §5(A)
+    ],
+  };
+  const rec = makeClRecorder();
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  // Every row promoted to To Apply (engine ignores decision).
+  const saved = deps._getSaved();
+  for (const app of saved) {
+    assert.equal(app.status, "To Apply", `${app.key} should be To Apply`);
+  }
+  // Exactly one warning surfaced.
+  assert.equal(
+    ctx._errLines.filter((l) => /legacy "decision" field/.test(l)).length,
+    1
+  );
+});
+
+// RFC 034: Strong + Medium + Weak all reach Notion as "To Apply".
+test("prepare --phase commit (RFC 034): Strong + Medium + Weak all reach Notion as To Apply", async () => {
+  const apps = [
+    makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm" }),
+    makeApp({ key: "gh:2", status: "Inbox", companyName: "Stripe" }),
+    makeApp({ key: "gh:3", status: "Inbox", companyName: "Plaid" }),
+  ];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        fitScore: "Strong",
+        fitRationale: "core PM/fintech",
+        clKey: "Affirm_PM",
+        resumeVer: "v1",
+        clParagraphs: ["P1", "P2", "P3", "P4"],
+      },
+      {
+        key: "gh:2",
+        fitScore: "Medium",
+        fitRationale: "adjacent domain",
+        clKey: "Stripe_PM",
+        resumeVer: "v1",
+        clParagraphs: ["P1", "P2", "P3", "P4"],
+      },
+      {
+        key: "gh:3",
+        fitScore: "Weak",
+        fitRationale: "outside core domain",
+        // Per RFC 034 §5 option A: no clParagraphs for Weak.
+      },
+    ],
+  };
+  const rec = makeClRecorder();
+  const rig = makeNotionRig();
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+    ...rig.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  // All three rows reached Notion.
+  assert.equal(rig.pushCalls.length, 3, "all three rows should push to Notion");
+  // All three rows ended up as "To Apply" in the TSV.
+  const saved = deps._getSaved();
+  const byKey = Object.fromEntries(saved.map((a) => [a.key, a]));
+  assert.equal(byKey["gh:1"].status, "To Apply");
+  assert.equal(byKey["gh:2"].status, "To Apply");
+  assert.equal(byKey["gh:3"].status, "To Apply");
+  // Fit verdicts captured on every row.
+  assert.equal(byKey["gh:1"].fit_score, "Strong");
+  assert.equal(byKey["gh:2"].fit_score, "Medium");
+  assert.equal(byKey["gh:3"].fit_score, "Weak");
+  // Weak row has no clKey / cl_path (engine didn't write CL).
+  assert.equal(byKey["gh:3"].cl_key || "", "");
+  assert.equal(byKey["gh:3"].cl_path || "", "");
+  // No legacy-decision warning (no decision field on any row).
+  assert.equal(
+    ctx._errLines.filter((l) => /legacy "decision" field/.test(l)).length,
+    0
+  );
+});
+
+// RFC 034: Notion failure on a Weak row reverts TSV to Inbox (existing
+// RFC 022 contract still holds — the row gets a second chance next run via
+// `filterAlreadyEvaluated` checks — but since fit_score=Weak persists, it
+// will be dropped next prepare unless the operator re-evaluates).
+test("prepare --phase commit (RFC 034): Notion failure on Weak row reverts to Inbox", async () => {
+  const apps = [makeApp({ key: "gh:3", status: "Inbox", companyName: "Plaid" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:3",
+        fitScore: "Weak",
+        fitRationale: "outside core domain",
+        // No clParagraphs for Weak.
+      },
+    ],
+  };
+  const rec = makeClRecorder();
+  const rig = makeNotionRig({
+    pushFailFn: () => ({ error: new Error("Notion 503") }),
+  });
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+    ...rig.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  assert.equal(rig.pushCalls.length, 1, "Notion push attempted");
+  const saved = deps._getSaved();
+  // Status reverted on failure (RFC 022 contract).
+  assert.equal(saved[0].status, "Inbox");
+  assert.equal(saved[0].notion_page_id || "", "");
+  // Fit verdict still persisted — verdict was valid; only the push failed.
+  assert.equal(saved[0].fit_score, "Weak");
+  const errLines = ctx._errLines.join("\n");
+  assert.match(errLines, /Notion push failed for gh:3/);
+});
+
+// --- BL-9: fit verdict persistence on commit --------------------------------
+
+test("prepare --phase commit (BL-9): evaluated row persists fit_score=Strong + rationale + timestamp", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
         clKey: "stripe_spm_cl",
         notionPageId: "p1",
         fitScore: "Strong",
@@ -1156,112 +1317,60 @@ test("prepare --phase commit (BL-9): to_apply persists fit_score=Strong + ration
   assert.equal(app.skip_reason || "", "");
 });
 
-test("prepare --phase commit (BL-9): skip persists fit_score=Weak + skip_reason=weak_fit", async () => {
-  // The whole point of Step 2 + Step 3: a Weak verdict on this run must be
-  // re-readable next run so filterAlreadyEvaluated drops it without paying
-  // SKILL cost again.
-  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
-  const results = {
-    profileId: "testuser",
-    results: [
-      {
-        key: "gh:1",
-        decision: "skip",
-        fitScore: "Weak",
-        fitRationale: "Energy domain — outside PM core",
-        skipReason: "weak_fit",
-      },
-    ],
-  };
-  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
-  const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
-  await cmd(ctx);
-  const app = deps._getSaved()[0];
-  // skip leaves status untouched but fit fields ARE written.
-  assert.equal(app.status, "To Apply");
-  assert.equal(app.fit_score, "Weak");
-  assert.equal(app.skip_reason, "weak_fit");
-  assert.equal(app.fit_rationale, "Energy domain — outside PM core");
-  assert.equal(app.fit_evaluated_at, "2026-04-20T13:00:00.000Z");
-});
-
-test("prepare --phase commit (BL-9): skip with skip_reason=duplicate persists for next-run filter", async () => {
-  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
-  const results = {
-    profileId: "testuser",
-    results: [
-      {
-        key: "gh:1",
-        decision: "skip",
-        fitRationale: "Duplicate of greenhouse:1234 — same posting different ATS",
-        skipReason: "duplicate",
-      },
-    ],
-  };
-  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
-  const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
-  await cmd(ctx);
-  const app = deps._getSaved()[0];
-  assert.equal(app.skip_reason, "duplicate");
-  assert.equal(app.fit_rationale, "Duplicate of greenhouse:1234 — same posting different ATS");
-});
-
-test("prepare --phase commit (BL-9): archive persists fit verdict alongside status change", async () => {
-  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
-  const results = {
-    profileId: "testuser",
-    results: [
-      {
-        key: "gh:1",
-        decision: "archive",
-        fitScore: "Weak",
-        fitRationale: "Hard blocker — non-PM role mis-classified at scan",
-        skipReason: "weak_fit",
-      },
-    ],
-  };
-  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
-  const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
-  await cmd(ctx);
-  const app = deps._getSaved()[0];
-  assert.equal(app.status, "Archived");
-  assert.equal(app.fit_score, "Weak");
-  assert.equal(app.skip_reason, "weak_fit");
-});
+// RFC 034 removed the `skip` and `archive` dispatch branches. Tests that
+// asserted skip-leaves-status-untouched / archive-sets-Archived /
+// skip-with-skipReason-persists were removed (BL-80). The current contract:
+// every evaluated row becomes "To Apply" and is pushed to Notion.
 
 test("prepare --phase commit (BL-9): invalid fitScore warns and is not persisted", async () => {
-  const apps = [makeApp({ key: "gh:1", status: "To Apply", fit_score: "" })];
+  // The legacy `skipReason` field is back-compat but still validated when
+  // present so a stale SKILL can't corrupt the column.
+  const apps = [makeApp({ key: "gh:1", status: "Inbox", fit_score: "" })];
   const results = {
     profileId: "testuser",
-    results: [{ key: "gh:1", decision: "skip", fitScore: "MaybeStrong", skipReason: "weak_fit" }],
+    results: [
+      {
+        key: "gh:1",
+        fitScore: "MaybeStrong",
+        clKey: "x",
+        resumeVer: "v",
+        clParagraphs: ["P1", "P2", "P3", "P4"],
+      },
+    ],
   };
-  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
+  const rec = makeClRecorder();
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+  });
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
   await cmd(ctx);
   const app = deps._getSaved()[0];
-  // Bad fit_score not persisted, but skip_reason still written (independent).
+  // Bad fit_score not persisted — but row still promoted to To Apply.
   assert.equal(app.fit_score || "", "");
   assert.equal(app.fit_evaluated_at || "", "");
-  assert.equal(app.skip_reason, "weak_fit");
+  assert.equal(app.status, "To Apply");
   assert.ok(ctx._errLines.some((l) => /invalid fitScore "MaybeStrong"/.test(l)));
 });
 
-test("prepare --phase commit (BL-9): invalid skipReason warns and is not persisted", async () => {
-  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+test("prepare --phase commit (BL-9): invalid skipReason (back-compat) warns and is not persisted", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
   const results = {
     profileId: "testuser",
-    results: [{ key: "gh:1", decision: "skip", fitScore: "Weak", skipReason: "not_a_pm_role" }],
+    results: [
+      {
+        key: "gh:1",
+        fitScore: "Weak",
+        skipReason: "not_a_pm_role", // legacy / invalid value
+      },
+    ],
   };
   const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
   await cmd(ctx);
   const app = deps._getSaved()[0];
-  // fit_score still written, skip_reason rejected.
   assert.equal(app.fit_score, "Weak");
   assert.equal(app.skip_reason || "", "");
   assert.ok(ctx._errLines.some((l) => /invalid skipReason "not_a_pm_role"/.test(l)));
@@ -1273,7 +1382,7 @@ test("prepare --phase commit (BL-9): result without fit fields leaves existing T
   const apps = [
     makeApp({
       key: "gh:1",
-      status: "To Apply",
+      status: "Inbox",
       fit_score: "Strong",
       fit_rationale: "earlier rationale",
       fit_evaluated_at: "2026-05-01T00:00:00Z",
@@ -1281,7 +1390,7 @@ test("prepare --phase commit (BL-9): result without fit fields leaves existing T
   ];
   const results = {
     profileId: "testuser",
-    results: [{ key: "gh:1", decision: "to_apply", clKey: "k", notionPageId: "p1" }],
+    results: [{ key: "gh:1", clKey: "k", notionPageId: "p1" }],
   };
   const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
   const cmd = makePrepareCommand(deps);
@@ -1293,11 +1402,10 @@ test("prepare --phase commit (BL-9): result without fit fields leaves existing T
   assert.equal(app.fit_evaluated_at, "2026-05-01T00:00:00Z");
 });
 
-test("prepare --phase commit (BL-9): downgraded-to-skip path (invalid resumeVer) still captures verdict", async () => {
-  // When commit downgrades a to_apply to skip due to invalid resumeVer, the
-  // fit verdict should still be written so the user doesn't see this row
-  // re-evaluated next run.
-  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+test("prepare --phase commit (BL-9): invalid resumeVer leaves row as Inbox but still captures verdict", async () => {
+  // When commit skips a row due to invalid resumeVer, the fit verdict should
+  // still be written so the user doesn't see this row re-evaluated next run.
+  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
   const profile = {
     id: "testuser",
     filterRules: {},
@@ -1314,7 +1422,6 @@ test("prepare --phase commit (BL-9): downgraded-to-skip path (invalid resumeVer)
     results: [
       {
         key: "gh:1",
-        decision: "to_apply",
         resumeVer: "typo_key",
         fitScore: "Strong",
         fitRationale: "Good fit, but typo will downgrade",
@@ -1371,25 +1478,47 @@ test("prepare --phase commit: missing results-file returns 1", async () => {
   assert.ok(ctx._errLines.some((l) => /results-file/.test(l)));
 });
 
-test("prepare --phase commit: unknown decision warns and falls back to skip", async () => {
-  const apps = [makeApp({ key: "gh:1", status: "To Apply" })];
+test("prepare --phase commit (RFC 034): any `decision` value is tolerated and logged once", async () => {
+  // The old "unknown decision warns and falls back to skip" path is gone.
+  // RFC 034: any value of `decision` (including typos) is back-compat noise;
+  // the engine ignores the field with a single warning and processes the
+  // row normally.
+  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
   const results = {
     profileId: "testuser",
-    results: [{ key: "gh:1", decision: "approve" }], // typo, not in enum
+    results: [
+      {
+        key: "gh:1",
+        decision: "approve", // typo in old enum — now just ignored
+        fitScore: "Strong",
+        clKey: "k",
+        resumeVer: "v",
+        clParagraphs: ["P1", "P2", "P3", "P4"],
+      },
+    ],
   };
-  const deps = makeCommitDeps(apps, { readFile: () => JSON.stringify(results) });
+  const rec = makeClRecorder();
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+  });
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json", dryRun: false } });
   const code = await cmd(ctx);
   assert.equal(code, 0);
+  // No "unknown decision" warning anymore — just the back-compat advisory.
   assert.ok(
-    ctx._errLines.some((l) => /unknown decision "approve"/.test(l)),
-    "should warn about unknown decision"
+    ctx._errLines.some((l) => /legacy "decision" field/.test(l)),
+    "should warn about legacy decision field"
   );
-  // App should remain unchanged (no resume_ver, no notion_page_id, status as-was)
+  assert.equal(
+    ctx._errLines.filter((l) => /unknown decision/.test(l)).length,
+    0,
+    "should NOT log the old 'unknown decision' warning"
+  );
+  // Row promoted normally.
   const saved = deps._getSaved();
-  assert.equal(saved[0].notion_page_id || "", "");
-  assert.equal(saved[0].resume_ver || "", "");
+  assert.equal(saved[0].status, "To Apply");
 });
 
 test("prepare --phase commit: unknown resumeVer warns and skips when validArchetypes set is non-empty", async () => {
@@ -1823,15 +1952,18 @@ test("prepare --phase commit (BL-14): clParagraphs without clKey warns + skips f
   assert.ok(ctx._errLines.some((l) => /clParagraphs present but clKey missing/.test(l)));
 });
 
-test("prepare --phase commit (BL-14): to_apply WITHOUT clParagraphs warns (regression guard)", async () => {
+test("prepare --phase commit (BL-14 / RFC 034): Strong/Medium row WITHOUT clParagraphs warns (regression guard)", async () => {
+  // RFC 034 §5(A): only Strong/Medium rows are expected to carry
+  // clParagraphs. The warning now scopes to those scores so a Weak row
+  // without CL is not flagged (by design).
   const apps = [makeApp({ key: "gh:1", status: "Inbox", companyName: "Affirm" })];
   const results = {
     profileId: "testuser",
-    // No clParagraphs — old SKILL behavior. Engine should flag this.
+    // No clParagraphs on a Strong row — old SKILL behavior. Engine should flag.
     results: [
       {
         key: "gh:1",
-        decision: "to_apply",
+        fitScore: "Strong",
         clKey: "Affirm_PM_20260505",
         resumeVer: "v1",
       },
@@ -1849,8 +1981,42 @@ test("prepare --phase commit (BL-14): to_apply WITHOUT clParagraphs warns (regre
   assert.equal(rec.writes.length, 0);
   assert.equal(rec.pdfs.length, 0);
   assert.ok(
-    ctx._errLines.some((l) => /to_apply row\(s\) missing clParagraphs/.test(l)),
-    `expected legacy-row warning, got: ${ctx._errLines.join(" | ")}`
+    ctx._errLines.some((l) => /Strong\/Medium row\(s\) missing clParagraphs/.test(l)),
+    `expected Strong/Medium-row warning, got: ${ctx._errLines.join(" | ")}`
+  );
+});
+
+test("prepare --phase commit (RFC 034): Weak row WITHOUT clParagraphs does NOT warn (by design)", async () => {
+  // RFC 034 §5(A): Weak rows are expected to omit clParagraphs — they go
+  // to Notion with an empty Cover Letter field. The CL-missing warning
+  // must not fire for Weak.
+  const apps = [makeApp({ key: "gh:1", status: "Inbox", companyName: "Plaid" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        fitScore: "Weak",
+        fitRationale: "outside core domain",
+        // No clKey, no clParagraphs — correct shape for Weak.
+      },
+    ],
+  };
+  const rec = makeClRecorder();
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    ...rec.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  // No CL writes. No warning.
+  assert.equal(rec.writes.length, 0);
+  assert.equal(rec.pdfs.length, 0);
+  assert.equal(
+    ctx._errLines.filter((l) => /missing clParagraphs/.test(l)).length,
+    0,
+    `Weak row should not trigger CL-missing warning, got: ${ctx._errLines.join(" | ")}`
   );
 });
 
@@ -2355,22 +2521,29 @@ test("prepare --phase pre (BL-9 Step 4): unknown --mode returns 1", async () => 
   assert.ok(ctx._errLines.some((l) => /unknown --mode/.test(l)));
 });
 
-// --- BL-9 Step 5: weak-fallback + inboxExhausted -----------------------------
-
-test("filterAlreadyEvaluated weak-fallback mode: keeps Weak rows, still drops duplicates", () => {
-  const apps = [
-    makeApp({ key: "a", fit_score: "Weak" }),
-    makeApp({ key: "b", skip_reason: "weak_fit" }),
-    makeApp({ key: "c", skip_reason: "duplicate" }),
-    makeApp({ key: "d" }),
-  ];
-  const { passed, skipped } = filterAlreadyEvaluated(apps, { mode: "weak-fallback" });
-  // a + b + d pass; c drops as duplicate.
-  assert.deepEqual(passed.map((a) => a.key).sort(), ["a", "b", "d"]);
-  assert.equal(skipped.length, 1);
-  assert.equal(skipped[0].key, "c");
-  assert.equal(skipped[0].reason, "already_evaluated_duplicate");
+test("prepare --phase pre (RFC 034): --mode weak-fallback is rejected with migration hint", async () => {
+  // The old `--mode weak-fallback` was removed in RFC 034 (BL-80). The CLI
+  // must reject it with a clear error so stale tooling surfaces the
+  // migration instead of falling through silently.
+  const apps = [makeApp()];
+  const deps = makePrepDeps(apps);
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({
+    flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 30, dryRun: false },
+  });
+  const code = await cmd(ctx);
+  assert.equal(code, 1);
+  assert.ok(
+    ctx._errLines.some((l) => /weak-fallback.*removed in RFC 034/.test(l)),
+    "should mention RFC 034 in the rejection"
+  );
 });
+
+// --- BL-9 Step 5: inboxExhausted helpers ------------------------------------
+//
+// RFC 034 (BL-80) removed `--mode weak-fallback`. The old
+// `filterAlreadyEvaluated({mode:"weak-fallback"})` opt-in is gone — the
+// function signature no longer takes options; Weak rows are always dropped.
 
 test("isFreshInboxApp: true for status=Inbox", () => {
   assert.equal(isFreshInboxApp(makeApp({ status: "Inbox" })), true);
@@ -2409,13 +2582,15 @@ test("computeInboxExhausted: ignores duplicate-flagged rows", () => {
   assert.equal(computeInboxExhausted(apps, new Set(["a"])), true);
 });
 
-test("computeInboxExhausted: counts already-Weak rows as not-exhausted", () => {
-  // Weak rows are still pull-able by weak-fallback → don't count as exhausted.
+test("computeInboxExhausted (RFC 034): already-Weak rows count as exhausted (filterAlreadyEvaluated drops them)", () => {
+  // After RFC 034 removed weak-fallback, Weak rows are filtered out of
+  // every subsequent prepare run by filterAlreadyEvaluated. They are NOT
+  // pullable, so they should be treated like `duplicate` for exhaustion.
   const apps = [
     makeApp({ key: "a", status: "Inbox" }),
     makeApp({ key: "b", status: "Inbox", fit_score: "Weak" }),
   ];
-  assert.equal(computeInboxExhausted(apps, new Set(["a"])), false);
+  assert.equal(computeInboxExhausted(apps, new Set(["a"])), true);
 });
 
 test("prepare --phase pre fresh (BL-9 Step 5): writes inboxExhausted=true when batch consumes all fresh", async () => {
@@ -2433,10 +2608,10 @@ test("prepare --phase pre fresh (BL-9 Step 5): writes inboxExhausted=true when b
   assert.equal(result.stats.inboxExhausted, true);
 });
 
-test("prepare --phase pre fresh (BL-9 Step 5): inboxExhausted=false when already-Weak rows remain", async () => {
-  // Fresh run consumes the 1 fresh row. The Weak row was filtered by
-  // filterAlreadyEvaluated and never reached the batch — but it's still
-  // available for weak-fallback. Inbox NOT exhausted yet.
+test("prepare --phase pre fresh (RFC 034): inboxExhausted=true when only already-Weak rows remain", async () => {
+  // After RFC 034 removed weak-fallback, Weak rows are not pullable in any
+  // subsequent prepare run. If the only remaining Inbox row is Weak, the
+  // Inbox is exhausted as far as the SKILL loop is concerned.
   const apps = [
     makeApp({ key: "gh:0", jobId: "0", status: "Inbox" }),
     makeApp({ key: "gh:1", jobId: "1", status: "Inbox", fit_score: "Weak" }),
@@ -2448,425 +2623,9 @@ test("prepare --phase pre fresh (BL-9 Step 5): inboxExhausted=false when already
   const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
   assert.equal(result.batch.length, 1);
   assert.equal(result.batch[0].key, "gh:0");
-  assert.equal(result.stats.inboxExhausted, false);
-});
-
-test("prepare --phase pre weak-fallback (BL-9 Step 5): pulls already-Weak rows into batch with wasAlreadyWeak=true", async () => {
-  // gh:0 is in batch (already from a prior pass). gh:1 has been judged Weak.
-  // weak-fallback should pull gh:1 in with wasAlreadyWeak=true.
-  const apps = [
-    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
-    makeApp({
-      key: "gh:1",
-      jobId: "1",
-      status: "Inbox",
-      fit_score: "Weak",
-      fit_rationale: "no fintech overlap",
-    }),
-  ];
-  const prevContext = {
-    version: 1,
-    profileId: "testuser",
-    mode: "topup",
-    batchSize: 4,
-    batch: [
-      {
-        key: "gh:0",
-        source: "greenhouse",
-        jobId: "0",
-        companyName: "Stripe",
-        title: "PM",
-        url: "https://example.com/0",
-        urlAlive: true,
-        urlStatus: 200,
-      },
-    ],
-    skipped: [],
-    deferredQueue: [],
-    unknownTierCompanies: [],
-    stats: {},
-  };
-  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
-  const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({
-    flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: false },
-  });
-  const code = await cmd(ctx);
-  assert.equal(code, 0);
-  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
-  assert.equal(result.mode, "weak-fallback");
-  assert.equal(result.batch.length, 2);
-  const newEntry = result.batch[1];
-  assert.equal(newEntry.key, "gh:1");
-  assert.equal(newEntry.wasAlreadyWeak, true);
-  assert.equal(newEntry.priorFitScore, "Weak");
-  assert.equal(newEntry.priorFitRationale, "no fintech overlap");
-  assert.equal(result.stats.weakFallbackRuns, 1);
-});
-
-test("prepare --phase pre weak-fallback (RFC 024): inbox_health excludes already-Weak from remaining_viable", async () => {
-  // Regression guard for code-review P1-1: weak-fallback's stillQueuedKeys
-  // may include already-Weak rows pulled into the pool here. They would be
-  // dropped by filterAlreadyEvaluated on the next runPre (fresh mode), so
-  // they MUST NOT count toward "viable for next prepare". Otherwise
-  // weak-fallback runs report false-healthy and SKILL Step 13 stays silent
-  // when it shouldn't.
-  //
-  // Setup: 1 already-in-batch (gh:0). 1 fresh-not-yet-weak (gh:1) in queue.
-  // 3 already-Weak rows (gh:2/3/4). need=1, batchSize=4. weak-fallback pulls
-  // the most accessible — gh:1 (fresh) wins, but only 1 alive needed. So:
-  //   - 1 consumed (gh:1), going into batch.
-  //   - stillQueued may include gh:2/3/4 (already-Weak) if applyPrepareFilter
-  //     leaves them in passed.slice(consumed). Those MUST NOT count.
-  const apps = [
-    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
-    makeApp({ key: "gh:1", jobId: "1", status: "Inbox" }),
-    makeApp({ key: "gh:2", jobId: "2", status: "Inbox", fit_score: "Weak" }),
-    makeApp({ key: "gh:3", jobId: "3", status: "Inbox", fit_score: "Weak" }),
-    makeApp({ key: "gh:4", jobId: "4", status: "Inbox", fit_score: "Weak" }),
-  ];
-  const prevContext = {
-    version: 1,
-    profileId: "testuser",
-    mode: "topup",
-    batchSize: 4,
-    batch: [
-      {
-        key: "gh:0",
-        source: "greenhouse",
-        jobId: "0",
-        companyName: "Stripe",
-        title: "PM",
-        url: "https://example.com/0",
-        urlAlive: true,
-        urlStatus: 200,
-      },
-    ],
-    skipped: [],
-    deferredQueue: ["gh:1"],
-    unknownTierCompanies: [],
-    stats: {},
-  };
-  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
-  const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({
-    flags: { phase: "pre", mode: "weak-fallback", need: 1, batch: 4, dryRun: false },
-  });
-  await cmd(ctx);
-  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
-  assert.ok(result.inbox_health, "weak-fallback must write inbox_health");
-  // Even if stillQueuedKeys contains gh:2/3/4 (already-Weak), they don't
-  // count as viable — next fresh runPre would drop them. So remaining_viable
-  // must reflect ONLY non-weak still-queued rows.
-  for (const key of result.deferredQueue) {
-    const app = apps.find((a) => a.key === key);
-    if (app && app.fit_score === "Weak") {
-      // If weak appears in deferredQueue, remaining_viable must be < deferredQueue.length.
-      assert.ok(
-        result.inbox_health.remaining_viable < result.deferredQueue.length,
-        `already-Weak in deferredQueue (${key}) must NOT count toward remaining_viable; ` +
-          `got remaining_viable=${result.inbox_health.remaining_viable}, ` +
-          `deferredQueue.length=${result.deferredQueue.length}`
-      );
-      break;
-    }
-  }
-  // With gh:1 consumed and 3 already-Weak filtered out: remaining_viable=0,
-  // target=4 → status=low, recommendation=run_scan.
-  assert.equal(result.inbox_health.status, "low");
-  assert.equal(result.inbox_health.remaining_viable, 0);
-  assert.equal(result.inbox_health.recommendation, "run_scan");
-});
-
-test("prepare --phase pre weak-fallback (BL-9 Step 5): combines deferredQueue + already-Weak (dedupes)", async () => {
-  // gh:1 is in queue (passed filter, not URL-checked yet, no verdict).
-  // gh:2 is already-Weak.
-  // gh:3 is in BOTH queue AND already-Weak in TSV — must appear once.
-  const apps = [
-    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
-    makeApp({ key: "gh:1", jobId: "1", status: "Inbox" }),
-    makeApp({ key: "gh:2", jobId: "2", status: "Inbox", fit_score: "Weak" }),
-    makeApp({ key: "gh:3", jobId: "3", status: "Inbox", fit_score: "Weak" }),
-  ];
-  const prevContext = {
-    version: 1,
-    profileId: "testuser",
-    mode: "topup",
-    batchSize: 5,
-    batch: [
-      {
-        key: "gh:0",
-        source: "greenhouse",
-        jobId: "0",
-        companyName: "Stripe",
-        title: "PM",
-        url: "https://example.com/0",
-        urlAlive: true,
-        urlStatus: 200,
-      },
-    ],
-    skipped: [],
-    deferredQueue: ["gh:1", "gh:3"],
-    unknownTierCompanies: [],
-    stats: {},
-  };
-  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
-  const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({
-    flags: { phase: "pre", mode: "weak-fallback", need: 5, batch: 5, dryRun: false },
-  });
-  await cmd(ctx);
-  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
-  // Should pull all 3 distinct keys (gh:1, gh:2, gh:3).
-  const newKeys = result.batch
-    .slice(1)
-    .map((e) => e.key)
-    .sort();
-  assert.deepEqual(newKeys, ["gh:1", "gh:2", "gh:3"]);
-  // gh:1 came from queue, NOT marked weak. gh:2 and gh:3 are weak.
-  const e1 = result.batch.find((e) => e.key === "gh:1");
-  const e2 = result.batch.find((e) => e.key === "gh:2");
-  const e3 = result.batch.find((e) => e.key === "gh:3");
-  assert.ok(!e1.wasAlreadyWeak);
-  assert.equal(e2.wasAlreadyWeak, true);
-  assert.equal(e3.wasAlreadyWeak, true);
-});
-
-test("prepare --phase pre weak-fallback (BL-9 Step 5): drops duplicate-flagged rows even in this mode", async () => {
-  const apps = [
-    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
-    makeApp({ key: "gh:1", jobId: "1", status: "Inbox", fit_score: "Weak" }),
-    makeApp({ key: "gh:2", jobId: "2", status: "Inbox", skip_reason: "duplicate" }),
-  ];
-  const prevContext = {
-    version: 1,
-    profileId: "testuser",
-    mode: "topup",
-    batchSize: 4,
-    batch: [
-      {
-        key: "gh:0",
-        source: "greenhouse",
-        jobId: "0",
-        companyName: "Stripe",
-        title: "PM",
-        url: "https://example.com/0",
-        urlAlive: true,
-        urlStatus: 200,
-      },
-    ],
-    skipped: [],
-    deferredQueue: ["gh:2"],
-    unknownTierCompanies: [],
-    stats: {},
-  };
-  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
-  const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({
-    flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: false },
-  });
-  await cmd(ctx);
-  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
-  // Only gh:1 added; gh:2 dropped as duplicate.
-  assert.equal(result.batch.length, 2);
-  assert.equal(result.batch[1].key, "gh:1");
-  assert.ok(
-    result.skipped.some((s) => s.key === "gh:2" && s.reason === "already_evaluated_duplicate")
-  );
-});
-
-test("prepare --phase pre weak-fallback (BL-9 Step 5): empty pool — writes mode + stats, no batch growth", async () => {
-  const apps = [makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" })];
-  const prevContext = {
-    version: 1,
-    profileId: "testuser",
-    mode: "topup",
-    batchSize: 4,
-    batch: [
-      {
-        key: "gh:0",
-        source: "greenhouse",
-        jobId: "0",
-        companyName: "Stripe",
-        title: "PM",
-        url: "https://example.com/0",
-        urlAlive: true,
-        urlStatus: 200,
-      },
-    ],
-    skipped: [],
-    deferredQueue: [],
-    unknownTierCompanies: [],
-    stats: {},
-  };
-  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
-  const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({
-    flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: false },
-  });
-  await cmd(ctx);
-  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
-  assert.equal(result.mode, "weak-fallback");
-  assert.equal(result.batch.length, 1);
-  assert.equal(result.stats.weakFallbackRuns, 1);
   assert.equal(result.stats.inboxExhausted, true);
 });
 
-test("prepare --phase pre weak-fallback (BL-9 Step 5): inboxExhausted=true after consuming all weak rows", async () => {
-  // 1 already-Weak row in TSV. weak-fallback pulls it into batch. After that,
-  // no fresh rows remain.
-  const apps = [
-    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
-    makeApp({ key: "gh:1", jobId: "1", status: "Inbox", fit_score: "Weak" }),
-  ];
-  const prevContext = {
-    version: 1,
-    profileId: "testuser",
-    mode: "topup",
-    batchSize: 4,
-    batch: [
-      {
-        key: "gh:0",
-        source: "greenhouse",
-        jobId: "0",
-        companyName: "Stripe",
-        title: "PM",
-        url: "https://example.com/0",
-        urlAlive: true,
-        urlStatus: 200,
-      },
-    ],
-    skipped: [],
-    deferredQueue: [],
-    unknownTierCompanies: [],
-    stats: {},
-  };
-  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
-  const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({
-    flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: false },
-  });
-  await cmd(ctx);
-  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
-  assert.equal(result.stats.inboxExhausted, true);
-});
-
-test("prepare --phase pre weak-fallback (BL-9 Step 5): respects company cap (pre-accounts prevBatch)", async () => {
-  // Company cap = 2 active for Stripe. prevBatch already has 2 Stripe entries.
-  // Cap pre-account → topup must NOT add more Stripe rows.
-  const apps = [
-    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
-    makeApp({ key: "gh:1", status: "To Apply", notion_page_id: "p1" }),
-    makeApp({ key: "gh:2", jobId: "2", status: "Inbox", fit_score: "Weak", companyName: "Stripe" }),
-  ];
-  const prevContext = {
-    version: 1,
-    profileId: "testuser",
-    mode: "topup",
-    batchSize: 5,
-    batch: [
-      {
-        key: "gh:0",
-        source: "greenhouse",
-        jobId: "0",
-        companyName: "Stripe",
-        title: "PM",
-        url: "https://example.com/0",
-        urlAlive: true,
-        urlStatus: 200,
-      },
-      {
-        key: "gh:1",
-        source: "greenhouse",
-        jobId: "1",
-        companyName: "Stripe",
-        title: "PM",
-        url: "https://example.com/1",
-        urlAlive: true,
-        urlStatus: 200,
-      },
-    ],
-    skipped: [],
-    deferredQueue: [],
-    unknownTierCompanies: [],
-    stats: {},
-  };
-  const deps = makePrepDeps(apps, {
-    readFile: () => JSON.stringify(prevContext),
-    loadProfile: () => ({
-      id: "testuser",
-      filterRules: { company_cap: { max_active: 2 } },
-      company_tiers: { Stripe: "S" },
-      paths: {
-        root: "/fake/profiles/testuser",
-        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
-        jdCacheDir: "/fake/profiles/testuser/jd_cache",
-      },
-    }),
-  });
-  const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({
-    flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 5, dryRun: false },
-  });
-  await cmd(ctx);
-  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
-  // gh:2 must be skipped with company_cap.
-  assert.equal(result.batch.length, 2);
-  assert.ok(result.skipped.some((s) => s.key === "gh:2" && s.reason === "company_cap"));
-});
-
-test("prepare --phase pre weak-fallback (BL-9 Step 5): missing prepare_context.json returns 1", async () => {
-  const apps = [makeApp()];
-  const deps = makePrepDeps(apps, {
-    readFile: () => {
-      throw new Error("ENOENT");
-    },
-  });
-  const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({
-    flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 5, dryRun: false },
-  });
-  const code = await cmd(ctx);
-  assert.equal(code, 1);
-  assert.ok(ctx._errLines.some((l) => /cannot read prepare_context/.test(l)));
-});
-
-test("prepare --phase pre weak-fallback (BL-9 Step 5): dry-run does not write file", async () => {
-  const apps = [
-    makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
-    makeApp({ key: "gh:1", jobId: "1", status: "Inbox", fit_score: "Weak" }),
-  ];
-  const prevContext = {
-    version: 1,
-    profileId: "testuser",
-    mode: "topup",
-    batchSize: 4,
-    batch: [
-      {
-        key: "gh:0",
-        source: "greenhouse",
-        jobId: "0",
-        companyName: "Stripe",
-        title: "PM",
-        url: "https://example.com/0",
-        urlAlive: true,
-        urlStatus: 200,
-      },
-    ],
-    skipped: [],
-    deferredQueue: [],
-    unknownTierCompanies: [],
-    stats: {},
-  };
-  const deps = makePrepDeps(apps, { readFile: () => JSON.stringify(prevContext) });
-  const cmd = makePrepareCommand(deps);
-  const ctx = makeCtx({
-    flags: { phase: "pre", mode: "weak-fallback", need: 3, batch: 4, dryRun: true },
-  });
-  await cmd(ctx);
-  assert.equal(Object.keys(deps._written).length, 0);
-  assert.ok(ctx._lines.some((l) => /dry-run/.test(l)));
-});
 
 test("prepare --phase pre topup (BL-9 Step 5): writes inboxExhausted to stats", async () => {
   // After topup, batch consumes both queue keys. No fresh rows remain.

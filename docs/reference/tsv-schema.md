@@ -45,7 +45,7 @@ already-evaluated jobs instead of re-paying the SKILL cost.
 | 17 | `fit_score` | enum | no | Claude's fit verdict from `prepare --phase commit`: `Strong` / `Medium` / `Weak` / `""`. Empty until the row passes through the SKILL. |
 | 18 | `fit_rationale` | string | no | Short free-text rationale (≤ ~200 chars typical). Written together with `fit_score`. |
 | 19 | `fit_evaluated_at` | ISO timestamp | no | When the SKILL run that wrote `fit_score` happened. Engine reads this to decide whether to re-evaluate (currently: never re-evaluate once written). |
-| 20 | `skip_reason` | enum | no | When the SKILL decision was `skip`: `weak_fit` / `duplicate` / `""`. Engine-level skips (`company_cap`, `title_blocklist`, etc.) are recomputed each run and **not** persisted here. |
+| 20 | `skip_reason` | enum | no | Engine-side persisted skip reason. Today only `duplicate` is set by the engine. `weak_fit` was previously written by the SKILL `decision="skip"` path; that path was removed in RFC 034 (BL-80) but the value may persist on historical rows. Engine-level filter skips (`company_cap`, `title_blocklist`, etc.) are recomputed each run and **not** persisted here. |
 
 ## Status values
 
