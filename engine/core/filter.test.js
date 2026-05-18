@@ -218,6 +218,63 @@ test("filterJobs skips location_blocklist when US marker present", () => {
   assert.equal(rej.length, 1);
 });
 
+// ---- BL-24: multi-loc location_blocklist + US state codes ----
+
+test("BL-24: multi-loc job with US state code in any element passes (keep wins)", () => {
+  const job = { ...BASE_JOB, locations: ["Warsaw, Poland", "Sacramento, CA"] };
+  const { passed, rejected } = filterJobs([job], { location_blocklist: ["Poland"] });
+  assert.equal(passed.length, 1, "US state code in any element overrides blocklist hit");
+  assert.equal(rejected.length, 0);
+});
+
+test("BL-24: multi-loc job without any US marker is blocked on any-element blocklist hit", () => {
+  const job = { ...BASE_JOB, locations: ["Remote", "Warsaw, Poland"] };
+  const { rejected } = filterJobs([job], { location_blocklist: ["Poland"] });
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].reason.kind, "location_blocklist");
+  assert.equal(rejected[0].reason.match, "Poland");
+});
+
+test("BL-24: 50 state codes — ', CA' / ', NY' / ', TX' / ', DC' / ', WA' all count as US", () => {
+  for (const code of ["CA", "NY", "TX", "DC", "WA", "AL", "WY"]) {
+    const job = { ...BASE_JOB, locations: [`Somewhere, ${code}`, "Munich, Germany"] };
+    const { passed } = filterJobs([job], { location_blocklist: ["Germany"] });
+    assert.equal(passed.length, 1, `, ${code} should mark element as US-hireable`);
+  }
+});
+
+test("BL-24: state-code regex does NOT false-match country names starting with state-letter prefix", () => {
+  // ", Algeria" / ", Canada" / ", Argentina" must NOT trigger ", AL" / ", CA" / ", AR".
+  for (const non of ["Algiers, Algeria", "Toronto, Canada", "Buenos Aires, Argentina"]) {
+    const job = { ...BASE_JOB, locations: [non] };
+    const blocklist = [non.split(", ")[1]];
+    const { rejected } = filterJobs([job], { location_blocklist: blocklist });
+    assert.equal(rejected.length, 1, `${non} must be blocked, not falsely US-detected`);
+  }
+});
+
+test("BL-24: existing single-string location contract preserved", () => {
+  // job.location single-string is wrapped to [location] under the hood.
+  const allowed = { ...BASE_JOB, location: "New York, NY" };
+  const { passed } = filterJobs([allowed], { location_blocklist: ["Germany"] });
+  assert.equal(passed.length, 1);
+
+  const blocked = { ...BASE_JOB, location: "Berlin, Germany" };
+  const { rejected } = filterJobs([blocked], { location_blocklist: ["Germany"] });
+  assert.equal(rejected.length, 1);
+});
+
+test("BL-24: locations[] is preferred over single-string location when both present", () => {
+  // scan.js still emits both for back-compat. The array MUST win.
+  const job = {
+    ...BASE_JOB,
+    location: "Warsaw, Poland", // would block on its own
+    locations: ["Warsaw, Poland", "Austin, TX"], // but TX makes it US-hireable
+  };
+  const { passed } = filterJobs([job], { location_blocklist: ["Poland"] });
+  assert.equal(passed.length, 1, "locations[] takes precedence over scalar location");
+});
+
 test("filterJobs enforces company_cap (max_active)", () => {
   const jobs = [
     { ...BASE_JOB, jobId: "a" },
