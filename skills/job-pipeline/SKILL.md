@@ -182,19 +182,25 @@ Step C — weak fallback (only if needed)
       else:
         run Steps 1, 3, 4, 5, 5.7, 6, 7, 8 as usual
 
-Step D — pick top 30 by sequential priority
-  # Sequential fill: take ALL Strong first, then Medium to fill, then Weak.
-  # Mediums never bump Strongs; Weaks never bump Mediums.
+Step D — push ALL evaluated to Notion (no top-N cap)
+  # User rule (locked 2026-05-18): everything we evaluated this run goes to Notion.
+  # `target=30` is a chase budget for STRONG (controls when iteration stops),
+  # not a cap on commit. User triages Strong/Medium/Weak themselves in Notion.
+  # The only `decision="skip"` case left is geo / hard-blocker discoveries that
+  # surfaced during evaluation (e.g. title encodes UK/EU/ME) — those go
+  # `decision="archive"` instead, NEVER `fitScore="Weak"`. Per BL-37 / memory
+  # rule `feedback_pipeline_fit_score_arch.md`: hard blockers are archived, not
+  # downgraded to Weak. If a job got through engine pre-filter but the title
+  # makes it non-viable (geo, level beyond filter, etc.) emit `decision="archive"`
+  # with `fitRationale: "manual: <reason>"`.
   candidates = verdicts.strong + verdicts.medium + verdicts.weak  (in that order)
-  final = candidates[:30]
-  if len(final) < 30:
-    warn user: "only N candidates found, push N instead of 30"
+  # No slice. Every candidate becomes `decision="to_apply"`.
 
 Step E — write results + commit
   Step 10: write prepare_results_<timestamp>.json
-    decision = "to_apply" for each job in `final`
-    decision = "skip" for everything else evaluated this run (carries fitScore so the
-               row gets persisted to TSV and won't be re-judged next prepare run)
+    decision = "to_apply" for EVERY entry in candidates (Strong + Medium + Weak)
+    decision = "archive" for entries where a hard blocker (geo, non-viable
+               level/role beyond filter) became clear during evaluation
   Step 11: prepare --phase commit --results-file <path>
     Engine writes PDF + creates Notion page + updates TSV atomically per-row.
     Notion-page-creation owned by engine since RFC 022 (BL-23).
@@ -207,8 +213,8 @@ Step E — write results + commit
 prepare loop iteration 1/3: 30 candidates → 8 Strong, 12 Medium, 10 Weak
 prepare loop iteration 2/3: 27 new candidates → 5 Strong, 9 Medium, 13 Weak
 prepare loop iteration 3/3: 21 new candidates → 2 Strong, 9 Medium, 10 Weak
-loop done: 15 Strong, 30 Medium, 33 Weak (target 30)
-selecting top 30: 15 Strong + 15 Medium → commit
+loop done: 15 Strong, 30 Medium, 33 Weak (target 30 Strong reached)
+pushing all 78 evaluated to Notion (15 Strong + 30 Medium + 33 Weak)
 ```
 
 If `weak-fallback` runs:
@@ -216,15 +222,14 @@ If `weak-fallback` runs:
 ```
 strong+medium below target (8+5=13 of 30); falling back to weak…
 weak-fallback: pulled 17 entries (12 already-Weak, 5 fresh)
-final: 8 Strong + 5 Medium + 17 Weak = 30 → commit
+loop done: 8 Strong + 5 Medium + 17 Weak = 30 evaluated → push all to Notion
 ```
 
 If `inboxExhausted`:
 
 ```
 loop done: 4 Strong, 7 Medium (Inbox exhausted)
-warn: only 11 candidates found, commit 11 instead of 30
-selecting all 11 (4 Strong + 7 Medium) → commit
+pushing all 11 evaluated to Notion (4 Strong + 7 Medium)
 ```
 
 #### Anti-patterns — do NOT
@@ -278,7 +283,7 @@ Early-startup modifier: if company is pre-Series B or <50 employees — downgrad
 
 Geo filtering already happened in the engine pre-phase (Step 3 is read-only) — only entries with `geo_decision === "allowed"` reach the batch. The remaining gate is fit.
 
-In the autonomous loop (Step B above), assign every judged job to one of three in-memory buckets — `verdicts.strong` / `verdicts.medium` / `verdicts.weak` — based on `fitScore`. **Do NOT mark anything `decision="skip"` yet.** The final skip / to_apply call is made in Step E once the top-30 is picked.
+In the autonomous loop (Step B above), assign every judged job to one of three in-memory buckets — `verdicts.strong` / `verdicts.medium` / `verdicts.weak` — based on `fitScore`. **Do NOT mark anything `decision="skip"`.** Per the locked rule in Step D, every evaluated job becomes `decision="to_apply"` regardless of Strong/Medium/Weak — the buckets exist only so the iteration loop can chase 30 Strong before stopping. Skip is reserved for nothing (deprecated); hard blockers found in title become `decision="archive"`.
 
 If the entry has `wasAlreadyWeak: true`, it goes straight to `verdicts.weak` with `fitScore="Weak"` carried over from `entry.priorFitScore`. No Step 4 re-judging.
 
@@ -383,12 +388,14 @@ What you (SKILL) used to compute in Step 9 now goes into `results.json` `to_appl
 
 **Step 10 — Write results file**
 
-Write `profiles/<id>/prepare_results_<YYYYMMDD_HHMMSS>.json` ONCE at the end of the run, covering every job evaluated across all loop iterations (not just the final top-N).
+Write `profiles/<id>/prepare_results_<YYYYMMDD_HHMMSS>.json` ONCE at the end of the run, covering every job evaluated across all loop iterations. All evaluated jobs become `decision="to_apply"`; there is no top-N selection.
 
 Result entries:
-- `decision: "to_apply"` — the top-N the engine will commit + push to Notion. Carries `clKey`, `clParagraphs`, `clBaseKey`, `resumeVer`, `salaryMin`, `salaryMax`, plus `fitScore` / `fitRationale`. RFC 022: also include `city`, `state`, `workFormat` (extracted from JD text — SKILL is authoritative here). Engine writes the MD + PDF files from `clParagraphs`, creates the Notion page, and updates TSV atomically on commit (BL-14 / RFC 019 / RFC 022); do **not** include `clPath` (engine derives it from the company slug + `clKey`) and do **not** include `notionPageId` (engine creates the page itself).
-- `decision: "skip"` — every other judged row from the loop. Carries `fitScore: "Weak"` (or rarely Strong/Medium that didn't make the cut) + `fitRationale` so the engine commit phase persists the verdict and `filterAlreadyEvaluated` skips them on the next prepare run. (Strong/Medium that didn't make top-30 still get persisted; if they pass filter next time, they'll be picked up again.)
-- `decision: "archive"` — engine pre-filter rejects (rows in `prepare_context.skipped[]`). For every entry in `skipped[]` whose `reason ∈ {title_blocklist, url_dead, company_blocklist, geo_metro_miss, geo_country_miss, geo_remote_only_miss, geo_blocklist, geo_no_location}` emit `decision: "archive"` with `fitRationale: "engine pre-filter: <reason> (<details>)"` where `<details>` is `pattern` (title/company blocklist), `urlStatus` (url_dead), or `geo_matched_by` (geo). Engine commit sets `status="Archived"`. **Exclude** `reason: "company_cap"` (per-batch limit, row stays viable for next prepare) and `reason: "already_evaluated_weak"` (already has Weak verdict in TSV; weak-fallback needs it). This shrinks Inbox after every prepare so `inbox_health` reflects only triageable rows. No `fitScore` is required for archive entries.
+- `decision: "to_apply"` — **every** evaluated row from the loop (Strong + Medium + Weak), per the locked rule above. Carries `clKey`, `clParagraphs`, `clBaseKey`, `resumeVer`, `salaryMin`, `salaryMax`, plus `fitScore` / `fitRationale`. RFC 022: also include `city`, `state`, `workFormat` (extracted from JD text — SKILL is authoritative here). Engine writes the MD + PDF files from `clParagraphs`, creates the Notion page, and updates TSV atomically on commit (BL-14 / RFC 019 / RFC 022); do **not** include `clPath` (engine derives it from the company slug + `clKey`) and do **not** include `notionPageId` (engine creates the page itself). User triages Strong/Medium/Weak in Notion themselves — SKILL does not filter.
+- `decision: "skip"` — **avoid emitting**. The previous "skip" cases (Medium/Weak bumped out of top-30, hard-blockers found in title) are now handled differently: real candidates go to `to_apply` regardless of Strong/Medium/Weak; hard blockers go to `archive`.
+- `decision: "archive"` — engine pre-filter rejects (rows in `prepare_context.skipped[]`) + hard blockers discovered during evaluation. For every entry in `skipped[]` whose `reason ∈ {title_blocklist, title_requirelist, url_dead, company_blocklist, geo_metro_miss, geo_country_miss, geo_remote_only_miss, geo_blocklist, geo_no_location}` emit `decision: "archive"` with `fitRationale: "engine pre-filter: <reason> (<details>)"` where `<details>` is `pattern` (title blocklist/requirelist/company blocklist), `urlStatus` (url_dead), or `geo_matched_by` (geo). Engine commit sets `status="Archived"`. **Also emit** `decision: "archive"` for evaluated rows where the title encodes a hard blocker the engine couldn't catch (e.g. `(UK/EU/ME)` geo in a posting without a `location` field) — use `fitRationale: "manual: <reason>"`. **Exclude** `reason: "company_cap"` (per-batch limit, row stays viable for next prepare) and `reason: "already_evaluated_weak"` (already has Weak verdict in TSV; weak-fallback needs it). This shrinks Inbox after every prepare so `inbox_health` reflects only triageable rows. No `fitScore` is required for archive entries.
+
+> **Rule (locked 2026-05-18, BL-XX):** `title_requirelist` rejects MUST be archived by `prepare`. Scan already archives them at ingest, but Inbox accumulates stale `title_requirelist` rows from earlier scans when the role filter was looser. Letting them sit there inflates the Inbox count without value. Same applies to `title_blocklist`, `url_dead`, `company_blocklist`, and the geo reasons — `prepare` is the cleanup pass that mirrors scan-time fate to the legacy pool.
 
 Format:
 
@@ -452,11 +459,11 @@ This updates `applications.tsv`: `to_apply` entries get `status="To Apply"`, `cl
 
 Summarize at the user level (BL-11 — what the user sees, not engine internals):
 
-- **Headline**: `pushed N jobs to Notion (Strong: A, Medium: B, Weak: C)`. If N < 30, lead with `only N candidates found` and the reason (`Inbox exhausted` or `loop hit 3-iteration limit`).
+- **Headline**: `pushed N jobs to Notion (Strong: A, Medium: B, Weak: C)`. N = every evaluated row (no top-N cap). If A < 30, mention `loop stopped: <reason>` (`Inbox exhausted` or `iter limit reached`) but still push all evaluated.
 - **Loop summary**: how many iterations ran, whether weak-fallback triggered. Example: `loop: 2 iterations + weak-fallback (15 already-Weak rows reused)`.
 - **CL reuse breakdown**: group by `clBaseKey` — `8 reused affirm_capital, 3 reused chime_growth, 1 written from scratch`.
 - **Pre-phase skips**: read from `prepare_context.stats.skipReasons` and surface the breakdown verbatim (e.g. `company_cap: 5, title_blocklist: 2, url_dead: 1`). Omit if `{}`.
-- **Archived (engine pre-filter)**: count of `decision: "archive"` entries written this run. Format: `archived (engine pre-filter): N (title_blocklist: X, url_dead: Y, geo_*: Z, …)`. Omit if 0.
+- **Archived (engine pre-filter)**: count of `decision: "archive"` entries written this run. Format: `archived (engine pre-filter): N (title_blocklist: X, title_requirelist: Y, url_dead: Z, geo_*: W, …)`. Omit if 0.
 - **Auto-tier assignments**: only if Step 5.7 ran — list the company → tier mapping.
 - **Deferred queue**: `prepare_context.stats.deferred` — number of fresh rows that didn't make it into the batch. Mention only if non-zero AND inboxExhausted is false (otherwise queue's empty).
 - **Warnings / anomalies**: any invalid resumeVer, invalid tier, fit-validation warnings the engine logged.
