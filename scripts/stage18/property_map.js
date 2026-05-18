@@ -118,6 +118,7 @@ function selectOptionsFor(field) {
         { name: "greenhouse", color: "blue" },
         { name: "lever", color: "purple" },
         { name: "ashby", color: "pink" },
+        { name: "workable", color: "yellow" },
         { name: "smartrecruiters", color: "green" },
         { name: "workday", color: "orange" },
         { name: "remoteok", color: "gray" },

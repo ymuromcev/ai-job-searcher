@@ -1,8 +1,22 @@
 ---
 title: "Incident log"
 status: live
-last_updated: 2026-05-12
+last_updated: 2026-05-18
 ---
+
+## 2026-05-18 — `location_blocklist` checked only `locations[0]`, missed multi-loc and state-coded US elements (BL-24)
+
+**Severity**: LOW (no data loss; some non-US jobs leaked into Inbox; some US-hireable multi-loc jobs would have been wrongly rejected after BL-24's hypothesized fix).
+
+**Cause**: `scan.js:311` collapsed `job.locations[]` → `job.location = locations[0]` for filter back-compat. `filter.js#matchBlocklists` checked that single string only. Two failure modes: (1) non-US country tag in later elements went unseen, (2) hypothetical fix that joined elements would have re-broken US-hireable multi-loc jobs whose state code (`, CA`, `, NY`, etc.) wasn't in `US_MARKERS`. Triggering case (SumUp Warsaw 2026-05-11) was actually pre-blocklist-update artifact — the engine had never seen "Poland" in the rules at scan time — but the structural risk was real for any Workday-style multi-loc tenant.
+
+**What changed**: `engine/core/filter.js` now iterates the full `locations[]` array (falling back to `[location]` for the single-string contract). New semantic: a US marker in ANY element keeps the job; otherwise a blocklist substring in ANY element blocks. `US_MARKERS` extended with a regex over 50 state codes (+ DC) with a trailing word boundary, so `", CA"` matches Sacramento but not Algeria. Six new regression tests in `filter.test.js`. 1359/1359 tests pass.
+
+**Prevention**: The contract is now array-first; `scan.js` may eventually drop the redundant `location` scalar (separate follow-up). Tests pin every BL-24 case (multi-loc keep, multi-loc block, state-code coverage, country-name false-positive guard, single-string back-compat, locations[]-vs-scalar precedence) so a regression would be loud.
+
+---
+
+
 
 # Incidents
 

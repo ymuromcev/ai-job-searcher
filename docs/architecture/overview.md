@@ -125,6 +125,7 @@ run via the `modules: ["discovery:<name>", ...]` array.
 | `greenhouse.js` | Greenhouse JSON board API per company slug. JD cache enabled. |
 | `lever.js` | Lever public postings API. JD cache enabled. |
 | `ashby.js` | Ashby public postings API. |
+| `workable.js` | Workable public widget API (`/api/v1/widget/accounts/{slug}`). Lists active jobs per tenant; full-JD fetch unsupported (per-job JSON 404s, HTML JS-rendered). |
 | `workday.js` | Workday tenant CXS endpoints (per-tenant slug list). |
 | `oracle_cloud.js` | Oracle Recruiting Cloud / Fusion HCM Candidate Experience sites; multi-tenant via per-row `siteUrl`. SSRF-guarded to `*.oraclecloud.com` over HTTPS. |
 | `jobsyn.js` | NLX Jobsyn (Direct Employers Foundation) public search API; multi-tenant via `X-Origin` header. Origin pattern-validated to prevent CRLF header injection. |

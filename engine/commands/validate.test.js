@@ -455,6 +455,11 @@ test("retro_sweep: only sweeps 'To Apply', not Applied/Interview/Offer", async (
 });
 
 test("retro_sweep: location_blocklist now exercised after schema v3 (G-5)", async () => {
+  // BL-24 (2026-05-18): fixture updated. Original used "Napa, CA" with a "Napa"
+  // blocklist to simulate a non-US match, but after BL-24 ", CA" counts as a US
+  // marker and overrides the blocklist (correct US-hireable-wins semantic).
+  // Replaced with a clearly non-US location so the test asserts what it always
+  // intended: retro_sweep exercises location_blocklist at all.
   const apps = [
     fakeApp({
       key: "greenhouse:1",
@@ -462,7 +467,7 @@ test("retro_sweep: location_blocklist now exercised after schema v3 (G-5)", asyn
       status: "To Apply",
       companyName: "Acme",
       title: "PM",
-      location: "Napa, CA",
+      location: "Munich, Germany",
     }),
     fakeApp({
       key: "greenhouse:2",
@@ -486,7 +491,7 @@ test("retro_sweep: location_blocklist now exercised after schema v3 (G-5)", asyn
     loadProfile: () => ({
       paths: { root: "/tmp/profiles/lilia" },
       filterRules: {
-        location_blocklist: ["Napa"],
+        location_blocklist: ["Germany"],
       },
     }),
     fetchFn: async () => ({ ok: true, status: 200 }),
@@ -495,7 +500,7 @@ test("retro_sweep: location_blocklist now exercised after schema v3 (G-5)", asyn
   const code = await makeValidateCommand(deps)(ctx);
   assert.equal(code, 1);
   assert.match(out.all(), /retro_sweep: 1 row\(s\) now match blocklists/);
-  assert.match(out.all(), /location_blocklist: Napa/);
+  assert.match(out.all(), /location_blocklist: Germany/);
 });
 
 test("validate cap warning goes to stderr", async () => {

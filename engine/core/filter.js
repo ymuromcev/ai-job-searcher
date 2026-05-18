@@ -37,8 +37,69 @@ const { enforceGeo } = require("./geo_enforcer.js");
 
 const US_MARKERS = ["united states", "usa", ", us", "(us)", "u.s."];
 
+// 50 state codes + DC. Matched only when preceded by `, ` and at a word
+// boundary so `, AL` catches "Sacramento, CA" but NOT "Some Place, Algeria"
+// (Algeria starts with "Al" but the trailing word boundary fails). Mixed-case
+// is handled by lowercasing the input before the test. BL-24 / 2026-05-18.
+const US_STATE_CODES = [
+  "al",
+  "ak",
+  "az",
+  "ar",
+  "ca",
+  "co",
+  "ct",
+  "de",
+  "fl",
+  "ga",
+  "hi",
+  "id",
+  "il",
+  "in",
+  "ia",
+  "ks",
+  "ky",
+  "la",
+  "me",
+  "md",
+  "ma",
+  "mi",
+  "mn",
+  "ms",
+  "mo",
+  "mt",
+  "ne",
+  "nv",
+  "nh",
+  "nj",
+  "nm",
+  "ny",
+  "nc",
+  "nd",
+  "oh",
+  "ok",
+  "or",
+  "pa",
+  "ri",
+  "sc",
+  "sd",
+  "tn",
+  "tx",
+  "ut",
+  "vt",
+  "va",
+  "wa",
+  "wv",
+  "wi",
+  "wy",
+  "dc",
+];
+const US_STATE_RE = new RegExp(`,\\s*(?:${US_STATE_CODES.join("|")})\\b`, "i");
+
 function hasUsMarker(locLower) {
-  return US_MARKERS.some((m) => locLower.includes(m));
+  if (US_MARKERS.some((m) => locLower.includes(m))) return true;
+  if (US_STATE_RE.test(locLower)) return true;
+  return false;
 }
 
 function escapeRegex(s) {
@@ -134,10 +195,25 @@ function matchBlocklists(job, rules) {
     if (!cleanPartFound && firstHit) return firstHit;
   }
 
-  const loc = String(job.location || "").toLowerCase();
-  if (loc && !hasUsMarker(loc)) {
+  // BL-24 (2026-05-18): iterate the full locations[] array, not just the
+  // first-element string. Previous behaviour collapsed `locations[]` to
+  // `locations[0]` in scan.js and missed multi-loc jobs whose first element
+  // happened to be US-clean while later elements carried country tags. New
+  // contract: a US marker in ANY element keeps the job (US-hirable wins),
+  // otherwise a blocklist match in ANY element blocks. Single-string
+  // `job.location` is wrapped to preserve the historic single-value contract.
+  const locsArr =
+    Array.isArray(job.locations) && job.locations.length > 0
+      ? job.locations.map(String)
+      : job.location
+        ? [String(job.location)]
+        : [];
+  const locsLower = locsArr.map((l) => l.toLowerCase());
+  if (locsLower.length > 0 && !locsLower.some(hasUsMarker)) {
     for (const blocked of rules.location_blocklist || []) {
-      if (loc.includes(String(blocked).toLowerCase())) {
+      const needle = String(blocked).toLowerCase();
+      if (!needle) continue;
+      if (locsLower.some((l) => l.includes(needle))) {
         return { kind: "location_blocklist", match: blocked };
       }
     }
