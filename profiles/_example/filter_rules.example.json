@@ -16,12 +16,22 @@
     "patterns": []
   },
   "role_targets": {
-    "_description": "RFC 030 — single source of truth for acceptable role-tracks. Read by scan (title gate) and by LLM prepare (Fit Score). One block changes BOTH gates. Empty tracks[] means no positive title gate.",
+    "_description": "RFC 030 — single source of truth for acceptable role-tracks. Read by scan (title gate) and by LLM prepare (Fit Score). One block changes BOTH gates. RFC 033 (BL-78) — at least one track is required on every profile; replace the example below with your real role-tracks.",
     "fit_treatments": {
       "primary": "Apply Fit Score by domain match only. Track is the candidate's main target.",
       "bridge": "Bridge/stepping-stone role. Apply standard domain logic but never downgrade purely for being on this track instead of the primary one."
     },
-    "tracks": []
+    "tracks": [
+      {
+        "id": "pm_generalist",
+        "name": "Product Manager (Generalist)",
+        "patterns": [
+          { "pattern": "\\bproduct\\s+manager\\b", "reason": "PM track" },
+          { "pattern": "\\bsenior\\s+product\\s+manager\\b", "reason": "Senior PM" }
+        ],
+        "fit_treatment": "primary"
+      }
+    ]
   },
   "location_rules": {
     "_description": "Restrict to specific locations / remote-only. Empty = no location filter.",

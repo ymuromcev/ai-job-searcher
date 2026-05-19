@@ -299,14 +299,16 @@ If `cover_letter_versions.json` is missing or empty (cold-start profile), fall b
 
 **8b — Pick the base entry.**
 
-Match priority, in order — stop at the first hit:
+Per RFC 036: the engine pre-picks the base entry deterministically in the pre-phase and embeds the result on the batch entry as `batch[i].clBase = { key, score, reason, paragraphs: { P2, P3, P4 } }`. **Do not re-run the priority list.** Read `clBase` directly:
 
-1. **Same company + same role focus** — exact `company` match AND role keywords overlap (e.g. existing entry for `Affirm` + `Capital`-focused, current job is `Affirm Capital PM` → reuse).
-2. **Same company, different role** — useful when prior letter exists for the company. Replace P3 (why this company) sparingly; P2 proof stays.
-3. **Same archetype, different company** — match the chosen `resumeVer` (Step 7) to an existing entry whose role focus aligns with the archetype (e.g. `resumeVer = ConsumerLending` → look for `lendbuzz_creditcard` / `affirm_capital` / similar entries).
-4. **Closest archetype** — if no archetype-aligned entry exists, pick the most domain-adjacent one (e.g. `PaymentsInfra` → fall back to `PlatformInfra`-style entry).
+- `clBase.paragraphs.P2` / `P3` / `P4` — copy verbatim into the letter (see 8c).
+- `clBase.key` — echo back as `clBaseKey` in the per-job results entry.
+- `clBase.reason` — if it contains `low_confidence` or `role_focus_mismatch`, regenerate P3 (and apply your judgment on P2 if focus has clearly drifted). Otherwise trust the pick.
+- `clBase.key === null` (reason `empty_library`) — cold-start fallback path: write all four paragraphs from scratch using `cover_letter_template.md`.
 
-In template-variants shape: `defaults.{p2, p3, p4_template}` IS the base — every letter reuses them. Only P1 varies, and the `letters` array is your reference set for tone/length on past P1s.
+For template-variants profiles, the engine returns `clBase.key = "defaults"` and the locked `defaults.{p2, p3, p4_template}` paragraphs. The `letters` array on disk stays available as your tone/length reference set for past P1s if needed.
+
+Legacy fallback (one release only): if `clBase` is missing from the batch entry (engine pre-dates RFC 036), revert to the prose priority — same company + role focus → same company → same archetype → closest archetype.
 
 **8c — Rebuild the letter.**
 

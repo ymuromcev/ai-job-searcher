@@ -41,7 +41,10 @@ const STATUS_PRIORITY = {
 // merged — they identify the winner and changing them would break the
 // row's identity.
 const MERGEABLE_FIELDS = [
-  "location",
+  // v5 (RFC 038): single-string `location` replaced by `locations: string[]`.
+  // The merge predicate ("lift loser if winner empty") still applies — an
+  // empty array on the winner gets replaced by a non-empty array on the loser.
+  "locations",
   "resume_ver",
   "cl_key",
   "salary_min",
@@ -151,13 +154,23 @@ function pickWinner(rows) {
   return sorted[0];
 }
 
+function isEmptyMergeable(v) {
+  // v5 (RFC 038): `locations` is an array; an empty array means "no
+  // location" and should be lifted from a loser if the loser has any.
+  // All other mergeable fields are strings — "" / null / undefined count
+  // as empty.
+  if (v === undefined || v === null || v === "") return true;
+  if (Array.isArray(v) && v.length === 0) return true;
+  return false;
+}
+
 function mergeLosersInto(winner, losers) {
   const merged = { ...winner };
   for (const field of MERGEABLE_FIELDS) {
-    if (merged[field]) continue;
+    if (!isEmptyMergeable(merged[field])) continue;
     for (const loser of losers) {
       const v = loser[field];
-      if (v !== undefined && v !== null && v !== "") {
+      if (!isEmptyMergeable(v)) {
         merged[field] = v;
         break;
       }

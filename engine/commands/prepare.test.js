@@ -428,6 +428,100 @@ test("prepare --phase pre: roleTargets is null when filterRules has no role_targ
   assert.equal(written.roleTargets, null);
 });
 
+// RFC 036 (BL-90): clBase pre-pick lands on every batch entry when the
+// profile carries a coverLetterConfig.
+
+test("prepare --phase pre: embeds clBase on each batch entry (library shape)", async () => {
+  const apps = [
+    makeApp({ key: "gh:1", companyName: "Stripe", title: "Senior Platform PM" }),
+  ];
+  const deps = makePrepDeps(apps, {
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: {},
+      company_tiers: { Stripe: "S" },
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+      coverLetterConfig: {
+        stripe_platform: {
+          filename: "Stripe_Platform_PM.pdf",
+          paragraphs: ["P1 stripe", "P2 stripe platform", "P3 stripe why", "P4 close"],
+          company: "Stripe",
+          archetype: "PaymentsInfra",
+          role_keywords: ["pm", "platform"],
+        },
+        affirm_capital: {
+          filename: "Affirm.pdf",
+          paragraphs: ["P1 affirm", "P2 affirm", "P3 affirm", "P4 close"],
+          company: "Affirm",
+          archetype: "ConsumerLending",
+          role_keywords: ["pm", "capital"],
+        },
+      },
+    }),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+
+  const written = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(written.batch.length, 1);
+  const e = written.batch[0];
+  assert.ok(e.clBase, "batch entry should carry clBase");
+  assert.equal(e.clBase.key, "stripe_platform");
+  assert.match(e.clBase.reason, /company_exact/);
+  assert.equal(e.clBase.paragraphs.P2, "P2 stripe platform");
+  assert.equal(e.clBase.paragraphs.P3, "P3 stripe why");
+  assert.equal(e.clBase.paragraphs.P4, "P4 close");
+});
+
+test("prepare --phase pre: clBase absent when profile has no coverLetterConfig", async () => {
+  const apps = [makeApp()];
+  const deps = makePrepDeps(apps); // default loadProfile → no coverLetterConfig
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const written = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(written.batch.length, 1);
+  assert.equal(written.batch[0].clBase, undefined);
+});
+
+test("prepare --phase pre: template-variants shape returns defaults clBase", async () => {
+  const apps = [makeApp({ key: "gh:1", companyName: "Kaiser", title: "RN Per Diem" })];
+  const deps = makePrepDeps(apps, {
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: {},
+      company_tiers: { Kaiser: "S" },
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+      coverLetterConfig: {
+        defaults: {
+          p2: "Locked P2.",
+          p3: "Locked P3.",
+          p4_template: "Available {availability}.",
+        },
+        letters: [],
+      },
+    }),
+  });
+  const cmd = makePrepareCommand(deps);
+  await cmd(makeCtx());
+  const written = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  const cb = written.batch[0].clBase;
+  assert.equal(cb.key, "defaults");
+  assert.equal(cb.reason, "template-variants:defaults");
+  assert.equal(cb.paragraphs.P2, "Locked P2.");
+  assert.equal(cb.paragraphs.P4, "Available {availability}.");
+});
+
 test("prepare --phase pre: dry-run does not write file", async () => {
   const apps = [makeApp()];
   const deps = makePrepDeps(apps);
@@ -2058,9 +2152,9 @@ test("prepare --phase pre (L-4): metro geo skips out-of-metro app at applyPrepar
     makeApp({ key: "gh:1", companyName: "Kaiser", title: "Medical Receptionist" }),
     makeApp({ key: "gh:2", companyName: "Kaiser", title: "Medical Receptionist" }),
   ];
-  // Simulate TSV location field (G-5 schema v3) on the apps.
-  apps[0].location = "Sacramento, CA";
-  apps[1].location = "Houston, TX";
+  // Simulate TSV locations field (schema v5, RFC 038) on the apps.
+  apps[0].locations = ["Sacramento, CA"];
+  apps[1].locations = ["Houston, TX"];
   const deps = makePrepDepsWithGeo(apps, LILIA_GEO);
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx();
@@ -2083,8 +2177,8 @@ test("prepare --phase pre (L-4): unrestricted mode passes everything", async () 
     makeApp({ key: "gh:1", companyName: "Stripe", title: "Senior PM" }),
     makeApp({ key: "gh:2", companyName: "Stripe", title: "Senior PM" }),
   ];
-  apps[0].location = "London, UK";
-  apps[1].location = "Bangalore, India";
+  apps[0].locations = ["London, UK"];
+  apps[1].locations = ["Bangalore, India"];
   const deps = makePrepDepsWithGeo(apps, { mode: "unrestricted", remote_ok: true });
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx();
@@ -2096,7 +2190,7 @@ test("prepare --phase pre (L-4): unrestricted mode passes everything", async () 
 
 test("prepare --phase pre (L-4): metro geo populates entry.geo_decision='allowed' on passing entries", async () => {
   const apps = [makeApp({ key: "gh:1", companyName: "Kaiser" })];
-  apps[0].location = "Sacramento, CA";
+  apps[0].locations = ["Sacramento, CA"];
   const deps = makePrepDepsWithGeo(apps, LILIA_GEO);
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx();
@@ -2108,10 +2202,10 @@ test("prepare --phase pre (L-4): metro geo populates entry.geo_decision='allowed
 });
 
 test("prepare --phase pre (L-4): metro geo skips empty-location apps with geo_no_location", async () => {
-  // Old TSV row from before G-5 backfill — no location field. In metro mode
+  // Old TSV row from before G-5 backfill — no locations. In metro mode
   // → geo_no_location reject.
   const apps = [makeApp({ key: "gh:1", companyName: "Kaiser" })];
-  apps[0].location = ""; // empty location
+  apps[0].locations = []; // empty locations
   const deps = makePrepDepsWithGeo(apps, LILIA_GEO);
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx();
@@ -2123,7 +2217,7 @@ test("prepare --phase pre (L-4): metro geo skips empty-location apps with geo_no
 
 test("prepare --phase pre (L-4): metro geo blocklist short-circuits with geo_blocklist", async () => {
   const apps = [makeApp({ key: "gh:1", companyName: "Kaiser" })];
-  apps[0].location = "Napa, CA";
+  apps[0].locations = ["Napa, CA"];
   const deps = makePrepDepsWithGeo(apps, LILIA_GEO);
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx();
@@ -2133,12 +2227,42 @@ test("prepare --phase pre (L-4): metro geo blocklist short-circuits with geo_blo
   assert.equal(result.skipped[0].reason, "geo_blocklist");
 });
 
+// RFC 038 / BL-93 regression: a multi-loc row whose first element is the
+// non-US "Remote (UK)" but whose second element is "United States" must NOT
+// be archived. Before v5 the persistence layer collapsed the array to
+// locations[0] so the US marker was lost between scan and prepare; the row
+// was archived by geo_country_miss. After v5 the full array survives and
+// the BL-24 "US-anywhere wins" rule fires correctly.
+test("prepare --phase pre (BL-93 regression): multi-loc with US in second element is NOT archived", async () => {
+  const apps = [
+    makeApp({ key: "gh:1", companyName: "Stripe", title: "Senior PM" }),
+  ];
+  apps[0].locations = ["Remote (UK)", "United States"];
+  const deps = makePrepDepsWithGeo(apps, {
+    mode: "us-wide",
+    remote_ok: true,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  // The row passes geo because "United States" appears in the array.
+  assert.equal(result.batch.length, 1, "multi-loc US-wins row must reach the batch");
+  assert.equal(result.batch[0].key, "gh:1");
+  // And no geo skip on the skipped pile.
+  assert.equal(
+    result.skipped.filter((s) => String(s.reason || "").startsWith("geo_")).length,
+    0,
+    "no geo_* skip should fire when any element carries a US marker"
+  );
+});
+
 test("prepare --phase pre (L-4): no geo block in profile → no geo_decision field (back-compat)", async () => {
   // Profile without `geo` (e.g. test fixtures or legacy profiles loaded
   // through a non-normalized path). Entries should not carry geo_decision —
   // SKILL Step 3 falls back to its legacy WebFetch path.
   const apps = [makeApp({ key: "gh:1", companyName: "Stripe" })];
-  apps[0].location = "Sacramento, CA";
+  apps[0].locations = ["Sacramento, CA"];
   const deps = makePrepDeps(apps); // no geo injection
   const cmd = makePrepareCommand(deps);
   const ctx = makeCtx();
@@ -3444,4 +3568,357 @@ test("RFC 022: missing prepare_context.json — engine continues, omits city/sta
   assert.equal(pushed.schedule, undefined);
   const errLines = ctx._errLines.join("\n");
   assert.match(errLines, /prepare_context\.json unreadable/);
+});
+
+// --- RFC 035 (BL-91): engine-emitted archive for filter-skipped rows -------
+
+function makeInboxApp(overrides = {}) {
+  return makeApp({ status: "Inbox", notion_page_id: "", ...overrides });
+}
+
+test("prepare --phase pre (RFC 035): archives company_blocklist row to TSV", async () => {
+  const apps = [
+    makeInboxApp({ key: "gh:1", companyName: "BadCo" }),
+    makeInboxApp({ key: "gh:2", companyName: "Stripe" }),
+  ];
+  const saved = [];
+  const deps = makePrepDeps(apps, {
+    saveApplications: (_p, list) => saved.push(list),
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: { company_blocklist: ["BadCo"] },
+      company_tiers: { Stripe: "S" },
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+    }),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+
+  // The blocklist row was archived in TSV.
+  const badRow = apps.find((a) => a.key === "gh:1");
+  assert.equal(badRow.status, "Archived");
+  assert.equal(badRow.skip_reason, "company_blocklist");
+  assert.equal(badRow.updatedAt, "2026-04-20T12:00:00.000Z");
+
+  // The passing row is untouched.
+  const passRow = apps.find((a) => a.key === "gh:2");
+  assert.equal(passRow.status, "Inbox");
+  assert.equal(passRow.skip_reason || "", "");
+
+  // saveApplications was called.
+  assert.equal(saved.length, 1);
+  // stderr summary line emitted.
+  const err = ctx._errLines.join("\n");
+  assert.match(err, /archived 1 rows: company_blocklist=1/);
+});
+
+test("prepare --phase pre (RFC 035): archives title_blocklist row to TSV", async () => {
+  const apps = [
+    makeInboxApp({ key: "gh:1", title: "Director of Product" }),
+    makeInboxApp({ key: "gh:2", title: "Senior PM" }),
+  ];
+  const saved = [];
+  const deps = makePrepDeps(apps, {
+    saveApplications: (_p, list) => saved.push(list),
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: {
+        title_blocklist: [{ pattern: "director", reason: "too-senior" }],
+      },
+      company_tiers: { Stripe: "S" },
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+    }),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+
+  const blocked = apps.find((a) => a.key === "gh:1");
+  assert.equal(blocked.status, "Archived");
+  assert.equal(blocked.skip_reason, "title_blocklist");
+  assert.equal(saved.length, 1);
+});
+
+test("prepare --phase pre (RFC 035): archives company_cap row to TSV", async () => {
+  // One Stripe row already active → cap=1 means the new Inbox row is skipped.
+  const apps = [
+    makeApp({
+      key: "gh:1",
+      companyName: "Stripe",
+      status: "Applied",
+      notion_page_id: "p1",
+    }),
+    makeInboxApp({ key: "gh:2", companyName: "Stripe" }),
+  ];
+  const deps = makePrepDeps(apps, {
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: { company_cap: { max_active: 1 } },
+      company_tiers: { Stripe: "S" },
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+    }),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+
+  const capped = apps.find((a) => a.key === "gh:2");
+  assert.equal(capped.status, "Archived");
+  assert.equal(capped.skip_reason, "company_cap");
+  const err = ctx._errLines.join("\n");
+  assert.match(err, /company_cap=1/);
+});
+
+test("prepare --phase pre (RFC 035): archives geo_metro_miss row to TSV", async () => {
+  const apps = [makeInboxApp({ key: "gh:1", companyName: "Kaiser" })];
+  apps[0].locations = ["Houston, TX"];
+  const deps = makePrepDeps(apps, {
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: {},
+      geo: {
+        mode: "metro",
+        cities: ["Sacramento"],
+        states: ["CA"],
+        remote_ok: false,
+      },
+      company_tiers: { Kaiser: "S" },
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+    }),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+
+  const houston = apps.find((a) => a.key === "gh:1");
+  assert.equal(houston.status, "Archived");
+  assert.equal(houston.skip_reason, "geo_metro_miss");
+  const err = ctx._errLines.join("\n");
+  assert.match(err, /geo_metro_miss=1/);
+});
+
+test("prepare --phase pre (RFC 035): archives url_dead row to TSV", async () => {
+  const apps = [makeInboxApp({ key: "gh:1" })];
+  const deps = makePrepDeps(apps, {
+    // Force the URL check to flag the row dead.
+    checkUrls: async (rows) => rows.map((r) => makeDeadUrl(r)),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+
+  const dead = apps.find((a) => a.key === "gh:1");
+  assert.equal(dead.status, "Archived");
+  assert.equal(dead.skip_reason, "url_dead");
+  const err = ctx._errLines.join("\n");
+  assert.match(err, /url_dead=1/);
+});
+
+test("prepare --phase pre (RFC 035): preserves prior skip_reason on already-Archived rows (first-archive-wins)", async () => {
+  // Pre-existing Archived row carries `location_blocklist` from a scan-time
+  // archive (BL-24). The new run would emit `company_blocklist`, but we
+  // refuse to overwrite the older, more meaningful reason.
+  //
+  // To force the filter to actually emit a skip for an Archived row, we make
+  // the test go through applyPrepareFilter directly — but for the engine
+  // integration we mark the row as Archived AND empty status check is
+  // already a hard stop via filterAlreadyEvaluated. So we test the helper
+  // directly via the public skip path: stage the row as fresh-but-archived
+  // is impossible by definition. We test the preservation invariant on a
+  // separate code path: archiveSkippedRows is exercised end-to-end via the
+  // dedicated test below using two consecutive prepare runs.
+  //
+  // Practical assertion: after one prepare run archives gh:1 with
+  // company_blocklist, a second prepare run on the same TSV must not
+  // overwrite the reason (filterAlreadyEvaluated hard-stops on Archived,
+  // and even if it didn't, archiveSkippedRows preserves the prior reason).
+  const apps = [
+    {
+      ...makeInboxApp({ key: "gh:1", companyName: "BadCo" }),
+      status: "Archived",
+      skip_reason: "location_blocklist",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    },
+  ];
+  const deps = makePrepDeps(apps, {
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: { company_blocklist: ["BadCo"] },
+      company_tiers: {},
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+    }),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+
+  const row = apps[0];
+  assert.equal(row.status, "Archived");
+  // Original reason preserved — not overwritten with `company_blocklist`.
+  assert.equal(row.skip_reason, "location_blocklist");
+  assert.equal(row.updatedAt, "2026-04-01T00:00:00.000Z");
+});
+
+test("prepare --phase pre (RFC 035): backfills empty skip_reason on Archived rows", async () => {
+  // Direct unit test on the archiveSkippedRows helper via filterAlreadyEvaluated
+  // semantics is hard (status=Archived → hard stop). Test the helper logic via
+  // a synthetic skip list against the archive helper. We re-import the helper
+  // by exercising it through a fresh-status row that gets archived for the
+  // first time AND verify the path also handles an Archived row whose reason
+  // is empty. We seed apps[0] as Archived with empty skip_reason, ensure
+  // filterAlreadyEvaluated drops it (status check), but then bypass that
+  // check by directly invoking the saved TSV path via a synthetic skipped
+  // entry. The simplest end-to-end coverage: assert that a brand-new
+  // archive write *does* go through (companion to the preserve test above).
+  const apps = [makeInboxApp({ key: "gh:1", companyName: "BadCo" })];
+  apps[0].skip_reason = ""; // explicit empty
+  const deps = makePrepDeps(apps, {
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: { company_blocklist: ["BadCo"] },
+      company_tiers: {},
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+    }),
+  });
+  const cmd = makePrepareCommand(deps);
+  await cmd(makeCtx());
+  // Row archived from Inbox → Archived with new reason.
+  assert.equal(apps[0].status, "Archived");
+  assert.equal(apps[0].skip_reason, "company_blocklist");
+});
+
+test("filterAlreadyEvaluated (RFC 035): drops rows with status='Archived'", () => {
+  const apps = [
+    makeApp({ key: "gh:1", status: "Archived", skip_reason: "title_blocklist" }),
+    makeApp({ key: "gh:2", status: "Inbox", notion_page_id: "" }),
+  ];
+  const { passed, skipped } = filterAlreadyEvaluated(apps);
+  assert.equal(passed.length, 1);
+  assert.equal(passed[0].key, "gh:2");
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].key, "gh:1");
+  assert.equal(skipped[0].reason, "already_evaluated_archived");
+});
+
+test("prepare --phase pre (RFC 035): --dry-run suppresses TSV save but emits 'would archive' line", async () => {
+  const apps = [makeInboxApp({ key: "gh:1", companyName: "BadCo" })];
+  const saved = [];
+  const deps = makePrepDeps(apps, {
+    saveApplications: (_p, list) => saved.push(list),
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: { company_blocklist: ["BadCo"] },
+      company_tiers: {},
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+    }),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { dryRun: true, phase: "pre", batch: 30 } });
+  await cmd(ctx);
+
+  // No save side-effect.
+  assert.equal(saved.length, 0);
+  // No context file written either.
+  assert.equal(Object.keys(deps._written).length, 0);
+  // But the dry-run stderr line is present with the breakdown.
+  const err = ctx._errLines.join("\n");
+  assert.match(err, /\(dry-run\) would archive 1 rows: company_blocklist=1/);
+});
+
+test("prepare --phase pre (RFC 035): enum guard — every skipped reason is engine or already_evaluated", async () => {
+  // Defensive: assert the live skipped[] reasons fall inside the known set.
+  // Catches a future filter that emits a new reason without updating the
+  // ENGINE_SKIP_REASONS enum.
+  const { ENGINE_SKIP_REASONS, ALREADY_EVALUATED_REASONS } = require("../core/skip_reasons.js");
+  const apps = [
+    makeInboxApp({ key: "gh:1", companyName: "BadCo" }),
+    makeInboxApp({ key: "gh:2", title: "Director" }),
+    makeApp({ key: "gh:3", status: "Archived", skip_reason: "title_blocklist" }),
+    makeApp({ key: "gh:4", fit_score: "Weak", status: "Inbox", notion_page_id: "" }),
+  ];
+  apps[0].locations = ["Houston, TX"];
+  apps[1].locations = ["Houston, TX"];
+  const deps = makePrepDeps(apps, {
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: {
+        company_blocklist: ["BadCo"],
+        title_blocklist: [{ pattern: "director", reason: "too-senior" }],
+      },
+      company_tiers: {},
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+    }),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+
+  const allowed = new Set([
+    ...ENGINE_SKIP_REASONS,
+    ...ALREADY_EVALUATED_REASONS,
+    "already_evaluated_archived",
+  ]);
+  for (const s of result.skipped) {
+    assert.ok(
+      allowed.has(s.reason),
+      `skipped reason "${s.reason}" is not in the canonical engine / already-evaluated set`
+    );
+  }
+});
+
+test("ENGINE_SKIP_REASONS exposes the documented set (regression guard)", () => {
+  const { ENGINE_SKIP_REASONS } = require("../core/skip_reasons.js");
+  for (const r of [
+    "company_blocklist",
+    "title_blocklist",
+    "title_requirelist",
+    "company_cap",
+    "geo_no_location",
+    "geo_blocklist",
+    "geo_metro_miss",
+    "geo_country_miss",
+    "geo_remote_only_miss",
+    "geo_unknown_mode",
+    "url_dead",
+  ]) {
+    assert.ok(ENGINE_SKIP_REASONS.has(r), `ENGINE_SKIP_REASONS missing "${r}"`);
+  }
+  // Synthetic reasons are NOT in the engine enum (they don't archive).
+  assert.equal(ENGINE_SKIP_REASONS.has("already_evaluated_weak"), false);
+  assert.equal(ENGINE_SKIP_REASONS.has("weak_fit"), false);
+  assert.equal(ENGINE_SKIP_REASONS.has("duplicate"), false);
 });

@@ -44,11 +44,16 @@ const { findTitleBlocklistHit } = require("../core/filter.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 const { slugifyCompany } = require("../core/company_slug.js");
+const { pickClBase } = require("../core/cl_base_matcher.js");
 const { generateCoverLetterPdf } = require("../modules/generators/cover_letter_pdf.js");
 const { planDedup } = require("../core/tsv_dedup.js");
 const notionSync = require("../core/notion_sync.js");
 const { makeCompanyResolver } = require("../core/company_resolver.js");
 const notionJobPage = require("../core/notion_job_page.js");
+const {
+  ENGINE_SKIP_REASONS,
+  ALREADY_EVALUATED_REASONS,
+} = require("../core/skip_reasons.js");
 
 // Active statuses that count toward the company cap. "To Apply" is included
 // because every triaged-and-prepared row is committed to be applied —
@@ -112,10 +117,22 @@ function buildActiveCounts(apps) {
 // RFC 034 (BL-80) removed the `weak-fallback` mode entirely. Weak rows are
 // pushed to Notion at the commit-phase of the prior run; they don't need
 // re-surfacing here. `duplicate` rows are still always dropped.
+//
+// RFC 035 (BL-91): rows with `status="Archived"` are also a hard stop. The
+// pre-phase now writes Archived for engine-filter-skipped rows, so a row
+// that hit `title_blocklist` on a prior run will already be Archived in
+// TSV. Re-running it through `applyPrepareFilter` + URL-check just to
+// re-archive it is wasted work. The synthetic skip reason
+// `already_evaluated_archived` keeps the row visible in `skipped[]` for the
+// SKILL's information without triggering another TSV write.
 function filterAlreadyEvaluated(apps) {
   const passed = [];
   const skipped = [];
   for (const app of apps) {
+    if (app.status === "Archived") {
+      skipped.push({ key: app.key, reason: "already_evaluated_archived", url: app.url });
+      continue;
+    }
     if (app.fit_score === "Weak" || app.skip_reason === "weak_fit") {
       skipped.push({ key: app.key, reason: "already_evaluated_weak", url: app.url });
       continue;
@@ -212,9 +229,10 @@ function applyPrepareFilter(apps, rules, activeCounts) {
     }
 
     // L-4 (RFC 013): profile-level geo enforcement at prepare time.
-    // app.location comes from TSV (schema v3, G-5). Empty location in metro
-    // mode → geo_no_location reject. Restrictive-mode failures filter the
-    // row out; unrestricted always passes (no behavior change for Jared).
+    // app.locations comes from TSV (schema v5, RFC 038 — full array, no
+    // longer collapsed to the first element). Empty array in metro mode →
+    // geo_no_location reject. Restrictive-mode failures filter the row out;
+    // unrestricted always passes (no behavior change for Jared).
     //
     // BL-102: cache the enforceGeo result on the passing app as `_geoResult`
     // so `buildBatchEntry` doesn't recompute it. The field flows through the
@@ -222,7 +240,7 @@ function applyPrepareFilter(apps, rules, activeCounts) {
     // reaches `urlRes` intact.
     let geoResultForApp = null;
     if (rules && rules.geo) {
-      const locsForGeo = app.location ? [app.location] : [];
+      const locsForGeo = Array.isArray(app.locations) ? app.locations : [];
       geoResultForApp = enforceGeo(locsForGeo, rules.geo);
       const mode = rules.geo.mode;
       if (!geoResultForApp.ok && mode && mode !== "unrestricted") {
@@ -357,6 +375,26 @@ function buildBatchEntry(
   });
   if (salary) entry.salary = salary;
 
+  // RFC 036 (BL-90): pre-pick the cover-letter base entry deterministically
+  // in the engine so SKILL just reads `entry.clBase.paragraphs.{P2,P3,P4}`
+  // instead of re-running the priority list every batch row. `resumeVer` is
+  // null at pre-phase time (SKILL picks it in Step 7) — archetype component
+  // is skipped, only company / title / JD-body components fire. Embedding
+  // full paragraphs means SKILL doesn't re-read the file.
+  const versions = profile.coverLetterConfig;
+  if (versions) {
+    entry.clBase = pickClBase({
+      job: {
+        companyName: urlRes.companyName,
+        title: urlRes.title,
+        jdText: entry.jdText || "",
+      },
+      versions,
+      resumeVer: null,
+      profile,
+    });
+  }
+
   return entry;
 }
 
@@ -444,6 +482,52 @@ function computeInboxHealth({ remainingViable, target, inBatch, dropsThisRun }) 
 // notion_page_id (legacy rows from before the migration).
 function isFreshInboxApp(app) {
   return app.status === "Inbox" || (app.status === "To Apply" && !app.notion_page_id);
+}
+
+// RFC 035 (BL-91): mutate `apps` in place, flipping every row referenced in
+// `skipped[]` with an engine-emitted reason to `status="Archived"` +
+// `skip_reason=<reason>` + `updatedAt=now`.
+//
+// Skip semantics:
+//   - `ALREADY_EVALUATED_REASONS` entries are surfaced for the SKILL only;
+//     their TSV state was set by a prior run. Skip without write.
+//   - first-archive-wins (§6.1): if an already-Archived row carries a
+//     non-empty `skip_reason`, preserve it. Only backfill empty reasons.
+//   - rows we cannot find in the TSV (e.g. test fixture quirk) are
+//     ignored — defensive, since the skip pipeline only emits keys that
+//     came out of the apps list to start with.
+//
+// Returns a per-reason breakdown of rows actually written, suitable for
+// the stderr summary line. Synthetic `already_evaluated_*` reasons and
+// preserved-reason rows are NOT counted in the breakdown.
+function archiveSkippedRows(apps, skipped, now) {
+  const byKey = new Map();
+  for (const app of apps) {
+    if (app && app.key) byKey.set(app.key, app);
+  }
+  const breakdown = {};
+  let archived = 0;
+  for (const s of skipped) {
+    if (!s || !s.key) continue;
+    if (ALREADY_EVALUATED_REASONS.has(s.reason)) continue;
+    if (s.reason === "already_evaluated_archived") continue;
+    if (!ENGINE_SKIP_REASONS.has(s.reason)) continue;
+    const app = byKey.get(s.key);
+    if (!app) continue;
+    // First-archive-wins: don't overwrite a meaningful prior reason.
+    if (app.status === "Archived" && app.skip_reason && app.skip_reason !== "") continue;
+    app.status = "Archived";
+    app.skip_reason = s.reason;
+    app.updatedAt = now;
+    breakdown[s.reason] = (breakdown[s.reason] || 0) + 1;
+    archived += 1;
+  }
+  return { archived, breakdown };
+}
+
+function formatArchiveBreakdown(breakdown) {
+  const entries = Object.entries(breakdown).sort(([a], [b]) => a.localeCompare(b));
+  return entries.map(([k, v]) => `${k}=${v}`).join(" ");
 }
 
 // BL-9 Step 5: signal for the autonomous SKILL loop. `inboxExhausted=true`
@@ -678,6 +762,13 @@ async function runPre(ctx, deps) {
   // a total count.
   const skipReasons = computeSkipReasons(allSkipped);
 
+  // RFC 035 (BL-91): archive filter-skipped rows directly in TSV. The engine
+  // owns the policy decision; the SKILL no longer translates it into an
+  // archive write (RFC 034 removed `decision`). Notion is not touched —
+  // these rows never had a Notion page (RFC 014).
+  const archiveNow = deps.now();
+  const archiveResult = archiveSkippedRows(apps, allSkipped, archiveNow);
+
   // BL-9 Step 4: unconsumed (deferred) keys persisted on the context so a
   // follow-up topup run can pull from them without re-running the engine
   // filter. Topup re-validates each key against TSV (status / fit_score) and
@@ -771,10 +862,31 @@ async function runPre(ctx, deps) {
 
   const contextPath = path.join(profile.paths.root, "prepare_context.json");
 
+  // RFC 035: emit archive summary on stderr so operators see what the
+  // filter just persisted. Format mirrors the stdout `skip reasons — …`
+  // line so the breakdown is grep-able.
+  if (archiveResult.archived > 0) {
+    const breakdownStr = formatArchiveBreakdown(archiveResult.breakdown);
+    if (flags.dryRun) {
+      stderr(
+        `(dry-run) would archive ${archiveResult.archived} rows: ${breakdownStr}`
+      );
+    } else {
+      stderr(`archived ${archiveResult.archived} rows: ${breakdownStr}`);
+    }
+  }
+
   if (flags.dryRun) {
     stdout(`(dry-run) would write prepare_context.json with ${batchOut.length} jobs`);
     stdout(`(dry-run) stats: ${JSON.stringify(context.stats)}`);
     return 0;
+  }
+
+  // RFC 035: persist the archive mutations before writing the context. If
+  // saveApplications fails, the operator sees the throw and prepare_context
+  // is not written — better than a half-applied state.
+  if (archiveResult.archived > 0) {
+    deps.saveApplications(applicationsPath, apps);
   }
 
   deps.writeFile(contextPath, JSON.stringify(context, null, 2));
@@ -1000,10 +1112,31 @@ async function runPreTopup(ctx, deps) {
     inbox_health: merged_inbox_health,
   };
 
+  // RFC 035: archive only NEW skips from this topup run. Carryover
+  // (`prevSkipped`) was archived by the prior fresh/topup run; re-archiving
+  // would just bounce `updatedAt`. We archive against `apps` (the freshly
+  // loaded TSV) so the save below persists the mutations.
+  const archiveNow = deps.now();
+  const archiveResult = archiveSkippedRows(apps, newSkipped, archiveNow);
+  if (archiveResult.archived > 0) {
+    const breakdownStr = formatArchiveBreakdown(archiveResult.breakdown);
+    if (flags.dryRun) {
+      stderr(
+        `(dry-run) would archive ${archiveResult.archived} rows: ${breakdownStr}`
+      );
+    } else {
+      stderr(`archived ${archiveResult.archived} rows: ${breakdownStr}`);
+    }
+  }
+
   if (flags.dryRun) {
     stdout(`(dry-run) would append ${newEntries.length} entries → batch=${merged.batch.length}`);
     stdout(`(dry-run) stats: ${JSON.stringify(merged.stats)}`);
     return 0;
+  }
+
+  if (archiveResult.archived > 0) {
+    deps.saveApplications(applicationsPath, apps);
   }
 
   deps.writeFile(contextPath, JSON.stringify(merged, null, 2));
@@ -1077,7 +1210,7 @@ async function loadPrepareContextByKey(profile, deps, stderr) {
 //   - coverLetter: derived from r.clKey
 //   - dateAdded: now (YYYY-MM-DD)
 //   - city / state / workFormat: results.json (SKILL extracts), fallback to
-//     prepareCtxEntry, fallback to TSV.location best-effort, else omitted
+//     prepareCtxEntry, fallback to TSV.locations[0] best-effort, else omitted
 //   - schedule / requirements: prepareCtxEntry (engine extracted in pre)
 //   - salaryExpectations: formatSalaryDisplay(min, max)
 function buildJobFieldsForNotion({ app, r, prepareCtxEntry, now, formatSalaryDisplay }) {
@@ -1239,7 +1372,14 @@ async function runCommit(ctx, deps) {
   // typos rather than silently corrupting the column; the rest of the row
   // still gets the per-row updates below.
   const VALID_FIT_SCORES = new Set(["Strong", "Medium", "Weak"]);
-  const VALID_SKIP_REASONS = new Set(["weak_fit", "duplicate"]);
+  // RFC 035 (BL-91): renamed from `VALID_SKIP_REASONS` to make the boundary
+  // explicit. Engine-emitted skip reasons (`title_blocklist`, `company_cap`,
+  // `geo_*`, `url_dead`) come from `ENGINE_SKIP_REASONS` in
+  // `engine/core/skip_reasons.js` and are written by `runPre` directly. This
+  // set guards the SKILL back-compat path only: `weak_fit` and `duplicate`
+  // are still accepted on results.json entries for one release after
+  // RFC 034 (the SKILL no longer emits `skipReason`, but stale checkouts may).
+  const SKILL_LEGACY_SKIP_REASONS = new Set(["weak_fit", "duplicate"]);
 
   // BL-9: applies fit_score / fit_rationale / fit_evaluated_at / skip_reason
   // from a SKILL result onto a TSV row. Mutates `app` in place. Stamps
@@ -1265,12 +1405,12 @@ async function runCommit(ctx, deps) {
       app.fit_rationale = String(r.fitRationale);
     }
     if (r.skipReason !== undefined && r.skipReason !== "" && r.skipReason !== null) {
-      if (VALID_SKIP_REASONS.has(r.skipReason)) {
+      if (SKILL_LEGACY_SKIP_REASONS.has(r.skipReason)) {
         app.skip_reason = r.skipReason;
       } else {
         stderr(
           `warn: invalid skipReason "${r.skipReason}" for key ${r.key} — must be one of ` +
-            `${[...VALID_SKIP_REASONS].join("/")}; not persisted`
+            `${[...SKILL_LEGACY_SKIP_REASONS].join("/")}; not persisted`
         );
         updates.invalidSkipReason++;
       }

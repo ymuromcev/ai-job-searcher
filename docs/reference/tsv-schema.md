@@ -17,12 +17,13 @@ Both files are tab-separated with a header row first. Field separators
 inside values are normalized to a single space at write time
 (`escapeField` strips `\t \r \n`).
 
-## Schema v4 (current)
+## Schema v5 (current)
 
-`HEADER` constant in `engine/core/applications_tsv.js`. Twenty columns.
-Schema rev'd from v3 → v4 on 2026-05-05 (BL-9) to persist Claude's fit
-verdict on each row. Subsequent `prepare` runs use these columns to skip
-already-evaluated jobs instead of re-paying the SKILL cost.
+`HEADER` / `HEADER_V5` constant in `engine/core/applications_tsv.js`.
+Twenty columns. Schema rev'd from v4 → v5 on 2026-05-18 (BL-93 / RFC 038)
+to persist the full multi-element `locations[]` array from discovery,
+instead of collapsing to `locations[0]`. The on-disk column is renamed
+`location` → `locations` and carries a JSON-encoded array of strings.
 
 | # | Column | Type | Required | Description |
 |---|---|---|---|---|
@@ -32,7 +33,7 @@ already-evaluated jobs instead of re-paying the SKILL cost.
 | 4 | `companyName` | string | yes | Display name from the source. Resolved to a Companies-DB relation at sync time. |
 | 5 | `title` | string | yes | Posted role title. |
 | 6 | `url` | string | yes | Application URL. |
-| 7 | `location` | string | no | First entry from the discovery `locations` array. Empty when the source did not provide one. |
+| 7 | `locations` | JSON string[] | no | Every entry from the discovery `NormalizedJob.locations` array, JSON-encoded. Empty array (`"[]"`) when the source did not provide any. Notion `Location` is rendered as `locations.join(", ")` on push. |
 | 8 | `status` | enum | yes | One of the nine pipeline statuses below. |
 | 9 | `notion_page_id` | string | no | Notion page id once the row has been pushed. Empty before push. |
 | 10 | `resume_ver` | string | no | Resume archetype id used (key from `resume_versions.json`). |
@@ -89,12 +90,13 @@ profile flavor unification (Stage 8) finalized the current set.
 
 | Version | Header | Width | Reader | Writer |
 |---|---|---|---|---|
-| v4 | `HEADER` | 20 | `rowToAppV4` | `rowFor` (current) |
-| v3 | `HEADER_V3` | 16 | `rowToAppV3` (synthesizes empty `fit_*` + `skip_reason`) | none |
-| v2 | `HEADER_V2` | 15 | `rowToAppV2` (synthesizes empty `location` + `fit_*` + `skip_reason`) | none |
-| v1 | `HEADER_V1` | 12 | `rowToAppV1` (synthesizes empty `location`, `salary_min`, `salary_max`, `cl_path`, `fit_*`, `skip_reason`) | none |
+| v5 | `HEADER_V5` (alias `HEADER`) | 20 | `rowToAppV5` (JSON-decodes `locations` cell) | `rowFor` (current; JSON-encodes `locations`) |
+| v4 | `HEADER_V4` | 20 | `rowToAppV4` (wraps single-string `location` to `[location]`) | none |
+| v3 | `HEADER_V3` | 16 | `rowToAppV3` (wraps `location`; synthesizes empty `fit_*` + `skip_reason`) | none |
+| v2 | `HEADER_V2` | 15 | `rowToAppV2` (synthesizes empty `locations` + `fit_*` + `skip_reason`) | none |
+| v1 | `HEADER_V1` | 12 | `rowToAppV1` (synthesizes empty `locations`, `salary_min`, `salary_max`, `cl_path`, `fit_*`, `skip_reason`) | none |
 
-The reader rejects any header that does not match one of the four
+The reader rejects any header that does not match one of the five
 constants exactly — extra or reordered columns are not tolerated.
 
 ### Recorded backups
@@ -108,6 +110,7 @@ only.
 | `applications.tsv.pre-stage16` | Pre-migration snapshot before workspace cutover for the PM-Pete profile. |
 | `applications.tsv.pre-migrate-2026-04-27` | Pre-migration snapshot for the Healthcare-Hannah profile. |
 | `applications.tsv.contaminated-fintech` | One-off cleanup after a cross-profile contamination during early wizard runs. |
+| `applications.tsv.pre-v5-<YYYY-MM-DD>` | Written by `scripts/migrate_tsv_v4_to_v5.js` before promoting a v4 file to v5 (RFC 038). |
 
 ## `data/jobs.tsv` (shared master pool)
 
@@ -125,9 +128,10 @@ satisfies the command's own filter — there is no manifest layer.
 
 ## Future schema (draft)
 
-RFC 012 (relational data model) proposes a v5 layout that promotes
-`companyName` → `companyId` and adds a separate `companies.tsv`. The
-TSV reader will keep auto-upgrading from v1, v2, v3, and v4.
+RFC 012 (relational data model) proposes promoting `companyName` →
+`companyId` and adding a separate `companies.tsv` in a future bump.
+The TSV reader will keep auto-upgrading from v1 through the current
+version on every read.
 
 ## See also
 
