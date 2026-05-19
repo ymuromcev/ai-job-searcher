@@ -1,234 +1,139 @@
 // Pure filter: applies profile filter_rules to a list of jobs.
 // Returns partitioned { passed, rejected } with reasons.
 //
-// Rules schema (see profiles/_example/filter_rules.example.json):
-//   company_cap:        { max_active, overrides: { [company]: max } }
-//   company_blocklist:  [names]                   case-insensitive exact match
-//   title_blocklist:    [{ pattern, reason }]     case-insensitive WORD-BOUNDARY match
-//   location_blocklist: [substrings]              case-insensitive substring match,
-//                                                 skipped entirely when job location
-//                                                 contains a US marker (united states,
-//                                                 usa, ", us", "(us)", "u.s.")
-//   geo:                profile.geo block (RFC 013, L-4) — when present and
-//                                                 mode !== "unrestricted",
-//                                                 enforces positive geo policy
-//                                                 via geo_enforcer.enforceGeo.
-//                                                 Caller (scan.js / validate.js)
-//                                                 is expected to set
-//                                                 rules.geo = profile.geo before
-//                                                 calling.
+// RFC 040 / BL-92: this module is now a thin shim layer over
+// `evaluate_job.js`. The public API (`filterJobs` / `checkJob` /
+// `matchBlocklists`) is preserved bit-identical for one release —
+// existing callers in scan / validate retro-sweep do not need to
+// change. Phase 2 will inline the `evaluateJob` calls here and delete
+// the shim translation.
 //
-// Multi-location support (RFC 013, L-4): job objects may carry either
-// `location` (single string) or `locations[]` (array). Filter prefers
-// `locations[]` when present and falls back to `[location]` otherwise. For
-// blocklist purposes the first location is checked (as before — historic
-// contract). For geo enforcer, the full array is passed.
-//
-// Title-blocklist semantics (2026-04-28 update — diverges from prototype):
-//   - Word-boundary regex (\b…\b) instead of plain substring. Avoids false
-//     positives like "PRN" matching "rn" or "orthodontic" matching "do".
-//   - Compound title split on "/" (slash-titles like "Receptionist/Office
-//     Manager"). If ANY split part is clean (no blocklist hit), the whole
-//     title passes — caters to hybrid roles where one half is desirable.
-//     NOTE: split is "/" only — not "," (e.g. "Supervisor, Medical" stays
-//     a single part: "Medical" is a department modifier, not a co-role).
+// Why a shim layer: the legacy API speaks in terms of `job.role`,
+// `job.location`/`job.locations`, and returns `{ kind, ... } | null`.
+// `evaluateJob` speaks in `job.title`, `job.locations[]`, and returns
+// `{ decision, skipReason, matched }`. The adapter `jobFromAdapterScan`
+// + the small `legacyReasonFor` translator are the only place this
+// translation lives — drift is eliminated everywhere else.
 
-// US-marker primitives live in geo_enforcer.js (BL-81 — single source of
-// truth). Importing keeps filter.js and geo_enforcer.js classification
-// aligned. US_MARKERS is re-exported for back-compat (filter.test.js).
-const { enforceGeo, hasUsMarker, US_MARKERS } = require("./geo_enforcer.js");
+const {
+  enforceGeo,
+  hasUsMarker,
+  US_MARKERS,
+} = require("./geo_enforcer.js");
+const { findTitleBlocklistHit } = require("./filter_helpers.js");
+const { evaluateJob } = require("./evaluate_job.js");
 
-function escapeRegex(s) {
-  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// Re-exported for back-compat — see filter.test.js (BL-81 fixture
+// imports US_MARKERS from filter.js).
+// `findTitleBlocklistHit` is also re-exported (BL-100: email_filters
+// and prepare.js both import it from here).
+
+/**
+ * Shape adapter: legacy scan-style job → EvaluateJobInput.job.
+ * Scan jobs carry `role` (not `title`), `location` (single string) or
+ * `locations[]`, and `company`.
+ */
+function jobFromAdapterScan(scanJob) {
+  const j = scanJob || {};
+  return {
+    company: String(j.company || ""),
+    title: String(j.role || j.title || ""),
+    locations:
+      Array.isArray(j.locations) && j.locations.length > 0
+        ? j.locations.map(String)
+        : j.location
+          ? [String(j.location)]
+          : [],
+    url: j.jobUrl || j.url || "",
+    source: j.source || "",
+  };
 }
 
-// Word-boundary match that also handles patterns whose first or last char is
-// a non-word character (comma, dot, space). Plain `\b...\b` fails for those
-// because `\b` requires a word/non-word transition — it never fires between
-// two non-word chars (e.g. between `,` and ` `). When the pattern edge is
-// already a non-word char, the boundary is intrinsic and `\b` is omitted.
-function makeBoundaryRegex(needle) {
-  const lower = String(needle).toLowerCase();
-  const startB = /\w/.test(lower[0]) ? "\\b" : "";
-  const endB = /\w/.test(lower[lower.length - 1]) ? "\\b" : "";
-  return new RegExp(`${startB}${escapeRegex(lower)}${endB}`, "i");
-}
-
-// BL-79: shared title_blocklist semantics for scan (matchBlocklists) and
-// prepare (applyPrepareFilter). Word-boundary regex + slash-split so:
-//   - "rn" does NOT match "PRN Coordinator"
-//   - "rn" DOES match "RN Manager"
-//   - a slash-compound title passes if ANY part is clean
-// `patterns` is a flat array of pattern strings (callers normalize their own
-// shapes first — keeps the helper neutral about {pattern,reason} vs raw).
-// Returns the first matching pattern string, or null if the title is clean.
-function findTitleBlocklistHit(title, patterns) {
-  if (!patterns || patterns.length === 0) return null;
-  const titleLower = String(title || "").toLowerCase();
-  if (!titleLower) return null;
-  const parts = titleLower
-    .split("/")
-    .map((p) => p.trim())
-    .filter(Boolean);
-  const titleParts = parts.length > 0 ? parts : [titleLower];
-
-  let firstHit = null;
-  for (const part of titleParts) {
-    let partHit = null;
-    for (const pat of patterns) {
-      const needle = String(pat || "");
-      if (!needle) continue;
-      if (makeBoundaryRegex(needle).test(part)) {
-        partHit = needle;
-        break;
-      }
-    }
-    if (partHit) {
-      if (firstHit == null) firstHit = partHit;
-    } else {
-      return null; // any clean part → title passes
-    }
+// Translate an evaluateJob result into the legacy `matchBlocklists`
+// return shape (`{ kind, ... } | null`). `matchBlocklists` historically
+// does NOT consult `company_cap` (that's `checkJob`'s job). The shim
+// here mirrors that split — see the explicit company_cap exclusion.
+function legacyReasonForMatchBlocklists(result) {
+  if (!result || result.decision === "keep") return null;
+  const reason = result.skipReason;
+  const matched = result.matched || {};
+  if (reason === "company_blocklist") {
+    return { kind: "company_blocklist", company: matched.company };
   }
-  return firstHit;
-}
-
-// Returns a reason object for the first matching blocklist (company / title /
-// location) or null if nothing matches. Content-only: does NOT consult
-// company_cap. Used by:
-//   - checkJob: full SCAN-time gate (blocklists + cap)
-//   - validate retro-sweep: re-screen existing "To Apply" rows after
-//     filter_rules updates, without re-counting caps.
-//
-// Note: since schema v3 (G-5, 2026-05-03), TSV rows DO carry `location`, so
-// retro-sweep exercises location_blocklist + geo enforcement on the row's
-// stored location. Backfilled rows from the master pool have it; older rows
-// without a backfill stay with location="" and never hit a substring match.
-// (G-33 closed 2026-05-04 — covered together with G-5 + L-4.)
-function matchBlocklists(job, rules) {
-  const company = String(job.company || "");
-  const companyLower = company.toLowerCase();
-  if (Array.isArray(rules.company_blocklist)) {
-    for (const blocked of rules.company_blocklist) {
-      if (String(blocked).toLowerCase() === companyLower) {
-        return { kind: "company_blocklist", company };
-      }
-    }
+  if (reason === "title_requirelist") {
+    return {
+      kind: "title_requirelist",
+      why: matched.why,
+    };
   }
-
-  const role = String(job.role || "");
-  const roleLower = role.toLowerCase();
-  if (roleLower) {
-    // Compound titles use "/" as a co-role separator. Split and check each
-    // part independently — if any single part is clean, the title passes.
-    // Example: "Dental Receptionist/Office Manager" passes for someone whose
-    // blocklist contains "manager" because "Dental Receptionist" is clean.
-    // We do NOT split on "," — "Supervisor, Medical" is one role with a
-    // department modifier, not two roles.
-    const titleParts = roleLower
-      .split("/")
-      .map((p) => p.trim())
-      .filter(Boolean);
-    const parts = titleParts.length > 0 ? titleParts : [roleLower];
-
-    // title_requirelist: positive gate — if configured, at least one title
-    // part must match at least one required pattern. Rejects non-PM roles
-    // (e.g. SWE, DevOps, Accounting) that slip through the company-level
-    // filters because ATS adapters return all open roles, not just PM ones.
-    if (Array.isArray(rules.title_requirelist) && rules.title_requirelist.length > 0) {
-      const anyPartMatches = parts.some((part) =>
-        rules.title_requirelist.some((pat) => {
-          const needle = String(pat.pattern || "");
-          if (!needle) return false;
-          return makeBoundaryRegex(needle).test(part);
-        })
-      );
-      if (!anyPartMatches) {
-        return { kind: "title_requirelist", why: "title does not match any required pattern" };
-      }
-    }
-
-    // BL-79: delegate to findTitleBlocklistHit so prepare.js and scan.js
-    // share semantics. We still need the {pattern, reason} object for the
-    // returned reason, so we resolve back to the original entry after hit.
-    const blocklist = Array.isArray(rules.title_blocklist) ? rules.title_blocklist : [];
-    const patternStrs = blocklist
-      .map((p) => String((p && p.pattern) || ""))
-      .filter((s) => s.length > 0);
-    const hit = findTitleBlocklistHit(roleLower, patternStrs);
-    if (hit) {
-      const orig = blocklist.find(
-        (p) => String((p && p.pattern) || "").toLowerCase() === hit.toLowerCase()
-      );
-      return {
-        kind: "title_blocklist",
-        pattern: orig ? orig.pattern : hit,
-        why: orig ? orig.reason : undefined,
-      };
-    }
+  if (reason === "title_blocklist") {
+    return {
+      kind: "title_blocklist",
+      pattern: matched.pattern,
+      why: matched.reason,
+    };
   }
-
-  // BL-24 (2026-05-18): iterate the full locations[] array, not just the
-  // first-element string. Previous behaviour collapsed `locations[]` to
-  // `locations[0]` in scan.js and missed multi-loc jobs whose first element
-  // happened to be US-clean while later elements carried country tags. New
-  // contract: a US marker in ANY element keeps the job (US-hirable wins),
-  // otherwise a blocklist match in ANY element blocks. Single-string
-  // `job.location` is wrapped to preserve the historic single-value contract.
-  const locsArr =
-    Array.isArray(job.locations) && job.locations.length > 0
-      ? job.locations.map(String)
-      : job.location
-        ? [String(job.location)]
-        : [];
-  const locsLower = locsArr.map((l) => l.toLowerCase());
-  if (locsLower.length > 0 && !hasUsMarker(locsLower)) {
-    for (const blocked of rules.location_blocklist || []) {
-      const needle = String(blocked).toLowerCase();
-      if (!needle) continue;
-      if (locsLower.some((l) => l.includes(needle))) {
-        return { kind: "location_blocklist", match: blocked };
-      }
-    }
+  if (reason === "location_blocklist") {
+    return {
+      kind: "location_blocklist",
+      match: matched.match,
+    };
   }
-
-  // L-4 / RFC 013: profile-level geo enforcement. Active only when caller
-  // injected `rules.geo` AND mode !== "unrestricted". Multi-location aware:
-  // we pass the full locations[] array if available, else fall back to the
-  // single string. enforceGeo returns ok=true for unrestricted mode, so the
-  // explicit guard below is just an optimization (skip the call entirely).
-  if (rules.geo && rules.geo.mode && rules.geo.mode !== "unrestricted") {
-    const locsForGeo =
-      Array.isArray(job.locations) && job.locations.length > 0
-        ? job.locations
-        : job.location
-          ? [job.location]
-          : [];
-    const geoResult = enforceGeo(locsForGeo, rules.geo);
-    if (!geoResult.ok) {
-      return { kind: geoResult.reason, mode: rules.geo.mode };
-    }
+  if (reason && reason.startsWith("geo_")) {
+    return { kind: reason, mode: matched.mode };
   }
-
   return null;
+}
+
+/**
+ * Returns a reason object for the first matching blocklist (company /
+ * title / location / geo) or null if nothing matches. Content-only:
+ * does NOT consult company_cap. Used by:
+ *   - checkJob: full SCAN-time gate (blocklists + cap)
+ *   - validate retro-sweep: re-screen existing "To Apply" rows after
+ *     filter_rules updates, without re-counting caps.
+ *
+ * Phase 1 shim: delegates to `evaluateJob` with a synthetic context
+ * that includes ALL rules except company_cap (matchBlocklists never
+ * consulted it). We achieve this by stripping `company_cap` from rules
+ * before delegating — keeps the cap call-site as `checkJob`.
+ */
+function matchBlocklists(job, rules) {
+  const evalJob = jobFromAdapterScan(job);
+  const rulesForBlocklists = { ...(rules || {}) };
+  delete rulesForBlocklists.company_cap;
+  const profile = {
+    filter_rules: rulesForBlocklists,
+    geo: rules && rules.geo ? rules.geo : null,
+  };
+  const result = evaluateJob({
+    job: evalJob,
+    profile,
+    appState: { companyCounts: {} },
+    context: "scan",
+  });
+  return legacyReasonForMatchBlocklists(result);
 }
 
 function checkJob(job, rules, counts) {
-  const blockReason = matchBlocklists(job, rules);
-  if (blockReason) return blockReason;
-
-  const cap = rules.company_cap || {};
-  const overrides = cap.overrides || {};
-  const limit = Object.prototype.hasOwnProperty.call(overrides, job.company)
-    ? overrides[job.company]
-    : cap.max_active != null
-      ? cap.max_active
-      : Infinity;
-  const current = counts[job.company] || 0;
-  if (current >= limit) {
-    return { kind: "company_cap", cap: limit, current };
+  const evalJob = jobFromAdapterScan(job);
+  const profile = {
+    filter_rules: rules || {},
+    geo: rules && rules.geo ? rules.geo : null,
+  };
+  const result = evaluateJob({
+    job: evalJob,
+    profile,
+    appState: { companyCounts: counts || {} },
+    context: "scan",
+  });
+  if (result.decision === "keep") return null;
+  const reason = result.skipReason;
+  const matched = result.matched || {};
+  if (reason === "company_cap") {
+    return { kind: "company_cap", cap: matched.cap, current: matched.current };
   }
-
-  return null;
+  return legacyReasonForMatchBlocklists(result);
 }
 
 function filterJobs(jobs, rules, currentCounts = {}) {
@@ -257,6 +162,10 @@ module.exports = {
   checkJob,
   matchBlocklists,
   findTitleBlocklistHit,
+  jobFromAdapterScan,
   US_MARKERS,
   hasUsMarker,
+  // Re-exported so existing internal callers (geo_enforcer test, etc.)
+  // can keep importing from here.
+  enforceGeo,
 };

@@ -46,6 +46,7 @@ const {
 } = require("../core/geo_enforcer.js");
 const { findHardBlockers } = require("../core/hard_blockers.js");
 const { findTitleBlocklistHit } = require("../core/filter.js");
+const { evaluateJob } = require("../core/evaluate_job.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 const { slugifyCompany } = require("../core/company_slug.js");
@@ -152,101 +153,90 @@ function filterAlreadyEvaluated(apps) {
   return { passed, skipped };
 }
 
+// RFC 040 / BL-92: `applyPrepareFilter` is now a thin loop over
+// `evaluateJob({ context: "prepare" })`. Decision pipeline order
+// (RFC 040 §3.3): company_blocklist → title_requirelist →
+// title_blocklist → company_cap → location_blocklist → geo. The
+// BL-89 title-encoded geo pre-reject (`geo_title_excluded`) is NOT in
+// `evaluateJob` (it composes with `enforceGeo`) and stays inline
+// here, between cap and geo — same position as before this RFC.
+//
+// `_geoResult` cache (BL-102): `evaluateJob` returns the full
+// `enforceGeo` result via `matched.geoResult` so the passing app can
+// carry `_geoResult` downstream (`url_check.js` spread → `urlRes`).
+function jobFromTsv(app) {
+  return {
+    company: String(app.companyName || ""),
+    title: String(app.title || ""),
+    locations: Array.isArray(app.locations) ? app.locations : [],
+    url: app.url ? String(app.url) : "",
+    source: app.source ? String(app.source) : "",
+  };
+}
+
 function applyPrepareFilter(apps, rules, activeCounts) {
-  const companyCap = (rules && rules.company_cap) || {};
-  const maxActive = companyCap.max_active != null ? Number(companyCap.max_active) : Infinity;
-  const capOverrides = companyCap.overrides || {};
-
-  // Blocklists arrive in the flat engine shape from profile_loader's
-  // normalizeFilterRules (company_blocklist: [strings], title_blocklist:
-  // [{pattern, reason}], title_requirelist: [{pattern, reason}]).
-  // Plain-string fallback is kept for tests that pass rules inline without
-  // going through the loader.
-  const companyBlocklist = new Set(
-    (Array.isArray(rules && rules.company_blocklist) ? rules.company_blocklist : [])
-      .map((c) => (c && typeof c === "object" ? c.name : c))
-      .filter((c) => typeof c === "string" && c.length > 0)
-      .map((c) => c.toLowerCase())
-  );
-
-  const titlePatterns = (Array.isArray(rules && rules.title_blocklist) ? rules.title_blocklist : [])
-    .map((p) => (p && typeof p === "object" ? p.pattern : p))
-    .filter((p) => typeof p === "string" && p.length > 0)
-    .map((p) => p.toLowerCase());
-
-  // Positive gate: if non-empty, at least one slash-part of the title must
-  // match a required pattern (word-boundary regex, case-insensitive).
-  // Prevents non-PM roles (SWE, DevOps, Analyst…) from reaching the batch when
-  // ATS adapters return all company openings.
-  const titleRequirelist = (
-    Array.isArray(rules && rules.title_requirelist) ? rules.title_requirelist : []
-  )
-    .map((p) => (p && typeof p === "object" ? p.pattern : p))
-    .filter((p) => typeof p === "string" && p.length > 0)
-    .map((p) => p.toLowerCase());
-
   const counts = { ...activeCounts };
   const passed = [];
   const skipped = [];
 
+  // Profile-shape wrapper that mirrors what the loader produces. `rules`
+  // already contains `geo` (injected by the caller before invocation —
+  // see RFC 013 wiring in `cmdPrepare`).
+  const profileGeo = rules && rules.geo ? rules.geo : null;
+  // For evaluateJob's blocklist+cap pass, we strip `geo` from the
+  // rules so the title-geo (BL-89) check can run between cap and geo.
+  // Then we call evaluateJob a second time with geo enabled.
+  const rulesNoGeo = { ...(rules || {}) };
+  delete rulesNoGeo.geo;
+
   for (const app of apps) {
-    const companyLower = String(app.companyName || "").toLowerCase();
+    const evalJob = jobFromTsv(app);
 
-    if (companyBlocklist.has(companyLower)) {
-      skipped.push({ key: app.key, reason: "company_blocklist", url: app.url });
-      continue;
-    }
-
-    const titleLower = String(app.title || "").toLowerCase();
-
-    // title_requirelist: positive gate checked before blocklist
-    if (titleRequirelist.length > 0 && titleLower) {
-      const parts = titleLower
-        .split("/")
-        .map((p) => p.trim())
-        .filter(Boolean);
-      const titleParts = parts.length > 0 ? parts : [titleLower];
-      const anyMatches = titleParts.some((part) =>
-        titleRequirelist.some((pat) => new RegExp(`\\b${escapeRegex(pat)}\\b`, "i").test(part))
-      );
-      if (!anyMatches) {
-        skipped.push({ key: app.key, reason: "title_requirelist", url: app.url });
-        continue;
+    // Pass 1: blocklists + requirelist + cap + location_blocklist
+    // (no profile.geo → evaluateJob skips its geo step entirely).
+    const r1 = evaluateJob({
+      job: evalJob,
+      profile: { filter_rules: rulesNoGeo },
+      appState: { companyCounts: counts },
+      context: "prepare",
+    });
+    if (r1.decision === "skip") {
+      const reason = r1.skipReason;
+      const m = r1.mapped || r1.matched || {};
+      if (reason === "title_blocklist") {
+        skipped.push({
+          key: app.key,
+          reason: "title_blocklist",
+          pattern: m.pattern,
+          url: app.url,
+        });
+      } else if (reason === "company_cap") {
+        skipped.push({
+          key: app.key,
+          reason: "company_cap",
+          cap: m.cap,
+          current: m.current,
+          url: app.url,
+        });
+      } else {
+        // company_blocklist, title_requirelist, location_blocklist
+        const entry = { key: app.key, reason, url: app.url };
+        if (reason === "location_blocklist" && m.match != null) {
+          entry.match = m.match;
+        }
+        skipped.push(entry);
       }
-    }
-
-    // BL-79: word-boundary + slash-split semantics shared with filter.js.
-    // Raw `titleLower.includes(pat)` made "rn" match "PRN Coordinator" and
-    // diverged from scan-time matchBlocklists. findTitleBlocklistHit is the
-    // single source of truth for both stages.
-    const titleHit = findTitleBlocklistHit(titleLower, titlePatterns);
-    if (titleHit) {
-      skipped.push({ key: app.key, reason: "title_blocklist", pattern: titleHit, url: app.url });
       continue;
     }
 
-    const cap = Object.prototype.hasOwnProperty.call(capOverrides, app.companyName)
-      ? Number(capOverrides[app.companyName])
-      : maxActive;
-    const current = counts[app.companyName] || 0;
-    if (current >= cap) {
-      skipped.push({ key: app.key, reason: "company_cap", cap, current, url: app.url });
-      continue;
-    }
-
-    // RFC 039 / BL-89: title-encoded geo pre-reject. Inspect the job title
-    // BEFORE enforceGeo: ATS adapters frequently surface a generic
-    // `locations:["Remote"]` for a posting whose title is `"Senior PM
-    // (UK/EU/India)"`. Composition rule (RFC 039 §3.3): an inclusive marker
-    // in the title (US / state / accept_country) overrides an exclusive
-    // marker. Otherwise an exclusive marker is reject-`geo_title_excluded`.
-    // If the title is silent either way → fall through to `enforceGeo` on
-    // locations. Restrictive-mode-only: we don't reject titles in
-    // `unrestricted` profiles (Jared parity).
-    const geoMode = rules && rules.geo && rules.geo.mode;
+    // BL-89: title-encoded geo pre-reject. Composition rule (RFC 039
+    // §3.3): inclusive marker in the title (US / state /
+    // accept_country) overrides an exclusive marker. Restrictive-mode
+    // only.
+    const geoMode = profileGeo && profileGeo.mode;
     if (geoMode && geoMode !== "unrestricted") {
       const titleGeo = extractTitleGeo(app.title);
-      const inclusive = titleMentionsCandidateGeo(app.title, rules.geo);
+      const inclusive = titleMentionsCandidateGeo(app.title, profileGeo);
       if (!inclusive && titleGeo.excluded) {
         skipped.push({
           key: app.key,
@@ -259,26 +249,25 @@ function applyPrepareFilter(apps, rules, activeCounts) {
       }
     }
 
-    // L-4 (RFC 013): profile-level geo enforcement at prepare time.
-    // app.locations comes from TSV (schema v5, RFC 038 — full array, no
-    // longer collapsed to the first element). Empty array in metro mode →
-    // geo_no_location reject. Restrictive-mode failures filter the row out;
-    // unrestricted always passes (no behavior change for Jared).
-    //
-    // BL-102: cache the enforceGeo result on the passing app as `_geoResult`
-    // so `buildBatchEntry` doesn't recompute it. The field flows through the
-    // URL-check pipeline via spread (`{ ...row, ... }` in url_check.js) and
-    // reaches `urlRes` intact.
+    // Pass 2: geo via evaluateJob. We pass the same `counts` map but
+    // strip blocklists (already cleared by pass 1) — only the geo
+    // branch will fire. Cap re-check is harmless: counts haven't been
+    // incremented yet for this row, so it can't trip again.
     let geoResultForApp = null;
-    if (rules && rules.geo) {
-      const locsForGeo = Array.isArray(app.locations) ? app.locations : [];
-      geoResultForApp = enforceGeo(locsForGeo, rules.geo);
-      const mode = rules.geo.mode;
-      if (!geoResultForApp.ok && mode && mode !== "unrestricted") {
+    if (profileGeo) {
+      const r2 = evaluateJob({
+        job: evalJob,
+        profile: { filter_rules: {}, geo: profileGeo },
+        appState: { companyCounts: counts },
+        context: "prepare",
+      });
+      const matched2 = r2.matched || {};
+      geoResultForApp = matched2.geoResult || null;
+      if (r2.decision === "skip") {
         skipped.push({
           key: app.key,
-          reason: geoResultForApp.reason,
-          mode,
+          reason: r2.skipReason,
+          mode: profileGeo.mode,
           url: app.url,
         });
         continue;
@@ -287,7 +276,7 @@ function applyPrepareFilter(apps, rules, activeCounts) {
 
     const passedApp = geoResultForApp ? { ...app, _geoResult: geoResultForApp } : app;
     passed.push(passedApp);
-    counts[app.companyName] = current + 1;
+    counts[app.companyName] = (counts[app.companyName] || 0) + 1;
   }
 
   return { passed, skipped };

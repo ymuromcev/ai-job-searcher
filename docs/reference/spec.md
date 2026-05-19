@@ -76,6 +76,16 @@ The on-disk file (`profiles/<id>/filter_rules.json`) may be **flat** or
 normalizer. Consumers (`filter.js`, `prepare.js`, `email_filters.js`,
 `validate.js`) only see flat.
 
+Since [RFC 040](../../rfc/040-unified-evaluate-job.md) the filter
+pipeline has a single canonical implementation in
+`engine/core/evaluate_job.js` (`evaluateJob({ job, profile, appState,
+context }) → { decision, skipReason, matched }`). The three legacy
+entry points — `filter.js` `matchBlocklists` / `checkJob` /
+`filterJobs`, `prepare.js` `applyPrepareFilter`, `email_filters.js`
+`isLevelBlocked` — are Phase 1 shims that delegate to `evaluateJob`
+through shape adapters. Phase 2 inlines the call-sites one release
+later.
+
 ### Filter semantics
 
 | Layer | Rule | Comparison |

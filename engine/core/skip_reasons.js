@@ -31,11 +31,16 @@
 
 const ENGINE_SKIP_REASONS = Object.freeze(
   new Set([
-    // Filter (applyPrepareFilter)
+    // Filter (applyPrepareFilter / evaluateJob)
     "company_blocklist",
     "title_blocklist",
     "title_requirelist",
     "company_cap",
+    // RFC 040 / BL-92: location_blocklist surfaces from evaluateJob's
+    // `prepare` context. (Pre-RFC, only the scan path emitted it; the
+    // value is also written to TSV by validate's retro-sweep archive
+    // and is a long-standing operator-visible reason.)
+    "location_blocklist",
     // Geo (enforceGeo via applyPrepareFilter)
     "geo_no_location",
     "geo_blocklist",
