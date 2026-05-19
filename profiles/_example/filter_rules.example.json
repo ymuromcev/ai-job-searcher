@@ -36,5 +36,17 @@
   "location_rules": {
     "_description": "Restrict to specific locations / remote-only. Empty = no location filter.",
     "allowed_substrings": []
+  },
+  "hard_blockers": {
+    "_description": "RFC 039 / BL-89 — deterministic pre-SKILL filter. Rows that match any rule here NEVER reach Claude and are archived in TSV with `skip_reason=hard_blocker:<code>`. Keep the list short — these are STRUCTURAL disqualifiers (a skill the candidate does not have, a years cap, a cert the candidate lacks). For soft fit (PM vs SWE, fintech vs healthcare), let the SKILL judge.",
+    "required_skills_excluded": [
+      {
+        "skill": "ExampleSkillX",
+        "patterns": ["\\bExampleSkillX\\b", "\\bAlternateNameX\\b"],
+        "min_years": 1
+      }
+    ],
+    "years_required_max": 15,
+    "cert_blockers": []
   }
 }

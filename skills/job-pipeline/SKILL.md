@@ -228,6 +228,8 @@ Read profiles/<id>/prepare_context.json
 
 Report stats: `inboxTotal` / `afterFilter` / `inBatch` / `urlAlive` / `urlDead`. Proceed without confirmation — the CLI's `--batch N` flag already gates batch size; Claude does not re-prompt the user. Default is 30; adjust by re-running pre-phase with a different `--batch`.
 
+**Per-row JD payload (RFC 039 / BL-89).** Prefer `batch[i].jdStructure` — a deterministic `{ requirements: string[], responsibilities: string[], salary_text, location_text, full_text_excerpt }` payload produced by the engine's heuristic JD extractor. Read `requirements[]` and `responsibilities[]` directly; use `full_text_excerpt` as the prose fallback when those arrays are empty. The legacy `batch[i].jdText` (raw JD body) is still emitted for one release as a fallback for stale engine builds; if `jdStructure` is absent, fall back to `jdText`. Do not re-fetch the JD when `jdStructure` is present — the engine already extracted it.
+
 **Step 3 — Geo decision**
 
 Read `prepare_context.batch[i].geo_decision` — pass through as-is. Engine has already computed; do NOT WebFetch for geo.

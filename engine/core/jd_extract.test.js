@@ -1,7 +1,15 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { extractSchedule, extractRequirements, extractFromJd } = require("./jd_extract.js");
+const {
+  extractSchedule,
+  extractRequirements,
+  extractFromJd,
+  extractJDStructure,
+  STRUCTURE_MAX_BULLETS,
+  STRUCTURE_MAX_BULLET_LEN,
+  STRUCTURE_EXCERPT_LEN,
+} = require("./jd_extract.js");
 
 // --- Fixtures (realistic healthcare JD slices) -------------------------------
 
@@ -348,5 +356,176 @@ test("extractFromJd: empty input → both null", () => {
 
 test("extractFromJd: stable shape — always {schedule, requirements} keys", () => {
   const out = extractFromJd(NO_SCHEDULE);
+  assert.deepEqual(Object.keys(out).sort(), ["requirements", "schedule"]);
+});
+
+// --- extractJDStructure (RFC 039 / BL-89) ----------------------------------
+
+const PM_STRUCTURED_JD = `
+Senior Product Manager, Capital
+
+About the role:
+You will own the full product lifecycle for Stripe Capital.
+
+Requirements:
+- 7+ years of product management experience at a high-growth company
+- Strong analytical skills (SQL, A/B testing)
+- Experience with credit products preferred
+
+What you'll do:
+- Define the product roadmap for SMB credit
+- Partner with engineering, design, and risk teams
+- Own the metrics and quarterly OKRs
+
+Compensation:
+The base salary range is $200,000 — $260,000.
+
+Location:
+Remote — US only.
+`;
+
+test("extractJDStructure: happy path — both arrays populated + excerpt", () => {
+  const out = extractJDStructure(PM_STRUCTURED_JD);
+  assert.ok(out.requirements.length >= 2, "requirements parsed");
+  assert.ok(out.responsibilities.length >= 2, "responsibilities parsed");
+  assert.match(out.requirements[0], /7\+ years/);
+  assert.match(out.responsibilities[0], /product roadmap|Define/i);
+  assert.match(out.salary_text, /\$200,000.*\$260,000/);
+  assert.match(out.location_text, /Remote/i);
+  assert.ok(out.full_text_excerpt.length > 0);
+  assert.ok(out.full_text_excerpt.length <= STRUCTURE_EXCERPT_LEN);
+});
+
+test("extractJDStructure: heading variant 'Qualifications' fires", () => {
+  const jd = `
+Title: PM
+
+Qualifications:
+- 3+ years PM
+- BS in CS
+`;
+  const out = extractJDStructure(jd);
+  assert.equal(out.requirements.length, 2);
+  assert.match(out.requirements[0], /3\+ years PM/);
+});
+
+test("extractJDStructure: heading variant 'About you' fires", () => {
+  const jd = `
+About you:
+- Detail-oriented
+- Comfortable with ambiguity
+`;
+  const out = extractJDStructure(jd);
+  assert.equal(out.requirements.length, 2);
+});
+
+test("extractJDStructure: heading variant 'Day-to-day' fires for responsibilities", () => {
+  const jd = `
+Day-to-day:
+- Ship features
+- Review PRs
+`;
+  const out = extractJDStructure(jd);
+  assert.equal(out.responsibilities.length, 2);
+});
+
+test("extractJDStructure: bullet style — bullet leader •", () => {
+  const jd = `
+Requirements:
+• 5 years experience
+• Python required
+`;
+  const out = extractJDStructure(jd);
+  assert.equal(out.requirements.length, 2);
+});
+
+test("extractJDStructure: bullet style — asterisk leader", () => {
+  const jd = `
+Requirements:
+* 5 years experience
+* Python required
+`;
+  const out = extractJDStructure(jd);
+  assert.equal(out.requirements.length, 2);
+});
+
+test("extractJDStructure: bullet style — en-dash leader", () => {
+  const jd = `
+Requirements:
+– 5 years experience
+– Python required
+`;
+  const out = extractJDStructure(jd);
+  assert.equal(out.requirements.length, 2);
+});
+
+test("extractJDStructure: no-structure fallback — pure prose returns empty arrays + excerpt", () => {
+  const prose = "We are looking for someone special. Apply at our careers page. Send your resume.";
+  const out = extractJDStructure(prose);
+  assert.deepEqual(out.requirements, []);
+  assert.deepEqual(out.responsibilities, []);
+  assert.equal(out.salary_text, null);
+  assert.ok(out.full_text_excerpt.includes("special"));
+});
+
+test("extractJDStructure: bullet cap — 30 bullets → 25 capped (longest-drop-first)", () => {
+  const bullets = [];
+  for (let i = 0; i < 30; i++) {
+    // Each bullet is a different length so we can identify which got dropped.
+    bullets.push(`- bullet${i} ${"X".repeat(i * 5)}`);
+  }
+  const jd = `Requirements:\n${bullets.join("\n")}`;
+  const out = extractJDStructure(jd);
+  assert.equal(out.requirements.length, STRUCTURE_MAX_BULLETS);
+  // Shorter ones (low indices) must survive; longest (high indices) dropped.
+  assert.ok(out.requirements.some((b) => b.startsWith("bullet0")));
+  assert.ok(!out.requirements.some((b) => b.startsWith("bullet29")));
+});
+
+test("extractJDStructure: length cap — 500-char bullet truncated to 200", () => {
+  const long = "X".repeat(500);
+  const jd = `Requirements:\n- ${long}`;
+  const out = extractJDStructure(jd);
+  assert.equal(out.requirements.length, 1);
+  assert.equal(out.requirements[0].length, STRUCTURE_MAX_BULLET_LEN);
+});
+
+test("extractJDStructure: inline salary detected without 'Compensation' heading", () => {
+  const jd = `
+Requirements:
+- 5 years experience.
+
+We pay $140,000 — $190,000 plus equity.
+`;
+  const out = extractJDStructure(jd);
+  assert.match(out.salary_text, /\$140,000.*\$190,000/);
+});
+
+test("extractJDStructure: empty / null / undefined input → empty shape", () => {
+  for (const input of ["", null, undefined]) {
+    const out = extractJDStructure(input);
+    assert.deepEqual(out, {
+      requirements: [],
+      responsibilities: [],
+      salary_text: null,
+      location_text: null,
+      full_text_excerpt: "",
+    });
+  }
+});
+
+test("extractJDStructure: 3000+ char body → excerpt truncated to 3000", () => {
+  const filler = "abc ".repeat(2000);
+  const out = extractJDStructure(filler);
+  assert.equal(out.full_text_excerpt.length, STRUCTURE_EXCERPT_LEN);
+});
+
+test("extractFromJd back-compat: shape unchanged for legacy callers", () => {
+  // Bit-identical to pre-RFC-039 behaviour — `extractFromJd` returns the
+  // same `{schedule, requirements}` object regardless of `extractJDStructure`.
+  const out = extractFromJd(KAISER_RECEPTIONIST);
+  assert.equal(typeof out.schedule, "string");
+  assert.equal(typeof out.requirements, "string");
+  // No `jdStructure` field leaks into the legacy shape.
   assert.deepEqual(Object.keys(out).sort(), ["requirements", "schedule"]);
 });

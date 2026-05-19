@@ -1,22 +1,28 @@
 // JD field extractors for the prepare stage.
 //
-// Two pure regex-based functions that pull schedule + requirements signal out
-// of a job-description body and produce short canonical strings suitable for
-// Notion fields:
-//   - schedule    → select  (single canonical employment type, e.g. "Full-time")
-//   - requirements → rich_text (short bulleted summary, capped ~500 chars)
+// Pure regex-based functions that pull structure out of a job-description
+// body. Two layers:
 //
-// The extractors are deliberately conservative. If no signal is found we return
-// null and let the SKILL fall back to no-write (back-compat: profiles whose
-// property_map doesn't declare these fields aren't affected at all).
+//   1. `extractJDStructure(rawJDText)` (RFC 039 / BL-89) — the new public
+//      contract. Returns `{ requirements, responsibilities, salary_text,
+//      location_text, full_text_excerpt }`. Replaces shipping raw JD prose
+//      to the SKILL — token budget drops from ~3-5K to ~300-800 per row.
 //
-// Healthcare JDs are the primary target (Lilia profile) but the patterns are
-// generic enough to fire on any JD that uses common employment-type vocabulary.
+//   2. `extractSchedule(jdText)` and `extractRequirements(jdText)` — the
+//      legacy extractors that produce a single canonical schedule string +
+//      a healthcare-flavored bullet summary. Wrapped by `extractFromJd` which
+//      keeps the `{ schedule, requirements }` shape (callers under
+//      `engine/commands/prepare.js` `buildBatchEntry` still consume it).
+//
+// Healthcare JDs are the primary target for the legacy `extractRequirements`
+// path (Lilia profile). The new `extractJDStructure` is heading-driven and
+// generic across all JD vocabularies (Workday, Greenhouse, Lever, etc.).
 //
 // Exports:
-//   extractSchedule(jdText)    → string | null
-//   extractRequirements(jdText) → string | null
-//   extractFromJd(jdText)      → { schedule, requirements } convenience wrapper
+//   extractSchedule(jdText)        → string | null
+//   extractRequirements(jdText)    → string | null  (legacy summary)
+//   extractJDStructure(rawJDText)  → JDStructure    (RFC 039 / BL-89)
+//   extractFromJd(jdText)          → { schedule, requirements }
 
 // --- Helpers ----------------------------------------------------------------
 
@@ -29,11 +35,6 @@ function normalize(text) {
       .replace(/\r\n?/g, "\n")
       .trim()
   );
-}
-
-function firstMatch(text, regex) {
-  const m = regex.exec(text);
-  return m ? m[0] : null;
 }
 
 // --- Schedule ---------------------------------------------------------------
@@ -94,7 +95,7 @@ function extractSchedule(jdText) {
   return null;
 }
 
-// --- Requirements -----------------------------------------------------------
+// --- Requirements (legacy summary) ------------------------------------------
 
 // Education vocabulary. The capture group preserves the matched span so we
 // can render it back in the summary verbatim (less paraphrase risk).
@@ -310,11 +311,248 @@ function capitalize(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+// --- Structured JD extract (RFC 039 / BL-89) --------------------------------
+
+// Heading matcher tables. Each entry's regex is anchored at start-of-line
+// (post-normalization) and matched case-insensitively. The leading
+// whitespace + optional bullet/dash is consumed so heading lines like
+// `## Requirements` or `- Requirements:` still classify.
+//
+// Matchers must be specific enough that body bullets don't masquerade as
+// section openers. "You will" is intentionally listed under responsibilities
+// because Greenhouse uses it as a heading; misclassification of body text
+// is acceptable because the table is consulted only after the line has been
+// confirmed heading-shaped (short-ish, ends with `:` or is title-cased — see
+// `looksLikeHeading`).
+const REQUIREMENTS_HEADINGS = [
+  /^\s*(?:[#>*\-•–]+\s*)?(Requirements?|Qualifications?|What you'?ll need|About you|Who you are|You have|Must[\s-]haves?|Key skills|Required|Minimum qualifications)\b/i,
+];
+
+const RESPONSIBILITIES_HEADINGS = [
+  /^\s*(?:[#>*\-•–]+\s*)?(Responsibilities|What you'?ll do|Role|Day[\s-]to[\s-]day|In this role|You will)\b/i,
+];
+
+const SALARY_HEADINGS = [
+  /^\s*(?:[#>*\-•–]+\s*)?(Compensation|Salary|Pay range|Base pay|Total compensation)\b/i,
+];
+
+const LOCATION_HEADINGS = [
+  /^\s*(?:[#>*\-•–]+\s*)?(Location|Work location|Where|Remote|Hybrid|Onsite)\b/i,
+];
+
+// Inline salary pattern. Used as a fallback when no `Compensation` heading
+// is present (common on Greenhouse JDs that drop the range into the body).
+const SALARY_INLINE = /\$[\d,]+\s*[—–\-]\s*\$[\d,]+/;
+
+const STRUCTURE_MAX_BULLETS = 25;
+const STRUCTURE_MAX_BULLET_LEN = 200;
+const STRUCTURE_EXCERPT_LEN = 3000;
+
+// Bullet leader characters we accept. The line is bullet-shaped when it
+// starts with one of these tokens (possibly after leading whitespace).
+const BULLET_LEADER_RE = /^\s*[-•*–]\s+/;
+
+function matchesAny(line, patterns) {
+  for (const re of patterns) {
+    if (re.test(line)) return line;
+  }
+  return null;
+}
+
+function classifyHeading(line) {
+  // A heading line must look like a heading — short, ends with `:` or is
+  // entirely the heading vocabulary. Prose lines that happen to begin with
+  // "Remote — …" or "You will be expected to …" must NOT classify as
+  // headings, or the section body collapses to empty.
+  if (!line || line.length === 0) return null;
+  const trimmed = line.trim();
+  if (trimmed.length === 0) return null;
+  // Heading shape gate: either ends with `:` (canonical heading style) OR
+  // the line is short and contains no sentence punctuation (commas / em-
+  // dashes / periods in the middle of the line). Cap at 60 chars.
+  const endsWithColon = /:\s*$/.test(trimmed);
+  const looksLikeHeading =
+    endsWithColon ||
+    (trimmed.length <= 60 && !/[—–,.]/.test(trimmed.replace(/[:.\s]+$/, "")));
+  if (!looksLikeHeading) return null;
+
+  if (matchesAny(line, REQUIREMENTS_HEADINGS)) return "requirements";
+  if (matchesAny(line, RESPONSIBILITIES_HEADINGS)) return "responsibilities";
+  if (matchesAny(line, SALARY_HEADINGS)) return "salary";
+  if (matchesAny(line, LOCATION_HEADINGS)) return "location";
+  return null;
+}
+
+// Split a section body into bullet-shaped entries. If the body contains at
+// least one bullet leader, split on bullet leaders. Otherwise, fall back to
+// sentence boundary (`. `) — this keeps prose JDs at least somewhat
+// structured.
+function splitSectionIntoBullets(body) {
+  if (!body) return [];
+  const lines = body.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return [];
+
+  const hasBullets = lines.some((l) => BULLET_LEADER_RE.test(l));
+  if (hasBullets) {
+    const out = [];
+    let current = "";
+    for (const line of lines) {
+      if (BULLET_LEADER_RE.test(line)) {
+        if (current) out.push(current);
+        current = line.replace(BULLET_LEADER_RE, "").trim();
+      } else {
+        // Continuation of previous bullet.
+        current = current ? `${current} ${line}` : line;
+      }
+    }
+    if (current) out.push(current);
+    return out;
+  }
+
+  // No bullets — fall back to sentence split. Keeps each "sentence" as a
+  // pseudo-bullet so downstream code can still trim by count and length.
+  const joined = lines.join(" ");
+  return joined
+    .split(/(?<=[.!?])\s+(?=[A-Z])/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+// Cap an array of bullets to STRUCTURE_MAX_BULLETS by dropping the longest
+// entries first. Truncate each surviving entry to STRUCTURE_MAX_BULLET_LEN.
+function capBullets(bullets) {
+  let arr = bullets.slice();
+  if (arr.length > STRUCTURE_MAX_BULLETS) {
+    // Sort by length descending, drop the heaviest, but preserve the original
+    // order of the survivors so semantic order isn't shuffled.
+    const indexed = arr.map((b, i) => ({ b, i, len: b.length }));
+    indexed.sort((a, b) => b.len - a.len);
+    const drop = new Set(indexed.slice(0, arr.length - STRUCTURE_MAX_BULLETS).map((e) => e.i));
+    arr = arr.filter((_, i) => !drop.has(i));
+  }
+  return arr.map((b) => (b.length > STRUCTURE_MAX_BULLET_LEN ? b.slice(0, STRUCTURE_MAX_BULLET_LEN) : b));
+}
+
+/**
+ * Heuristic-only structured JD extract (RFC 039 §3.1 / BL-89).
+ *
+ * Output shape:
+ *   {
+ *     requirements: string[],       // bullet array, ≤ 25 entries × 200 chars
+ *     responsibilities: string[],   // bullet array, ≤ 25 entries × 200 chars
+ *     salary_text: string | null,   // raw salary line, do not parse $ here
+ *     location_text: string | null, // raw location/work-format line
+ *     full_text_excerpt: string,    // first ~3K chars (fallback signal)
+ *   }
+ *
+ * Deterministic: two runs over the same input produce the same output.
+ * No LLM, no network. Caps are exact (the contract is public). Empty/null
+ * input returns the empty shape.
+ *
+ * @param {string} rawJDText
+ * @returns {{requirements: string[], responsibilities: string[], salary_text: string|null, location_text: string|null, full_text_excerpt: string}}
+ */
+function extractJDStructure(rawJDText) {
+  const text = normalize(rawJDText);
+  const empty = {
+    requirements: [],
+    responsibilities: [],
+    salary_text: null,
+    location_text: null,
+    full_text_excerpt: "",
+  };
+  if (!text) return empty;
+
+  const lines = text.split("\n");
+
+  // Walk the lines, segmenting into sections by heading. Lines before the
+  // first heading land in a synthetic "preamble" section that we don't
+  // surface (it usually contains role title / company blurb).
+  const sections = { requirements: [], responsibilities: [], salary: [], location: [] };
+  let currentKind = null;
+  let currentBuf = [];
+
+  function flushCurrent() {
+    if (!currentKind) return;
+    sections[currentKind].push(currentBuf.join("\n"));
+    currentBuf = [];
+  }
+
+  for (const rawLine of lines) {
+    const kind = classifyHeading(rawLine);
+    if (kind) {
+      flushCurrent();
+      currentKind = kind;
+      // Heading line itself isn't included in the body buffer.
+      continue;
+    }
+    if (currentKind) {
+      currentBuf.push(rawLine);
+    }
+  }
+  flushCurrent();
+
+  // Build the requirement / responsibility bullet arrays.
+  const requirementsBullets = [];
+  for (const body of sections.requirements) {
+    for (const b of splitSectionIntoBullets(body)) requirementsBullets.push(b);
+  }
+  const responsibilitiesBullets = [];
+  for (const body of sections.responsibilities) {
+    for (const b of splitSectionIntoBullets(body)) responsibilitiesBullets.push(b);
+  }
+
+  // Pick the first non-empty salary section line; if none, scan the full body
+  // for an inline `$X — $Y` pattern.
+  let salary_text = null;
+  for (const body of sections.salary) {
+    const firstLine = body
+      .split("\n")
+      .map((l) => l.trim())
+      .find(Boolean);
+    if (firstLine) {
+      salary_text = firstLine.slice(0, STRUCTURE_MAX_BULLET_LEN);
+      break;
+    }
+  }
+  if (!salary_text) {
+    const m = SALARY_INLINE.exec(text);
+    if (m) salary_text = m[0];
+  }
+
+  // Pick the first non-empty location section line.
+  let location_text = null;
+  for (const body of sections.location) {
+    const firstLine = body
+      .split("\n")
+      .map((l) => l.trim())
+      .find(Boolean);
+    if (firstLine) {
+      location_text = firstLine.slice(0, STRUCTURE_MAX_BULLET_LEN);
+      break;
+    }
+  }
+
+  // full_text_excerpt is deterministic — first STRUCTURE_EXCERPT_LEN chars.
+  const full_text_excerpt = text.slice(0, STRUCTURE_EXCERPT_LEN);
+
+  return {
+    requirements: capBullets(requirementsBullets),
+    responsibilities: capBullets(responsibilitiesBullets),
+    salary_text,
+    location_text,
+    full_text_excerpt,
+  };
+}
+
 // --- Convenience wrapper ----------------------------------------------------
 
 /**
- * Run both extractors at once. Returns a stable shape so callers can spread
- * directly into a batch entry.
+ * Run the legacy extractors (schedule + healthcare-flavored requirements
+ * summary). Returns a stable shape so callers can spread directly into a
+ * batch entry. Preserved bit-identical to pre-RFC-039 behaviour for
+ * back-compat with external callers (`buildBatchEntry`'s `entry.schedule`
+ * + `entry.requirements`).
  *
  * @param {string} jdText
  * @returns {{schedule: string|null, requirements: string|null}}
@@ -329,10 +567,14 @@ function extractFromJd(jdText) {
 module.exports = {
   extractSchedule,
   extractRequirements,
+  extractJDStructure,
   extractFromJd,
   // Exported for tests / debugging
   EMPLOYMENT_TYPES,
   SHIFT_PATTERNS,
   HEALTHCARE_CERTS,
   SOFTWARE_CERTS,
+  STRUCTURE_MAX_BULLETS,
+  STRUCTURE_MAX_BULLET_LEN,
+  STRUCTURE_EXCERPT_LEN,
 };

@@ -356,10 +356,20 @@ re-enters `--phase pre`.
 5. URL liveness (HEAD + GET fallback, SSRF guard)
 
 Skipped rows carry `reason ∈ {"company_blocklist", "title_requirelist",
-"title_blocklist", "company_cap", "url_dead"}` plus reason-specific
-extras. Sources with no real URL (`linkedin`, `indeed`, `custom`) skip
-URL check via `SKIP_URL_CHECK_SOURCES` — they pass with `{alive: true,
-skipped: true}`.
+"title_blocklist", "company_cap", "url_dead", "geo_title_excluded",
+"hard_blocker:*"}` plus reason-specific extras. Sources with no real URL
+(`linkedin`, `indeed`, `custom`) skip URL check via
+`SKIP_URL_CHECK_SOURCES` — they pass with `{alive: true, skipped: true}`.
+
+`geo_title_excluded` (RFC 039 / BL-89) fires when the job title carries
+an exclusive non-US geo marker (e.g. `"Senior PM (UK/EU/India)"`,
+`"Lead PM — EMEA only"`) without a US / accept-country marker. The check
+runs inside `applyPrepareFilter` before the URL-check budget is spent.
+`hard_blocker:*` (RFC 039 §3.2) is a wildcard family: codes like
+`hard_blocker:required_skill_excluded:Python`,
+`hard_blocker:years_required_max_exceeded:20`,
+`hard_blocker:cert_required:RN`. The first code is in `reason`, the full
+list in `reasons[]`.
 
 ### JD fetch + cache (P-4)
 
@@ -401,6 +411,13 @@ Phase 1 → Phase 2 contract.
       "urlBoardRoot": false,
       "jdStatus": "cached",
       "jdText": "...",
+      "jdStructure": {
+        "requirements": ["..."],
+        "responsibilities": ["..."],
+        "salary_text": "$140,000 — $190,000",
+        "location_text": "Remote — US only",
+        "full_text_excerpt": "..."
+      },
       "salary": { "tier":"A","level":"Senior","min":...,"max":...,"mid":...,"expectation":"..." }
     }
   ],

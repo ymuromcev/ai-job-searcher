@@ -38,8 +38,13 @@ const applicationsTsv = require("../core/applications_tsv.js");
 const { checkAll } = require("../core/url_check.js");
 const { fetchAll: fetchAllJds } = require("../core/jd_cache.js");
 const { calcSalary } = require("../core/salary_calc.js");
-const { extractFromJd } = require("../core/jd_extract.js");
-const { enforceGeo } = require("../core/geo_enforcer.js");
+const { extractFromJd, extractJDStructure } = require("../core/jd_extract.js");
+const {
+  enforceGeo,
+  extractTitleGeo,
+  titleMentionsCandidateGeo,
+} = require("../core/geo_enforcer.js");
+const { findHardBlockers } = require("../core/hard_blockers.js");
 const { findTitleBlocklistHit } = require("../core/filter.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 const { resolveProfilesDir } = require("../core/paths.js");
@@ -53,6 +58,7 @@ const notionJobPage = require("../core/notion_job_page.js");
 const {
   ENGINE_SKIP_REASONS,
   ALREADY_EVALUATED_REASONS,
+  isEngineSkipReason,
 } = require("../core/skip_reasons.js");
 
 // Active statuses that count toward the company cap. "To Apply" is included
@@ -228,6 +234,31 @@ function applyPrepareFilter(apps, rules, activeCounts) {
       continue;
     }
 
+    // RFC 039 / BL-89: title-encoded geo pre-reject. Inspect the job title
+    // BEFORE enforceGeo: ATS adapters frequently surface a generic
+    // `locations:["Remote"]` for a posting whose title is `"Senior PM
+    // (UK/EU/India)"`. Composition rule (RFC 039 §3.3): an inclusive marker
+    // in the title (US / state / accept_country) overrides an exclusive
+    // marker. Otherwise an exclusive marker is reject-`geo_title_excluded`.
+    // If the title is silent either way → fall through to `enforceGeo` on
+    // locations. Restrictive-mode-only: we don't reject titles in
+    // `unrestricted` profiles (Jared parity).
+    const geoMode = rules && rules.geo && rules.geo.mode;
+    if (geoMode && geoMode !== "unrestricted") {
+      const titleGeo = extractTitleGeo(app.title);
+      const inclusive = titleMentionsCandidateGeo(app.title, rules.geo);
+      if (!inclusive && titleGeo.excluded) {
+        skipped.push({
+          key: app.key,
+          reason: "geo_title_excluded",
+          marker: titleGeo.marker,
+          mode: geoMode,
+          url: app.url,
+        });
+        continue;
+      }
+    }
+
     // L-4 (RFC 013): profile-level geo enforcement at prepare time.
     // app.locations comes from TSV (schema v5, RFC 038 — full array, no
     // longer collapsed to the first element). Empty array in metro mode →
@@ -345,6 +376,14 @@ function buildBatchEntry(
     if (extracted.requirements) entry.requirements = extracted.requirements;
   }
 
+  // RFC 039 / BL-89: structured JD payload — `jdStructure`. Replaces shipping
+  // raw `jdText` to the SKILL (budget drops from 3-5K to 300-800 tokens per
+  // row). `jdText` is still emitted for one release for back-compat with
+  // stale SKILL checkouts (RFC 039 §5).
+  if (entry.jdText) {
+    entry.jdStructure = extractJDStructure(entry.jdText);
+  }
+
   // L-4 (RFC 013): geo decision. Entries that reach the batch already passed
   // applyPrepareFilter geo check, so geo_decision is "allowed" by construction.
   // We still surface the field on every entry so SKILL Step 3 has a
@@ -414,6 +453,60 @@ async function fetchJdsByKey(aliveResults, jdCacheDir, deps) {
     jdByAppKey[jdInputs[i].key] = jdResults[i];
   }
   return jdByAppKey;
+}
+
+// RFC 039 / BL-89: hard-blocker pass between JD-fetch and buildBatchEntry.
+// For each alive row that has fetched JD text, extract a structured JD via
+// `extractJDStructure` and feed it to `findHardBlockers`. Blocked rows are
+// removed from the alive set and surfaced in `hardBlockerSkipped[]` with
+// `reason` = first code, `reasons[]` = full list (RFC 039 §7.5).
+//
+// `profile` here is a thin wrapper `{ filterRules: { hard_blockers? } }` —
+// the function reads `profile.filterRules.hard_blockers` only. Empty/missing
+// config short-circuits to no-op (every row passes through).
+//
+// Rows without fetched JD body (e.g. ATS adapters without a jd_cache fetcher)
+// are NEVER hard-blocked — we cannot evaluate the requirements without text,
+// and the safer default is to let the SKILL judge them. The audit's failure
+// mode (Python required → Weak) only fires when JD text is available, so
+// this matches the BL-89 intent.
+function applyHardBlockers(aliveResults, jdByAppKey, profile) {
+  const config =
+    profile && profile.filterRules && profile.filterRules.hard_blockers
+      ? profile.filterRules.hard_blockers
+      : null;
+  if (!config) {
+    return { aliveResults, hardBlockerSkipped: [] };
+  }
+
+  const surviving = [];
+  const hardBlockerSkipped = [];
+  for (const urlRes of aliveResults) {
+    const jd = jdByAppKey[urlRes.key];
+    const jdText = jd && jd.text ? jd.text : "";
+    if (!jdText) {
+      surviving.push(urlRes);
+      continue;
+    }
+    const structuredJD = extractJDStructure(jdText);
+    const codes = findHardBlockers({
+      structuredJD,
+      profile,
+      title: urlRes.title,
+    });
+    if (codes.length === 0) {
+      surviving.push(urlRes);
+      continue;
+    }
+    const fullReasons = codes.map((c) => `hard_blocker:${c}`);
+    hardBlockerSkipped.push({
+      key: urlRes.key,
+      reason: fullReasons[0],
+      reasons: fullReasons,
+      url: urlRes.url,
+    });
+  }
+  return { aliveResults: surviving, hardBlockerSkipped };
 }
 
 // Compute skip-reason breakdown from a flat list of skip records.
@@ -511,7 +604,8 @@ function archiveSkippedRows(apps, skipped, now) {
     if (!s || !s.key) continue;
     if (ALREADY_EVALUATED_REASONS.has(s.reason)) continue;
     if (s.reason === "already_evaluated_archived") continue;
-    if (!ENGINE_SKIP_REASONS.has(s.reason)) continue;
+    // RFC 039 / BL-89: accept literal enum values AND `hard_blocker:*`.
+    if (!isEngineSkipReason(s.reason)) continue;
     const app = byKey.get(s.key);
     if (!app) continue;
     // First-archive-wins: don't overwrite a meaningful prior reason.
@@ -731,11 +825,25 @@ async function runPre(ctx, deps) {
   const jdCacheDir = profile.paths.jdCacheDir;
   const jdByAppKey = await fetchJdsByKey(aliveResults, jdCacheDir, deps);
 
+  // RFC 039 / BL-89: hard-blocker pass. Runs AFTER JD-fetch and BEFORE
+  // buildBatchEntry. A blocked row goes to `skipped[]` with the first code
+  // in `reason` and the full list in `reasons[]` (RFC 039 §7.5); it's
+  // archived via `archiveSkippedRows` (RFC 035) and never reaches the SKILL.
+  // This is the architectural enforcement of `feedback_pipeline_fit_score_arch`.
+  const profileForHB = {
+    filterRules: { ...(profile.filterRules || {}) },
+  };
+  const { aliveResults: aliveAfterHB, hardBlockerSkipped } = applyHardBlockers(
+    aliveResults,
+    jdByAppKey,
+    profileForHB
+  );
+
   // Assemble batch entries. Track unique companies in batch whose tier is
   // unknown — SKILL Step 5.7 will assign them and pass back via results
   // (G-11/G-15: "Claude должен выставлять тиры самостоятельно").
   const unknownTierSet = new Set();
-  const batchOut = aliveResults.map((urlRes) =>
+  const batchOut = aliveAfterHB.map((urlRes) =>
     buildBatchEntry(
       urlRes,
       jdByAppKey[urlRes.key],
@@ -756,7 +864,12 @@ async function runPre(ctx, deps) {
     urlStatus: r.status,
   }));
 
-  const allSkipped = [...alreadyEvaluatedSkips, ...filteredOut, ...deadSkipped];
+  const allSkipped = [
+    ...alreadyEvaluatedSkips,
+    ...filteredOut,
+    ...deadSkipped,
+    ...hardBlockerSkipped,
+  ];
   // G-12: skip-reason breakdown so the user sees WHY 12 jobs got skipped
   // (company_cap: 5, title_blocklist: 2, url_dead: 1, …) instead of just
   // a total count.
@@ -1036,8 +1149,18 @@ async function runPreTopup(ctx, deps) {
   const jdCacheDir = profile.paths.jdCacheDir;
   const jdByAppKey = await fetchJdsByKey(aliveResults, jdCacheDir, deps);
 
+  // RFC 039 / BL-89: hard-blocker pass (topup mirror — identical contract).
+  const profileForHB = {
+    filterRules: { ...(profile.filterRules || {}) },
+  };
+  const { aliveResults: aliveAfterHB, hardBlockerSkipped } = applyHardBlockers(
+    aliveResults,
+    jdByAppKey,
+    profileForHB
+  );
+
   const unknownTierSet = new Set(prevUnknownTiers);
-  const newEntries = aliveResults.map((urlRes) =>
+  const newEntries = aliveAfterHB.map((urlRes) =>
     buildBatchEntry(
       urlRes,
       jdByAppKey[urlRes.key],
@@ -1062,6 +1185,7 @@ async function runPreTopup(ctx, deps) {
     ...filteredOut,
     ...deadSkipped,
     ...droppedFromQueue,
+    ...hardBlockerSkipped,
   ];
 
   // Remaining queue: apps that were eligible but not URL-checked yet, plus any

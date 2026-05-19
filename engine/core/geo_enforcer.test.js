@@ -3,7 +3,15 @@
 const test = require("node:test");
 const assert = require("node:assert");
 
-const { enforceGeo, isRemoteLoc, hasUsMarker, US_MARKERS } = require("./geo_enforcer.js");
+const {
+  enforceGeo,
+  isRemoteLoc,
+  hasUsMarker,
+  US_MARKERS,
+  extractTitleGeo,
+  titleMentionsCandidateGeo,
+  TITLE_GEO_PATTERNS,
+} = require("./geo_enforcer.js");
 const { hasUsMarker: hasUsMarkerFromFilter, US_MARKERS: US_MARKERS_FROM_FILTER } = require("./filter.js");
 
 // --- Mode: unrestricted ----------------------------------------------------
@@ -358,4 +366,124 @@ test("Jared unrestricted profile: passes both US and global", () => {
   assert.strictEqual(enforceGeo(["London, UK"], geo).ok, true);
   assert.strictEqual(enforceGeo(["Remote"], geo).ok, true);
   assert.strictEqual(enforceGeo([], geo).ok, true);
+});
+
+// --- Title-encoded geo pre-reject (RFC 039 / BL-89) ------------------------
+
+test("extractTitleGeo: parenthetical UK tag", () => {
+  const r = extractTitleGeo("Senior PM (UK)");
+  assert.strictEqual(r.excluded, true);
+  assert.match(r.marker, /UK/);
+});
+
+test("extractTitleGeo: parenthetical EU tag", () => {
+  const r = extractTitleGeo("Senior PM (EU)");
+  assert.strictEqual(r.excluded, true);
+});
+
+test("extractTitleGeo: parenthetical India tag", () => {
+  const r = extractTitleGeo("Backend Engineer (India)");
+  assert.strictEqual(r.excluded, true);
+  assert.match(r.marker, /India/);
+});
+
+test("extractTitleGeo: multi-region tag (UK/EU/India)", () => {
+  const r = extractTitleGeo("Senior PM (UK/EU/India)");
+  assert.strictEqual(r.excluded, true);
+});
+
+test("extractTitleGeo: inline 'EMEA only'", () => {
+  const r = extractTitleGeo("Product Manager — EMEA only");
+  assert.strictEqual(r.excluded, true);
+  assert.match(r.marker, /EMEA only/i);
+});
+
+test("extractTitleGeo: 'Remote - APAC' pattern", () => {
+  const r = extractTitleGeo("Lead PM, Remote - APAC");
+  assert.strictEqual(r.excluded, true);
+  assert.match(r.marker, /Remote - APAC/i);
+});
+
+test("extractTitleGeo: 'Remote — EMEA' em-dash pattern", () => {
+  const r = extractTitleGeo("Senior PM, Remote — EMEA");
+  assert.strictEqual(r.excluded, true);
+});
+
+test("extractTitleGeo: plain title — not excluded", () => {
+  const r = extractTitleGeo("Lead Product Manager");
+  assert.strictEqual(r.excluded, false);
+  assert.strictEqual(r.marker, null);
+});
+
+test("extractTitleGeo: empty / null input", () => {
+  assert.deepStrictEqual(extractTitleGeo(""), { excluded: false, marker: null });
+  assert.deepStrictEqual(extractTitleGeo(null), { excluded: false, marker: null });
+  assert.deepStrictEqual(extractTitleGeo(undefined), { excluded: false, marker: null });
+});
+
+test("titleMentionsCandidateGeo: US marker in title returns true", () => {
+  assert.strictEqual(
+    titleMentionsCandidateGeo("Senior PM (US/UK/Canada)", { mode: "us-wide" }),
+    true
+  );
+  assert.strictEqual(
+    titleMentionsCandidateGeo("Senior PM - United States", { mode: "us-wide" }),
+    true
+  );
+});
+
+test("titleMentionsCandidateGeo: state code (CA) in title returns true", () => {
+  assert.strictEqual(
+    titleMentionsCandidateGeo("PM - San Francisco, CA", { mode: "us-wide" }),
+    true
+  );
+});
+
+test("titleMentionsCandidateGeo: accept_countries matched by substring", () => {
+  const geo = { mode: "us-wide", accept_countries: ["Canada"] };
+  assert.strictEqual(
+    titleMentionsCandidateGeo("Senior PM (Canada/UK)", geo),
+    true
+  );
+});
+
+test("titleMentionsCandidateGeo: no inclusive marker → false", () => {
+  assert.strictEqual(
+    titleMentionsCandidateGeo("Senior PM (UK/EU)", { mode: "us-wide" }),
+    false
+  );
+});
+
+test("TITLE_GEO_PATTERNS: exposed for tests", () => {
+  assert.ok(Array.isArray(TITLE_GEO_PATTERNS));
+  assert.ok(TITLE_GEO_PATTERNS.length >= 3);
+});
+
+// Composition (mirrors applyPrepareFilter's behavior in prepare.js)
+
+function composeTitleDecision(title, profileGeo) {
+  // Same composition rule used by applyPrepareFilter:
+  // inclusive marker overrides exclusive; else exclusive rejects; else pass.
+  const titleGeo = extractTitleGeo(title);
+  const inclusive = titleMentionsCandidateGeo(title, profileGeo);
+  if (inclusive) return { reject: false };
+  if (titleGeo.excluded) return { reject: true, marker: titleGeo.marker };
+  return { reject: false };
+}
+
+test("composition: inclusive 'US' wins over excluded 'UK'", () => {
+  const d = composeTitleDecision("Senior PM (US/UK/Canada)", { mode: "us-wide" });
+  assert.strictEqual(d.reject, false);
+});
+
+test("composition: multi-region exclusive without US → reject", () => {
+  const d = composeTitleDecision("Backend Engineer (UK/EU/India)", {
+    mode: "us-wide",
+  });
+  assert.strictEqual(d.reject, true);
+});
+
+test("composition: plain title falls through to locations check", () => {
+  const d = composeTitleDecision("Lead PM (Hybrid SF)", { mode: "us-wide" });
+  assert.strictEqual(d.reject, false);
 });

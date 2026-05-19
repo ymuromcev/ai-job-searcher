@@ -3887,21 +3887,22 @@ test("prepare --phase pre (RFC 035): enum guard — every skipped reason is engi
   await cmd(ctx);
   const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
 
-  const allowed = new Set([
-    ...ENGINE_SKIP_REASONS,
+  const { isEngineSkipReason } = require("../core/skip_reasons.js");
+  const syntheticAllowed = new Set([
     ...ALREADY_EVALUATED_REASONS,
     "already_evaluated_archived",
   ]);
   for (const s of result.skipped) {
+    const ok = isEngineSkipReason(s.reason) || syntheticAllowed.has(s.reason);
     assert.ok(
-      allowed.has(s.reason),
+      ok,
       `skipped reason "${s.reason}" is not in the canonical engine / already-evaluated set`
     );
   }
 });
 
 test("ENGINE_SKIP_REASONS exposes the documented set (regression guard)", () => {
-  const { ENGINE_SKIP_REASONS } = require("../core/skip_reasons.js");
+  const { ENGINE_SKIP_REASONS, isEngineSkipReason } = require("../core/skip_reasons.js");
   for (const r of [
     "company_blocklist",
     "title_blocklist",
@@ -3913,12 +3914,243 @@ test("ENGINE_SKIP_REASONS exposes the documented set (regression guard)", () => 
     "geo_country_miss",
     "geo_remote_only_miss",
     "geo_unknown_mode",
+    "geo_title_excluded",
     "url_dead",
   ]) {
     assert.ok(ENGINE_SKIP_REASONS.has(r), `ENGINE_SKIP_REASONS missing "${r}"`);
+    assert.ok(isEngineSkipReason(r), `isEngineSkipReason rejected "${r}"`);
   }
+  // RFC 039 / BL-89: `hard_blocker:*` is accepted via the predicate but is
+  // NOT in the literal Set (it's a wildcard family).
+  assert.ok(isEngineSkipReason("hard_blocker:required_skill_excluded:Python"));
+  assert.ok(isEngineSkipReason("hard_blocker:cert_required:RN"));
+  assert.ok(!isEngineSkipReason("hard_blocker:"));
+  assert.ok(!isEngineSkipReason(""));
   // Synthetic reasons are NOT in the engine enum (they don't archive).
   assert.equal(ENGINE_SKIP_REASONS.has("already_evaluated_weak"), false);
   assert.equal(ENGINE_SKIP_REASONS.has("weak_fit"), false);
   assert.equal(ENGINE_SKIP_REASONS.has("duplicate"), false);
+});
+
+// --- RFC 039 / BL-89: structured JD + hard_blockers + title-geo -----------
+
+test("prepare --phase pre (RFC 039): emits jdStructure on every batch row with JD body", async () => {
+  const apps = [makeApp({ key: "gh:1" })];
+  const jdText = `
+Senior PM
+Requirements:
+- 5+ years PM experience
+- SQL fluency
+What you'll do:
+- Define the roadmap
+- Partner with engineering
+`;
+  const deps = makePrepDeps(apps, {
+    fetchJds: async () => [{ key: "gh:1", status: "fetched", text: jdText }],
+  });
+  const cmd = makePrepareCommand(deps);
+  await cmd(makeCtx());
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 1);
+  const entry = result.batch[0];
+  assert.ok(entry.jdStructure, "jdStructure must be emitted");
+  assert.ok(Array.isArray(entry.jdStructure.requirements));
+  assert.ok(entry.jdStructure.requirements.length >= 1);
+  assert.ok(Array.isArray(entry.jdStructure.responsibilities));
+  // Back-compat: jdText still present for one release (RFC 039 §5).
+  assert.equal(entry.jdText, jdText);
+});
+
+test("prepare --phase pre (RFC 039): no jdStructure when JD body absent", async () => {
+  const apps = [makeApp({ key: "gh:1" })];
+  const deps = makePrepDeps(apps, {
+    fetchJds: async () => [{ key: "gh:1", status: "not_found", text: null }],
+  });
+  const cmd = makePrepareCommand(deps);
+  await cmd(makeCtx());
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  const entry = result.batch[0];
+  assert.equal(entry.jdStructure, undefined);
+});
+
+test("prepare --phase pre (RFC 039): hard-blocker row goes to skipped[], not batch[]", async () => {
+  // Profile excludes Python; JD requires Python → row archived, never reaches SKILL.
+  const apps = [makeInboxApp({ key: "gh:1", companyName: "Stripe" })];
+  const jdText = `
+Senior Software Engineer
+Requirements:
+- 5+ years Python required
+- Distributed systems experience
+`;
+  const deps = makePrepDeps(apps, {
+    fetchJds: async () => [{ key: "gh:1", status: "fetched", text: jdText }],
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: {
+        hard_blockers: {
+          required_skills_excluded: [
+            { skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 },
+          ],
+        },
+      },
+      company_tiers: { Stripe: "S" },
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+    }),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  await cmd(ctx);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  // Hard-blocked row absent from batch[].
+  assert.equal(result.batch.length, 0);
+  // Surfaced in skipped[] with hard_blocker: prefix.
+  const blocked = result.skipped.find((s) => s.key === "gh:1");
+  assert.ok(blocked, "row must be in skipped[]");
+  assert.equal(blocked.reason, "hard_blocker:required_skill_excluded:Python");
+  assert.deepEqual(blocked.reasons, ["hard_blocker:required_skill_excluded:Python"]);
+  // TSV archived with the full reason verbatim (RFC 035 path).
+  const row = apps.find((a) => a.key === "gh:1");
+  assert.equal(row.status, "Archived");
+  assert.equal(row.skip_reason, "hard_blocker:required_skill_excluded:Python");
+});
+
+test("prepare --phase pre (RFC 039): hard-blocker rows never reach SKILL — critical invariant", async () => {
+  // Two rows: one with Python-required (blocked), one clean (passes).
+  const apps = [
+    makeInboxApp({ key: "gh:1", companyName: "Stripe", title: "Backend Engineer" }),
+    makeInboxApp({ key: "gh:2", companyName: "Stripe", title: "Senior PM" }),
+  ];
+  const jdByKey = {
+    "gh:1": "Requirements:\n- 5+ years Python required",
+    "gh:2": "Requirements:\n- 5+ years PM experience",
+  };
+  const deps = makePrepDeps(apps, {
+    fetchJds: async (rows) =>
+      rows.map((r) => ({ key: r.key, status: "fetched", text: jdByKey[r.key] })),
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: {
+        hard_blockers: {
+          required_skills_excluded: [
+            { skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 },
+          ],
+        },
+      },
+      company_tiers: { Stripe: "S" },
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+    }),
+  });
+  const cmd = makePrepareCommand(deps);
+  await cmd(makeCtx());
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  // Only the clean row reaches the batch.
+  assert.equal(result.batch.length, 1);
+  assert.equal(result.batch[0].key, "gh:2");
+  // Blocked row has NO fitScore-like field on it — engine never asked SKILL.
+  for (const s of result.skipped) {
+    assert.equal(s.fit_score, undefined);
+    assert.equal(s.fitScore, undefined);
+  }
+});
+
+test("prepare --phase pre (RFC 039): title-geo 'EMEA only' archived without JD fetch", async () => {
+  // Title says EMEA only; profile is us-wide; row must be rejected BEFORE
+  // JD fetch attempts (the rejection happens inside applyPrepareFilter).
+  const apps = [
+    makeInboxApp({
+      key: "gh:1",
+      companyName: "Stripe",
+      title: "Lead PM (EMEA only)",
+    }),
+  ];
+  apps[0].locations = ["Remote"]; // ATS surfaced generic Remote
+  let fetchJdsCalls = 0;
+  const deps = makePrepDeps(apps, {
+    fetchJds: async (rows) => {
+      fetchJdsCalls += 1;
+      return rows.map((r) => ({ key: r.key, status: "fetched", text: "" }));
+    },
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: {},
+      geo: { mode: "us-wide", remote_ok: true },
+      company_tiers: { Stripe: "S" },
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+    }),
+  });
+  const cmd = makePrepareCommand(deps);
+  await cmd(makeCtx());
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 0);
+  const skipped = result.skipped.find((s) => s.key === "gh:1");
+  assert.ok(skipped);
+  assert.equal(skipped.reason, "geo_title_excluded");
+  // JD-fetch should NOT have been called with this row (it didn't even reach
+  // the URL-check alive set).
+  assert.equal(fetchJdsCalls, 0);
+  // TSV archived per RFC 035.
+  assert.equal(apps[0].status, "Archived");
+  assert.equal(apps[0].skip_reason, "geo_title_excluded");
+});
+
+test("prepare --phase pre (RFC 039): title-geo — inclusive 'US' wins, row passes", async () => {
+  const apps = [
+    makeInboxApp({
+      key: "gh:1",
+      companyName: "Stripe",
+      title: "Senior PM (US/UK/Canada)",
+    }),
+  ];
+  apps[0].locations = ["Remote"];
+  const deps = makePrepDeps(apps, {
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: {},
+      geo: { mode: "us-wide", remote_ok: true },
+      company_tiers: { Stripe: "S" },
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+    }),
+  });
+  const cmd = makePrepareCommand(deps);
+  await cmd(makeCtx());
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 1);
+  // Not archived.
+  assert.notEqual(apps[0].status, "Archived");
+});
+
+// SKILL contract test (RFC 039 §4.5) — assert SKILL.md mentions jdStructure
+// and tolerates legacy jdText fallback.
+test("SKILL.md (RFC 039 §4.5): mentions jdStructure as preferred + jdText as fallback", () => {
+  const fs = require("fs");
+  const path = require("path");
+  const skillPath = path.join(
+    __dirname,
+    "..",
+    "..",
+    "skills",
+    "job-pipeline",
+    "SKILL.md"
+  );
+  const text = fs.readFileSync(skillPath, "utf8");
+  assert.match(text, /jdStructure/, "SKILL.md must mention jdStructure");
+  // Step 2 region must mention the legacy fallback in some form.
+  assert.match(text, /jdText/, "SKILL.md must keep jdText for legacy fallback");
+  assert.match(text, /fall back/i, "SKILL.md must describe the fallback");
 });
