@@ -9,6 +9,7 @@ const {
   formatWorkday,
   formatIcims,
   formatTaleo,
+  formatCalCareers,
   buildWorkdayApiUrl,
   extractJsonLdJob,
   isAllowedTaleoHost,
@@ -729,4 +730,208 @@ test("Taleo: cache hit on second call (no second fetch)", async () => {
   const result = await fetchJd(TALEO_JOB, CACHE_DIR, deps);
   assert.equal(result.status, "cached");
   assert.equal(result.text, cachedText);
+});
+
+// --- CalCareers (RFC 034) ---------------------------------------------------
+
+const CALCAREERS_JOB = {
+  source: "calcareers",
+  slug: "itm2",
+  jobId: "504301",
+  title: "Senior Solutions Engineer",
+  url: "https://www.calcareers.ca.gov/CalHrPublic/Jobs/JobPosting.aspx?JobControlId=504301",
+  locations: ["Sacramento County"],
+  companyName: "CA High Speed Rail Authority",
+};
+
+// CalCareers renders header fields as `<span id="lblXXX">value</span>`.
+// Span IDs are ASP.NET server-control names — stable across postings.
+const CALCAREERS_HTML_FULL = `<!doctype html><html><body>
+<div class="postingHeader">
+  <strong>Working Title:</strong>
+  <span id="lblWorkingTitle">Senior Solutions Engineer</span>
+  <strong>Classification:</strong>
+  <span id="lblPrimaryClassification">INFORMATION TECHNOLOGY SPECIALIST III $9,507.00 - $12,740.00</span>
+  <strong>Department:</strong>
+  <span id="lblDepartmentName">CA High Speed Rail Authority</span>
+  <strong>Location:</strong>
+  <span id="lblWorkLocation">Sacramento County</span>
+  <strong>Salary:</strong>
+  <span id="lblPrimarySalary">$9,507.00 - $12,740.00 per Month</span>
+  <strong>Telework:</strong>
+  <span id="lblTelework">Hybrid</span>
+  <strong>Job Type:</strong>
+  <span id="lblJobType">Permanent, Full Time</span>
+  <strong>Final Filing Date:</strong>
+  <span id="lblFinalFilingDate">6/15/2026</span>
+</div>
+<div id="pnlJobDescription">
+  <p>Under administrative direction of the Chief of Digital Delivery, the IT Specialist III provides expert-level guidance for cloud platforms.</p>
+  <ul><li>Lead solution architecture reviews.</li><li>Mentor junior engineers.</li></ul>
+</div>
+<div class="postingContent">
+  <h3>Duties</h3>
+  <p>Design and review cloud architectures across the agency.</p>
+</div>
+<div class="postingContent">
+  <h3>Minimum Requirements</h3>
+  <ul><li>5+ years cloud experience.</li><li>Current eligibility on IT Specialist III list.</li></ul>
+</div>
+</body></html>`;
+
+test("formatCalCareers extracts TITLE / CLASS / LOCATION / SALARY / body", () => {
+  const text = formatCalCareers(CALCAREERS_HTML_FULL, CALCAREERS_JOB);
+  assert.ok(text, "expected non-null text");
+  assert.match(text, /^TITLE: Senior Solutions Engineer/m);
+  // CLASS strips the salary suffix that the page renders inline.
+  assert.match(text, /^CLASS: INFORMATION TECHNOLOGY SPECIALIST III$/m);
+  assert.match(text, /^LOCATION: Sacramento County/m);
+  // SCHEDULE joins telework + job type.
+  assert.match(text, /^SCHEDULE: Hybrid — Permanent, Full Time/m);
+  assert.match(text, /^SALARY: \$9,507\.00/m);
+  assert.match(text, /^FINAL FILING: 6\/15\/2026/m);
+  assert.match(text, /expert-level guidance/);
+  assert.match(text, /- Lead solution architecture/);
+  // Supplementary postingContent blocks appended.
+  assert.match(text, /Design and review cloud architectures/);
+  assert.match(text, /5\+ years cloud experience/);
+});
+
+test("formatCalCareers falls back to job.title and job.locations when labels absent", () => {
+  const html = `<div id="pnlJobDescription"><p>Body only, no header labels.</p></div>`;
+  const text = formatCalCareers(html, CALCAREERS_JOB);
+  assert.ok(text);
+  assert.match(text, /^TITLE: Senior Solutions Engineer/m);
+  assert.match(text, /^LOCATION: Sacramento County/m);
+  // No CLASS / SCHEDULE / SALARY / FINAL FILING lines when not in HTML.
+  assert.ok(!/^CLASS:/m.test(text));
+  assert.ok(!/^SCHEDULE:/m.test(text));
+});
+
+test("formatCalCareers returns null when pnlJobDescription is missing", () => {
+  assert.equal(formatCalCareers("<html><body><p>nothing</p></body></html>", CALCAREERS_JOB), null);
+  assert.equal(formatCalCareers("", CALCAREERS_JOB), null);
+  assert.equal(formatCalCareers(null, CALCAREERS_JOB), null);
+});
+
+test("formatCalCareers returns null when pnlJobDescription is empty after strip", () => {
+  const html = `<div id="pnlJobDescription"><iframe src="x"></iframe></div>`;
+  assert.equal(formatCalCareers(html, CALCAREERS_JOB), null);
+});
+
+test("CalCareers: cache miss fetches HTML, parses, writes cache", async () => {
+  const { deps, written } = makeDeps({
+    fetchFn: makeFetchFn({ [CALCAREERS_JOB.url]: { status: 200, html: CALCAREERS_HTML_FULL } }),
+  });
+  const result = await fetchJd(CALCAREERS_JOB, CACHE_DIR, deps);
+  assert.equal(result.status, "fetched");
+  assert.ok(result.text.includes("TITLE: Senior Solutions Engineer"));
+  assert.ok(result.text.includes("CLASS: INFORMATION TECHNOLOGY SPECIALIST III"));
+  const writtenPath = `${CACHE_DIR}/${cacheKey(CALCAREERS_JOB)}`;
+  assert.equal(written[writtenPath], result.text);
+});
+
+test("CalCareers: 404 returns not_found, no cache write", async () => {
+  const { deps, written } = makeDeps({
+    fetchFn: makeFetchFn({ [CALCAREERS_JOB.url]: { status: 404, html: "" } }),
+  });
+  const result = await fetchJd(CALCAREERS_JOB, CACHE_DIR, deps);
+  assert.equal(result.status, "not_found");
+  assert.equal(Object.keys(written).length, 0);
+});
+
+test("CalCareers: missing pnlJobDescription returns not_found (no header-only cache)", async () => {
+  const { deps, written } = makeDeps({
+    fetchFn: makeFetchFn({
+      [CALCAREERS_JOB.url]: { status: 200, html: "<html><body><p>nothing</p></body></html>" },
+    }),
+  });
+  const result = await fetchJd(CALCAREERS_JOB, CACHE_DIR, deps);
+  assert.equal(result.status, "not_found");
+  assert.equal(Object.keys(written).length, 0);
+});
+
+test("CalCareers: passes HTML User-Agent header", async () => {
+  let seenOpts = null;
+  const { deps } = makeDeps({
+    fetchFn: async (url, opts) => {
+      seenOpts = opts;
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return CALCAREERS_HTML_FULL;
+        },
+        async json() {
+          return {};
+        },
+      };
+    },
+  });
+  await fetchJd(CALCAREERS_JOB, CACHE_DIR, deps);
+  assert.ok(seenOpts && seenOpts.headers && /Mozilla/.test(seenOpts.headers["User-Agent"]));
+});
+
+test("CalCareers: fetch throw returns status=error (no cache write)", async () => {
+  const { deps, written } = makeDeps({
+    fetchFn: async () => {
+      throw new Error("boom");
+    },
+  });
+  const result = await fetchJd(CALCAREERS_JOB, CACHE_DIR, deps);
+  assert.equal(result.status, "error");
+  assert.match(result.error, /boom/);
+  assert.equal(Object.keys(written).length, 0);
+});
+
+test("CalCareers: SSRF — non-calcareers host returns not_found without fetching", async () => {
+  let calls = 0;
+  const badJob = { ...CALCAREERS_JOB, url: "https://evil.example.com/JobPosting.aspx?JobControlId=1" };
+  const { deps } = makeDeps({
+    fetchFn: async () => {
+      calls++;
+      return { ok: true, status: 200, async text() { return CALCAREERS_HTML_FULL; }, async json() { return {}; } };
+    },
+  });
+  const result = await fetchJd(badJob, CACHE_DIR, deps);
+  assert.equal(result.status, "not_found");
+  assert.equal(calls, 0, "fetchFn must not be called for non-calcareers host");
+});
+
+test("CalCareers: SSRF — http:// (non-TLS) returns not_found", async () => {
+  let calls = 0;
+  const badJob = { ...CALCAREERS_JOB, url: "http://www.calcareers.ca.gov/CalHrPublic/Jobs/JobPosting.aspx?JobControlId=1" };
+  const { deps } = makeDeps({
+    fetchFn: async () => {
+      calls++;
+      return { ok: true, status: 200, async text() { return CALCAREERS_HTML_FULL; }, async json() { return {}; } };
+    },
+  });
+  const result = await fetchJd(badJob, CACHE_DIR, deps);
+  assert.equal(result.status, "not_found");
+  assert.equal(calls, 0, "fetchFn must not be called for non-TLS URL");
+});
+
+test("CalCareers: malformed URL returns not_found", async () => {
+  const badJob = { ...CALCAREERS_JOB, url: "not a url" };
+  const { deps } = makeDeps({});
+  const result = await fetchJd(badJob, CACHE_DIR, deps);
+  assert.equal(result.status, "not_found");
+});
+
+test("CalCareers: cache hit on second call (no fetch)", async () => {
+  const cachedText = "TITLE: Senior Solutions Engineer\nCLASS: INFORMATION TECHNOLOGY SPECIALIST III\n\nBody.";
+  const cachePath = `${CACHE_DIR}/${cacheKey(CALCAREERS_JOB)}`;
+  let calls = 0;
+  const { deps } = makeDeps({
+    existing: { [cachePath]: cachedText },
+    fetchFn: async () => {
+      calls++;
+      throw new Error("must not fetch on cache hit");
+    },
+  });
+  const result = await fetchJd(CALCAREERS_JOB, CACHE_DIR, deps);
+  assert.equal(result.status, "cached");
+  assert.equal(result.text, cachedText);
+  assert.equal(calls, 0);
 });

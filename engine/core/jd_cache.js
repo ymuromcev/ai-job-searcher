@@ -277,6 +277,87 @@ function formatTaleo(html, job) {
   return parts.join("\n").trim();
 }
 
+// CalCareers JD page (RFC 034). ASP.NET WebForms; no public JSON API.
+// Main JD body lives in `<div id="pnlJobDescription">…</div>`; additional
+// sections live in sibling `<div class="postingContent">…</div>` blocks.
+// Header strip carries labeled fields: Working Title, Classification,
+// Department, Location, Salary, Telework, Publish Date, Final Filing Date.
+// Real CalCareers pages wrap the JD body in nested divs (cells, lists);
+// the nested close `</div>\s*</div>` reliably terminates the wrapper.
+// Minimal/test markup with no inner div falls through to the single-close
+// fallback. Order matters — try nested first to avoid early termination
+// on real pages.
+const CALCAREERS_JD_RE = /<div[^>]*id="pnlJobDescription"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/i;
+const CALCAREERS_JD_FALLBACK_RE = /<div[^>]*id="pnlJobDescription"[^>]*>([\s\S]*?)<\/div>/i;
+const CALCAREERS_POSTING_BLOCK_RE =
+  /<div[^>]*class="[^"]*\bpostingContent\b[^"]*"[^>]*>([\s\S]*?)(?=<div[^>]*class="[^"]*\b(?:postingContent|postingHeader)\b|<\/(?:section|main|body)>|<(?:footer|nav)\b)/gi;
+
+// CalCareers renders each header field as a `<span id="lblXXX">value</span>`.
+// IDs are stable across postings (ASP.NET server controls), so ID-anchored
+// extraction is far more reliable than label-text scanning.
+function extractCalCareersSpan(html, spanId) {
+  const safe = spanId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`<span[^>]*id="${safe}"[^>]*>([\\s\\S]{0,500}?)<\\/span>`, "i");
+  const m = re.exec(html);
+  if (!m) return null;
+  const value = stripHtml(m[1]).replace(/\s+/g, " ").trim();
+  return value || null;
+}
+
+function formatCalCareers(html, job) {
+  if (typeof html !== "string" || !html) return null;
+  const m = CALCAREERS_JD_RE.exec(html) || CALCAREERS_JD_FALLBACK_RE.exec(html);
+  if (!m) return null;
+  const body = stripHtml(m[1]);
+  if (!body) return null;
+
+  const workingTitle =
+    extractCalCareersSpan(html, "lblWorkingTitle") || (job && job.title) || "";
+  let classification = extractCalCareersSpan(html, "lblPrimaryClassification") || "";
+  if (classification) {
+    // Some renderings inline the salary suffix; keep the class title only.
+    classification = classification.split(/\s+\$/)[0].trim();
+  }
+  let location = extractCalCareersSpan(html, "lblWorkLocation") || "";
+  if (!location && job && Array.isArray(job.locations) && job.locations.length > 0) {
+    location = job.locations[0];
+  }
+  const telework = extractCalCareersSpan(html, "lblTelework") || "";
+  const salary = extractCalCareersSpan(html, "lblPrimarySalary") || "";
+  const finalFiling = extractCalCareersSpan(html, "lblFinalFilingDate") || "";
+  const jobType = extractCalCareersSpan(html, "lblJobType") || "";
+
+  const parts = [`TITLE: ${workingTitle}`];
+  if (classification) parts.push(`CLASS: ${classification}`);
+  if (location) parts.push(`LOCATION: ${location}`);
+  // Telework + JobType together carry the "Hybrid / Permanent, Full Time"
+  // signal that downstream extractSchedule keys on. Join with " — " when
+  // both are present.
+  const scheduleParts = [telework, jobType].filter(Boolean);
+  if (scheduleParts.length > 0) parts.push(`SCHEDULE: ${scheduleParts.join(" — ")}`);
+  if (salary) parts.push(`SALARY: ${salary}`);
+  if (finalFiling) parts.push(`FINAL FILING: ${finalFiling}`);
+  parts.push("", body);
+
+  const seen = new Set([body]);
+  const supplementary = [];
+  CALCAREERS_POSTING_BLOCK_RE.lastIndex = 0;
+  let bm;
+  while ((bm = CALCAREERS_POSTING_BLOCK_RE.exec(html)) !== null) {
+    const stripped = stripHtml(bm[1]);
+    if (!stripped) continue;
+    if (seen.has(stripped)) continue;
+    seen.add(stripped);
+    supplementary.push(stripped);
+  }
+  CALCAREERS_POSTING_BLOCK_RE.lastIndex = 0;
+  if (supplementary.length > 0) {
+    parts.push("", supplementary.join("\n\n"));
+  }
+
+  return parts.join("\n").trim();
+}
+
 function extractIcimsBody(html) {
   // Prefer the closed-container shape (anchored on the matching end-of-block
   // marker), then fall back to greedy if the page omits the closing comment.
@@ -352,7 +433,7 @@ async function fetchJd(job, cacheDir, deps = {}) {
 
   const { source, slug, jobId } = job;
 
-  const SUPPORTED = new Set(["greenhouse", "lever", "workday", "icims", "taleo"]);
+  const SUPPORTED = new Set(["greenhouse", "lever", "workday", "icims", "taleo", "calcareers"]);
   if (!SUPPORTED.has(source)) {
     return { key, status: "unsupported" };
   }
@@ -424,6 +505,38 @@ async function fetchJd(job, cacheDir, deps = {}) {
       }
       const capped = html.length > MAX_HTML_BYTES ? html.slice(0, MAX_HTML_BYTES) : html;
       text = formatTaleo(capped, job);
+    } else if (source === "calcareers") {
+      // CalCareers posting page (RFC 034). Adapter writes the public URL
+      // into job.url; we GET it as HTML, cap, and parse.
+      //
+      // SSRF guard: pin protocol + host. Adapter only emits
+      // `https://www.calcareers.ca.gov/...`, but a tampered TSV row could
+      // otherwise redirect JD fetches anywhere. Same posture as Taleo's
+      // host allow-list.
+      if (!job.url || typeof job.url !== "string") {
+        return { key, status: "not_found" };
+      }
+      let parsedCc;
+      try {
+        parsedCc = new URL(job.url);
+      } catch {
+        return { key, status: "not_found" };
+      }
+      if (parsedCc.protocol !== "https:" || parsedCc.hostname !== "www.calcareers.ca.gov") {
+        return { key, status: "not_found" };
+      }
+      const res = await d.fetchFn(job.url, {
+        timeoutMs: 15000,
+        retries: 1,
+        headers: { "User-Agent": HTML_UA },
+      });
+      if (!res.ok) return { key, status: "not_found" };
+      const html = await res.text();
+      if (typeof html !== "string" || html.length === 0) {
+        return { key, status: "not_found" };
+      }
+      const capped = html.length > MAX_HTML_BYTES ? html.slice(0, MAX_HTML_BYTES) : html;
+      text = formatCalCareers(capped, job);
     }
   } catch (err) {
     return { key, status: "error", error: err.message };
@@ -462,6 +575,7 @@ module.exports = {
   formatWorkday,
   formatIcims,
   formatTaleo,
+  formatCalCareers,
   buildWorkdayApiUrl,
   extractJsonLdJob,
   isAllowedTaleoHost,

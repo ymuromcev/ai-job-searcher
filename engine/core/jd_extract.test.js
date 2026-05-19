@@ -350,3 +350,22 @@ test("extractFromJd: stable shape — always {schedule, requirements} keys", () 
   const out = extractFromJd(NO_SCHEDULE);
   assert.deepEqual(Object.keys(out).sort(), ["requirements", "schedule"]);
 });
+
+// --- RFC 034 regression: CalCareers output runs through extractFromJd -------
+
+test("extractFromJd: CalCareers-shaped output (CLASS:/SCHEDULE:/SALARY:) does not crash", () => {
+  const calcareersOutput = [
+    "TITLE: Senior Solutions Engineer",
+    "CLASS: INFORMATION TECHNOLOGY SPECIALIST III",
+    "LOCATION: Sacramento County",
+    "SCHEDULE: Hybrid — Permanent, Full Time",
+    "SALARY: $9,507.00 - $12,740.00 per Month",
+    "FINAL FILING: 6/15/2026",
+    "",
+    "Under administrative direction of the Chief of Digital Delivery, the IT Specialist III provides expert-level guidance. Bachelor's degree required. 5+ years cloud experience.",
+  ].join("\n");
+  const out = extractFromJd(calcareersOutput);
+  assert.deepEqual(Object.keys(out).sort(), ["requirements", "schedule"]);
+  assert.ok(out.schedule === null || typeof out.schedule === "string");
+  assert.ok(out.requirements === null || typeof out.requirements === "string");
+});
