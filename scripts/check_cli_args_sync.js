@@ -50,13 +50,7 @@ const { execFileSync } = require("child_process");
 // Global flags — documented under every command's pipe-table but referenced
 // from `engine/cli.js` itself (parsed by `parseArgs`, not by each command).
 // These are exempt from "documented but not referenced" detection per command.
-const GLOBAL_FLAGS = new Set([
-  "profile",
-  "dry-run",
-  "apply",
-  "verbose",
-  "help",
-]);
+const GLOBAL_FLAGS = new Set(["profile", "dry-run", "apply", "verbose", "help"]);
 
 // Watched paths for pre-commit scoping. Globs are expanded against the
 // staged-file list, not the working tree.
@@ -84,13 +78,13 @@ const HEURISTICS = {
       // `args["--mode"]` — object-style lookup against the parseArgs values.
       name: "args-bracket",
       re: /args\["--([a-z][a-z0-9-]*)"\]/g,
-      note: "object-style flag access (args[\"--foo\"]).",
+      note: 'object-style flag access (args["--foo"]).',
     },
     {
       // `argv.includes("--auto")` — positional flag check.
       name: "argv-includes",
       re: /argv\.includes\("--([a-z][a-z0-9-]*)"\)/g,
-      note: "argv.includes(\"--foo\") positional flag presence.",
+      note: 'argv.includes("--foo") positional flag presence.',
     },
     {
       // `--foo` appearing inside a string / template literal (stderr / help
@@ -109,7 +103,7 @@ const HEURISTICS = {
       // the same line; values walked out via extractInequalityValues().
       name: "inequality-chain",
       re: /(?:\b[a-zA-Z_$][\w$]*\s*!==\s*"[^"]+"(?:\s*&&\s*)?){2,}/g,
-      note: "if (m !== \"a\" && m !== \"b\") enum guard.",
+      note: 'if (m !== "a" && m !== "b") enum guard.',
     },
     {
       // Named array literal: `const VALID_MODES = ["a", "b"]`.
@@ -121,7 +115,7 @@ const HEURISTICS = {
       // Stderr message "valid: a, b, c". Captures the comma-separated tail.
       name: "valid-list",
       re: /\bvalid:\s+([a-z][a-z0-9_, -]+?)(?=[)"`\n.])/g,
-      note: "stderr \"(valid: a, b, c)\" hint.",
+      note: 'stderr "(valid: a, b, c)" hint.',
     },
   ],
 };
@@ -155,11 +149,10 @@ function readFile(root, rel) {
 
 function getStagedFiles(root) {
   try {
-    const out = execFileSync(
-      "git",
-      ["diff", "--cached", "--name-only", "--diff-filter=ACM"],
-      { cwd: root, encoding: "utf8" }
-    );
+    const out = execFileSync("git", ["diff", "--cached", "--name-only", "--diff-filter=ACM"], {
+      cwd: root,
+      encoding: "utf8",
+    });
     return out
       .split("\n")
       .map((s) => s.trim())
@@ -189,9 +182,7 @@ function stripComments(source) {
   if (!source) return source;
   // Replace /* ... */ blocks (including multi-line) with same-length
   // whitespace, keeping newlines.
-  let out = source.replace(/\/\*[\s\S]*?\*\//g, (m) =>
-    m.replace(/[^\n]/g, " ")
-  );
+  let out = source.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
   // Strip `//` to end-of-line. BUT: only when `//` isn't inside a string.
   // Cheap proxy that's good enough for this codebase: walk char-by-char.
   out = out
@@ -209,9 +200,7 @@ function stripComments(source) {
 // `--dedup` as an unknown prepare flag.
 function stripCrossCommandRefs(source, otherCommands) {
   if (!source || !otherCommands || otherCommands.length === 0) return source;
-  const escaped = otherCommands
-    .map((c) => c.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&"))
-    .join("|");
+  const escaped = otherCommands.map((c) => c.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")).join("|");
   // Match `<cmd> --flag[ <enum>]` with optional `phase X` / `--apply`-style
   // trailing tokens. Replace with spaces to keep line indexes intact.
   const re = new RegExp(
@@ -309,9 +298,7 @@ function helpTextSliceForCommand(cliJsContent, cmd) {
   const parts = [];
 
   // `<cmd> flags:` heading and capture until the next heading.
-  const flagsRe = new RegExp(
-    `\\n${cmd} flags:\\n([\\s\\S]*?)(?=\\n[a-z][a-z0-9-]* flags:|$)`
-  );
+  const flagsRe = new RegExp(`\\n${cmd} flags:\\n([\\s\\S]*?)(?=\\n[a-z][a-z0-9-]* flags:|$)`);
   const flagsMatch = help.match(flagsRe);
   if (flagsMatch) parts.push(flagsMatch[1]);
 
@@ -452,8 +439,7 @@ function scanCode(source, knownFlags) {
         // If named-binding picks a flag that wasn't otherwise referenced
         // (the file uses VALID_MODES but never `--mode`), still trust the
         // binding — the variable name is itself a strong signal.
-        const bestFlag =
-          associateNameToFlag(varName, flags, knownFlags) || nearestFlag(i);
+        const bestFlag = associateNameToFlag(varName, flags, knownFlags) || nearestFlag(i);
         if (bestFlag) record(bestFlag, "named-array", values);
       }
     }
@@ -478,10 +464,7 @@ function scanCode(source, knownFlags) {
 // stem as the inferred flag (e.g. `VALID_MODES` → `mode`). The stripped
 // stem is only returned if it looks like a plausible flag name.
 function associateNameToFlag(varName, localFlags, knownFlags) {
-  const candidates = new Set([
-    ...(localFlags || []),
-    ...(knownFlags || []),
-  ]);
+  const candidates = new Set([...(localFlags || []), ...(knownFlags || [])]);
   const tokens = varName
     .replace(/^valid_/, "")
     .replace(/_modes?$/, "")
@@ -517,7 +500,9 @@ function associateNameToFlag(varName, localFlags, knownFlags) {
 // `mode` even when the surrounding file doesn't print `--mode` literally).
 function parseOptionKeys(cliJsContent) {
   if (!cliJsContent) return new Set();
-  const m = cliJsContent.match(/const PARSE_OPTIONS = \{[\s\S]*?options:\s*\{([\s\S]*?)\},\s*allowPositionals/);
+  const m = cliJsContent.match(
+    /const PARSE_OPTIONS = \{[\s\S]*?options:\s*\{([\s\S]*?)\},\s*allowPositionals/
+  );
   if (!m) return new Set();
   const body = m[1];
   const keys = new Set();
@@ -537,7 +522,8 @@ function scanCommand(root, cmd) {
   const cmdFile = readFile(root, `engine/commands/${cmd}.js`);
   // Some commands live under a non-standard filename (e.g. indeed-prep ->
   // indeed_prepare.js). Look it up from the COMMANDS dispatch block.
-  const altCmdFile = cmdFile || readFile(root, `engine/commands/${resolveAltCommandFile(cliJsContent, cmd)}`);
+  const altCmdFile =
+    cmdFile || readFile(root, `engine/commands/${resolveAltCommandFile(cliJsContent, cmd)}`);
 
   const helpSlice = helpTextSliceForCommand(cliJsContent, cmd);
   const knownFlags = parseOptionKeys(cliJsContent);

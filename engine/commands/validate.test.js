@@ -93,6 +93,35 @@ test("validate exits 0 when everything is clean", async () => {
   assert.match(out.all(), /validation: ok/);
 });
 
+test("validate flags missing positive-gate (no role_targets + no title_requirelist) as issue (RFC 033)", async () => {
+  // Profile has only a blocklist — no role_targets, no title_requirelist.
+  // This is the lilia incident shape (2026-05-18) and must surface as an
+  // explicit issue with exit 1.
+  const { ctx, out } = makeCtx();
+  const deps = makeDeps({
+    loadProfile: () =>
+      makeProfile({
+        id: "lilia",
+        filterRules: {
+          company_cap: { max_active: 2 },
+          title_blocklist: [{ pattern: "engineer", reason: "not a target role" }],
+          role_targets: null,
+          title_requirelist: [],
+        },
+      }),
+  });
+  const code = await makeValidateCommand(deps)(ctx);
+  assert.equal(code, 1);
+  assert.match(out.all(), /filter_rules:.*role_targets.*RFC 033/);
+});
+
+test("validate filter_rules: ok when role_targets has populated tracks", async () => {
+  const { ctx, out } = makeCtx();
+  const code = await makeValidateCommand(makeDeps())(ctx);
+  assert.equal(code, 0);
+  assert.match(out.all(), /filter_rules: ok \(positive title gate present\)/);
+});
+
 test("validate flags TSV parse errors", async () => {
   const { ctx, out } = makeCtx();
   const deps = makeDeps({
@@ -937,8 +966,7 @@ const FAKE_NOTION_DB_ID = "12345678-1234-1234-1234-1234567890ab";
 
 function notionDeps(overrides = {}) {
   return {
-    loadProfile: () =>
-      makeProfile({ notion: { jobs_pipeline_db_id: FAKE_NOTION_DB_ID } }),
+    loadProfile: () => makeProfile({ notion: { jobs_pipeline_db_id: FAKE_NOTION_DB_ID } }),
     loadSecrets: () => ({ NOTION_TOKEN: "ntn_fake" }),
     loadApplications: () => ({ apps: [] }),
     loadJobs: () => ({ jobs: [] }),

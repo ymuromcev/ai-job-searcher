@@ -1,11 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const {
-  pickClBase,
-  detectShape,
-  DEFAULT_THRESHOLD,
-} = require("./cl_base_matcher.js");
+const { pickClBase, detectShape, DEFAULT_THRESHOLD } = require("./cl_base_matcher.js");
 
 // --- Fixtures ----------------------------------------------------------------
 
@@ -18,9 +14,7 @@ function templateVariantsVersions() {
       availability: "starting next month",
       sign: "Lilia",
     },
-    letters: [
-      { job_id: "kp-1", role: "RN", company: "Kaiser", p1: "Hello Kaiser..." },
-    ],
+    letters: [{ job_id: "kp-1", role: "RN", company: "Kaiser", p1: "Hello Kaiser..." }],
   };
 }
 
@@ -293,10 +287,13 @@ test("library: JD body keyword density adds score, capped at +5", () => {
   };
   const profile = {
     resume_archetypes: {
-      FintechPM: { keywords: ["credit", "lending", "underwriting", "risk", "loan", "fraud", "interest"] },
+      FintechPM: {
+        keywords: ["credit", "lending", "underwriting", "risk", "loan", "fraud", "interest"],
+      },
     },
   };
-  const jdText = "We work on credit, lending, underwriting, risk, loan, fraud, and interest models.";
+  const jdText =
+    "We work on credit, lending, underwriting, risk, loan, fraud, and interest models.";
   const out = pickClBase({
     job: { companyName: "X", title: "PM", jdText },
     versions,

@@ -108,17 +108,17 @@ test("SKILL.md (RFC 034): no `decision` field in any output JSON example", () =>
   assert.doesNotMatch(
     text,
     /\bdecision\s*=\s*"to_apply"/,
-    "SKILL.md must not show `decision = \"to_apply\"` in pseudocode (RFC 034)"
+    'SKILL.md must not show `decision = "to_apply"` in pseudocode (RFC 034)'
   );
   assert.doesNotMatch(
     text,
     /\bdecision\s*=\s*"skip"/,
-    "SKILL.md must not show `decision = \"skip\"` in pseudocode (RFC 034)"
+    'SKILL.md must not show `decision = "skip"` in pseudocode (RFC 034)'
   );
   assert.doesNotMatch(
     text,
     /\bdecision\s*=\s*"archive"/,
-    "SKILL.md must not show `decision = \"archive\"` in pseudocode (RFC 034)"
+    'SKILL.md must not show `decision = "archive"` in pseudocode (RFC 034)'
   );
 });
 

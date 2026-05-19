@@ -65,9 +65,7 @@ function normalizeJob(raw) {
 // objects (defensive — profile_loader normalizes to strings, but inline
 // tests sometimes feed objects). Returns a Set of lowercased names.
 function normalizeCompanyBlocklist(rules) {
-  const list = Array.isArray(rules && rules.company_blocklist)
-    ? rules.company_blocklist
-    : [];
+  const list = Array.isArray(rules && rules.company_blocklist) ? rules.company_blocklist : [];
   const out = new Set();
   for (const entry of list) {
     const name = entry && typeof entry === "object" ? entry.name : entry;
@@ -83,17 +81,13 @@ function normalizeCompanyBlocklist(rules) {
 // for diagnostics) plus a parallel array of bare lowercase pattern
 // strings for `findTitleBlocklistHit`.
 function normalizeTitleBlocklist(rules) {
-  const raw = Array.isArray(rules && rules.title_blocklist)
-    ? rules.title_blocklist
-    : [];
+  const raw = Array.isArray(rules && rules.title_blocklist) ? rules.title_blocklist : [];
   const entries = [];
   const patterns = [];
   for (const item of raw) {
-    const pattern =
-      item && typeof item === "object" ? item.pattern : item;
+    const pattern = item && typeof item === "object" ? item.pattern : item;
     if (typeof pattern !== "string" || !pattern) continue;
-    const reason =
-      item && typeof item === "object" ? item.reason : undefined;
+    const reason = item && typeof item === "object" ? item.reason : undefined;
     entries.push({ pattern, reason });
     patterns.push(pattern);
   }
@@ -101,13 +95,10 @@ function normalizeTitleBlocklist(rules) {
 }
 
 function normalizeTitleRequirelist(rules) {
-  const raw = Array.isArray(rules && rules.title_requirelist)
-    ? rules.title_requirelist
-    : [];
+  const raw = Array.isArray(rules && rules.title_requirelist) ? rules.title_requirelist : [];
   const out = [];
   for (const item of raw) {
-    const pattern =
-      item && typeof item === "object" ? item.pattern : item;
+    const pattern = item && typeof item === "object" ? item.pattern : item;
     if (typeof pattern !== "string" || !pattern) continue;
     out.push(pattern);
   }
@@ -126,9 +117,7 @@ function titlePassesRequirelist(title, patterns) {
     .map((p) => p.trim())
     .filter(Boolean);
   const titleParts = parts.length > 0 ? parts : [titleLower];
-  return titleParts.some((part) =>
-    patterns.some((pat) => makeBoundaryRegex(pat).test(part))
-  );
+  return titleParts.some((part) => patterns.some((pat) => makeBoundaryRegex(pat).test(part)));
 }
 
 function shouldRunCompanyCap(context) {
@@ -162,8 +151,7 @@ function evaluateJob({ job, profile, appState, context }) {
   const rules = (profile && profile.filter_rules) || {};
   // RFC 013: profile-level geo lives at `profile.geo`; legacy callers may
   // inject it as `rules.geo`. Both accepted.
-  const profileGeo =
-    (profile && profile.geo) || (rules && rules.geo) || null;
+  const profileGeo = (profile && profile.geo) || (rules && rules.geo) || null;
 
   // ---- 1. company_blocklist ----
   const companyBlocklist = normalizeCompanyBlocklist(rules);
@@ -192,8 +180,7 @@ function evaluateJob({ job, profile, appState, context }) {
   }
 
   // ---- 3. title_blocklist (word-boundary canonical, always) ----
-  const { entries: titleEntries, patterns: titlePatterns } =
-    normalizeTitleBlocklist(rules);
+  const { entries: titleEntries, patterns: titlePatterns } = normalizeTitleBlocklist(rules);
   if (titlePatterns.length > 0 && norm.title) {
     const hit = findTitleBlocklistHit(norm.title, titlePatterns);
     if (hit) {
@@ -221,8 +208,7 @@ function evaluateJob({ job, profile, appState, context }) {
       : cap.max_active != null
         ? Number(cap.max_active)
         : Infinity;
-    const counts =
-      (appState && appState.companyCounts) || {};
+    const counts = (appState && appState.companyCounts) || {};
     const current = counts[norm.company] || 0;
     if (current >= limit) {
       return {
@@ -243,9 +229,7 @@ function evaluateJob({ job, profile, appState, context }) {
   if (shouldRunLocationBlocklist(context)) {
     const locsLower = norm.locations.map((l) => l.toLowerCase());
     if (locsLower.length > 0 && !hasUsMarker(locsLower)) {
-      const blocklist = Array.isArray(rules.location_blocklist)
-        ? rules.location_blocklist
-        : [];
+      const blocklist = Array.isArray(rules.location_blocklist) ? rules.location_blocklist : [];
       for (const blocked of blocklist) {
         const needle = String(blocked || "").toLowerCase();
         if (!needle) continue;

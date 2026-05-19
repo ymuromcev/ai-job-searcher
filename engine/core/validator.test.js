@@ -90,11 +90,7 @@ test("validateProfileDeep aggregates issues across categories", () => {
     },
     paths: { root: "/tmp/nope" },
   };
-  const result = validateProfileDeep(
-    profile,
-    {},
-    { existsSync: () => false }
-  );
+  const result = validateProfileDeep(profile, {}, { existsSync: () => false });
   const categories = new Set(result.issues.map((i) => i.category));
   // Includes both schema (regex), semantic (role_targets), referential (module).
   assert.ok(categories.has("schema"));
@@ -196,7 +192,10 @@ test("golden: profiles/_example/ passes validateProfileDeep with zero errors", (
   const { tmpRoot, profilesDir, profileRoot } = copyExampleToTmp();
   try {
     const profile = loadProfile("example_test", { profilesDir });
-    const result = validateProfileDeep(profile, { profileRoot, dataDir: path.join(tmpRoot, "data") });
+    const result = validateProfileDeep(profile, {
+      profileRoot,
+      dataDir: path.join(tmpRoot, "data"),
+    });
     const errs = result.issues.filter((i) => i.severity === "error");
     if (errs.length > 0) {
       // Make the failure easy to act on.

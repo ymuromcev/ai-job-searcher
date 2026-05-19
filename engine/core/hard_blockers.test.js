@@ -30,9 +30,7 @@ test("findHardBlockers: no profile → []", () => {
 
 test("findHardBlockers: required_skill_excluded fires with years co-occurrence", () => {
   const profile = makeProfile({
-    required_skills_excluded: [
-      { skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 },
-    ],
+    required_skills_excluded: [{ skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 }],
   });
   const codes = findHardBlockers({
     structuredJD: {
@@ -45,9 +43,7 @@ test("findHardBlockers: required_skill_excluded fires with years co-occurrence",
 
 test("findHardBlockers: 'nice to have' qualifier does NOT fire", () => {
   const profile = makeProfile({
-    required_skills_excluded: [
-      { skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 },
-    ],
+    required_skills_excluded: [{ skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 }],
   });
   const codes = findHardBlockers({
     structuredJD: {
@@ -60,9 +56,7 @@ test("findHardBlockers: 'nice to have' qualifier does NOT fire", () => {
 
 test("findHardBlockers: 'preferred' qualifier does NOT fire", () => {
   const profile = makeProfile({
-    required_skills_excluded: [
-      { skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 },
-    ],
+    required_skills_excluded: [{ skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 }],
   });
   const codes = findHardBlockers({
     structuredJD: { requirements: ["Python preferred but not required"] },
@@ -90,9 +84,7 @@ test("findHardBlockers: pattern alternates (Django) fire under the Python skill 
 
 test("findHardBlockers: ±3-line co-occurrence — required marker on neighboring line", () => {
   const profile = makeProfile({
-    required_skills_excluded: [
-      { skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 },
-    ],
+    required_skills_excluded: [{ skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 }],
   });
   // Skill appears alone; required marker appears 2 lines below.
   const codes = findHardBlockers({
@@ -146,9 +138,7 @@ test("findHardBlockers: cert word-boundary — 'WARN' does NOT fire RN", () => {
 
 test("findHardBlockers: multi-code — Python AND 15 years required", () => {
   const profile = makeProfile({
-    required_skills_excluded: [
-      { skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 },
-    ],
+    required_skills_excluded: [{ skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 }],
     years_required_max: 10,
   });
   const codes = findHardBlockers({
@@ -157,17 +147,12 @@ test("findHardBlockers: multi-code — Python AND 15 years required", () => {
     },
     profile,
   });
-  assert.deepEqual(codes, [
-    "required_skill_excluded:Python",
-    "years_required_max_exceeded:15",
-  ]);
+  assert.deepEqual(codes, ["required_skill_excluded:Python", "years_required_max_exceeded:15"]);
 });
 
 test("findHardBlockers: empty requirements array — only cert blockers can fire", () => {
   const profile = makeProfile({
-    required_skills_excluded: [
-      { skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 },
-    ],
+    required_skills_excluded: [{ skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 }],
     cert_blockers: ["RN"],
   });
   const codes = findHardBlockers({
@@ -196,9 +181,7 @@ test("findHardBlockers: pure-input isolation — no JD parsing inside", () => {
   // Hand-craft requirements; ensure the module doesn't fall back to scanning
   // any other field on `structuredJD`.
   const profile = makeProfile({
-    required_skills_excluded: [
-      { skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 },
-    ],
+    required_skills_excluded: [{ skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 }],
   });
   const codes = findHardBlockers({
     structuredJD: {
@@ -222,8 +205,5 @@ test("findHardBlockers: cert family + min_years are independent", () => {
     structuredJD: { requirements: ["CMA certification required; 8 years experience"] },
     profile,
   });
-  assert.deepEqual(codes, [
-    "years_required_max_exceeded:8",
-    "cert_required:CMA",
-  ]);
+  assert.deepEqual(codes, ["years_required_max_exceeded:8", "cert_required:CMA"]);
 });

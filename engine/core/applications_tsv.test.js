@@ -143,14 +143,10 @@ test("v5: save + load round-trips multi-element locations array", () => {
 test("v5: round-trips locations with commas, quotes, and unicode", () => {
   const file = tmp();
   const { apps: built } = apps.appendNew([], [fixtureJob()], { now: "2026-04-20T00:00:00Z" });
-  built[0].locations = ['Paris, France', 'Berlin, "Mitte"', "São Paulo, BR"];
+  built[0].locations = ["Paris, France", 'Berlin, "Mitte"', "São Paulo, BR"];
   apps.save(file, built);
   const back = apps.load(file);
-  assert.deepEqual(back.apps[0].locations, [
-    "Paris, France",
-    'Berlin, "Mitte"',
-    "São Paulo, BR",
-  ]);
+  assert.deepEqual(back.apps[0].locations, ["Paris, France", 'Berlin, "Mitte"', "São Paulo, BR"]);
 });
 
 test("v5: empty locations array round-trips as []", () => {

@@ -548,7 +548,10 @@ function fuzzInput(seed) {
     profile: {
       filter_rules: {
         company_blocklist: ["BadCo"],
-        title_blocklist: [{ pattern: "director", reason: "x" }, { pattern: "rn", reason: "y" }],
+        title_blocklist: [
+          { pattern: "director", reason: "x" },
+          { pattern: "rn", reason: "y" },
+        ],
         title_requirelist: [{ pattern: "product manager" }, { pattern: "PM" }],
         company_cap: { max_active: 2 },
         location_blocklist: ["Germany"],

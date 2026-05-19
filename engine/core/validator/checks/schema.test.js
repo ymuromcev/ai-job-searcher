@@ -134,10 +134,7 @@ test("schema: notion.jobs_pipeline_db_id non-UUID → error", () => {
 });
 
 test("schema: notion.jobs_pipeline_db_id valid UUID → no issue (dashed and un-dashed)", () => {
-  for (const id of [
-    "12345678-1234-1234-1234-1234567890ab",
-    "1234567812341234123412345678AB12",
-  ]) {
+  for (const id of ["12345678-1234-1234-1234-1234567890ab", "1234567812341234123412345678AB12"]) {
     assert.ok(UUID_RE.test(id));
     const profile = { filterRules: fr(), notion: { jobs_pipeline_db_id: id } };
     assert.deepEqual(runSchemaChecks(profile), []);

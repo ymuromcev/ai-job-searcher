@@ -18,6 +18,7 @@ const path = require("path");
 const fs = require("fs");
 
 const profileLoader = require("../core/profile_loader.js");
+const { checkPositiveGate } = require("../core/profile_loader.js");
 const jobsTsv = require("../core/jobs_tsv.js");
 const applications = require("../core/applications_tsv.js");
 const { matchBlocklists } = require("../core/filter.js");
@@ -301,7 +302,10 @@ function makeValidateCommand(overrides = {}) {
 
     let profile;
     try {
-      profile = deps.loadProfile(profileId, { profilesDir });
+      // Silence loadProfile's stderr warning — we report the same gap as a
+      // structured issue below (RFC 033) so the user sees it once with
+      // explicit "exit 1" semantics.
+      profile = deps.loadProfile(profileId, { profilesDir, warn: () => {} });
     } catch (err) {
       ctx.stderr(`error: ${err.message}`);
       return 1;
@@ -381,6 +385,18 @@ function makeValidateCommand(overrides = {}) {
     } catch (err) {
       ctx.stderr(`jobs.tsv: PARSE ERROR — ${err.message}`);
       issues += 1;
+    }
+
+    // 1.5. RFC 033 — positive title gate (role_targets / title_requirelist).
+    // Profiles without an allowlist accept any non-blocked title, which is
+    // how lilia ended up with phlebotomy / ED-tech rows in her Inbox
+    // (2026-05-18). Fail loud here so cron / CI flag the gap.
+    const gateWarning = checkPositiveGate(profile.filterRules, profile.id);
+    if (gateWarning) {
+      issues += 1;
+      ctx.stderr(`filter_rules: ${gateWarning}`);
+    } else {
+      stdout(`filter_rules: ok (positive title gate present)`);
     }
 
     // 2. company_cap.

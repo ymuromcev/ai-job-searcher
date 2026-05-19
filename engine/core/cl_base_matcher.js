@@ -22,13 +22,51 @@
 // archetype component is skipped, only company / title / JD-body fire.
 
 const STOPWORDS = new Set([
-  "a", "an", "the", "of", "and", "or", "for", "to", "in", "on", "at", "by",
-  "with", "as", "from", "into", "is", "are", "was", "were", "be", "been",
-  "being", "&",
+  "a",
+  "an",
+  "the",
+  "of",
+  "and",
+  "or",
+  "for",
+  "to",
+  "in",
+  "on",
+  "at",
+  "by",
+  "with",
+  "as",
+  "from",
+  "into",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "&",
   // role-title noise
-  "senior", "sr", "junior", "jr", "lead", "staff", "principal", "head",
-  "manager", "director", "vp", "chief", "officer", "specialist", "associate",
-  "i", "ii", "iii", "iv", "v",
+  "senior",
+  "sr",
+  "junior",
+  "jr",
+  "lead",
+  "staff",
+  "principal",
+  "head",
+  "manager",
+  "director",
+  "vp",
+  "chief",
+  "officer",
+  "specialist",
+  "associate",
+  "i",
+  "ii",
+  "iii",
+  "iv",
+  "v",
 ]);
 
 const DEFAULT_WEIGHTS = {
@@ -77,15 +115,18 @@ function detectShape(versions) {
 // (`affirm_capital` → company `"affirm"`, keywords `["affirm", "capital"]`).
 function entryMeta(entryKey, entry) {
   const fromKeyTokens = tokenize(entryKey.replace(/[_\-]+/g, " "));
-  const company = entry && typeof entry.company === "string" && entry.company.length > 0
-    ? normalizeCompany(entry.company)
-    : (fromKeyTokens[0] || "");
-  const archetype = entry && typeof entry.archetype === "string" && entry.archetype.length > 0
-    ? entry.archetype
-    : null;
-  const roleKeywords = entry && Array.isArray(entry.role_keywords) && entry.role_keywords.length > 0
-    ? entry.role_keywords.map((k) => String(k).toLowerCase()).filter(Boolean)
-    : fromKeyTokens;
+  const company =
+    entry && typeof entry.company === "string" && entry.company.length > 0
+      ? normalizeCompany(entry.company)
+      : fromKeyTokens[0] || "";
+  const archetype =
+    entry && typeof entry.archetype === "string" && entry.archetype.length > 0
+      ? entry.archetype
+      : null;
+  const roleKeywords =
+    entry && Array.isArray(entry.role_keywords) && entry.role_keywords.length > 0
+      ? entry.role_keywords.map((k) => String(k).toLowerCase()).filter(Boolean)
+      : fromKeyTokens;
   return { company, archetype, roleKeywords };
 }
 
@@ -129,10 +170,8 @@ function scoreLibraryEntry({ entryKey, entry, job, resumeVer, weights, profile }
   // Component 4: JD-body keyword density. Looks up archetype keywords from
   // profile.resume_archetypes[resumeVer].keywords. Skipped when resumeVer is
   // null (pre-phase) or the profile doesn't carry archetype keywords.
-  const arch = resumeVer
-    && profile
-    && profile.resume_archetypes
-    && profile.resume_archetypes[resumeVer];
+  const arch =
+    resumeVer && profile && profile.resume_archetypes && profile.resume_archetypes[resumeVer];
   const archKeywords = arch && Array.isArray(arch.keywords) ? arch.keywords : [];
   const jdText = job && typeof job.jdText === "string" ? job.jdText.toLowerCase() : "";
   if (archKeywords.length > 0 && jdText.length > 0) {

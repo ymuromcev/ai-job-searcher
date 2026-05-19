@@ -85,7 +85,10 @@ function expandSimpleAlternation(token) {
   // Inner must be a flat `a|b|c` list — no nested groups, anchors, or
   // regex meta in any alternative.
   if (!inner.includes("|")) return [];
-  const alts = inner.split("|").map((s) => s.trim()).filter(Boolean);
+  const alts = inner
+    .split("|")
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (alts.length === 0) return [];
   if (alts.some((a) => REGEXY_RE.test(a))) return [];
   // before/after must be plain text too.

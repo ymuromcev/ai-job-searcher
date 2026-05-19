@@ -749,8 +749,7 @@ const WORKABLE_JOB = {
   locations: ["Remote", "Paris, Île-de-France, France"],
   rawExtra: { telecommuting: true, employment_type: "Full-time" },
 };
-const WORKABLE_API_URL =
-  "https://apply.workable.com/api/v1/accounts/huggingface/jobs/922D2C6549";
+const WORKABLE_API_URL = "https://apply.workable.com/api/v1/accounts/huggingface/jobs/922D2C6549";
 
 // Minimal record mirrored from a real recon probe on 2026-05-18 against
 // apply.workable.com/api/v1/accounts/huggingface/jobs/922D2C6549. HTML
@@ -782,8 +781,7 @@ const WORKABLE_API_PAYLOAD = {
   requirements:
     "<ul><li>5+ years of relevant experience</li>" +
     "<li>Deep familiarity with cloud platforms (AWS / GCP / Azure)</li></ul>",
-  benefits:
-    "<ul><li>Flexible remote work</li><li>Competitive compensation</li></ul>",
+  benefits: "<ul><li>Flexible remote work</li><li>Competitive compensation</li></ul>",
 };
 
 test("buildWorkableApiUrl builds api URL from slug + jobId", () => {
@@ -801,7 +799,11 @@ test("buildWorkableApiUrl rejects malformed slug / jobId (SSRF guard)", () => {
     { ...WORKABLE_JOB, slug: 123 },
   ];
   for (const job of bad) {
-    assert.equal(buildWorkableApiUrl(job), null, `should reject ${JSON.stringify(job.slug)}/${JSON.stringify(job.jobId)}`);
+    assert.equal(
+      buildWorkableApiUrl(job),
+      null,
+      `should reject ${JSON.stringify(job.slug)}/${JSON.stringify(job.jobId)}`
+    );
   }
 });
 

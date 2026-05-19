@@ -3,8 +3,13 @@
 // read profiles/ themselves. See RFC 001 "Engine isolation" for rationale.
 //
 // Contract:
-//   loadProfile(id, { profilesDir? }) -> normalized profile object
-//   loadSecrets(id, env?)             -> { [KEY_WITHOUT_PREFIX]: value }
+//   loadProfile(id, { profilesDir?, warn? }) -> normalized profile object
+//   loadSecrets(id, env?)                    -> { [KEY_WITHOUT_PREFIX]: value }
+//   checkPositiveGate(filterRules, id)       -> string | null  (RFC 033)
+//
+// `warn` is invoked with one human-readable string when the loaded profile is
+// missing a positive title gate (RFC 033). Defaults to writing to
+// process.stderr; pass `() => {}` to silence in tests.
 
 const fs = require("fs");
 const path = require("path");
@@ -113,7 +118,54 @@ function loadProfile(id, options = {}) {
   // filter.js / prepare.js / validate.js via geo_enforcer.
   result.geo = normalizeGeo(profile.geo);
 
+  // RFC 033: warn if the profile has no positive title gate. The blocklist
+  // alone is fundamentally the wrong tool for "I want roles shaped like X" —
+  // see the 2026-05-18 lilia incident in RFC 033 §1. Loud at load-time so
+  // every CLI invocation surfaces the gap; `validate` reports it as an issue.
+  // Phase-2 of RFC 033 flips this to a hard fail.
+  const gateWarning = checkPositiveGate(result.filterRules, id);
+  if (gateWarning) {
+    const warn = typeof options.warn === "function" ? options.warn : defaultWarn;
+    warn(gateWarning);
+  }
+
   return result;
+}
+
+function defaultWarn(msg) {
+  process.stderr.write(`profile_loader: ${msg}\n`);
+}
+
+// RFC 033: detect profiles missing a positive title gate. Returns a
+// human-readable warning string or null when the profile is configured.
+// Pure function — safe to call from validate without re-loading.
+// Expects the post-`normalizeFilterRules` shape: `role_targets.tracks` is an
+// array (or absent), `title_requirelist` is a flat array (or absent).
+function checkPositiveGate(filterRules, profileId) {
+  const label = profileId ? `profile "${profileId}"` : "profile";
+  if (!filterRules) {
+    return (
+      `${label}: no filter_rules — scan accepts ANY title (no positive gate, ` +
+      `no blocklist). See RFC 033. Add filter_rules.json with at least one ` +
+      `role_targets track.`
+    );
+  }
+  const tracks =
+    filterRules.role_targets && Array.isArray(filterRules.role_targets.tracks)
+      ? filterRules.role_targets.tracks
+      : [];
+  const hasRoleTargets = tracks.some((t) => Array.isArray(t.patterns) && t.patterns.length > 0);
+  const hasRequirelist =
+    Array.isArray(filterRules.title_requirelist) && filterRules.title_requirelist.length > 0;
+  if (hasRoleTargets || hasRequirelist) return null;
+  return (
+    `${label}: no role_targets / title_requirelist — scan will accept any ` +
+    `non-blocked title (see RFC 033). Add at least one track to ` +
+    `filter_rules.json, e.g.:\n` +
+    `  "role_targets": { "tracks": [{ "id": "your_track", ` +
+    `"name": "Your Track", "patterns": [{ "pattern": "title-substring", ` +
+    `"reason": "..." }] }] }`
+  );
 }
 
 // --- Memory loading ---------------------------------------------------------
@@ -419,6 +471,7 @@ module.exports = {
   loadMemory,
   normalizeSalaryConfig,
   normalizeGeo,
+  checkPositiveGate,
   VALID_GEO_MODES,
   ID_REGEX,
 };

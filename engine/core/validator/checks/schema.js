@@ -32,9 +32,7 @@ function checkRoleTargets(profile, issues) {
   const rt = profile && profile.filterRules && profile.filterRules.role_targets;
   if (!rt) return;
   if (!Array.isArray(rt.tracks)) {
-    issues.push(
-      issue("error", "filter_rules.role_targets.tracks", "tracks must be an array")
-    );
+    issues.push(issue("error", "filter_rules.role_targets.tracks", "tracks must be an array"));
     return;
   }
   const seenIds = new Set();

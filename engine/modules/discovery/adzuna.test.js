@@ -164,14 +164,11 @@ test("adzuna BL-87: patternToKeywords strips anchors and \\b", () => {
 });
 
 test("adzuna BL-87: patternToKeywords expands simple (a|b) alternation", () => {
-  assert.deepEqual(
-    patternToKeywords("product (manager|owner)"),
-    ["product manager", "product owner"]
-  );
-  assert.deepEqual(
-    patternToKeywords("(senior|lead) pm"),
-    ["senior pm", "lead pm"]
-  );
+  assert.deepEqual(patternToKeywords("product (manager|owner)"), [
+    "product manager",
+    "product owner",
+  ]);
+  assert.deepEqual(patternToKeywords("(senior|lead) pm"), ["senior pm", "lead pm"]);
 });
 
 test("adzuna BL-87: patternToKeywords drops regex-y patterns (silent skip)", () => {
@@ -211,13 +208,7 @@ test("adzuna BL-87: deriveKeywordsFromRoleTargets flattens + dedupes case-insens
   const out = deriveKeywordsFromRoleTargets(filterRules);
   // First-occurrence casing wins. "PM" stays (different lowercased key from
   // "senior pm" / "lead pm").
-  assert.deepEqual(out, [
-    "product manager",
-    "PM",
-    "forward-deployed",
-    "senior pm",
-    "lead pm",
-  ]);
+  assert.deepEqual(out, ["product manager", "PM", "forward-deployed", "senior pm", "lead pm"]);
 });
 
 test("adzuna BL-87: deriveKeywordsFromRoleTargets returns [] when role_targets missing/empty", () => {
@@ -250,9 +241,7 @@ test("adzuna BL-87: derives keywords from role_targets when keyword_search.keywo
           },
           {
             id: "fde",
-            patterns: [
-              { pattern: "forward-deployed", reason: "FDE" },
-            ],
+            patterns: [{ pattern: "forward-deployed", reason: "FDE" }],
           },
         ],
       },

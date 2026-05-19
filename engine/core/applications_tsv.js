@@ -578,9 +578,7 @@ function appendNew(
     // v5 (RFC 038): persist the full discovery locations[] array so the
     // multi-loc signal survives into prepare's geo recheck and validate's
     // retro-sweep. Fall back to [] when the source didn't provide one.
-    const locations = Array.isArray(job.locations)
-      ? job.locations.map(String).filter(Boolean)
-      : [];
+    const locations = Array.isArray(job.locations) ? job.locations.map(String).filter(Boolean) : [];
     fresh.push({
       key,
       source: job.source,

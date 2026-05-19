@@ -15,11 +15,7 @@
 // + the small `legacyReasonFor` translator are the only place this
 // translation lives — drift is eliminated everywhere else.
 
-const {
-  enforceGeo,
-  hasUsMarker,
-  US_MARKERS,
-} = require("./geo_enforcer.js");
+const { enforceGeo, hasUsMarker, US_MARKERS } = require("./geo_enforcer.js");
 const { findTitleBlocklistHit } = require("./filter_helpers.js");
 const { evaluateJob } = require("./evaluate_job.js");
 

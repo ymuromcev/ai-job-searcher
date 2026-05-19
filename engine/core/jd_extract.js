@@ -372,8 +372,7 @@ function classifyHeading(line) {
   // dashes / periods in the middle of the line). Cap at 60 chars.
   const endsWithColon = /:\s*$/.test(trimmed);
   const looksLikeHeading =
-    endsWithColon ||
-    (trimmed.length <= 60 && !/[—–,.]/.test(trimmed.replace(/[:.\s]+$/, "")));
+    endsWithColon || (trimmed.length <= 60 && !/[—–,.]/.test(trimmed.replace(/[:.\s]+$/, "")));
   if (!looksLikeHeading) return null;
 
   if (matchesAny(line, REQUIREMENTS_HEADINGS)) return "requirements";
@@ -389,7 +388,10 @@ function classifyHeading(line) {
 // structured.
 function splitSectionIntoBullets(body) {
   if (!body) return [];
-  const lines = body.split("\n").map((l) => l.trim()).filter(Boolean);
+  const lines = body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
   if (lines.length === 0) return [];
 
   const hasBullets = lines.some((l) => BULLET_LEADER_RE.test(l));
@@ -430,7 +432,9 @@ function capBullets(bullets) {
     const drop = new Set(indexed.slice(0, arr.length - STRUCTURE_MAX_BULLETS).map((e) => e.i));
     arr = arr.filter((_, i) => !drop.has(i));
   }
-  return arr.map((b) => (b.length > STRUCTURE_MAX_BULLET_LEN ? b.slice(0, STRUCTURE_MAX_BULLET_LEN) : b));
+  return arr.map((b) =>
+    b.length > STRUCTURE_MAX_BULLET_LEN ? b.slice(0, STRUCTURE_MAX_BULLET_LEN) : b
+  );
 }
 
 /**

@@ -476,9 +476,8 @@ function titleMentionsCandidateGeo(title, profileGeo) {
   if (!t) return false;
   if (hasUsMarker(t)) return true;
   if (US_TITLE_TOKEN_RE.test(t)) return true;
-  const accept = profileGeo && Array.isArray(profileGeo.accept_countries)
-    ? profileGeo.accept_countries
-    : [];
+  const accept =
+    profileGeo && Array.isArray(profileGeo.accept_countries) ? profileGeo.accept_countries : [];
   if (accept.length === 0) return false;
   const lower = t.toLowerCase();
   for (const country of accept) {

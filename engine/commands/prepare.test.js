@@ -432,9 +432,7 @@ test("prepare --phase pre: roleTargets is null when filterRules has no role_targ
 // profile carries a coverLetterConfig.
 
 test("prepare --phase pre: embeds clBase on each batch entry (library shape)", async () => {
-  const apps = [
-    makeApp({ key: "gh:1", companyName: "Stripe", title: "Senior Platform PM" }),
-  ];
+  const apps = [makeApp({ key: "gh:1", companyName: "Stripe", title: "Senior Platform PM" })];
   const deps = makePrepDeps(apps, {
     loadProfile: () => ({
       id: "testuser",
@@ -1271,10 +1269,7 @@ test("prepare --phase commit (RFC 034): legacy `decision` warning fires once eve
     assert.equal(app.status, "To Apply", `${app.key} should be To Apply`);
   }
   // Exactly one warning surfaced.
-  assert.equal(
-    ctx._errLines.filter((l) => /legacy "decision" field/.test(l)).length,
-    1
-  );
+  assert.equal(ctx._errLines.filter((l) => /legacy "decision" field/.test(l)).length, 1);
 });
 
 // RFC 034: Strong + Medium + Weak all reach Notion as "To Apply".
@@ -1337,10 +1332,7 @@ test("prepare --phase commit (RFC 034): Strong + Medium + Weak all reach Notion 
   assert.equal(byKey["gh:3"].cl_key || "", "");
   assert.equal(byKey["gh:3"].cl_path || "", "");
   // No legacy-decision warning (no decision field on any row).
-  assert.equal(
-    ctx._errLines.filter((l) => /legacy "decision" field/.test(l)).length,
-    0
-  );
+  assert.equal(ctx._errLines.filter((l) => /legacy "decision" field/.test(l)).length, 0);
 });
 
 // RFC 034: Notion failure on a Weak row reverts TSV to Inbox (existing
@@ -2234,9 +2226,7 @@ test("prepare --phase pre (L-4): metro geo blocklist short-circuits with geo_blo
 // was archived by geo_country_miss. After v5 the full array survives and
 // the BL-24 "US-anywhere wins" rule fires correctly.
 test("prepare --phase pre (BL-93 regression): multi-loc with US in second element is NOT archived", async () => {
-  const apps = [
-    makeApp({ key: "gh:1", companyName: "Stripe", title: "Senior PM" }),
-  ];
+  const apps = [makeApp({ key: "gh:1", companyName: "Stripe", title: "Senior PM" })];
   apps[0].locations = ["Remote (UK)", "United States"];
   const deps = makePrepDepsWithGeo(apps, {
     mode: "us-wide",
@@ -2749,7 +2739,6 @@ test("prepare --phase pre fresh (RFC 034): inboxExhausted=true when only already
   assert.equal(result.batch[0].key, "gh:0");
   assert.equal(result.stats.inboxExhausted, true);
 });
-
 
 test("prepare --phase pre topup (BL-9 Step 5): writes inboxExhausted to stats", async () => {
   // After topup, batch consumes both queue keys. No fresh rows remain.
@@ -3888,10 +3877,7 @@ test("prepare --phase pre (RFC 035): enum guard — every skipped reason is engi
   const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
 
   const { isEngineSkipReason } = require("../core/skip_reasons.js");
-  const syntheticAllowed = new Set([
-    ...ALREADY_EVALUATED_REASONS,
-    "already_evaluated_archived",
-  ]);
+  const syntheticAllowed = new Set([...ALREADY_EVALUATED_REASONS, "already_evaluated_archived"]);
   for (const s of result.skipped) {
     const ok = isEngineSkipReason(s.reason) || syntheticAllowed.has(s.reason);
     assert.ok(
@@ -3988,9 +3974,7 @@ Requirements:
       id: "testuser",
       filterRules: {
         hard_blockers: {
-          required_skills_excluded: [
-            { skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 },
-          ],
+          required_skills_excluded: [{ skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 }],
         },
       },
       company_tiers: { Stripe: "S" },
@@ -4035,9 +4019,7 @@ test("prepare --phase pre (RFC 039): hard-blocker rows never reach SKILL — cri
       id: "testuser",
       filterRules: {
         hard_blockers: {
-          required_skills_excluded: [
-            { skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 },
-          ],
+          required_skills_excluded: [{ skill: "Python", patterns: ["\\bPython\\b"], min_years: 1 }],
         },
       },
       company_tiers: { Stripe: "S" },
@@ -4140,14 +4122,7 @@ test("prepare --phase pre (RFC 039): title-geo — inclusive 'US' wins, row pass
 test("SKILL.md (RFC 039 §4.5): mentions jdStructure as preferred + jdText as fallback", () => {
   const fs = require("fs");
   const path = require("path");
-  const skillPath = path.join(
-    __dirname,
-    "..",
-    "..",
-    "skills",
-    "job-pipeline",
-    "SKILL.md"
-  );
+  const skillPath = path.join(__dirname, "..", "..", "skills", "job-pipeline", "SKILL.md");
   const text = fs.readFileSync(skillPath, "utf8");
   assert.match(text, /jdStructure/, "SKILL.md must mention jdStructure");
   // Step 2 region must mention the legacy fallback in some form.

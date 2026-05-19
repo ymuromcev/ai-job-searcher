@@ -12,7 +12,10 @@ const {
   titleMentionsCandidateGeo,
   TITLE_GEO_PATTERNS,
 } = require("./geo_enforcer.js");
-const { hasUsMarker: hasUsMarkerFromFilter, US_MARKERS: US_MARKERS_FROM_FILTER } = require("./filter.js");
+const {
+  hasUsMarker: hasUsMarkerFromFilter,
+  US_MARKERS: US_MARKERS_FROM_FILTER,
+} = require("./filter.js");
 
 // --- Mode: unrestricted ----------------------------------------------------
 
@@ -441,17 +444,11 @@ test("titleMentionsCandidateGeo: state code (CA) in title returns true", () => {
 
 test("titleMentionsCandidateGeo: accept_countries matched by substring", () => {
   const geo = { mode: "us-wide", accept_countries: ["Canada"] };
-  assert.strictEqual(
-    titleMentionsCandidateGeo("Senior PM (Canada/UK)", geo),
-    true
-  );
+  assert.strictEqual(titleMentionsCandidateGeo("Senior PM (Canada/UK)", geo), true);
 });
 
 test("titleMentionsCandidateGeo: no inclusive marker → false", () => {
-  assert.strictEqual(
-    titleMentionsCandidateGeo("Senior PM (UK/EU)", { mode: "us-wide" }),
-    false
-  );
+  assert.strictEqual(titleMentionsCandidateGeo("Senior PM (UK/EU)", { mode: "us-wide" }), false);
 });
 
 test("TITLE_GEO_PATTERNS: exposed for tests", () => {

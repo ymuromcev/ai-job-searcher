@@ -326,15 +326,7 @@ async function fillUpAliveBatch(passed, target, deps) {
 //
 // BL-9 Step 4: extracted so both fresh and topup modes produce identical
 // entry shape. No behavior change vs the inline block runPre had before.
-function buildBatchEntry(
-  urlRes,
-  jd,
-  profile,
-  deps,
-  companyTiers,
-  salaryOpts,
-  unknownTierSet
-) {
+function buildBatchEntry(urlRes, jd, profile, deps, companyTiers, salaryOpts, unknownTierSet) {
   const entry = {
     key: urlRes.key,
     source: urlRes.source,
@@ -970,9 +962,7 @@ async function runPre(ctx, deps) {
   if (archiveResult.archived > 0) {
     const breakdownStr = formatArchiveBreakdown(archiveResult.breakdown);
     if (flags.dryRun) {
-      stderr(
-        `(dry-run) would archive ${archiveResult.archived} rows: ${breakdownStr}`
-      );
+      stderr(`(dry-run) would archive ${archiveResult.archived} rows: ${breakdownStr}`);
     } else {
       stderr(`archived ${archiveResult.archived} rows: ${breakdownStr}`);
     }
@@ -1234,9 +1224,7 @@ async function runPreTopup(ctx, deps) {
   if (archiveResult.archived > 0) {
     const breakdownStr = formatArchiveBreakdown(archiveResult.breakdown);
     if (flags.dryRun) {
-      stderr(
-        `(dry-run) would archive ${archiveResult.archived} rows: ${breakdownStr}`
-      );
+      stderr(`(dry-run) would archive ${archiveResult.archived} rows: ${breakdownStr}`);
     } else {
       stderr(`archived ${archiveResult.archived} rows: ${breakdownStr}`);
     }
@@ -1748,9 +1736,7 @@ async function runCommit(ctx, deps) {
   // The legacy `r.decision === "to_apply"` gate is gone; the TSV status is
   // the source of truth (rows downgraded for invalid resumeVer stay Inbox
   // and are not in this set).
-  const toApplyResults = results.filter(
-    (r) => byKey[r.key] && byKey[r.key].status === "To Apply"
-  );
+  const toApplyResults = results.filter((r) => byKey[r.key] && byKey[r.key].status === "To Apply");
 
   function revertToInbox(app, reason) {
     app.status = "Inbox";
@@ -1955,9 +1941,7 @@ async function runCommit(ctx, deps) {
   }
   const extraStr = extras.length > 0 ? `, ${extras.join(", ")}` : "";
 
-  stdout(
-    `commit: ${updates.toApply} → To Apply, ${updates.notFound} not found${extraStr}`
-  );
+  stdout(`commit: ${updates.toApply} → To Apply, ${updates.notFound} not found${extraStr}`);
   if (updates.fitWritten > 0) {
     stdout(
       `fit verdicts: ${updates.fitWritten} new fit_score values persisted to TSV ` +

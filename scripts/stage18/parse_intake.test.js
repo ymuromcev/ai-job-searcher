@@ -325,6 +325,7 @@ test("validateIntake: detects missing required fields", () => {
   assert.ok(v.errors.some((e) => e.includes("parent_page_url")));
   assert.ok(v.errors.some((e) => e.includes("resume archetype")));
   assert.ok(v.errors.some((e) => e.includes("NOTION_TOKEN")));
+  assert.ok(v.errors.some((e) => e.includes("role-track")));
 });
 
 test("validateIntake: accepts minimal-valid intake", () => {
@@ -337,8 +338,97 @@ test("validateIntake: accepts minimal-valid intake", () => {
     notion: { parent_page_url: "https://notion.so/x-00000000000000000000000000000000" },
     resume_archetypes: [{ key: "ai-pm", title: "AI PM" }],
     env_checks: { env_notion_token_set: true },
+    role_targets: [{ id: "pm", name: "PM", patterns: ["product manager"] }],
   };
   const v = validateIntake(intake);
   assert.equal(v.ok, true);
   assert.deepEqual(v.errors, []);
+});
+
+// --- RFC 033: section L (role targets) -------------------------------------
+
+test("validateIntake: missing role_targets surfaces an RFC 033 error", () => {
+  const intake = {
+    identity: { profile_id: "p", full_name: "Pat", email: "p@x" },
+    notion: { parent_page_url: "https://notion.so/x-00000000000000000000000000000000" },
+    resume_archetypes: [{ key: "ai-pm", title: "AI PM" }],
+    env_checks: { env_notion_token_set: true },
+  };
+  const v = validateIntake(intake);
+  assert.equal(v.ok, false);
+  assert.ok(v.errors.some((e) => e.includes("role-track") && e.includes("RFC 033")));
+});
+
+test("validateIntake: role-track with empty patterns array is rejected", () => {
+  const intake = {
+    identity: { profile_id: "p", full_name: "Pat", email: "p@x" },
+    notion: { parent_page_url: "https://notion.so/x-00000000000000000000000000000000" },
+    resume_archetypes: [{ key: "ai-pm", title: "AI PM" }],
+    env_checks: { env_notion_token_set: true },
+    role_targets: [{ id: "pm", name: "PM", patterns: [] }],
+  };
+  const v = validateIntake(intake);
+  assert.equal(v.ok, false);
+  assert.ok(v.errors.some((e) => e.includes('"pm"') && e.includes("title pattern")));
+});
+
+test("parseIntake: section L tracks round-trip with patterns and fit_treatment", () => {
+  const md = `## L. Role targets
+
+### L.1 pm
+- name: Product Manager
+- fit_treatment: primary
+- patterns:
+  - product manager
+  - group product manager
+
+### L.2 fde
+- name: Forward-Deployed Engineer
+- fit_treatment: bridge
+- bridge_note: Treat as primary in AI-native shops.
+- patterns:
+  - forward deployed
+`;
+  const intake = parseIntake(md);
+  assert.equal(intake.role_targets.length, 2);
+  const pm = intake.role_targets[0];
+  assert.equal(pm.id, "pm");
+  assert.equal(pm.name, "Product Manager");
+  assert.equal(pm.fit_treatment, "primary");
+  assert.deepEqual(pm.patterns, ["product manager", "group product manager"]);
+
+  const fde = intake.role_targets[1];
+  assert.equal(fde.id, "fde");
+  assert.equal(fde.fit_treatment, "bridge");
+  assert.equal(fde.bridge_note, "Treat as primary in AI-native shops.");
+});
+
+test("parseIntake: section L placeholder track <track_id> is dropped", () => {
+  const md = `## L. Role targets
+
+### L.1 <track_id>
+- name:
+- patterns:
+  -
+  -
+
+### L.2 pm
+- name: PM
+- patterns:
+  - product manager
+`;
+  const intake = parseIntake(md);
+  assert.equal(intake.role_targets.length, 1);
+  assert.equal(intake.role_targets[0].id, "pm");
+});
+
+test("parseIntake: section L track with no populated patterns is dropped", () => {
+  const md = `## L. Role targets
+
+### L.1 pm
+- name: PM
+- patterns:
+`;
+  const intake = parseIntake(md);
+  assert.deepEqual(intake.role_targets, []);
 });

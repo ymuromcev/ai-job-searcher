@@ -32,12 +32,8 @@ function writeCliJs(root, commands, helpBlocks) {
   // helpBlocks: array of `<cmd> flags:\n<body>` strings to include in
   // HELP_TEXT.
   const cmdList = commands.map((c) => `  "${c}",`).join("\n");
-  const requireMap = commands
-    .map((c) => `    ${c}: require("./commands/${c}.js"),`)
-    .join("\n");
-  const helpBody = helpBlocks
-    .map((b) => `\n${b}\n`)
-    .join("");
+  const requireMap = commands.map((c) => `    ${c}: require("./commands/${c}.js"),`).join("\n");
+  const helpBody = helpBlocks.map((b) => `\n${b}\n`).join("");
   const src = `
 const KNOWN_COMMANDS = [
 ${cmdList}
@@ -61,11 +57,7 @@ module.exports = { KNOWN_COMMANDS, HELP_TEXT };
 }
 
 function writeCommandFile(root, cmd, body) {
-  fs.writeFileSync(
-    path.join(root, "engine", "commands", `${cmd}.js`),
-    body,
-    "utf8"
-  );
+  fs.writeFileSync(path.join(root, "engine", "commands", `${cmd}.js`), body, "utf8");
 }
 
 function writeCliMd(root, sections) {
@@ -165,11 +157,7 @@ test("case 2: happy path — code and docs agree, exit 0", () => {
 test("case 3: code-only flag — exit 1 with message", () => {
   const root = mkRoot();
   writeCliJs(root, ["prepare"], ["prepare flags:\n  --new-flag    Internal."]);
-  writeCommandFile(
-    root,
-    "prepare",
-    `if (args["--new-flag"]) { ctx.stderr("--new-flag set"); }`
-  );
+  writeCommandFile(root, "prepare", `if (args["--new-flag"]) { ctx.stderr("--new-flag set"); }`);
   writeCliMd(root, [
     {
       cmd: "prepare",
@@ -406,12 +394,12 @@ test("case 10: in-file disagreement between two code-side sources", () => {
 
 // --- Extra: HEURISTICS coverage (RFC §4 "every regex exercised") -----------
 
-test("heuristics: args-bracket pattern catches args[\"--foo\"]", () => {
+test('heuristics: args-bracket pattern catches args["--foo"]', () => {
   const r = gate.scanCode(`const v = args["--foo"];`);
   assert.ok(r.flags.has("foo"));
 });
 
-test("heuristics: args-bracket negative — args[\"--FOO\"] not matched", () => {
+test('heuristics: args-bracket negative — args["--FOO"] not matched', () => {
   const r = gate.scanCode(`const v = args["--FOO"];`);
   assert.ok(!r.flags.has("FOO"));
   assert.ok(!r.flags.has("foo"));
@@ -496,9 +484,7 @@ test("heuristics: named-array negative — lowercase const name not captured", (
 });
 
 test("heuristics: valid-list captures stderr (valid: a, b, c)", () => {
-  const r = gate.scanCode(
-    `ctx.stderr(\`error: unknown --mode "\${m}" (valid: fresh, topup)\`);`
-  );
+  const r = gate.scanCode(`ctx.stderr(\`error: unknown --mode "\${m}" (valid: fresh, topup)\`);`);
   let values = null;
   for (const [, sources] of r.flagEnumSources) {
     for (const s of sources) {
