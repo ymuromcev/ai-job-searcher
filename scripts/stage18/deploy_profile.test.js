@@ -35,9 +35,7 @@ function baseIntake(overrides = {}) {
     resume_archetypes: [
       { key: "pm_default", title: "Senior PM", summary: "PM generalist.", tags: ["pm"] },
     ],
-    role_targets: [
-      { id: "pm", name: "Product Manager", patterns: ["product manager", "pm"] },
-    ],
+    role_targets: [{ id: "pm", name: "Product Manager", patterns: ["product manager", "pm"] }],
     cover_letter: { tone: "conversational", length: "medium" },
     notion: {
       parent_page_url: "https://www.notion.so/workspace/Hub-00000000000000000000000000000000",

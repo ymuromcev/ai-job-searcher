@@ -658,10 +658,7 @@ test("checkPositiveGate: returns null when title_requirelist is non-empty (no ro
 });
 
 test("checkPositiveGate: warns when both role_targets and title_requirelist are empty", () => {
-  const out = checkPositiveGate(
-    { role_targets: null, title_requirelist: [] },
-    "lilia"
-  );
+  const out = checkPositiveGate({ role_targets: null, title_requirelist: [] }, "lilia");
   assert.ok(typeof out === "string");
   assert.match(out, /profile "lilia"/);
   assert.match(out, /role_targets/);

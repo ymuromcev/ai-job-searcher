@@ -337,9 +337,7 @@ function validateIntake(intake) {
   } else {
     for (const t of tracks) {
       if (!Array.isArray(t.patterns) || t.patterns.length === 0) {
-        errors.push(
-          `role-track "${t.id}" (section L) needs at least one title pattern`
-        );
+        errors.push(`role-track "${t.id}" (section L) needs at least one title pattern`);
       }
     }
   }

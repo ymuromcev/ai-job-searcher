@@ -154,9 +154,7 @@ function checkPositiveGate(filterRules, profileId) {
     filterRules.role_targets && Array.isArray(filterRules.role_targets.tracks)
       ? filterRules.role_targets.tracks
       : [];
-  const hasRoleTargets = tracks.some(
-    (t) => Array.isArray(t.patterns) && t.patterns.length > 0
-  );
+  const hasRoleTargets = tracks.some((t) => Array.isArray(t.patterns) && t.patterns.length > 0);
   const hasRequirelist =
     Array.isArray(filterRules.title_requirelist) && filterRules.title_requirelist.length > 0;
   if (hasRoleTargets || hasRequirelist) return null;

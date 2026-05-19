@@ -369,9 +369,7 @@ test("validateIntake: role-track with empty patterns array is rejected", () => {
   };
   const v = validateIntake(intake);
   assert.equal(v.ok, false);
-  assert.ok(
-    v.errors.some((e) => e.includes('"pm"') && e.includes("title pattern"))
-  );
+  assert.ok(v.errors.some((e) => e.includes('"pm"') && e.includes("title pattern")));
 });
 
 test("parseIntake: section L tracks round-trip with patterns and fit_treatment", () => {

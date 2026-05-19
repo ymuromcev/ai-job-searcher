@@ -41,9 +41,7 @@ test("buildFilterRules: user-provided blocklists lowercased + merged with baseli
 });
 
 test("buildFilterRules: dedupes overlap between user + baseline", () => {
-  const rules = buildFilterRules(
-    withTracks({ career: { title_blocklist: ["Intern", "intern"] } })
-  );
+  const rules = buildFilterRules(withTracks({ career: { title_blocklist: ["Intern", "intern"] } }));
   const patterns = rules.title_blocklist.map((t) => t.pattern);
   assert.equal(patterns.filter((p) => p === "intern").length, 1);
 });
@@ -81,9 +79,7 @@ test("buildFilterRules: throws when every track has empty patterns", () => {
 
 test("buildFilterRules: emits role_targets block with canonical shape", () => {
   const rules = buildFilterRules({
-    role_targets: [
-      { id: "pm", name: "Product Manager", patterns: ["Product Manager", "PM"] },
-    ],
+    role_targets: [{ id: "pm", name: "Product Manager", patterns: ["Product Manager", "PM"] }],
   });
   assert.equal(rules.role_targets.tracks.length, 1);
   const pm = rules.role_targets.tracks[0];
