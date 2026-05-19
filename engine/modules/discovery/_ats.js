@@ -1,6 +1,12 @@
 // Shared helpers for ATS adapters (greenhouse / lever / ashby / smartrecruiters).
 // Adapters pass a normalized mapper; this module handles fetch + error containment,
 // so a single company failure never kills a scan across 200+ targets.
+//
+// Contract: per-company ATS adapters are FETCH-ALL — they pull every open
+// posting for the configured company and return it raw. No title /
+// role_targets / keyword filtering at adapter level; the central filter
+// pipeline (core/filter.js + applyPrepareFilter) is the sole gatekeeper.
+// See ARCHITECTURE.md → "Discovery adapter classes".
 
 const { defaultFetch } = require("./_http.js");
 

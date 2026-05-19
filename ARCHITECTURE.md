@@ -63,6 +63,48 @@ Profile is data; engine is service. Adding a new candidate is a directory
 under `profiles/` plus a row of namespaced env vars in `.env`; no engine
 code changes.
 
+## Discovery adapter classes
+
+Adapters under `engine/modules/discovery/` fall into two classes with very
+different contracts. The split is implicit in the code but load-bearing:
+mis-classifying a new adapter leads either to missed jobs or to a bloated
+shared pool.
+
+**Per-company ATS adapters — fetch-all, post-filter.** One target = one
+configured company (greenhouse/lever/ashby/smartrecruiters/workable slug,
+icims/workday/taleo/oracle_cloud tenant, jobsyn X-Origin host). The adapter
+pulls every open posting for that company and returns it raw. No keyword,
+title, or `role_targets` filtering at adapter level — most ATS APIs do not
+support title-query, and even where they do, filtering early would drop
+jobs the central filter would have kept (e.g. an SDM role on a PM profile
+that the filter would route to a different archetype). The filter pipeline
+(`core/filter.js` + `applyPrepareFilter`) is the sole gatekeeper for these
+sources. Adding a new company is a one-line edit to the profile config;
+scan picks up all roles, the filter handles relevance.
+
+Current members: `greenhouse`, `lever`, `ashby`, `smartrecruiters`,
+`icims`, `workable`, `workday`, `taleo`, `oracle_cloud`, `jobsyn`. Shared
+fetch/concurrency helpers live in `_ats.js`.
+
+**Feed / keyword adapters — query-side filter where possible.** No company
+list; the adapter queries a public endpoint by keyword, category, location,
+or a fixed global feed and returns whatever comes back. These adapters may
+narrow at fetch time (Adzuna `what=`, USAJOBS `JobCategoryCode`, The Muse
+`?category=Product`, CalCareers per-keyword postback) and may apply a
+minimal adapter-level title gate when the feed is too broad to dump raw
+(remoteok pre-filters US-compat + title, otherwise it would ship ~100
+archives per scan). Profile-specific scoring still happens downstream in
+`core/filter.js`.
+
+Current members: `adzuna`, `remoteok`, `the_muse`, `usajobs`, `calcareers`,
+`indeed` (browser-ingest staging file, but conceptually keyword-driven).
+
+**Where to put a new adapter.** If it is `https://<vendor>.<ats>.com/<slug>`
+shaped — per-company — it is fetch-all; model it after `greenhouse.js`,
+build on `_ats.js`, and never read profile filter rules from inside. If it
+is a public job board queried by keyword/category — feed/keyword; model it
+after `adzuna.js` or `the_muse.js`.
+
 ## Data stores
 
 | Store | Scope | Role |

@@ -92,20 +92,20 @@ test("appendNew initializes salary_min/salary_max/cl_path as empty strings", () 
   assert.equal(r.apps[0].cl_path, "");
 });
 
-test("save + load round-trips v3 fields (salary_min, salary_max, cl_path, location)", () => {
+test("save + load round-trips v3 fields (salary_min, salary_max, cl_path) + v5 locations", () => {
   const file = tmp();
   const { apps: built } = apps.appendNew([], [fixtureJob()], { now: "2026-04-20T00:00:00Z" });
   built[0].salary_min = "140000";
   built[0].salary_max = "190000";
   built[0].cl_path = "Affirm_analyst_20260420";
-  built[0].location = "San Francisco, CA";
+  built[0].locations = ["San Francisco, CA"];
   apps.save(file, built);
   const back = apps.load(file);
-  assert.equal(back.schemaVersion, 4);
+  assert.equal(back.schemaVersion, 5);
   assert.equal(back.apps[0].salary_min, "140000");
   assert.equal(back.apps[0].salary_max, "190000");
   assert.equal(back.apps[0].cl_path, "Affirm_analyst_20260420");
-  assert.equal(back.apps[0].location, "San Francisco, CA");
+  assert.deepEqual(back.apps[0].locations, ["San Francisco, CA"]);
 });
 
 // BL-9: persist Claude's fit verdict so subsequent prepare runs can skip
@@ -120,14 +120,46 @@ test("save + load round-trips v4 fit fields (fit_score, fit_rationale, fit_evalu
   built[0].skip_reason = "weak_fit";
   apps.save(file, built);
   const back = apps.load(file);
-  assert.equal(back.schemaVersion, 4);
+  assert.equal(back.schemaVersion, 5);
   assert.equal(back.apps[0].fit_score, "Weak");
   assert.equal(back.apps[0].fit_rationale, "Energy domain — outside PM core");
   assert.equal(back.apps[0].fit_evaluated_at, "2026-05-05T14:17:47Z");
   assert.equal(back.apps[0].skip_reason, "weak_fit");
 });
 
-test("load auto-upgrades v1 files (12 cols) with empty v2+v3+v4 fields", () => {
+// RFC 038 / BL-93: persist the full multi-element locations[] array. Reader
+// JSON-decodes the v5 cell; writer JSON-encodes it back. Round-trip must
+// preserve every element.
+test("v5: save + load round-trips multi-element locations array", () => {
+  const file = tmp();
+  const { apps: built } = apps.appendNew([], [fixtureJob()], { now: "2026-04-20T00:00:00Z" });
+  built[0].locations = ["Remote (UK)", "United States", "New York, NY"];
+  apps.save(file, built);
+  const back = apps.load(file);
+  assert.equal(back.schemaVersion, 5);
+  assert.deepEqual(back.apps[0].locations, ["Remote (UK)", "United States", "New York, NY"]);
+});
+
+test("v5: round-trips locations with commas, quotes, and unicode", () => {
+  const file = tmp();
+  const { apps: built } = apps.appendNew([], [fixtureJob()], { now: "2026-04-20T00:00:00Z" });
+  built[0].locations = ["Paris, France", 'Berlin, "Mitte"', "São Paulo, BR"];
+  apps.save(file, built);
+  const back = apps.load(file);
+  assert.deepEqual(back.apps[0].locations, ["Paris, France", 'Berlin, "Mitte"', "São Paulo, BR"]);
+});
+
+test("v5: empty locations array round-trips as []", () => {
+  const file = tmp();
+  const { apps: built } = apps.appendNew([], [fixtureJob({ locations: [] })], {
+    now: "2026-04-20T00:00:00Z",
+  });
+  apps.save(file, built);
+  const back = apps.load(file);
+  assert.deepEqual(back.apps[0].locations, []);
+});
+
+test("load auto-upgrades v1 files (12 cols) with empty v2+v3+v4+v5 fields", () => {
   const file = tmp();
   const v1Header = apps.HEADER_V1.join("\t");
   const v1Row = [
@@ -152,7 +184,7 @@ test("load auto-upgrades v1 files (12 cols) with empty v2+v3+v4 fields", () => {
   assert.equal(back.apps[0].salary_min, "");
   assert.equal(back.apps[0].salary_max, "");
   assert.equal(back.apps[0].cl_path, "");
-  assert.equal(back.apps[0].location, "");
+  assert.deepEqual(back.apps[0].locations, []);
   assert.equal(back.apps[0].fit_score, "");
   assert.equal(back.apps[0].fit_rationale, "");
   assert.equal(back.apps[0].fit_evaluated_at, "");
@@ -160,10 +192,10 @@ test("load auto-upgrades v1 files (12 cols) with empty v2+v3+v4 fields", () => {
   assert.equal(back.apps[0].status, "To Apply");
   assert.equal(back.apps[0].notion_page_id, "abc");
 
-  // Re-saving promotes the file to v4.
+  // Re-saving promotes the file to v5.
   apps.save(file, back.apps);
   const after = apps.load(file);
-  assert.equal(after.schemaVersion, 4);
+  assert.equal(after.schemaVersion, 5);
 });
 
 test("load auto-upgrades v2 files (15 cols) with empty location and fit fields", () => {
@@ -191,19 +223,19 @@ test("load auto-upgrades v2 files (15 cols) with empty location and fit fields",
   const back = apps.load(file);
   assert.equal(back.schemaVersion, 2);
   assert.equal(back.apps.length, 1);
-  assert.equal(back.apps[0].location, "");
+  assert.deepEqual(back.apps[0].locations, []);
   assert.equal(back.apps[0].salary_min, "140000");
   assert.equal(back.apps[0].cl_path, "Affirm_analyst_20260420");
   assert.equal(back.apps[0].fit_score, "");
   assert.equal(back.apps[0].skip_reason, "");
 
-  // Re-saving promotes to v4.
+  // Re-saving promotes to v5.
   apps.save(file, back.apps);
   const after = apps.load(file);
-  assert.equal(after.schemaVersion, 4);
+  assert.equal(after.schemaVersion, 5);
 });
 
-test("load auto-upgrades v3 files (16 cols) with empty fit fields", () => {
+test("load auto-upgrades v3 files (16 cols) — `location` wraps to [location]", () => {
   const file = tmp();
   const v3Header = apps.HEADER_V3.join("\t");
   const v3Row = [
@@ -229,19 +261,93 @@ test("load auto-upgrades v3 files (16 cols) with empty fit fields", () => {
   const back = apps.load(file);
   assert.equal(back.schemaVersion, 3);
   assert.equal(back.apps.length, 1);
-  assert.equal(back.apps[0].location, "San Francisco, CA");
+  assert.deepEqual(back.apps[0].locations, ["San Francisco, CA"]);
   assert.equal(back.apps[0].fit_score, "");
   assert.equal(back.apps[0].fit_rationale, "");
   assert.equal(back.apps[0].fit_evaluated_at, "");
   assert.equal(back.apps[0].skip_reason, "");
 
-  // Re-saving promotes to v4.
+  // Re-saving promotes to v5.
   apps.save(file, back.apps);
   const after = apps.load(file);
-  assert.equal(after.schemaVersion, 4);
+  assert.equal(after.schemaVersion, 5);
 });
 
-test("appendNew copies first locations entry to row.location, falls back to ''", () => {
+// RFC 038: v4 (single-string `location`) wraps to [location] on read.
+test("load auto-upgrades v4 files (20 cols) — `location` wraps to [location]", () => {
+  const file = tmp();
+  const v4Header = apps.HEADER_V4.join("\t");
+  const v4Row = [
+    "greenhouse:1",
+    "greenhouse",
+    "1",
+    "Affirm",
+    "PM",
+    "https://x/1",
+    "San Francisco, CA",
+    "To Apply",
+    "abc",
+    "Risk_Fraud",
+    "cl_key1",
+    "140000",
+    "190000",
+    "Affirm_analyst_20260420",
+    "2026-01-01",
+    "2026-01-02",
+    "Strong",
+    "Great fit",
+    "2026-05-05T00:00:00Z",
+    "",
+  ].join("\t");
+  fs.writeFileSync(file, `${v4Header}\n${v4Row}\n`);
+
+  const back = apps.load(file);
+  assert.equal(back.schemaVersion, 4);
+  assert.equal(back.apps.length, 1);
+  assert.deepEqual(back.apps[0].locations, ["San Francisco, CA"]);
+  assert.equal(back.apps[0].fit_score, "Strong");
+
+  // Re-saving promotes to v5.
+  apps.save(file, back.apps);
+  const after = apps.load(file);
+  assert.equal(after.schemaVersion, 5);
+  assert.deepEqual(after.apps[0].locations, ["San Francisco, CA"]);
+});
+
+// v4 with empty location cell → empty array on read.
+test("load auto-upgrades v4 with empty location → []", () => {
+  const file = tmp();
+  const v4Header = apps.HEADER_V4.join("\t");
+  const v4Row = [
+    "greenhouse:1",
+    "greenhouse",
+    "1",
+    "Affirm",
+    "PM",
+    "https://x/1",
+    "",
+    "To Apply",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "2026-01-01",
+    "2026-01-02",
+    "",
+    "",
+    "",
+    "",
+  ].join("\t");
+  fs.writeFileSync(file, `${v4Header}\n${v4Row}\n`);
+
+  const back = apps.load(file);
+  assert.equal(back.schemaVersion, 4);
+  assert.deepEqual(back.apps[0].locations, []);
+});
+
+test("appendNew copies full discovery locations[] array, falls back to []", () => {
   // Distinct titles so the post-G-4 fuzzy-dedup doesn't collapse them.
   const r = apps.appendNew(
     [],
@@ -252,9 +358,9 @@ test("appendNew copies first locations entry to row.location, falls back to ''",
     ],
     { now: "2026-04-20T00:00:00Z" }
   );
-  assert.equal(r.apps[0].location, "Remote");
-  assert.equal(r.apps[1].location, "");
-  assert.equal(r.apps[2].location, "");
+  assert.deepEqual(r.apps[0].locations, ["Remote", "NYC"]);
+  assert.deepEqual(r.apps[1].locations, []);
+  assert.deepEqual(r.apps[2].locations, []);
 });
 
 // G-4: cross-platform fuzzy dedup. Same role posted on a different ATS than the
@@ -388,4 +494,17 @@ test("appendNew dedups when adapter returns the same id with and without prefix"
   const r = apps.appendNew(existing, incoming, { now: "2026-04-20T00:00:00Z" });
   assert.equal(r.fresh.length, 0, "prefixed jobId must collapse onto the canonical key");
   assert.equal(r.apps.length, 1);
+});
+
+// RFC 038: decodeLocations defensive fallback — a hand-edited v5 cell that
+// lost its JSON brackets should not crash the loader; we wrap the literal as
+// a single-element array.
+test("decodeLocations falls back to [cell] on non-JSON v5 cell (defensive)", () => {
+  assert.deepEqual(apps.decodeLocations(""), []);
+  assert.deepEqual(apps.decodeLocations("[]"), []);
+  assert.deepEqual(apps.decodeLocations('["a","b"]'), ["a", "b"]);
+  // hand-edited single value without brackets:
+  assert.deepEqual(apps.decodeLocations("Remote"), ["Remote"]);
+  // malformed JSON also defensive-wraps:
+  assert.deepEqual(apps.decodeLocations('["a",'), ['["a",']);
 });

@@ -32,38 +32,36 @@ function fakeApp(overrides = {}) {
   };
 }
 
-// Default filterRules fake includes a populated role_targets so existing
-// tests don't trip the RFC 033 positive-gate check. Tests that exercise
-// that path override loadProfile with an empty positive gate.
-const VALID_ROLE_TARGETS = {
-  tracks: [
-    {
-      id: "pm",
-      name: "Product Manager",
-      patterns: [{ pattern: "product manager", reason: "PM" }],
+// Minimal-but-deep-validator-clean fake profile. The deep validator (RFC 037)
+// requires identity / modules / role_targets, so naked `{paths, filterRules}`
+// fakes from before BL-99 trip schema errors. `makeProfile(overrides)` returns
+// a fully-valid profile object; tests override only the fields they need.
+function makeProfile(overrides = {}) {
+  const baseFilterRules = {
+    company_cap: { max_active: 2 },
+    role_targets: {
+      tracks: [{ id: "pm", name: "PM", patterns: [{ pattern: "manager" }] }],
+      fit_treatments: {},
     },
-  ],
-};
-// fakeFilterRules({ ... }) — merge extra rules on top of a valid positive
-// gate. Use this everywhere a test stubs loadProfile so adding new rule
-// keys doesn't require remembering to also add role_targets. Note we only
-// inject role_targets, NOT title_requirelist — leaving the requirelist empty
-// keeps `matchBlocklists` (retro_sweep) behaviour identical to pre-RFC 033
-// tests, while checkPositiveGate still sees a populated role_targets.
-function fakeFilterRules(extra = {}) {
-  return {
-    role_targets: VALID_ROLE_TARGETS,
-    ...extra,
   };
+  const profile = {
+    id: "jared",
+    identity: { name: "Jared", email: "j@example.com" },
+    modules: [],
+    paths: { root: "/tmp/profiles/jared" },
+    filterRules: baseFilterRules,
+    ...overrides,
+  };
+  // Allow callers to override just `filterRules` partially.
+  if (overrides.filterRules) {
+    profile.filterRules = { ...baseFilterRules, ...overrides.filterRules };
+  }
+  return profile;
 }
 
 function makeDeps(overrides = {}) {
   return {
-    loadProfile: () => ({
-      id: "jared",
-      paths: { root: "/tmp/profiles/jared" },
-      filterRules: fakeFilterRules({ company_cap: { max_active: 2 } }),
-    }),
+    loadProfile: () => makeProfile(),
     loadApplications: () => ({ apps: [fakeApp({ jobId: "1" }), fakeApp({ jobId: "2" })] }),
     loadJobs: () => ({ jobs: [] }),
     fetchFn: async (_url, opts) => ({ ok: true, status: opts.method === "HEAD" ? 200 : 200 }),
@@ -101,16 +99,16 @@ test("validate flags missing positive-gate (no role_targets + no title_requireli
   // explicit issue with exit 1.
   const { ctx, out } = makeCtx();
   const deps = makeDeps({
-    loadProfile: () => ({
-      id: "lilia",
-      paths: { root: "/tmp/profiles/lilia" },
-      filterRules: {
-        company_cap: { max_active: 2 },
-        title_blocklist: [{ pattern: "engineer", reason: "not a target role" }],
-        role_targets: null,
-        title_requirelist: [],
-      },
-    }),
+    loadProfile: () =>
+      makeProfile({
+        id: "lilia",
+        filterRules: {
+          company_cap: { max_active: 2 },
+          title_blocklist: [{ pattern: "engineer", reason: "not a target role" }],
+          role_targets: null,
+          title_requirelist: [],
+        },
+      }),
   });
   const code = await makeValidateCommand(deps)(ctx);
   assert.equal(code, 1);
@@ -144,10 +142,7 @@ test("validate reports company_cap violations and exits 1", async () => {
   ];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
-    loadProfile: () => ({
-      paths: { root: "/tmp/profiles/jared" },
-      filterRules: fakeFilterRules({ company_cap: { max_active: 2 } }),
-    }),
+    loadProfile: () => makeProfile({ filterRules: { company_cap: { max_active: 2 } } }),
   });
   const { ctx, out } = makeCtx();
   const code = await makeValidateCommand(deps)(ctx);
@@ -346,10 +341,7 @@ test("retro_sweep: no-op when filter_rules has no blocklists", async () => {
   const apps = [fakeApp({ status: "To Apply", companyName: "Stripe", title: "PM" })];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
-    loadProfile: () => ({
-      paths: { root: "/tmp/profiles/jared" },
-      filterRules: fakeFilterRules({}),
-    }),
+    loadProfile: () => makeProfile({ filterRules: {} }),
   });
   const { ctx, out } = makeCtx();
   const code = await makeValidateCommand(deps)(ctx);
@@ -394,13 +386,13 @@ test("retro_sweep: reports matches without --apply and exits 1", async () => {
     saveApplications: (_path, rows) => {
       saved = rows;
     },
-    loadProfile: () => ({
-      paths: { root: "/tmp/profiles/jared" },
-      filterRules: fakeFilterRules({
-        company_blocklist: ["toast"],
-        title_blocklist: [{ pattern: "Associate", reason: "too junior" }],
+    loadProfile: () =>
+      makeProfile({
+        filterRules: {
+          company_blocklist: ["toast"],
+          title_blocklist: [{ pattern: "Associate", reason: "too junior" }],
+        },
       }),
-    }),
     fetchFn: async () => ({ ok: true, status: 200 }),
   });
   const { ctx, out } = makeCtx();
@@ -438,10 +430,7 @@ test("retro_sweep: archives matches and writes TSV when --apply is set", async (
       savedPath = p;
       savedRows = rows;
     },
-    loadProfile: () => ({
-      paths: { root: "/tmp/profiles/jared" },
-      filterRules: fakeFilterRules({ company_blocklist: ["Toast"] }),
-    }),
+    loadProfile: () => makeProfile({ filterRules: { company_blocklist: ["Toast"] } }),
     fetchFn: async () => ({ ok: true, status: 200 }),
     now: () => "2026-04-21T00:00:00Z",
   });
@@ -493,10 +482,7 @@ test("retro_sweep: only sweeps 'To Apply', not Applied/Interview/Offer", async (
   ];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
-    loadProfile: () => ({
-      paths: { root: "/tmp/profiles/jared" },
-      filterRules: fakeFilterRules({ company_blocklist: ["Toast"] }),
-    }),
+    loadProfile: () => makeProfile({ filterRules: { company_blocklist: ["Toast"] } }),
     fetchFn: async () => ({ ok: true, status: 200 }),
   });
   const { ctx, out } = makeCtx();
@@ -521,7 +507,7 @@ test("retro_sweep: location_blocklist now exercised after schema v3 (G-5)", asyn
       status: "To Apply",
       companyName: "Acme",
       title: "PM",
-      location: "Munich, Germany",
+      locations: ["Munich, Germany"],
     }),
     fakeApp({
       key: "greenhouse:2",
@@ -529,7 +515,7 @@ test("retro_sweep: location_blocklist now exercised after schema v3 (G-5)", asyn
       status: "To Apply",
       companyName: "Acme",
       title: "PM",
-      location: "Sacramento, CA",
+      locations: ["Sacramento, CA"],
     }),
     fakeApp({
       key: "greenhouse:3",
@@ -537,17 +523,16 @@ test("retro_sweep: location_blocklist now exercised after schema v3 (G-5)", asyn
       status: "To Apply",
       companyName: "Acme",
       title: "PM",
-      location: "",
+      locations: [],
     }),
   ];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
-    loadProfile: () => ({
-      paths: { root: "/tmp/profiles/lilia" },
-      filterRules: fakeFilterRules({
-        location_blocklist: ["Germany"],
+    loadProfile: () =>
+      makeProfile({
+        paths: { root: "/tmp/profiles/lilia" },
+        filterRules: { location_blocklist: ["Germany"] },
       }),
-    }),
     fetchFn: async () => ({ ok: true, status: 200 }),
   });
   const { ctx, out } = makeCtx();
@@ -594,7 +579,7 @@ test("retro_sweep (L-4): metro geo flags out-of-metro 'To Apply' rows", async ()
       status: "To Apply",
       companyName: "Kaiser",
       title: "Medical Receptionist",
-      location: "Sacramento, CA",
+      locations: ["Sacramento, CA"],
     }),
     fakeApp({
       key: "greenhouse:2",
@@ -602,7 +587,7 @@ test("retro_sweep (L-4): metro geo flags out-of-metro 'To Apply' rows", async ()
       status: "To Apply",
       companyName: "Kaiser",
       title: "Medical Receptionist",
-      location: "Houston, TX",
+      locations: ["Houston, TX"],
     }),
     fakeApp({
       key: "greenhouse:3",
@@ -610,16 +595,17 @@ test("retro_sweep (L-4): metro geo flags out-of-metro 'To Apply' rows", async ()
       status: "Applied",
       companyName: "Kaiser",
       title: "Medical Receptionist",
-      location: "Houston, TX",
+      locations: ["Houston, TX"],
     }), // not swept (Applied)
   ];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
-    loadProfile: () => ({
-      paths: { root: "/tmp/profiles/lilia" },
-      filterRules: fakeFilterRules({}),
-      geo: LILIA_GEO,
-    }),
+    loadProfile: () =>
+      makeProfile({
+        paths: { root: "/tmp/profiles/lilia" },
+        filterRules: {},
+        geo: LILIA_GEO,
+      }),
     fetchFn: async () => ({ ok: true, status: 200 }),
   });
   const { ctx, out } = makeCtx();
@@ -637,16 +623,16 @@ test("retro_sweep (L-4): unrestricted profile → no geo sweep activity", async 
       status: "To Apply",
       companyName: "Stripe",
       title: "PM",
-      location: "London, UK",
+      locations: ["London, UK"],
     }),
   ];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
-    loadProfile: () => ({
-      paths: { root: "/tmp/profiles/jared" },
-      filterRules: fakeFilterRules({}),
-      geo: { mode: "unrestricted", remote_ok: true, blocklist: [] },
-    }),
+    loadProfile: () =>
+      makeProfile({
+        filterRules: {},
+        geo: { mode: "unrestricted", remote_ok: true, blocklist: [] },
+      }),
     fetchFn: async () => ({ ok: true, status: 200 }),
   });
   const { ctx, out } = makeCtx();
@@ -664,7 +650,7 @@ test("retro_sweep (L-4): metro geo with --apply archives geo-violating rows", as
       status: "To Apply",
       companyName: "Kaiser",
       title: "Medical Receptionist",
-      location: "Houston, TX",
+      locations: ["Houston, TX"],
     }),
   ];
   let savedRows;
@@ -673,11 +659,12 @@ test("retro_sweep (L-4): metro geo with --apply archives geo-violating rows", as
     saveApplications: (_p, rows) => {
       savedRows = rows;
     },
-    loadProfile: () => ({
-      paths: { root: "/tmp/profiles/lilia" },
-      filterRules: fakeFilterRules({}),
-      geo: LILIA_GEO,
-    }),
+    loadProfile: () =>
+      makeProfile({
+        paths: { root: "/tmp/profiles/lilia" },
+        filterRules: {},
+        geo: LILIA_GEO,
+      }),
     fetchFn: async () => ({ ok: true, status: 200 }),
     now: () => "2026-05-04T00:00:00Z",
   });
@@ -698,16 +685,17 @@ test("retro_sweep (L-4): geo_no_location surfaced separately for empty-location 
       status: "To Apply",
       companyName: "Kaiser",
       title: "Medical Receptionist",
-      location: "",
+      locations: [],
     }),
   ];
   const deps = makeDeps({
     loadApplications: () => ({ apps }),
-    loadProfile: () => ({
-      paths: { root: "/tmp/profiles/lilia" },
-      filterRules: fakeFilterRules({}),
-      geo: LILIA_GEO,
-    }),
+    loadProfile: () =>
+      makeProfile({
+        paths: { root: "/tmp/profiles/lilia" },
+        filterRules: {},
+        geo: LILIA_GEO,
+      }),
     fetchFn: async () => ({ ok: true, status: 200 }),
   });
   const { ctx, out } = makeCtx();
@@ -728,7 +716,7 @@ function dedupRow(overrides = {}) {
     companyName: "Affirm",
     title: "PM",
     url: "https://example.com/jobs/abc",
-    location: "",
+    locations: [],
     status: "Inbox",
     notion_page_id: "",
     resume_ver: "",
@@ -972,14 +960,13 @@ const ALL_EXPECTED_STATUS = [
   "Archived",
 ];
 
+// Real-looking UUID so the deep validator's notion.jobs_pipeline_db_id check
+// (RFC 037) doesn't fire on this test fixture.
+const FAKE_NOTION_DB_ID = "12345678-1234-1234-1234-1234567890ab";
+
 function notionDeps(overrides = {}) {
   return {
-    loadProfile: () => ({
-      id: "jared",
-      paths: { root: "/tmp/profiles/jared" },
-      filterRules: fakeFilterRules({}),
-      notion: { jobs_pipeline_db_id: "db_abc" },
-    }),
+    loadProfile: () => makeProfile({ notion: { jobs_pipeline_db_id: FAKE_NOTION_DB_ID } }),
     loadSecrets: () => ({ NOTION_TOKEN: "ntn_fake" }),
     loadApplications: () => ({ apps: [] }),
     loadJobs: () => ({ jobs: [] }),
@@ -1030,10 +1017,7 @@ test("BL-18 notion_status_schema: extras (custom statuses) don't fail", async ()
 test("BL-18 notion_status_schema: silently skipped when Notion not configured", async () => {
   const { ctx, out } = makeCtx();
   const deps = notionDeps({
-    loadProfile: () => ({
-      paths: { root: "/tmp/profiles/jared" },
-      filterRules: fakeFilterRules({}),
-    }),
+    loadProfile: () => makeProfile({ notion: undefined }),
     fetchDataSourceSchema: async () => {
       throw new Error("should not be called");
     },
@@ -1058,14 +1042,13 @@ test("BL-18 notion_status_schema: Notion fetch failure → warn but not fatal", 
 test("BL-18 notion_status_schema: respects profile.notion.property_map.status.field override", async () => {
   const { ctx, out } = makeCtx();
   const deps = notionDeps({
-    loadProfile: () => ({
-      paths: { root: "/tmp/profiles/jared" },
-      filterRules: fakeFilterRules({}),
-      notion: {
-        jobs_pipeline_db_id: "db_abc",
-        property_map: { status: { field: "Lifecycle", type: "status" } },
-      },
-    }),
+    loadProfile: () =>
+      makeProfile({
+        notion: {
+          jobs_pipeline_db_id: FAKE_NOTION_DB_ID,
+          property_map: { status: { field: "Lifecycle", type: "status" } },
+        },
+      }),
     fetchDataSourceSchema: async () => statusDS(ALL_EXPECTED_STATUS, "Lifecycle"),
   });
   const code = await makeValidateCommand(deps)(ctx);

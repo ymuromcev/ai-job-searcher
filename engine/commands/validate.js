@@ -26,6 +26,7 @@ const { resolveProfilesDir } = require("../core/paths.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 const { planDedup } = require("../core/tsv_dedup.js");
 const notion = require("../core/notion_sync.js");
+const { validateProfileDeep, formatIssue } = require("../core/validator.js");
 const {
   EXPECTED_STATUS_OPTIONS,
   extractStatusOptions,
@@ -319,6 +320,30 @@ function makeValidateCommand(overrides = {}) {
 
     let issues = 0;
 
+    // 0. Deep profile validation (RFC 037 / BL-99): structural shape, semantic
+    // coherence, cross-references. Catches drift in filter_rules / role_targets
+    // / geo / notion before downstream commands hit opaque failures. Errors
+    // increment `issues` (gate); warns are surfaced but don't gate.
+    const deep = validateProfileDeep(
+      profile,
+      { profileRoot: profile.paths && profile.paths.root, dataDir },
+      {}
+    );
+    const deepErrors = deep.issues.filter((i) => i.severity === "error");
+    const deepWarns = deep.issues.filter((i) => i.severity === "warn");
+    if (deepErrors.length === 0 && deepWarns.length === 0) {
+      stdout(`profile_schema: ok`);
+    } else {
+      for (const iss of deep.issues) {
+        if (iss.severity === "error") {
+          ctx.stderr(formatIssue(iss));
+        } else {
+          stdout(formatIssue(iss));
+        }
+      }
+      issues += deepErrors.length;
+    }
+
     // 1. TSV hygiene.
     let appsResult, jobsResult;
     try {
@@ -497,9 +522,12 @@ function makeValidateCommand(overrides = {}) {
     // existing "To Apply" rows (the only pre-apply triage state in the 8-status
     // set). Catches the case where a pattern was added to filter_rules.json
     // after old rows landed — prototype parity with validate_inbox.js. Since
-    // schema v3 (G-5, 2026-05-03) TSV rows carry `location`, so location
+    // schema v3 (G-5, 2026-05-03) TSV rows carry locations, so location
     // blocklist now exercises here too (rows without a backfilled location are
-    // simply not matched against location patterns — empty string never hits).
+    // simply not matched against location patterns — empty array never hits).
+    // Schema v5 (RFC 038, 2026-05-18) persists the full multi-element
+    // locations[] array, so the BL-24 "US-anywhere wins" rule now fires
+    // correctly on multi-loc rows during retro-sweep.
     //
     // L-4 (RFC 013): retro-sweep also enforces profile.geo. When profile
     // declares a metro / us-wide / remote-only mode, existing "To Apply" rows
@@ -518,8 +546,15 @@ function makeValidateCommand(overrides = {}) {
       const matches = [];
       for (const app of appsResult.apps) {
         if (!RETRO_SWEEP_STATUSES.has(app.status)) continue;
+        // v5 (RFC 038): pass the full locations[] array so the BL-24
+        // "US-anywhere wins" rule fires on multi-loc rows in retro-sweep too.
+        // matchBlocklists already accepts both shapes; we only emit the array.
         const reason = matchBlocklists(
-          { company: app.companyName, role: app.title, location: app.location || "" },
+          {
+            company: app.companyName,
+            role: app.title,
+            locations: Array.isArray(app.locations) ? app.locations : [],
+          },
           filterRules
         );
         if (reason) matches.push({ app, reason });

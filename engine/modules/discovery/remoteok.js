@@ -7,9 +7,11 @@
 // returns mixed PM/SWE/Designer jobs, so adapter-level title filtering keeps
 // the shared pool from ballooning by ~100 archived rows per scan.
 //
-// Title filter sourcing (G-3, 2026-05-04):
-//   - `ctx.filterRules.title_requirelist.patterns` if provided — single source
-//     of truth, profile-driven.
+// Title filter sourcing (G-3, 2026-05-04; BL-86, 2026-05-18):
+//   - `ctx.filterRules.title_requirelist` if provided — flat array of
+//     `{pattern, reason}` (the shape `profile_loader.normalizeFilterRules`
+//     emits, same shape `filter.js` reads). Single source of truth,
+//     profile-driven.
 //   - Falls back to `DEFAULT_PM_RE` for back-compat when the caller didn't
 //     plumb filter rules (older tests, ad-hoc scripts).
 //
@@ -33,12 +35,20 @@ function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Compile a single regex from profile's `title_requirelist.patterns` (the same
+// Compile a single regex from profile's `title_requirelist` (the same
 // list that filter.matchBlocklists uses at scan-time gate). Falls back to the
 // default PM regex when the profile didn't declare a requirelist.
+// BL-86 (2026-05-18): reads the flat `[{pattern, reason}, ...]` shape that
+// `profile_loader.normalizeFilterRules` emits — same as `filter.js:137`.
+// Legacy `{patterns: [...]}` shape is still accepted for callers that pass
+// raw (non-normalized) rules.
 function buildTitleFilter(filterRules) {
-  const patterns =
-    (filterRules && filterRules.title_requirelist && filterRules.title_requirelist.patterns) || [];
+  const raw = filterRules && filterRules.title_requirelist;
+  const patterns = Array.isArray(raw)
+    ? raw
+    : raw && Array.isArray(raw.patterns)
+      ? raw.patterns
+      : [];
   const tokens = patterns
     .map((p) => String(p && p.pattern ? p.pattern : "").trim())
     .filter(Boolean);

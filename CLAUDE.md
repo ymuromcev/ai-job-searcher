@@ -90,6 +90,13 @@ prefixes). Run it once after clone. If the hook flags a false
 positive, `git commit --no-verify` is available — but if in doubt,
 double-check rather than skip.
 
+## Post-merge cleanup
+
+After a PR is merged, run `/post-merge-cleanup` (slash command) or
+`~/.claude/hooks/post_merge_cleanup.sh` directly. Defaults to
+`--dry-run`; pass `--apply` to actually delete the local branch +
+worktree. Remote branch is auto-deleted on merge (since 2026-05-17).
+
 ## Mental model for AI assistants
 
 > **Profile = data. Engine = service.**

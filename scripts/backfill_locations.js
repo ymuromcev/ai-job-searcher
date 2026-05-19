@@ -88,8 +88,11 @@ function main() {
   let orphanNoPoolLoc = 0;
   const orphanSources = new Map();
 
+  // v5 (RFC 038): in-memory row shape uses `locations: string[]`. The
+  // backfill still uses the master pool's first location as a single-element
+  // fill, which is the same behaviour as before (locations[0] from pool).
   const next = rows.map((r) => {
-    if (r.location && r.location.length > 0) {
+    if (Array.isArray(r.locations) && r.locations.length > 0) {
       alreadyHad += 1;
       return r;
     }
@@ -107,7 +110,7 @@ function main() {
       return r;
     }
     filled += 1;
-    return { ...r, location: res.loc };
+    return { ...r, locations: [res.loc] };
   });
 
   const total = rows.length;

@@ -6,13 +6,19 @@ const {
   fetchJd,
   fetchAll,
   stripHtml,
+  SUPPORTED,
+  JD_UNSUPPORTED,
   formatWorkday,
   formatIcims,
   formatTaleo,
+  formatWorkable,
   buildWorkdayApiUrl,
+  buildWorkableApiUrl,
   extractJsonLdJob,
   isAllowedTaleoHost,
 } = require("./jd_cache.js");
+const fs = require("node:fs");
+const path = require("node:path");
 
 // Build minimal I/O deps with controllable state.
 function makeDeps(overrides = {}) {
@@ -729,4 +735,251 @@ test("Taleo: cache hit on second call (no second fetch)", async () => {
   const result = await fetchJd(TALEO_JOB, CACHE_DIR, deps);
   assert.equal(result.status, "cached");
   assert.equal(result.text, cachedText);
+});
+
+// --- Workable (BL-95) --------------------------------------------------------
+
+const WORKABLE_JOB = {
+  source: "workable",
+  slug: "huggingface",
+  jobId: "922D2C6549",
+  title: "Cloud ML DevRel Engineer - EMEA remote",
+  companyName: "Hugging Face",
+  url: "https://apply.workable.com/j/922D2C6549",
+  locations: ["Remote", "Paris, Île-de-France, France"],
+  rawExtra: { telecommuting: true, employment_type: "Full-time" },
+};
+const WORKABLE_API_URL = "https://apply.workable.com/api/v1/accounts/huggingface/jobs/922D2C6549";
+
+// Minimal record mirrored from a real recon probe on 2026-05-18 against
+// apply.workable.com/api/v1/accounts/huggingface/jobs/922D2C6549. HTML
+// snippets condensed for fixture readability — the real payload is
+// ~5 KB; the structure (HTML strings in description/requirements/benefits)
+// is reproduced verbatim.
+const WORKABLE_API_PAYLOAD = {
+  id: 5537738,
+  shortcode: "922D2C6549",
+  title: "Cloud ML DevRel Engineer - EMEA remote",
+  remote: true,
+  location: {
+    country: "France",
+    countryCode: "FR",
+    city: "Paris",
+    region: "Île-de-France",
+  },
+  state: "published",
+  code: "HF-CLOUD-001",
+  published: "2026-02-12T00:00:00.000Z",
+  type: "full",
+  language: "en",
+  department: ["Revenue-Share"],
+  workplace: "remote",
+  description:
+    "<p>At Hugging Face, we're on a journey to democratize good AI.</p>" +
+    "<p><strong>About the Role</strong></p>" +
+    "<p>You will grow the impact of the Hugging Face ML Cloud team.</p>",
+  requirements:
+    "<ul><li>5+ years of relevant experience</li>" +
+    "<li>Deep familiarity with cloud platforms (AWS / GCP / Azure)</li></ul>",
+  benefits: "<ul><li>Flexible remote work</li><li>Competitive compensation</li></ul>",
+};
+
+test("buildWorkableApiUrl builds api URL from slug + jobId", () => {
+  assert.equal(buildWorkableApiUrl(WORKABLE_JOB), WORKABLE_API_URL);
+});
+
+test("buildWorkableApiUrl rejects malformed slug / jobId (SSRF guard)", () => {
+  const bad = [
+    { ...WORKABLE_JOB, slug: "evil/path" },
+    { ...WORKABLE_JOB, slug: "" },
+    { ...WORKABLE_JOB, jobId: "X Y" },
+    { ...WORKABLE_JOB, jobId: "?evil=1" },
+    { ...WORKABLE_JOB, jobId: "../../etc/passwd" },
+    { ...WORKABLE_JOB, jobId: "" },
+    { ...WORKABLE_JOB, slug: 123 },
+  ];
+  for (const job of bad) {
+    assert.equal(
+      buildWorkableApiUrl(job),
+      null,
+      `should reject ${JSON.stringify(job.slug)}/${JSON.stringify(job.jobId)}`
+    );
+  }
+});
+
+test("formatWorkable produces TITLE / LOCATION / SCHEDULE / REQ ID + stripped body", () => {
+  const text = formatWorkable(WORKABLE_API_PAYLOAD, WORKABLE_JOB);
+  assert.ok(text);
+  assert.match(text, /^TITLE: Cloud ML DevRel Engineer/m);
+  assert.match(text, /^LOCATION: Paris, Île-de-France, France/m);
+  assert.match(text, /^SCHEDULE: Full-time · Remote/m);
+  assert.match(text, /^REQ ID: HF-CLOUD-001/m);
+  assert.match(text, /democratize good AI/);
+  // Requirements section is present and bullets are converted by stripHtml.
+  assert.match(text, /Requirements:/);
+  assert.match(text, /- 5\+ years/);
+  assert.match(text, /Benefits:/);
+  assert.match(text, /- Flexible remote work/);
+});
+
+test("formatWorkable returns null when description/requirements/benefits all empty", () => {
+  const data = { title: "X", type: "full", workplace: "remote" };
+  assert.equal(
+    formatWorkable(data, WORKABLE_JOB),
+    null,
+    "header-only payload must not poison the cache"
+  );
+});
+
+test("formatWorkable: missing schedule fields → no SCHEDULE line", () => {
+  const data = {
+    title: "X",
+    description: "<p>Body text.</p>",
+  };
+  const text = formatWorkable(data, WORKABLE_JOB);
+  assert.ok(text);
+  assert.ok(!/^SCHEDULE:/m.test(text));
+});
+
+test("formatWorkable: tolerates non-object input", () => {
+  assert.equal(formatWorkable(null, WORKABLE_JOB), null);
+  assert.equal(formatWorkable("string", WORKABLE_JOB), null);
+});
+
+test("Workable: cache miss fetches JSON, formats, and writes text", async () => {
+  const { deps, written } = makeDeps({
+    fetchFn: makeFetchFn({ [WORKABLE_API_URL]: { status: 200, body: WORKABLE_API_PAYLOAD } }),
+  });
+  const result = await fetchJd(WORKABLE_JOB, CACHE_DIR, deps);
+  assert.equal(result.status, "fetched");
+  assert.ok(result.text.includes("TITLE: Cloud ML DevRel Engineer"));
+  assert.ok(result.text.includes("SCHEDULE: Full-time · Remote"));
+  assert.ok(result.text.includes("democratize good AI"));
+  const writtenPath = `${CACHE_DIR}/${cacheKey(WORKABLE_JOB)}`;
+  assert.equal(written[writtenPath], result.text);
+});
+
+test("Workable: 404 returns status=not_found, no cache write", async () => {
+  const { deps, written } = makeDeps({
+    fetchFn: makeFetchFn({ [WORKABLE_API_URL]: { status: 404, body: {} } }),
+  });
+  const result = await fetchJd(WORKABLE_JOB, CACHE_DIR, deps);
+  assert.equal(result.status, "not_found");
+  assert.equal(Object.keys(written).length, 0);
+});
+
+test("Workable: empty payload returns not_found (no header-only cache)", async () => {
+  const { deps, written } = makeDeps({
+    fetchFn: makeFetchFn({
+      [WORKABLE_API_URL]: { status: 200, body: { title: "X", type: "full", workplace: "remote" } },
+    }),
+  });
+  const result = await fetchJd(WORKABLE_JOB, CACHE_DIR, deps);
+  assert.equal(result.status, "not_found");
+  assert.equal(Object.keys(written).length, 0);
+});
+
+test("Workable: malformed jobId short-circuits to not_found (no fetch)", async () => {
+  let fetched = false;
+  const { deps } = makeDeps({
+    fetchFn: async () => {
+      fetched = true;
+      return { ok: true, status: 200, async json() {}, async text() {} };
+    },
+  });
+  const badJob = { ...WORKABLE_JOB, jobId: "../../evil" };
+  const result = await fetchJd(badJob, CACHE_DIR, deps);
+  assert.equal(result.status, "not_found");
+  assert.equal(fetched, false, "fetchFn must not be called for unsafe jobId");
+});
+
+test("Workable: passes User-Agent header to fetchFn", async () => {
+  let seenOpts = null;
+  const { deps } = makeDeps({
+    fetchFn: async (url, opts) => {
+      seenOpts = opts;
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return WORKABLE_API_PAYLOAD;
+        },
+      };
+    },
+  });
+  await fetchJd(WORKABLE_JOB, CACHE_DIR, deps);
+  assert.ok(seenOpts && seenOpts.headers && /Mozilla/.test(seenOpts.headers["User-Agent"]));
+});
+
+test("Workable: cache hit on second call (no second fetch)", async () => {
+  const cachedText = "TITLE: Cloud ML DevRel\nSCHEDULE: Full-time · Remote\n\nBody.";
+  const cachePath = `${CACHE_DIR}/${cacheKey(WORKABLE_JOB)}`;
+  const { deps } = makeDeps({ existing: { [cachePath]: cachedText } });
+  const result = await fetchJd(WORKABLE_JOB, CACHE_DIR, deps);
+  assert.equal(result.status, "cached");
+  assert.equal(result.text, cachedText);
+});
+
+// --- Adapter ↔ jd_cache coverage (BL-96) ------------------------------------
+//
+// Enumerate every discovery adapter file (excluding helpers / tests) and
+// assert each `source` is either in `SUPPORTED` (has a JD fetcher) or in
+// `JD_UNSUPPORTED` (explicitly opted out with a reason). Adding a new
+// adapter without considering JD-cache wiring will fail this test.
+test("adapter ↔ jd_cache coverage: every discovery source is either SUPPORTED or JD_UNSUPPORTED", () => {
+  const DISCOVERY_DIR = path.resolve(__dirname, "..", "modules", "discovery");
+  const files = fs
+    .readdirSync(DISCOVERY_DIR)
+    .filter((name) => name.endsWith(".js"))
+    .filter((name) => !name.startsWith("_"))
+    .filter((name) => !name.endsWith(".test.js"))
+    .filter((name) => name !== "index.js");
+
+  const sources = [];
+  for (const file of files) {
+    const mod = require(path.join(DISCOVERY_DIR, file));
+    assert.ok(
+      typeof mod.source === "string" && mod.source,
+      `${file}: adapter must export a non-empty "source" string`
+    );
+    sources.push({ file, source: mod.source });
+  }
+  assert.ok(sources.length > 0, "expected at least one discovery adapter");
+
+  const missing = [];
+  for (const { file, source } of sources) {
+    const hasFetcher = SUPPORTED.has(source);
+    const isExempt = JD_UNSUPPORTED.has(source);
+    if (!hasFetcher && !isExempt) {
+      missing.push({ file, source });
+    }
+    // Sanity: no source should be in BOTH sets — exempt means "no fetcher
+    // by design", supported means "fetcher present". Conflict signals a
+    // bug in jd_cache.js.
+    assert.ok(
+      !(hasFetcher && isExempt),
+      `source "${source}" cannot be both SUPPORTED and JD_UNSUPPORTED`
+    );
+  }
+  assert.deepEqual(
+    missing,
+    [],
+    `discovery adapter(s) missing from jd_cache wiring — add to SUPPORTED (with fetcher) or JD_UNSUPPORTED (with reason): ${JSON.stringify(missing)}`
+  );
+});
+
+test("JD_UNSUPPORTED reasons are non-empty strings", () => {
+  for (const [source, reason] of JD_UNSUPPORTED) {
+    assert.equal(typeof reason, "string", `${source} reason must be a string`);
+    assert.ok(reason.length >= 10, `${source} reason too short: ${JSON.stringify(reason)}`);
+  }
+});
+
+test("SUPPORTED and JD_UNSUPPORTED are disjoint", () => {
+  for (const source of SUPPORTED) {
+    assert.ok(
+      !JD_UNSUPPORTED.has(source),
+      `source "${source}" appears in both SUPPORTED and JD_UNSUPPORTED`
+    );
+  }
 });

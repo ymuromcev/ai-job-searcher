@@ -16,26 +16,37 @@
     "patterns": []
   },
   "role_targets": {
-    "_description": "RFC 030 / RFC 033 — single source of truth for acceptable role-tracks. Read by scan (title gate) and by LLM prepare (Fit Score). At least one track with one or more patterns is REQUIRED (RFC 033) — without it the engine has no positive title gate.",
+    "_description": "RFC 030 — single source of truth for acceptable role-tracks. Read by scan (title gate) and by LLM prepare (Fit Score). One block changes BOTH gates. RFC 033 (BL-78) — at least one track is required on every profile; replace the example below with your real role-tracks.",
     "fit_treatments": {
       "primary": "Apply Fit Score by domain match only. Track is the candidate's main target.",
       "bridge": "Bridge/stepping-stone role. Apply standard domain logic but never downgrade purely for being on this track instead of the primary one."
     },
     "tracks": [
       {
-        "_comment": "Replace this placeholder with one or more real tracks before running the engine. Substring match, case-insensitive.",
-        "id": "your_track",
-        "name": "Your Role Track",
-        "fit_treatment": "primary",
+        "id": "pm_generalist",
+        "name": "Product Manager (Generalist)",
         "patterns": [
-          { "pattern": "title-substring-1", "reason": "track: your_track" },
-          { "pattern": "title-substring-2", "reason": "track: your_track" }
-        ]
+          { "pattern": "\\bproduct\\s+manager\\b", "reason": "PM track" },
+          { "pattern": "\\bsenior\\s+product\\s+manager\\b", "reason": "Senior PM" }
+        ],
+        "fit_treatment": "primary"
       }
     ]
   },
   "location_rules": {
     "_description": "Restrict to specific locations / remote-only. Empty = no location filter.",
     "allowed_substrings": []
+  },
+  "hard_blockers": {
+    "_description": "RFC 039 / BL-89 — deterministic pre-SKILL filter. Rows that match any rule here NEVER reach Claude and are archived in TSV with `skip_reason=hard_blocker:<code>`. Keep the list short — these are STRUCTURAL disqualifiers (a skill the candidate does not have, a years cap, a cert the candidate lacks). For soft fit (PM vs SWE, fintech vs healthcare), let the SKILL judge.",
+    "required_skills_excluded": [
+      {
+        "skill": "ExampleSkillX",
+        "patterns": ["\\bExampleSkillX\\b", "\\bAlternateNameX\\b"],
+        "min_years": 1
+      }
+    ],
+    "years_required_max": 15,
+    "cert_blockers": []
   }
 }

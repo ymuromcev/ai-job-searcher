@@ -98,16 +98,14 @@ prepare flags:
                          writes prepare_context.json. "commit" applies SKILL results.
   --results-file <path>  Required for --phase commit. Path to SKILL results JSON.
   --batch <n>            Max jobs per prepare run (default: 30). Used with --phase pre.
-  --mode <fresh|topup|weak-fallback>
+  --mode <fresh|topup>
                          Used with --phase pre. "fresh" (default) runs the full pipeline
                          and rewrites prepare_context.json. "topup" reads the existing
                          context, pulls more entries from deferredQueue, URL-checks /
-                         JD-fetches them, and appends to batch[]. "weak-fallback" pulls
-                         from deferredQueue plus already-Weak rows in TSV (entries get
-                         wasAlreadyWeak=true so the SKILL doesn't re-judge them) — used
-                         by the autonomous prepare loop when Strong+Medium can't fill
-                         the batch.
-  --need <K>             Used with --mode topup or weak-fallback. Number of new alive
+                         JD-fetches them, and appends to batch[]. (RFC 034 removed
+                         "weak-fallback" — Weak rows now go to Notion directly via
+                         the standard fresh/topup loop and are triaged by the operator.)
+  --need <K>             Used with --mode topup. Number of new alive
                          entries to add. Default: batchSize - current batch length.
 
 check flags:

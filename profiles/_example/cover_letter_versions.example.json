@@ -1,5 +1,5 @@
 {
-  "_description": "Keyed cover-letter variants. Each key is a profile-chosen identifier (e.g. company_role_focus). Fields populate the template placeholders; unknown fields are ignored.",
+  "_description": "Keyed cover-letter variants. Each key is a profile-chosen identifier (e.g. company_role_focus). Two shapes are supported by RFC 036's cl_base_matcher: 'template-variants' (a single `defaults` object — see e.g. lilia) and 'library' (top-level keys map to entries with `paragraphs: [p1, p2, p3, p4]` — see e.g. jared). Optional per-entry metadata fields — `company`, `archetype`, `role_keywords` — are read by the engine matcher to pick the right base; absent fields fall back to key tokenization (e.g. key `affirm_capital` → company `affirm`, keywords `[affirm, capital]`).",
   "example_company_fintech_pm": {
     "companyName": "Example Fintech",
     "roleTitle": "Senior Product Manager",
@@ -11,5 +11,20 @@
     "candidateEmail": "candidate@example.com",
     "candidatePhone": "+1 (555) 000-0000",
     "candidateLinkedin": "linkedin.com/in/example"
+  },
+  "_library_shape_example": {
+    "_doc": "Reference example of the RFC 036 'library' shape. The keys below show the contract the matcher reads. Leading-underscore keys are ignored by the matcher.",
+    "affirm_capital": {
+      "filename": "Affirm_Capital_PM.pdf",
+      "paragraphs": [
+        "P1 hook — company-specific, regenerated per letter.",
+        "P2 core proof — locked across letters of the same archetype.",
+        "P3 secondary proof / why-this-company.",
+        "P4 close."
+      ],
+      "company": "Affirm",
+      "archetype": "ConsumerLending",
+      "role_keywords": ["pm", "capital", "credit"]
+    }
   }
 }

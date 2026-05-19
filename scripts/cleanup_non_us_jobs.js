@@ -84,21 +84,22 @@ function plan(apps, filterRules) {
       counts.skipped_protected_status += 1;
       continue;
     }
-    if (!app.location) {
+    // v5 (RFC 038): TSV row carries the full multi-loc array. Skip when
+    // empty; pass the array straight to matchBlocklists so the BL-24
+    // "US-anywhere wins" rule fires correctly on multi-loc rows.
+    const locations = Array.isArray(app.locations) ? app.locations : [];
+    if (locations.length === 0) {
       counts.skipped_no_location += 1;
       continue;
     }
-    const reason = matchBlocklists(
-      { location: app.location, locations: [app.location] },
-      filterRules || {}
-    );
+    const reason = matchBlocklists({ locations }, filterRules || {});
     if (reason && reason.kind === "location_blocklist") {
       counts.candidates += 1;
       candidates.push({
         key: app.key,
         companyName: app.companyName,
         title: app.title,
-        location: app.location,
+        location: locations.join(", "),
         status: app.status,
         notion_page_id: app.notion_page_id,
         match: reason.match,

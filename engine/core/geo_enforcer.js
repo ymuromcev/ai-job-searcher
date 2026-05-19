@@ -30,7 +30,9 @@
 
 const REMOTE_MARKERS = ["remote", "anywhere", "work from home", "wfh"];
 
-// US markers — same set as filter.js US_MARKERS.
+// US markers — canonical single source of truth (BL-81). Union of the
+// previously divergent filter.js and geo_enforcer.js lists. `filter.js`
+// imports this constant; do not redefine it elsewhere.
 const US_MARKERS = ["united states", "usa", ", us", "(us)", "u.s.", "u.s.a"];
 
 // US state name → 2-letter code lookup. Used in "us-wide" mode and as
@@ -162,16 +164,38 @@ function isRemoteLoc(locLower) {
   return REMOTE_MARKERS.some((m) => locLower.includes(m));
 }
 
-function hasUsMarker(locLower) {
-  if (US_MARKERS.some((m) => locLower.includes(m))) return true;
-  // State code as standalone token: ", CA" / " CA " / trailing " CA"
-  for (const code of US_STATE_CODES) {
-    const re = new RegExp(`(^|[\\s,])${code.toLowerCase()}([\\s,]|$)`, "i");
-    if (re.test(locLower)) return true;
-  }
-  // Full state name substring.
-  for (const name of US_STATE_NAMES) {
-    if (locLower.includes(name)) return true;
+// Accepts either a single location string or an array of strings. Returns
+// true if ANY element has a US marker (BL-24 semantic: US-hireable in any
+// element wins). Inputs are lowercased internally — callers may pass mixed
+// case.
+function hasUsMarker(stringOrArray) {
+  const arr = Array.isArray(stringOrArray)
+    ? stringOrArray
+    : stringOrArray == null
+      ? []
+      : [stringOrArray];
+  for (const raw of arr) {
+    if (raw == null) continue;
+    const loc = String(raw).toLowerCase();
+    if (!loc) continue;
+    if (US_MARKERS.some((m) => loc.includes(m))) return true;
+    let stateCodeHit = false;
+    for (const code of US_STATE_CODES) {
+      const re = new RegExp(`(^|[\\s,])${code.toLowerCase()}([\\s,]|$)`, "i");
+      if (re.test(loc)) {
+        stateCodeHit = true;
+        break;
+      }
+    }
+    if (stateCodeHit) return true;
+    let stateNameHit = false;
+    for (const name of US_STATE_NAMES) {
+      if (loc.includes(name)) {
+        stateNameHit = true;
+        break;
+      }
+    }
+    if (stateNameHit) return true;
   }
   return false;
 }
@@ -367,8 +391,108 @@ function enforceGeo(jobLocations, profileGeo) {
   return { ok: false, reason: firstReason || "geo_metro_miss", matchedBy: null };
 }
 
+// --- Title-encoded geo pre-reject (RFC 039 §3.3 / BL-89) -------------------
+//
+// `enforceGeo` (above) reads `locations[]` only — it does not look at the
+// job title. ATS adapters frequently surface a generic location like
+// `["Remote"]` for a posting whose title is `"Senior PM (UK/EU/India)"`.
+// Without a title check, the row passes `applyPrepareFilter`, reaches the
+// SKILL, and (post-RFC-034) ends up in Notion. The audit on 2026-05-18
+// counted ~12 such rows per prepare run.
+//
+// `extractTitleGeo(title)` returns `{ excluded, marker }`.
+// `titleMentionsCandidateGeo(title, profileGeo)` returns boolean — does
+// the title contain a US marker or any `accept_countries[]` value?
+//
+// Composition rule (RFC 039 §3.3): inclusive marker wins. A title like
+// `"Senior PM (US/UK/Canada)"` for a `us-only` candidate passes; a title
+// like `"Senior PM (UK/EU only)"` does not.
+//
+// Code-table v1 (RFC 039 §7.3). Promote to `filter_rules.geo` only if
+// profiles diverge.
+const TITLE_GEO_PATTERNS = [
+  // Parenthetical region tags. Capture group 1 is the matched marker, used
+  // verbatim in the skip reason for debugging.
+  {
+    re: /\((UK|EU|EMEA|APAC|LATAM|MEA|India|Germany|France|Netherlands|UK\/EU|UK\/EU\/India|EMEA only|APAC only)\)/i,
+  },
+  // Inline phrases that explicitly exclude the US.
+  {
+    re: /\b(EMEA only|APAC only|Europe only|India only|UK only|EU only|LATAM only)\b/i,
+  },
+  // "Remote - <region>" / "Remote — <region>" patterns.
+  {
+    re: /\bRemote\s*[—–-]\s*(EMEA|APAC|LATAM|Europe|UK|EU|India)\b/i,
+    prefix: "Remote - ",
+  },
+];
+
+/**
+ * Inspect a job title for an exclusive non-US geo marker.
+ *
+ * @param {string} title
+ * @returns {{excluded: boolean, marker: string|null}}
+ *   `excluded=true` when any `TITLE_GEO_PATTERNS` entry matches.
+ *   `marker` is the matched substring (group 1 of the regex, with optional
+ *   `prefix` prepended), or null when no pattern matches.
+ */
+function extractTitleGeo(title) {
+  const t = String(title == null ? "" : title);
+  if (!t) return { excluded: false, marker: null };
+
+  for (const entry of TITLE_GEO_PATTERNS) {
+    const m = entry.re.exec(t);
+    if (m) {
+      const inner = m[1] || m[0];
+      const marker = entry.prefix ? `${entry.prefix}${inner}` : inner;
+      return { excluded: true, marker };
+    }
+  }
+  return { excluded: false, marker: null };
+}
+
+/**
+ * Does the title contain an inclusive geo marker (US, USA, United States,
+ * a US state code/name, or any value in `profileGeo.accept_countries[]`)?
+ *
+ * Mirrors BL-24: a US marker (or candidate's accept-list country) anywhere
+ * in the title wins. The `extractTitleGeo` result is overridden when
+ * `titleMentionsCandidateGeo` is true.
+ *
+ * @param {string} title
+ * @param {object} [profileGeo]  Optional. When provided, `accept_countries[]`
+ *                               substring matches are also treated as inclusive.
+ * @returns {boolean}
+ */
+// Title-token US matcher. `hasUsMarker` (locations-shaped) requires forms like
+// `, us` / `(us)` / `u.s.` / explicit country names, which don't always
+// surface in titles. Titles can embed `US` as a token inside a slash list
+// like `(US/UK/Canada)` or `Senior PM — US`, so we additionally accept a
+// word-boundary `US` / `USA` / `U.S.` token.
+const US_TITLE_TOKEN_RE = /(?:^|[\s,(/—–-])(US|USA|U\.S\.|U\.S\.A)(?:[\s,)/—–-]|$)/;
+
+function titleMentionsCandidateGeo(title, profileGeo) {
+  const t = String(title == null ? "" : title);
+  if (!t) return false;
+  if (hasUsMarker(t)) return true;
+  if (US_TITLE_TOKEN_RE.test(t)) return true;
+  const accept =
+    profileGeo && Array.isArray(profileGeo.accept_countries) ? profileGeo.accept_countries : [];
+  if (accept.length === 0) return false;
+  const lower = t.toLowerCase();
+  for (const country of accept) {
+    if (typeof country !== "string" || !country) continue;
+    if (lower.includes(country.toLowerCase())) return true;
+  }
+  return false;
+}
+
 module.exports = {
   enforceGeo,
+  // RFC 039 / BL-89 title-encoded geo pre-reject.
+  extractTitleGeo,
+  titleMentionsCandidateGeo,
+  TITLE_GEO_PATTERNS,
   // Exported for tests / debugging.
   REMOTE_MARKERS,
   US_MARKERS,

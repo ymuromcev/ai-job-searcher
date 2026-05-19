@@ -87,3 +87,75 @@ test("SKILL.md Step 10 results schema example includes clParagraphs (BL-14)", ()
   // (The old line `"clPath": "<company>_<role-slug>_<YYYYMMDD>.md"` must be gone.)
   assert.doesNotMatch(text, /"clPath"\s*:\s*"<company>_<role-slug>_<YYYYMMDD>\.md"/);
 });
+
+// RFC 034 (BL-80) — SKILL output contract: no `decision`, no `skipReason`.
+//
+// These structural assertions catch accidental regressions in the prose +
+// example JSON in SKILL.md. The engine ignores legacy `decision` with a
+// back-compat warning, but the SKILL must NOT instruct the model to emit it.
+
+test("SKILL.md (RFC 034): no `decision` field in any output JSON example", () => {
+  const text = fs.readFileSync(SKILL_PATH, "utf8");
+  // Catches both `"decision": "to_apply"` and `decision: "to_apply"` (JSON
+  // examples vs prose / pseudocode). The word "decision" still appears in
+  // explanatory text (e.g. "geo decision", "RFC 034 removed `decision`"),
+  // so we scope this assertion to the schema-style usage.
+  assert.doesNotMatch(
+    text,
+    /"decision"\s*:\s*"[^"]*"/,
+    "SKILL.md must not show `decision` as an output JSON field (RFC 034)"
+  );
+  assert.doesNotMatch(
+    text,
+    /\bdecision\s*=\s*"to_apply"/,
+    'SKILL.md must not show `decision = "to_apply"` in pseudocode (RFC 034)'
+  );
+  assert.doesNotMatch(
+    text,
+    /\bdecision\s*=\s*"skip"/,
+    'SKILL.md must not show `decision = "skip"` in pseudocode (RFC 034)'
+  );
+  assert.doesNotMatch(
+    text,
+    /\bdecision\s*=\s*"archive"/,
+    'SKILL.md must not show `decision = "archive"` in pseudocode (RFC 034)'
+  );
+});
+
+test("SKILL.md (RFC 034): no `skipReason` field in any output JSON example", () => {
+  const text = fs.readFileSync(SKILL_PATH, "utf8");
+  assert.doesNotMatch(
+    text,
+    /"skipReason"\s*:\s*"[^"]*"/,
+    "SKILL.md must not show `skipReason` as an output field (RFC 034)"
+  );
+});
+
+test("SKILL.md (RFC 034): explicit anti-pattern note tells the model not to emit `decision`", () => {
+  const text = fs.readFileSync(SKILL_PATH, "utf8");
+  // The anti-pattern list calls this out explicitly so a future drift is
+  // caught at review time rather than at the first phantom-Weak bug.
+  assert.match(
+    text,
+    /Do not.*emit.*decision/i,
+    "anti-patterns must explicitly tell the model not to emit `decision`"
+  );
+});
+
+test("SKILL.md (RFC 034): weak-fallback mode is gone from the prepare loop prose", () => {
+  const text = fs.readFileSync(SKILL_PATH, "utf8");
+  // The flag is referenced in the migration callout ("RFC 034 removed
+  // `--mode weak-fallback`") but no longer appears as an operational step.
+  // The check: the mode-table only lists `fresh` and `topup`, and Step 6/7
+  // (the autonomous loop) doesn't invoke `--mode weak-fallback`.
+  assert.doesNotMatch(
+    text,
+    /Run:\s*prepare\s+--phase\s+pre\s+--mode\s+weak-fallback/,
+    "autonomous loop must not invoke --mode weak-fallback (RFC 034)"
+  );
+  assert.doesNotMatch(
+    text,
+    /node\s+engine\/cli\.js\s+prepare\s+--profile\s+<id>\s+--phase\s+pre\s+--mode\s+<fresh\|topup\|weak-fallback>/,
+    "CLI command line must not list weak-fallback as a valid --mode (RFC 034)"
+  );
+});
