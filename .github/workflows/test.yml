@@ -28,6 +28,21 @@ jobs:
         run: npm run lint
       - name: Format check
         run: npm run format:check
+      - name: Check CLI args sync
+        # RFC 041 / BL-104 — flag + literal-enum drift between engine/cli.js,
+        # engine/commands/*.js, and docs/reference/cli.md. The pre-commit
+        # hook is scoped to staged files; CI runs the full-tree scan.
+        # Exit 2 is heuristic warning only — surface as a `::warning::`
+        # annotation but do not fail. Exit 1 (drift) fails the job.
+        run: |
+          set +e
+          node scripts/check_cli_args_sync.js
+          rc=$?
+          if [ "$rc" -eq 2 ]; then
+            echo "::warning::cli-args-sync emitted heuristic warnings (see above)."
+            exit 0
+          fi
+          exit "$rc"
       - name: Run tests
         run: npm test
         env:

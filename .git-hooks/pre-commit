@@ -195,6 +195,31 @@ if [ -n "$CLI_JS_STAGED" ] || [ -n "$CLI_MD_STAGED" ]; then
   fi
 fi
 
+# --- CLI args ↔ cli.md sync (BL-104 / RFC 041) ------------------------------
+# Per-command flag-presence + literal-enum drift between engine/cli.js,
+# engine/commands/*.js, and docs/reference/cli.md. BL-98 covers command-name
+# granularity; this gate covers flag + enum granularity, the gap BL-80
+# leaked through. The gate scopes itself by re-checking the staged file
+# list — if no watched file is staged, it exits 0 immediately. Honors
+# CLI_ARGS_GATE_MODE=warn during the warn-only migration window (RFC 041
+# §7); the default flips to `block` in an immediate follow-up commit.
+CLI_ARGS_RC=0
+node scripts/check_cli_args_sync.js --pre-commit
+CLI_ARGS_RC=$?
+case "$CLI_ARGS_RC" in
+  0)
+    # pass / nothing watched.
+    ;;
+  2)
+    # heuristic warning only — do not block.
+    ;;
+  *)
+    # exit 1 (drift) or any other non-zero — fail the commit. The script
+    # itself prints the structured message + bypass hint above.
+    FAIL=1
+    ;;
+esac
+
 if [ "$FAIL" -ne 0 ]; then
   echo ""
   echo "-------------------------------------------------------"
