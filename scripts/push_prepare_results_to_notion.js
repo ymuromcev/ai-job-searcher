@@ -105,7 +105,9 @@ function parseArgs(argv) {
       key: app.key,
       fitScore: r.fitScore,
       dateAdded: today,
-      city: app.location || "",
+      // v5 (RFC 038): TSV now stores the full multi-loc array; the Notion
+      // City property is single-text, so we join with ", " for display.
+      city: Array.isArray(app.locations) ? app.locations.join(", ") : "",
       state: "Any",
       notes: r.fitRationale || "",
       salaryExpectations: salaryExp,

@@ -14,6 +14,15 @@ const RULES = {
 };
 
 function row(overrides) {
+  // Helper accepts either `location: "..."` (legacy) or `locations: [...]`
+  // (v5, RFC 038). We normalize to `locations: string[]` so the script,
+  // which only reads `app.locations`, sees the right shape.
+  const { location, locations, ...rest } = overrides || {};
+  let normLocations;
+  if (Array.isArray(locations)) normLocations = locations;
+  else if (typeof location === "string" && location.length > 0) normLocations = [location];
+  else if (location === "") normLocations = [];
+  else normLocations = [];
   return {
     key: "gh:1",
     source: "gh",
@@ -21,7 +30,7 @@ function row(overrides) {
     companyName: "Acme",
     title: "PM",
     url: "https://example.com",
-    location: "",
+    locations: normLocations,
     status: "To Apply",
     notion_page_id: "",
     resume_ver: "",
@@ -35,7 +44,7 @@ function row(overrides) {
     fit_rationale: "",
     fit_evaluated_at: "",
     skip_reason: "",
-    ...overrides,
+    ...rest,
   };
 }
 

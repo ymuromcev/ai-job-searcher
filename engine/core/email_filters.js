@@ -1,5 +1,26 @@
 // Email-source and content filters for the check command.
 // Ported from ../../Job Search/check_emails.js:54-74, 224-267 (prototype).
+//
+// RFC 040 / BL-92: `isLevelBlocked` and `isLocationBlocked` are
+// shim-layer wrappers over `evaluateJob` (Phase 1). Behaviour is
+// preserved bit-identical to BL-100; `isLocationBlocked` is deprecated
+// (one-release warning shim) per RFC 040 §7.5.
+
+const { findTitleBlocklistHit } = require("./filter_helpers.js");
+const { evaluateJob } = require("./evaluate_job.js");
+
+// Word-boundary regex mirroring filter.js#makeBoundaryRegex semantics.
+// Inlined (not imported) because filter.js does not export it and BL-100
+// requires using the same mechanism without modifying filter.js.
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function makeBoundaryRegex(needle) {
+  const lower = String(needle).toLowerCase();
+  const startB = /\w/.test(lower[0]) ? "\\b" : "";
+  const endB = /\w/.test(lower[lower.length - 1]) ? "\\b" : "";
+  return new RegExp(`${startB}${escapeRegex(lower)}${endB}`, "i");
+}
 
 // ATS domains — senders on these platforms are job-application-system
 // notifications (acks, rejections, interview invites, etc.). Used in three
@@ -202,23 +223,64 @@ function matchesRecruiterSubject(subject) {
   return RECRUITER_SUBJECT_PATTERNS.some((p) => p.test(subject));
 }
 
-// Level blocklist uses substring match on the title (prototype behavior).
-// rules arrives in the flat engine shape after profile_loader normalization:
-//   { title_blocklist: [{pattern, reason}, ...] }
-function isLevelBlocked(title, rules) {
-  if (!rules || !Array.isArray(rules.title_blocklist)) return false;
-  const t = (title || "").toLowerCase();
-  return rules.title_blocklist.some((p) =>
-    t.includes(String((p && (p.pattern || p)) || "").toLowerCase())
-  );
+// RFC 040 / BL-92: shape adapter from a parsed-email record to
+// `EvaluateJobInput.job`. Emails carry parsed `company` / `title` /
+// optional `locations[]`.
+function jobFromEmail(parsed) {
+  const p = parsed || {};
+  return {
+    company: String(p.company || ""),
+    title: String(p.title || ""),
+    locations: Array.isArray(p.locations) ? p.locations.map(String) : [],
+  };
 }
 
-// Location blocklist uses substring match on free-text context (subject/body).
-// rules arrives in the flat engine shape: { location_blocklist: [strings] }.
+// Level blocklist — word-boundary match on the title. BL-100 / RFC 040:
+// shares semantics with `findTitleBlocklistHit` (canonical
+// word-boundary). Same blocklist behaves identically for jobs
+// (scan/prepare) and for emails (check). Prevents false hits like
+// "rn" matching "PRN Coordinator".
+// rules arrives in the flat engine shape after profile_loader normalization:
+//   { title_blocklist: [{pattern, reason}, ...] }
+//
+// Phase 1 shim: delegates to `evaluateJob({ context: "email" })`. The
+// returned `matched.rule === "title_blocklist"` predicate is the
+// boolean shape callers depend on.
+function isLevelBlocked(title, rules) {
+  if (!rules || !Array.isArray(rules.title_blocklist)) return false;
+  const result = evaluateJob({
+    job: jobFromEmail({ company: "", title }),
+    profile: { filter_rules: rules || {} },
+    context: "email",
+  });
+  return result.decision === "skip" && result.skipReason === "title_blocklist";
+}
+
+// RFC 040 §7.5 / BL-92: `isLocationBlocked` is deprecated. The free-
+// text substring/word-boundary path produced real-world false
+// positives (e.g. email body "our New York office is hiring in
+// Wisconsin" tripping both NY and WI blocklists). The function stays
+// exported for one release with a one-time console.error so existing
+// callers keep working; Phase 2 removes it. Behaviour is preserved
+// (word-boundary on free text, per BL-100) so existing tests pass
+// unchanged.
+let _isLocationBlockedWarned = false;
 function isLocationBlocked(text, rules) {
+  if (!_isLocationBlockedWarned) {
+    _isLocationBlockedWarned = true;
+    // eslint-disable-next-line no-console
+    console.error(
+      "DEPRECATED: email_filters.isLocationBlocked — see RFC 040 §7.5, removed in next release"
+    );
+  }
   if (!rules || !Array.isArray(rules.location_blocklist)) return false;
-  const t = (text || "").toLowerCase();
-  return rules.location_blocklist.some((p) => t.includes(String(p || "").toLowerCase()));
+  const t = String(text || "");
+  if (!t) return false;
+  return rules.location_blocklist.some((p) => {
+    const needle = String(p || "");
+    if (!needle) return false;
+    return makeBoundaryRegex(needle).test(t);
+  });
 }
 
 // Deduplication against existing applications.tsv rows.
@@ -246,4 +308,5 @@ module.exports = {
   isLevelBlocked,
   isLocationBlocked,
   isTSVDup,
+  jobFromEmail,
 };

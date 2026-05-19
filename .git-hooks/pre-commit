@@ -129,6 +129,97 @@ if [ -n "$NEW_ADAPTERS$NEW_COMMANDS" ]; then
   fi
 fi
 
+# --- CHANGELOG gate (BL-97) -------------------------------------------------
+# Any behavioral change under engine/ requires a CHANGELOG.md update in the
+# same commit. Test-only edits (*.test.js) are skipped — adding a test does
+# not change behavior. Bypass with `git commit --no-verify` for trivial /
+# chore commits where a CHANGELOG entry would be noise.
+ENGINE_BEHAVIORAL=""
+for f in $STAGED; do
+  case "$f" in
+    engine/*.test.js|engine/**/*.test.js) ;;
+    engine/*) ENGINE_BEHAVIORAL="$ENGINE_BEHAVIORAL $f" ;;
+  esac
+done
+
+if [ -n "$ENGINE_BEHAVIORAL" ]; then
+  CHANGELOG_STAGED=$(echo "$STAGED" | grep -E '^CHANGELOG\.md$' || true)
+  if [ -z "$CHANGELOG_STAGED" ]; then
+    MSG="behavioral change in engine/ without CHANGELOG.md update."
+    MSG="$MSG"$'\n'"  changed:$ENGINE_BEHAVIORAL"
+    MSG="$MSG"$'\n'"  add an entry under [Unreleased] in CHANGELOG.md and re-stage."
+    MSG="$MSG"$'\n'"  trivial / chore? bypass with 'git commit --no-verify'."
+    report "CHANGELOG gate" "$MSG"
+  fi
+fi
+
+# --- KNOWN_COMMANDS ↔ cli.md sync (BL-98) -----------------------------------
+# When engine/cli.js or docs/reference/cli.md changes, every command listed in
+# the KNOWN_COMMANDS const array must have a matching `### <name>` heading in
+# the CLI reference. Catches the case where a new command ships in code
+# without a docs entry. Uses staged blobs (`:path`) so the check matches what
+# is about to be committed, not the working tree.
+CLI_JS_STAGED=$(echo "$STAGED" | grep -E '^engine/cli\.js$' || true)
+CLI_MD_STAGED=$(echo "$STAGED" | grep -E '^docs/reference/cli\.md$' || true)
+if [ -n "$CLI_JS_STAGED" ] || [ -n "$CLI_MD_STAGED" ]; then
+  # Read whichever side of the pair is in the index (if staged) or fall back
+  # to HEAD. Both files exist, so :path resolves either way after the commit.
+  CLI_JS_CONTENT=$(git show :engine/cli.js 2>/dev/null || git show HEAD:engine/cli.js 2>/dev/null || true)
+  CLI_MD_CONTENT=$(git show :docs/reference/cli.md 2>/dev/null || git show HEAD:docs/reference/cli.md 2>/dev/null || true)
+
+  # Extract command strings from the KNOWN_COMMANDS = [ ... ]; block.
+  KNOWN_LIST=$(printf '%s\n' "$CLI_JS_CONTENT" \
+    | awk '/const KNOWN_COMMANDS = \[/{flag=1; next} flag && /^\];/{flag=0} flag' \
+    | grep -oE '"[a-z][a-z0-9_-]*"' \
+    | tr -d '"' \
+    | sort -u)
+
+  # Extract `### name` heading slugs (first token after ###).
+  DOC_LIST=$(printf '%s\n' "$CLI_MD_CONTENT" \
+    | grep -E '^### ' \
+    | awk '{print $2}' \
+    | sort -u)
+
+  MISSING=""
+  for cmd in $KNOWN_LIST; do
+    if ! printf '%s\n' "$DOC_LIST" | grep -qE "^${cmd}$"; then
+      MISSING="$MISSING $cmd"
+    fi
+  done
+
+  if [ -n "$MISSING" ]; then
+    MSG="KNOWN_COMMANDS in engine/cli.js has commands without a docs entry."
+    MSG="$MSG"$'\n'"  missing '### <name>' heading in docs/reference/cli.md for:$MISSING"
+    MSG="$MSG"$'\n'"  add a section per command (see existing entries for shape)."
+    report "CLI docs sync gate" "$MSG"
+  fi
+fi
+
+# --- CLI args ↔ cli.md sync (BL-104 / RFC 041) ------------------------------
+# Per-command flag-presence + literal-enum drift between engine/cli.js,
+# engine/commands/*.js, and docs/reference/cli.md. BL-98 covers command-name
+# granularity; this gate covers flag + enum granularity, the gap BL-80
+# leaked through. The gate scopes itself by re-checking the staged file
+# list — if no watched file is staged, it exits 0 immediately. Honors
+# CLI_ARGS_GATE_MODE=warn during the warn-only migration window (RFC 041
+# §7); the default flips to `block` in an immediate follow-up commit.
+CLI_ARGS_RC=0
+node scripts/check_cli_args_sync.js --pre-commit
+CLI_ARGS_RC=$?
+case "$CLI_ARGS_RC" in
+  0)
+    # pass / nothing watched.
+    ;;
+  2)
+    # heuristic warning only — do not block.
+    ;;
+  *)
+    # exit 1 (drift) or any other non-zero — fail the commit. The script
+    # itself prints the structured message + bypass hint above.
+    FAIL=1
+    ;;
+esac
+
 if [ "$FAIL" -ne 0 ]; then
   echo ""
   echo "-------------------------------------------------------"

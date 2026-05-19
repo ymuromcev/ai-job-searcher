@@ -46,7 +46,9 @@ Three invariants follow:
 |---|---|---|
 | `profile_loader.js` | Single read point for `profiles/<id>/`. Validates id, loads `profile.json`, normalizes `filter_rules.json` (flat shape; synthesizes legacy `title_requirelist` from RFC 030 `role_targets.tracks[].patterns` when present), reads namespaced secrets from `.env`. | every `engine/commands/*` |
 | `paths.js` | Resolves canonical paths inside a profile root. | loader, commands, generators |
-| `filter.js` | Title (positive requirelist + negative blocklist) / company / location matcher. Case-insensitive substring with word boundaries; US-marker safeguard skips location blocklist when "United States" is asserted. Positive title gate is sourced from `role_targets` via the loader shim (RFC 030). | `commands/scan.js`, `commands/validate.js`, `email_filters.js` |
+| `evaluate_job.js` | **Canonical filter pipeline** (RFC 040). Single pure `evaluateJob({ job, profile, appState, context }) → { decision, skipReason, matched }` that implements `company_blocklist` → `title_requirelist` → `title_blocklist` → `company_cap` → `location_blocklist` → `geo`. Context matrix selects rule subset: `scan` / `prepare` run all; `email` runs only `company_blocklist` + `title_blocklist`. Word-boundary canonical for `title_blocklist` across every context; BL-24 `hasUsMarker` suppresses `location_blocklist` when any element is US-hireable. | `filter.js` shim, `commands/prepare.js` shim, `email_filters.js` shim |
+| `filter.js` | Title (positive requirelist + negative blocklist) / company / location matcher. **Phase 1 shim layer over `evaluate_job.js`** (RFC 040 / BL-92) — public API (`matchBlocklists` / `checkJob` / `filterJobs`) is preserved bit-identical for one release via `jobFromAdapterScan` + `legacyReasonForMatchBlocklists`. Positive title gate is sourced from `role_targets` via the loader shim (RFC 030). | `commands/scan.js`, `commands/validate.js`, `email_filters.js` |
+| `filter_helpers.js` | Shared word-boundary primitives (`makeBoundaryRegex`, `findTitleBlocklistHit`) used by `evaluate_job.js`, `filter.js`, and `email_filters.js`. Standalone module to avoid a runtime cycle between `filter.js` (shim) and `evaluate_job.js` (canonical). | `evaluate_job.js`, `filter.js`, `email_filters.js` |
 | `dedup.js` | Cross-profile dedup against `data/jobs.tsv` and per-profile `applications.tsv`. Keys on `(ats_source, job_id)`. | `commands/scan.js` |
 | `validator.js` | URL liveness, company cap, TSV hygiene checks. Powers `validate`. | `commands/validate.js` |
 | `applications_tsv.js` | v3 schema reader/writer (auto-upgrades v1 → v2 → v3 on read; always writes v3). `appendNew` defaults `status="Inbox"` (TSV-only staging, [RFC 014](../../rfc/014-status-split-new-vs-toapply.md)). | every command that touches TSV |
@@ -234,9 +236,9 @@ The Notion DB has eight statuses; the TSV has nine. The extra status
 is `Inbox`, used as the default for fresh `scan` rows that have not
 been triaged yet. Notion never sees `Inbox`. The transition `Inbox →
 To Apply` and the matching Notion page creation happen atomically in
-`prepare --phase commit decision=to_apply`, so a row is either
-`Inbox` (no Notion page) or `To Apply` (with a `notion_page_id`) —
-no race window. Source: [RFC 014](../../rfc/014-status-split-new-vs-toapply.md).
+`prepare --phase commit`, so a row is either `Inbox` (no Notion page)
+or `To Apply` (with a `notion_page_id`) — no race window. Source:
+[RFC 014](../../rfc/014-status-split-new-vs-toapply.md).
 
 ### Why `check` is two-phase
 

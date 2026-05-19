@@ -174,6 +174,88 @@ const TALENTBREW_DESC_RE =
 const TALENTBREW_DESC_FALLBACK_RE =
   /<div[^>]*class="[^"]*\bats-description\b[^"]*"[^>]*>([\s\S]*?)(?:<\/(?:section|main|body)>|<(?:footer|nav)\b)/i;
 
+// Workable per-job JSON. The widget listing endpoint
+// (api/v1/widget/accounts/{slug}) does NOT include per-job descriptions,
+// and the per-job widget route 404s. The non-widget v1 route
+//   https://apply.workable.com/api/v1/accounts/{slug}/jobs/{shortcode}
+// is public, unauth'd, and returns { title, description, requirements,
+// benefits, type, workplace, location, locations, ... } where
+// description/requirements/benefits are HTML strings.
+//
+// We build the API URL from job.slug + job.jobId (already validated by
+// the discovery adapter — assertJob enforces alphanumeric shape) rather
+// than parsing job.url, so a tampered TSV row can't redirect the fetch
+// to an arbitrary host.
+const WORKABLE_API_BASE = "https://apply.workable.com/api/v1/accounts";
+// Workable shortcodes seen in the wild are uppercase alphanumeric (e.g.
+// "922D2C6549"); allow underscore/dash for forward-compat. The slug
+// shape mirrors what `companies.tsv` accepts (lowercase, dot, dash).
+const WORKABLE_JOB_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const WORKABLE_SLUG_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+
+function buildWorkableApiUrl(job) {
+  if (!job || typeof job.slug !== "string" || typeof job.jobId !== "string") return null;
+  if (!WORKABLE_SLUG_RE.test(job.slug)) return null;
+  if (!WORKABLE_JOB_ID_RE.test(job.jobId)) return null;
+  return `${WORKABLE_API_BASE}/${encodeURIComponent(job.slug)}/jobs/${encodeURIComponent(job.jobId)}`;
+}
+
+function formatWorkable(data, job) {
+  if (!data || typeof data !== "object") return null;
+  const descHtml = typeof data.description === "string" ? data.description : "";
+  const reqHtml = typeof data.requirements === "string" ? data.requirements : "";
+  const benHtml = typeof data.benefits === "string" ? data.benefits : "";
+  // Body = description + requirements + benefits joined. Description alone is
+  // usually enough; requirements is where the "must have" bullets live and
+  // matters for extractRequirements downstream. If all three are empty,
+  // return null so fetchJd surfaces not_found instead of caching a
+  // header-only stub.
+  const bodyParts = [];
+  if (descHtml) bodyParts.push(stripHtml(descHtml));
+  if (reqHtml) bodyParts.push(`\nRequirements:\n${stripHtml(reqHtml)}`);
+  if (benHtml) bodyParts.push(`\nBenefits:\n${stripHtml(benHtml)}`);
+  const body = bodyParts.join("\n").trim();
+  if (!body) return null;
+
+  const title = (typeof data.title === "string" && data.title) || (job && job.title) || "";
+  // Workable location is an object {country, countryCode, city, region};
+  // join non-empty parts.
+  let location = "";
+  const loc = data.location && typeof data.location === "object" ? data.location : null;
+  if (loc) {
+    location = [loc.city, loc.region, loc.country]
+      .filter((s) => typeof s === "string" && s.trim().length > 0)
+      .join(", ");
+  }
+  // Schedule: workplace ("remote"/"hybrid"/"onsite") + type ("full"/"part"/...)
+  // Mirror Workday/Taleo "SCHEDULE: Full time" line so extractSchedule can
+  // pick it up without parsing the body.
+  const TYPE_MAP = {
+    full: "Full-time",
+    part: "Part-time",
+    contract: "Contract",
+    temporary: "Temporary",
+    intern: "Internship",
+    internship: "Internship",
+  };
+  const typeRaw = typeof data.type === "string" ? data.type.toLowerCase() : "";
+  const typeLabel = TYPE_MAP[typeRaw] || (typeRaw ? typeRaw : "");
+  const workplaceRaw = typeof data.workplace === "string" ? data.workplace.toLowerCase() : "";
+  const workplaceLabel = workplaceRaw
+    ? workplaceRaw.charAt(0).toUpperCase() + workplaceRaw.slice(1)
+    : "";
+  const scheduleParts = [typeLabel, workplaceLabel].filter(Boolean);
+  const scheduleLine = scheduleParts.join(" · ");
+
+  const parts = [`TITLE: ${title}`];
+  if (location) parts.push(`LOCATION: ${location}`);
+  if (scheduleLine) parts.push(`SCHEDULE: ${scheduleLine}`);
+  if (data.code) parts.push(`REQ ID: ${data.code}`);
+  parts.push("");
+  parts.push(body);
+  return parts.join("\n").trim();
+}
+
 // Taleo (TalentBrew) JD page. No public JSON API — scrape HTML. Pages
 // reliably carry a `<script type="application/ld+json">` block with
 // schema.org JobPosting metadata, plus a `<div class="ats-description">`
@@ -324,6 +406,35 @@ function formatIcims(html, job) {
   return parts.join("\n").trim();
 }
 
+// --- Source registry --------------------------------------------------------
+//
+// SUPPORTED — discovery sources for which jd_cache has a fetcher.
+// JD_UNSUPPORTED — discovery sources explicitly opted out of per-job
+// fetching (typically feed aggregators that already include the JD body
+// in their search result). Each exemption MUST carry a reason — the
+// adapter↔jd_cache coverage test (engine/core/jd_cache.test.js) will fail
+// if a new adapter source appears in neither set.
+const SUPPORTED = new Set(["greenhouse", "lever", "workday", "icims", "taleo", "workable"]);
+
+const JD_UNSUPPORTED = new Map([
+  // Feed / aggregator adapters — the search result the adapter produces
+  // already carries everything the prepare stage needs; per-job fetching
+  // is a no-op for the pipeline's downstream consumers.
+  ["adzuna", "feed aggregator — listing stores description snippet in rawExtra"],
+  ["remoteok", "feed aggregator — public JSON includes JD body in the search result"],
+  ["the_muse", "feed aggregator — listing API returns JD contents alongside metadata"],
+  ["indeed", "feed aggregator — manual ingest only, no public per-job route"],
+  ["usajobs", "feed aggregator — USAJOBS search API returns the JD body inline"],
+  ["jobsyn", "feed aggregator — Jobs Syndication search returns JD body inline"],
+  ["calcareers", "scraped HTML listing — adapter already pulls the per-job page during discovery"],
+  // ATS adapters with documented gaps (no JD fetcher yet — tracked as
+  // follow-ups). Listed here so the coverage test stays green; remove
+  // an entry once the matching fetcher lands.
+  ["ashby", "ATS — JD fetcher not yet implemented (gap audited 2026-05-18)"],
+  ["smartrecruiters", "ATS — JD fetcher not yet implemented (gap audited 2026-05-18)"],
+  ["oracle_cloud", "ATS — JD fetcher not yet implemented (gap audited 2026-05-18)"],
+]);
+
 // --- Default I/O deps --------------------------------------------------------
 
 const DEFAULT_DEPS = {
@@ -352,7 +463,6 @@ async function fetchJd(job, cacheDir, deps = {}) {
 
   const { source, slug, jobId } = job;
 
-  const SUPPORTED = new Set(["greenhouse", "lever", "workday", "icims", "taleo"]);
   if (!SUPPORTED.has(source)) {
     return { key, status: "unsupported" };
   }
@@ -396,6 +506,20 @@ async function fetchJd(job, cacheDir, deps = {}) {
       }
       const capped = html.length > MAX_HTML_BYTES ? html.slice(0, MAX_HTML_BYTES) : html;
       text = formatIcims(capped, job);
+    } else if (source === "workable") {
+      // Workable per-job JSON. URL is rebuilt from job.slug + job.jobId
+      // (both validated by buildWorkableApiUrl) so a tampered url field
+      // cannot redirect the fetch elsewhere.
+      const url = buildWorkableApiUrl(job);
+      if (!url) return { key, status: "not_found" };
+      const res = await d.fetchFn(url, {
+        timeoutMs: 15000,
+        retries: 1,
+        headers: { "User-Agent": HTML_UA },
+      });
+      if (!res.ok) return { key, status: "not_found" };
+      const data = await res.json();
+      text = formatWorkable(data, job);
     } else if (source === "taleo") {
       // SSRF guard: only fetch from the explicit Taleo host allow-list. The
       // adapter already wrote `job.url` with a vetted host, but we re-check
@@ -456,13 +580,17 @@ module.exports = {
   fetchJd,
   fetchAll,
   stripHtml,
+  SUPPORTED,
+  JD_UNSUPPORTED,
   // exported for tests / debugging
   formatGreenhouse,
   formatLever,
   formatWorkday,
   formatIcims,
   formatTaleo,
+  formatWorkable,
   buildWorkdayApiUrl,
+  buildWorkableApiUrl,
   extractJsonLdJob,
   isAllowedTaleoHost,
 };

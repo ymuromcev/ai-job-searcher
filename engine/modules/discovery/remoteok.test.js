@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const { assertJob } = require("./_types.js");
 const adapter = require("./remoteok.js");
+const { normalizeFilterRules } = require("../../core/profile_loader.js");
 
 function makeFetch(body, status = 200) {
   return async () => ({
@@ -227,6 +228,85 @@ test("discover stays back-compat (DEFAULT_PM_RE) when no filterRules in ctx", as
   assert.ok(ids.includes("111111"));
   assert.ok(ids.includes("222222"));
   assert.ok(!ids.includes("444444")); // SWE excluded by default PM regex
+});
+
+// --- BL-86: flat title_requirelist shape via profile_loader -----------------
+
+test("buildTitleFilter reads flat title_requirelist shape (post-normalize)", () => {
+  // Realistic shape emitted by profile_loader.normalizeFilterRules — flat
+  // array of {pattern, reason}, NOT wrapped in { patterns: [...] }.
+  const normalized = normalizeFilterRules({
+    title_requirelist: [
+      { pattern: "designer", reason: "design track" },
+      { pattern: "ux", reason: "design track" },
+    ],
+  });
+  const re = adapter.buildTitleFilter(normalized);
+  assert.notEqual(re, adapter.DEFAULT_PM_RE, "should not fall back to DEFAULT_PM_RE");
+  assert.ok(re.test("Senior Product Designer"));
+  assert.ok(re.test("UX Researcher"));
+  assert.ok(!re.test("Product Manager"), "non-design role must not slip through");
+});
+
+test("discover honors non-PM role_targets via realistic profile_loader output", async () => {
+  // Designer-track profile, synthesized from role_targets.tracks[].patterns
+  // by normalizeFilterRules (title_requirelist absent → falls through to the
+  // synthesis branch at profile_loader.js:269-272).
+  const normalized = normalizeFilterRules({
+    role_targets: {
+      tracks: [
+        {
+          id: "design",
+          name: "Product Designer",
+          patterns: [{ pattern: "designer" }, { pattern: "design lead" }],
+          fit_treatment: "primary",
+        },
+      ],
+    },
+  });
+  // Sanity-check the shape we expect — flat array, not wrapped.
+  assert.ok(Array.isArray(normalized.title_requirelist));
+  assert.equal(normalized.title_requirelist[0].pattern, "designer");
+
+  const feed = [
+    { legal: "true" },
+    {
+      id: 10,
+      company: "FigmaCo",
+      position: "Senior Product Designer",
+      location: "Remote - USA",
+      url: "https://remoteok.com/jobs/10",
+      slug: "figmaco-designer",
+      date: null,
+      tags: [],
+    },
+    {
+      id: 11,
+      company: "DesignCo",
+      position: "Design Lead",
+      location: "Worldwide",
+      url: "https://remoteok.com/jobs/11",
+      slug: "designco-lead",
+      date: null,
+      tags: [],
+    },
+    {
+      id: 12,
+      company: "PMCo",
+      position: "Senior Product Manager",
+      location: "Remote",
+      url: "https://remoteok.com/jobs/12",
+      slug: "pmco-pm",
+      date: null,
+      tags: [],
+    },
+  ];
+  const jobs = await adapter.discover([], {
+    fetchFn: makeFetch(feed),
+    filterRules: normalized,
+  });
+  const ids = jobs.map((j) => j.jobId).sort();
+  assert.deepEqual(ids, ["10", "11"], "designer + design lead pass; PM rejected");
 });
 
 test("discover skips meta block (no id)", async () => {

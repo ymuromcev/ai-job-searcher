@@ -17,7 +17,7 @@ function row(overrides = {}) {
     companyName: "Affirm",
     title: "PM",
     url: "https://example.com/jobs/abc",
-    location: "",
+    locations: [],
     status: "Inbox",
     notion_page_id: "",
     resume_ver: "",
@@ -290,20 +290,20 @@ test("pickWinner: stable for identical rows (returns first)", () => {
   assert.strictEqual(pickWinner([a, b]), a);
 });
 
-test("mergeLosersInto: lifts location/cl_path from losers", () => {
+test("mergeLosersInto: lifts locations/cl_path from losers", () => {
   const winner = row({
     key: "lever:abc",
     notion_page_id: "page-1",
-    location: "",
+    locations: [],
     cl_path: "",
   });
   const loser = row({
     key: "lever:lever:abc",
-    location: "Remote",
+    locations: ["Remote", "United States"],
     cl_path: "/cl/foo.pdf",
   });
   const merged = mergeLosersInto(winner, [loser]);
-  assert.equal(merged.location, "Remote");
+  assert.deepEqual(merged.locations, ["Remote", "United States"]);
   assert.equal(merged.cl_path, "/cl/foo.pdf");
   assert.equal(merged.notion_page_id, "page-1");
 });
