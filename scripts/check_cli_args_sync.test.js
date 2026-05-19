@@ -519,10 +519,9 @@ test("heuristics: valid-list negative — no `valid:` prefix not captured", () =
   assert.strictEqual(found, false);
 });
 
-test("migration default: drift exits 0 with CLI_ARGS_GATE_MODE unset (warn-mode default)", () => {
-  // RFC 041 §7 ships with `warn` as the default for the first release.
-  // This test is the canary — when the follow-up commit flips the default
-  // to `block`, this test will fail and the developer will update it.
+test("migration default: drift exits 1 with CLI_ARGS_GATE_MODE unset (block-mode default)", () => {
+  // RFC 041 §7: default flipped from `warn` → `block` on 2026-05-19 in the
+  // BL-104 close commit. This test pins the new default.
   const root = mkRoot();
   writeCliJs(root, ["prepare"], ["prepare flags:\n  --mode <fresh|topup>"]);
   writeCommandFile(
@@ -553,8 +552,7 @@ test("migration default: drift exits 0 with CLI_ARGS_GATE_MODE unset (warn-mode 
     (s) => err.write(s),
     (s) => out.write(s)
   );
-  assert.strictEqual(code, 0, "warn-mode default should exit 0 despite drift");
-  assert.match(err.lines.join("\n"), /CLI_ARGS_GATE_MODE=warn \(default/);
+  assert.strictEqual(code, 1, "block-mode default should exit 1 on drift");
   assert.match(err.lines.join("\n"), /drift detected/);
 });
 

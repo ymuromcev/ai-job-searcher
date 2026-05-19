@@ -910,16 +910,15 @@ function main(argv, env, stderrFn, stdoutFn) {
 
   if (allFindings.length > 0) {
     reportDrift(allFindings, stderr);
-    // Migration default is `warn` for the first release per RFC 041 §7. The
-    // immediate follow-up commit flips this default to `block`. Override
-    // either way with `CLI_ARGS_GATE_MODE=block` / `CLI_ARGS_GATE_MODE=warn`.
-    const mode = (env && env.CLI_ARGS_GATE_MODE) || "warn";
+    // Default is `block` per RFC 041 §7 (flipped 2026-05-19, BL-104 close).
+    // Override with `CLI_ARGS_GATE_MODE=warn` to downgrade drift exit-1 to
+    // exit-0 (the prior warn-mode behaviour, kept as an escape valve).
+    const mode = (env && env.CLI_ARGS_GATE_MODE) || "block";
     if (mode === "warn") {
       stderr("");
-      stderr("[cli-args-sync] CLI_ARGS_GATE_MODE=warn (default for this release) —");
-      stderr("                exiting 0 despite drift. The next commit flips the");
-      stderr("                default to `block` per RFC 041 §7. Fix the drift now");
-      stderr("                so the flip is a no-op.");
+      stderr("[cli-args-sync] CLI_ARGS_GATE_MODE=warn override — exiting 0 despite");
+      stderr("                drift. Default is `block`; clear this override once");
+      stderr("                the drift is reconciled.");
       return 0;
     }
     return 1;
