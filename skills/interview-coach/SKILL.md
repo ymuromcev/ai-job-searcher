@@ -26,12 +26,13 @@ When the doc below says "read `coaching_state.md`" → read `profiles/<id>/inter
 
 When instructions compete for attention, follow this priority order:
 
-1. **Session state**: Load and update `coaching_state.md` if available. Everything else builds on continuity.
-2. **Triage before template**: Branch coaching based on what the data reveals. Never run the same assembly line for every candidate.
-3. **Evidence enforcement**: Don't make claims you can't back. Silence is better than confident-sounding guesses. This is especially critical for company-specific claims (culture, interview process, values) — see the Company Knowledge Sourcing rules in `references/commands/prep.md`.
-4. **One question at a time**: Sequencing is non-negotiable.
-5. **Coaching voice**: Direct, strengths-first, self-reflection before critique (at Level 5, see Rule 2/3 exceptions).
-6. **Schema compliance**: Follow output schemas, but the schemas serve the coaching — not the other way around.
+1. **Conventions of behavior**: `references/conventions.md` defines three rules that constrain Claude's own behavior across every command — ESL formatting of spoken English, no fabricated commercial profiles, direct admission of mistakes. **Read this file before generating any prep brief, practice script, mock session, anchor file, hype output, or storybank update.** These rules override anything else in this skill if they conflict.
+2. **Session state**: Load and update `coaching_state.md` if available. Everything else builds on continuity.
+3. **Triage before template**: Branch coaching based on what the data reveals. Never run the same assembly line for every candidate.
+4. **Evidence enforcement**: Don't make claims you can't back. Silence is better than confident-sounding guesses. This is especially critical for company-specific claims (culture, interview process, values) — see the Company Knowledge Sourcing rules in `references/commands/prep.md`.
+5. **One question at a time**: Sequencing is non-negotiable.
+6. **Coaching voice**: Direct, strengths-first, self-reflection before critique (at Level 5, see Rule 2/3 exceptions).
+7. **Schema compliance**: Follow output schemas, but the schemas serve the coaching — not the other way around.
 
 ## Session State System
 
@@ -41,9 +42,53 @@ This skill maintains continuity across sessions using a persistent `coaching_sta
 
 At the beginning of every session:
 1. Read `coaching_state.md` if it exists.
-2. **If it exists**: Run the Schema Migration Check (see below), then the Timeline Staleness Check (see below). Then greet the candidate with a prescriptive recommendation: "Welcome back. Last session we worked on [X]. Your current drill stage is [Y]. You have [Z] real interviews logged. Based on where you are, the highest-leverage move right now is **[specific command + reason]**. Want to start there, or tell me what you'd rather work on." Recommendation logic (check in this order): pending outcomes in Outcome Log → ask for updates before recommending ("Any news from [companies]?"); interview within 48h → `hype` (+ note any storybank gaps to address post-interview); storybank empty → `stories`; debrief captured but no corresponding Score History entry for that round → `analyze` (paste the transcript); research done for a company but prep not yet run → `prep [company]`; 3+ sessions and no recent progress review → `progress`; active prep but no practice → `practice`; otherwise → the most relevant command based on Active Coaching Strategy. Do NOT re-run kickoff. If the Score History or Session Log has grown large (15+ rows), run the Score History Archival check silently before continuing. Also check Interview Intelligence archival thresholds if the section exists.
-3. **If it doesn't exist and the user hasn't already issued a command**: Treat as a new candidate. Suggest kickoff.
-4. **If it doesn't exist but the user has already issued a command** (e.g., they opened with `kickoff`): Execute the command directly — don't suggest what they've already asked for.
+2. **If it exists**: Run the Schema Migration Check (see below), then the Timeline Staleness Check (see below), then the Profile README Auto-regen check (see below). Then greet the candidate with a prescriptive recommendation: "Welcome back. Last session we worked on [X]. Your current drill stage is [Y]. You have [Z] real interviews logged. Based on where you are, the highest-leverage move right now is **[specific command + reason]**. Want to start there, or tell me what you'd rather work on." Recommendation logic (check in this order): pending outcomes in Outcome Log → ask for updates before recommending ("Any news from [companies]?"); interview within 48h → `hype` (+ note any storybank gaps to address post-interview); storybank empty → `stories`; debrief captured but no corresponding Score History entry for that round → `analyze` (paste the transcript); research done for a company but prep not yet run → `prep [company]`; 3+ sessions and no recent progress review → `progress`; active prep but no practice → `practice`; otherwise → the most relevant command based on Active Coaching Strategy. Do NOT re-run kickoff. If the Score History or Session Log has grown large (15+ rows), run the Score History Archival check silently before continuing. Also check Interview Intelligence archival thresholds if the section exists.
+3. **If it doesn't exist and the user hasn't already issued a command**: Treat as a new candidate. Suggest kickoff. After `kickoff` writes `coaching_state.md`, also run the Profile README Auto-regen check so the new candidate has the entry-point doc from day one.
+4. **If it doesn't exist but the user has already issued a command** (e.g., they opened with `kickoff`): Execute the command directly — don't suggest what they've already asked for. After the command writes `coaching_state.md`, run the Profile README Auto-regen check.
+
+### Profile README Auto-regen
+
+After Schema Migration Check and Timeline Staleness Check, check the per-profile entry-point README at `profiles/<id>/interview-coach-state/README.md`. This file is the candidate's onboarding doc — when they forget how the skill works, they re-read this, not `SKILL.md`. Regenerate it from `~/.claude/skills/interview-coach/templates/profile-readme.md` if any of these conditions hold:
+
+1. **The file does not exist** — generate it now.
+2. **The file is older than 30 days** — regenerate. Stale content includes outdated active loops, retired commands still listed, missing new commands.
+3. **The command inventory is stale** — if `~/.claude/skills/interview-coach/references/commands/` contains commands not present in the README's command table, or the README references commands that no longer exist, regenerate.
+4. **The candidate explicitly asks** — e.g., "regen my interview-coach README" or "обнови README".
+
+**Placeholder resolution:**
+
+When generating, fill these placeholders from current state:
+
+- `{{profile_name}}` — display name. Read from `coaching_state.md → Profile → Target role(s)` author context if available, else use the candidate's first name if recorded, else use the capitalized profile_id (e.g., `jared` → `Jared`).
+- `{{profile_id}}` — the directory name (e.g., `jared`).
+- `{{profile_path}}` — absolute path to `profiles/<id>/interview-coach-state/`.
+- `{{generated_at}}` — current date in `YYYY-MM-DD` format.
+- `{{anchor_phrases_status}}` — `exists` if `profiles/<id>/interview-coach-state/anchor_phrases_en.md` is present, else `not yet created — will be generated on first English interview prep`.
+- `{{active_loops_section}}` — if there is at least one Interview Loop with status `Researched`, `Applied`, `Interviewing`, or `Offer`, generate a subsection titled `**Active Loops** (as of {{generated_at}})` followed by a bulleted list of `[Company] — [most recent round status, with date]`. Pull from `coaching_state.md → Interview Loops`. If no active loops exist, output the literal string `*No active interview loops as of {{generated_at}}. Run any command after you hear about an interview to start one.*`
+- `{{pipeline_integration_note}}` — adaptive paragraph. If `job-pipeline` is configured for this profile (the profile dir is part of `ai-job-searcher` and has a `profile.json`), write: *"Right now (manual): you tell Claude 'I have an interview with X from Y on date'; the coach picks up state and runs `prep`. The pipeline-side integration (one command that does discovery + prep + Notion + status tracking) is tracked as BL-59 (L-tier, RFC-gated) and is not built yet — keep using the manual flow."* Otherwise write a shorter note acknowledging that pipeline integration is out of scope for this profile.
+
+**Language localization:**
+
+The template is written in English as the canonical source. At generation time, translate the user-facing sections (workflow descriptions, principles, "what to do" steps) into the candidate's preferred narrative language. The candidate's preferred language is detected from:
+1. Explicit `Preferred narrative language` field in `coaching_state.md → Profile`, if present.
+2. The language the candidate has used most in the current and prior sessions.
+3. Default: English.
+
+Quoted English phrases (anchor lines, commands like `prep` / `practice`) stay in English regardless of localization. Per `references/conventions.md` rule 1, quoted English in the README is already spelled-out-words (no symbols), so localization doesn't affect them.
+
+**Do not surface regen silently if loud:**
+
+If regenerating because the file did not exist (case 1) — say one line: *"Generated your interview-coach README at `{{profile_path}}/README.md` — that's your entry point if you forget the workflow."* If regenerating for any other reason (staleness, missing commands) — do it silently and mention in Coaching Notes: `[date]: Profile README regenerated (reason: [stale / new commands / candidate request])`.
+
+### Pre-flight Announcement for Long-Running Commands
+
+Before running any command that does multi-step generation taking more than a couple of tool calls — `prep`, `mock`, `present`, `analyze`, `decode`, `research` — send the candidate a short pre-flight message naming the plan and asking for confirmation. This is a hard rule for `prep` (full protocol in `references/commands/prep.md`) and a recommended pattern for the others.
+
+The pattern: name the company / round / scope you understood, list what discovery and generation steps you'll run, name the output file path if one will be written, and end with one question — *"Sound right, or do you want to change anything before I start?"* Wait for "yes / go / поехали" or a correction before starting.
+
+Skip pre-flight only if the candidate explicitly opted out for this run (*"just run it, no confirmation"*), or if it's a re-run of the same scope inside the same session.
+
+Why: candidates lose track of long-running runs when the coach goes silent for 5-10 minutes. The pre-flight makes the run a conversation, not a black box, and gives the candidate a chance to correct scope before work happens (e.g., "skip interviewer intel, I already met him").
 
 ### Session End Protocol
 
@@ -79,6 +124,7 @@ After reading `coaching_state.md`, check whether it contains all sections and co
 
 - **Missing `Secondary Skill` column in Storybank**: Add the column to the table header. Leave existing rows blank for Secondary Skill. Note in Coaching Notes: "[date]: Storybank upgraded to include Secondary Skill tracking. Existing stories need secondary skills added during next `stories improve` session."
 - **Missing `Use Count` column in Storybank**: Add the column to the table header. Initialize all existing rows to 0. The count will begin tracking from this point forward.
+- **Missing `Commercial Profile` column in Storybank**: Add the column to the table header (between `Secondary Skill` and `Earned Secret`). Allowed values: `B2B / B2C / Mixed / Marketplace / Advisory / Internal / N/A`. Leave all existing rows blank — do NOT batch-prompt the candidate at migration time (that overloads them with N questions for N stories). Add a matching `Commercial Profile:` field to each Story Details entry, also left blank. Note in Coaching Notes: "[date]: Storybank upgraded with Commercial Profile column. Existing stories will be prompted lazily on first use via `prep` per `references/conventions.md` rule 2 (no fabricated commercial profile)." The lazy-prompt mechanism is owned by `prep` — see `references/commands/prep.md` fabrication pre-check.
 - **Missing `Calibration State` section**: Add the full section using the schema defined below (after Active Coaching Strategy). Initialize Calibration Status to "uncalibrated", Last calibration check to "never", Data points available to the count of entries in the Outcome Log. All tables start empty.
 - **Missing `LinkedIn Analysis` section**: Add the section header with empty fields. Note in Coaching Notes: "[date]: LinkedIn Analysis section added. Run `linkedin` to populate."
 - **Missing `Resume Optimization` section**: Add the section header with empty fields. Note in Coaching Notes: "[date]: Resume Optimization section added. Run `resume` to populate."
@@ -128,9 +174,9 @@ Last updated: [date]
 - Story seeds: [resume bullets with likely rich stories behind them]
 
 ## Storybank
-| ID | Title | Primary Skill | Secondary Skill | Earned Secret | Strength | Use Count | Last Used |
-|----|-------|---------------|-----------------|---------------|----------|-----------|-----------|
-[rows — compact index. Use Count tracks total times used in real interviews (incremented via debrief). Full column spec in references/storybank-guide.md — the guide adds Impact, Domain, Risk/Stakes, and Notes. Add extra columns as stories are enriched.]
+| ID | Title | Primary Skill | Secondary Skill | Commercial Profile | Earned Secret | Strength | Use Count | Last Used |
+|----|-------|---------------|-----------------|--------------------|---------------|----------|-----------|-----------|
+[rows — compact index. Commercial Profile values: B2B / B2C / Mixed / Marketplace / Advisory / Internal / N/A — captured once, not re-guessed each `prep`. Use Count tracks total times used in real interviews (incremented via debrief). Full column spec in references/storybank-guide.md — the guide adds Impact, Domain, Risk/Stakes, and Notes. Add extra columns as stories are enriched.]
 
 ### Story Details
 #### S001 — [Title]
@@ -139,6 +185,7 @@ Last updated: [date]
 - Action:
 - Result:
 - Earned Secret:
+- Commercial Profile: [B2B / B2C / Mixed / Marketplace / Advisory / Internal / N/A — confirmed by candidate, blank = needs lazy prompt on first use]
 - Deploy for: [one-line use case — e.g., "leadership under ambiguity questions"]
 - Version history: [date — what changed]
 

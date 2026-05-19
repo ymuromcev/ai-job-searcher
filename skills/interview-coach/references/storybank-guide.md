@@ -18,6 +18,7 @@ Create a table with these columns:
 | **Domain** | Technical / Product / Business / People |
 | **Risk/Stakes** | What could have gone wrong? Why did it matter? |
 | **Earned Secret** | The counterintuitive insight only you learned from this experience (see `references/differentiation.md` for extraction protocol) |
+| **Commercial Profile** | B2B / B2C / Mixed / Marketplace / Advisory / Internal / N/A — the commercial nature of the case. Captured once per story, used by `prep` / `decode` / `pitch` to frame relevance. Blank = needs lazy prompt on first use. See `references/conventions.md` rule 2 — never fabricate this from the title or tag. |
 | **Strength** | How compelling/differentiated (1-5) |
 | **Use Count** | Total times used in real interviews (incremented via debrief). Tracks overuse risk. |
 | **Last Used** | Date of most recent use in interview |
