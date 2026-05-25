@@ -60,9 +60,12 @@ function compressEarlierRoles(roles) {
     return roles.slice(0, 3);
   }
   const kept = roles.slice(0, 2);
-  const collapsed = roles.slice(2);
-  const earliestDates = collapsed[collapsed.length - 1] && collapsed[collapsed.length - 1].dates;
-  const latestDates = collapsed[0] && collapsed[0].dates;
+  // Subagent emits reverse-chronological (newest first). For the "Earlier PM
+  // roles" prose paragraph, narrative reads better oldest→newest so the
+  // weakest/shortest gig isn't the lede. Reverse the collapsed slice.
+  const collapsed = roles.slice(2).slice().reverse();
+  const earliestDates = collapsed[0] && collapsed[0].dates;
+  const latestDates = collapsed[collapsed.length - 1] && collapsed[collapsed.length - 1].dates;
   const dateSpan = composeDateSpan(earliestDates, latestDates);
   const prose = collapsed
     .map((r) => {
@@ -98,34 +101,59 @@ function capRoleBullets(roles, maxBullets = 4) {
   });
 }
 
+// Strip a github/gitlab repo URL down to the user/org root, so the group
+// header for multi-project block doesn't link to one specific repo.
+// e.g. "github.com/foo/bar"  →  "github.com/foo"
+//      "https://gitlab.com/x/y/z" → "gitlab.com/x"
+//      "personal.dev" → "personal.dev" (no path → unchanged)
+function genericProjectUrl(url) {
+  if (!url || typeof url !== "string") return "";
+  const stripped = url.replace(/^https?:\/\//, "");
+  const parts = stripped.split("/").filter(Boolean);
+  if (parts.length <= 2) return stripped;
+  // host + user/org
+  return `${parts[0]}/${parts[1]}`;
+}
+
 function compressProjects(projects) {
-  if (!Array.isArray(projects) || projects.length <= 1) return projects;
-  const first = projects[0];
-  const rest = projects.slice(1);
-  const restProse = rest
+  if (!Array.isArray(projects) || projects.length === 0) return projects;
+  if (projects.length === 1) return projects;
+  // Match reference layout: single block, all projects in one prose paragraph,
+  // no bullets. Each project appears as "<b>Name</b> — description." separated
+  // by a space, so each project's identity is preserved without text mixing.
+  const prose = projects
     .map((p) => {
       const name = (p.name || "").trim();
       const desc = (p.description || "").trim().replace(/\.+$/, "");
       return `<b>${name}</b>${desc ? ` — ${desc}.` : "."}`;
     })
     .join(" ");
-  const baseDesc = (first.description || "").trim().replace(/\.+$/, "");
+  // Combine project URLs to the common user/org root (e.g. github.com/ymuromcev)
+  // so the group header doesn't appear to link to just one of the projects.
+  const firstUrl = projects.find((p) => p && p.url)?.url || "";
   return [
     {
-      name: first.name || "Personal Projects",
-      dates: first.dates,
-      url: first.url,
-      description: `${baseDesc}.${restProse ? " " + restProse : ""}`,
-      bullets: first.bullets || [],
+      name: "Personal Projects",
+      dates: projects[0].dates || "",
+      url: genericProjectUrl(firstUrl),
+      description: prose,
+      bullets: [],
     },
   ];
 }
 
-function compressForOnePage(data) {
+function compressForOnePage(data, bulletCap = null) {
   if (!data || typeof data !== "object") return data;
   const out = { ...data };
+  // Collapse 3rd+ roles into one "Earlier PM roles" paragraph and merge all
+  // projects into a single prose block — these are the big-lever compressions.
+  // `bulletCap` is opt-in (default: none) so we only drop bullets — and
+  // potentially their mirror phrases — when actually needed to fit one page.
+  // `generateResumePdf` applies caps adaptively on overflow.
   out.sharedExperience = compressEarlierRoles(out.sharedExperience || []);
-  out.sharedExperience = capRoleBullets(out.sharedExperience, 4);
+  if (typeof bulletCap === "number" && bulletCap > 0) {
+    out.sharedExperience = capRoleBullets(out.sharedExperience, bulletCap);
+  }
   out.projects = compressProjects(out.projects || []);
   return out;
 }
@@ -149,7 +177,15 @@ function compressForOnePage(data) {
 
 // Fields that are pre-rendered HTML (no escape on substitution). Add to this
 // set when introducing new HTML-bearing fields in the template.
-const HTML_SAFE_KEYS = new Set(["bulletsHtml", "descriptionHtml", "summaryHtml"]);
+const HTML_SAFE_KEYS = new Set([
+  "bulletsHtml",
+  "descriptionHtml",
+  "summaryHtml",
+  "html",
+  "roleLineHtml",
+  "projLineHtml",
+  "skillsHtml",
+]);
 
 function htmlEscape(s) {
   if (s == null) return "";
@@ -303,6 +339,102 @@ function renderHtml(data, templateSource) {
 }
 
 // ----------------------------------------------------------------------------
+// Template preprocessing
+//
+// The renderer's substitution model is intentionally minimal (scalar + array
+// iteration + scope stack). To keep the template clean and free of conditionals,
+// we materialize a few computed HTML fields here:
+//
+//   - role/project bullets: [[{text,bold}]]  →  [{html: '<b>x</b> y'}]
+//   - role-line / proj-line: pre-built with conditional separators so the
+//     "Earlier PM roles" entry (no company, no location) renders cleanly
+//   - description: exposed as descriptionHtml (may contain inline <b>...</b>
+//     emitted by compressEarlierRoles / compressProjects)
+//   - skillsFixed: pre-joined into a single skillsHtml prose string
+// ----------------------------------------------------------------------------
+
+function buildRoleLineHtml(role) {
+  const r = htmlEscape(role.role || "");
+  const co = role.company ? htmlEscape(role.company) : "";
+  const loc = role.location ? htmlEscape(role.location) : "";
+  const dt = role.dates ? htmlEscape(role.dates) : "";
+  let mid = "";
+  if (co) {
+    mid = " • " + co + (loc ? ", " + loc : "");
+  } else if (loc) {
+    mid = " • " + loc;
+  }
+  const date = dt ? " &nbsp;|&nbsp; " + dt : "";
+  return r + mid + date;
+}
+
+function buildProjLineHtml(p) {
+  const n = htmlEscape(p.name || "");
+  const dt = p.dates ? " &nbsp;|&nbsp; " + htmlEscape(p.dates) : "";
+  const url = p.url ? " • " + htmlEscape(p.url) : "";
+  return n + dt + url;
+}
+
+function prepareRoles(roles) {
+  if (!Array.isArray(roles)) return [];
+  return roles.map((r) => {
+    if (!r || typeof r !== "object") return r;
+    const bullets = Array.isArray(r.bullets)
+      ? r.bullets.map((runs) => ({ html: runsToHtml(runs) }))
+      : [];
+    return {
+      ...r,
+      bullets,
+      descriptionHtml: r.description || "",
+      roleLineHtml: buildRoleLineHtml(r),
+    };
+  });
+}
+
+function prepareProjects(projects) {
+  if (!Array.isArray(projects)) return [];
+  return projects.map((p) => {
+    if (!p || typeof p !== "object") return p;
+    const bullets = Array.isArray(p.bullets)
+      ? p.bullets.map((runs) => ({ html: runsToHtml(runs) }))
+      : [];
+    return {
+      ...p,
+      bullets,
+      descriptionHtml: p.description || "",
+      projLineHtml: buildProjLineHtml(p),
+    };
+  });
+}
+
+function prepareSkillsHtml(skillsFixed) {
+  if (!Array.isArray(skillsFixed) || skillsFixed.length === 0) return "";
+  return skillsFixed
+    .map((s) => {
+      if (!s || typeof s !== "object") return "";
+      const label = s.label ? `<b>${htmlEscape(s.label)}:</b> ` : "";
+      const value = s.value ? htmlEscape(s.value) : "";
+      return label + value;
+    })
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function prepareTemplateData(data) {
+  if (!data || typeof data !== "object") return data;
+  const out = { ...data };
+  out.sharedExperience = prepareRoles(out.sharedExperience);
+  out.projects = prepareProjects(out.projects);
+  if (out.sharedSections && typeof out.sharedSections === "object") {
+    out.sharedSections = {
+      ...out.sharedSections,
+      skillsHtml: prepareSkillsHtml(out.sharedSections.skillsFixed),
+    };
+  }
+  return out;
+}
+
+// ----------------------------------------------------------------------------
 // Chrome binary discovery
 // ----------------------------------------------------------------------------
 
@@ -413,12 +545,14 @@ async function countPages(pdfPath) {
 
 const TEMPLATE_PATH = path.join(__dirname, "resume_template.html");
 
-async function generateResumePdf(data, outputPath, opts = {}) {
-  const layout = (opts && opts.layout) || "one_page";
-  const compressed = layout === "one_page" ? compressForOnePage(data) : data;
+// Adaptive compression ladder for one_page layout. Tries the lightest
+// compression first (preserve all bullets → max mirror phrase coverage) and
+// only escalates if the output overflows 1 page. The final level is the
+// hardest cap — if it still overflows, return the result with pageCount > 1
+// so the caller's overflow warning fires for human review.
+const ONE_PAGE_COMPRESSION_LADDER = [null, 5, 4, 3];
 
-  // Read template at call time so tests that mock htmlToPdf can run before
-  // the template file exists on disk (Agent 2's deliverable).
+async function renderOnce(prepared, outputPath) {
   let template;
   try {
     template = fs.readFileSync(TEMPLATE_PATH, "utf8");
@@ -427,12 +561,10 @@ async function generateResumePdf(data, outputPath, opts = {}) {
       `generateResumePdf: cannot read resume_template.html at ${TEMPLATE_PATH}: ${err.message}`,
     );
   }
-
-  const html = renderHtml(compressed, template);
+  const html = renderHtml(prepared, template);
   const randomSuffix = crypto.randomBytes(8).toString("hex");
   const tmpHtml = path.join(os.tmpdir(), `resume-${process.pid}-${randomSuffix}.html`);
   fs.writeFileSync(tmpHtml, html, "utf8");
-
   try {
     const chrome = module.exports.findChromeBin();
     await module.exports.htmlToPdf(tmpHtml, outputPath, chrome);
@@ -447,6 +579,26 @@ async function generateResumePdf(data, outputPath, opts = {}) {
   }
 }
 
+async function generateResumePdf(data, outputPath, opts = {}) {
+  const layout = (opts && opts.layout) || "one_page";
+
+  if (layout !== "one_page") {
+    const prepared = prepareTemplateData(data);
+    return renderOnce(prepared, outputPath);
+  }
+
+  // one_page: walk the compression ladder until we fit, or run out of levels.
+  let lastResult = null;
+  for (const cap of ONE_PAGE_COMPRESSION_LADDER) {
+    const compressed = compressForOnePage(data, cap);
+    const prepared = prepareTemplateData(compressed);
+    lastResult = await renderOnce(prepared, outputPath);
+    if (lastResult.pageCount <= 1) return lastResult;
+  }
+  // All levels tried — return the most aggressive result even if still > 1 page.
+  return lastResult;
+}
+
 module.exports = {
   generateResumePdf,
   // Helpers re-exported for tests + downstream callers
@@ -456,6 +608,12 @@ module.exports = {
   compressProjects,
   renderHtml,
   runsToHtml,
+  prepareTemplateData,
+  prepareRoles,
+  prepareProjects,
+  prepareSkillsHtml,
+  buildRoleLineHtml,
+  buildProjLineHtml,
   findChromeBin,
   htmlToPdf,
   countPages,

@@ -61,7 +61,7 @@ test("compressForOnePage: 5 roles → 2 full + Earlier paragraph", () => {
   assert.ok(out.sharedExperience[2].description.includes("<b>R5 Co</b>"));
 });
 
-test("compressForOnePage: caps each role at 4 bullets", () => {
+test("compressForOnePage: preserves all bullets by default (mirror-coverage)", () => {
   const data = {
     sharedExperience: [
       makeRole("R1", "2024", 6),
@@ -70,6 +70,21 @@ test("compressForOnePage: caps each role at 4 bullets", () => {
     projects: [],
   };
   const out = compressForOnePage(data);
+  // Default: no cap — adaptive ladder in generateResumePdf applies one if
+  // the rendered PDF overflows. Keeps mirror phrases when they fit.
+  assert.strictEqual(out.sharedExperience[0].bullets.length, 6);
+  assert.strictEqual(out.sharedExperience[1].bullets.length, 7);
+});
+
+test("compressForOnePage: opt-in bulletCap caps each role", () => {
+  const data = {
+    sharedExperience: [
+      makeRole("R1", "2024", 6),
+      makeRole("R2", "2023", 7),
+    ],
+    projects: [],
+  };
+  const out = compressForOnePage(data, 4);
   for (const r of out.sharedExperience) {
     assert.ok(r.bullets.length <= 4, `role ${r.role} has ${r.bullets.length} bullets`);
   }

@@ -27,55 +27,36 @@ li::before { content: "- "; }
 
 <h2>Professional Experience</h2>
 <!-- SLOT:sharedExperience -->
-<!-- ITEM:sharedExperience -->
 <div class="role">
-<div class="role-line">{{role}} • {{company}}, {{location}} &nbsp;|&nbsp; {{dates}}</div>
-<div class="role-tag">{{description}}</div>
+<div class="role-line">{{roleLineHtml}}</div>
+<div class="role-tag">{{descriptionHtml}}</div>
 <ul>
-<!-- ITEM:bullets -->
+<!-- SLOT:bullets -->
 <li>{{html}}</li>
-<!-- /ITEM:bullets -->
+<!-- /SLOT:bullets -->
 </ul>
 </div>
-<!-- /ITEM:sharedExperience -->
 <!-- /SLOT:sharedExperience -->
 
 <h2>Personal Projects</h2>
 <!-- SLOT:projects -->
-<!-- ITEM:projects -->
 <div class="role">
-<div class="proj-line">{{name}} &nbsp;|&nbsp; {{dates}} • {{url}}</div>
-<div class="role-tag">{{description}}</div>
-<ul>
-<!-- ITEM:bullets -->
-<li>{{html}}</li>
-<!-- /ITEM:bullets -->
-</ul>
+<div class="proj-line">{{projLineHtml}}</div>
+<div class="flat">{{descriptionHtml}}</div>
 </div>
-<!-- /ITEM:projects -->
 <!-- /SLOT:projects -->
 
 <h2>Education</h2>
 <!-- SLOT:sharedSections.education -->
-<!-- ITEM:sharedSections.education -->
 <div class="flat"><b>{{degree}} &nbsp;|&nbsp; {{dates}} &nbsp;|&nbsp;</b> {{school}}</div>
-<!-- /ITEM:sharedSections.education -->
 <!-- /SLOT:sharedSections.education -->
 
 <h2>Certifications</h2>
 <!-- SLOT:certifications -->
-<!-- ITEM:certifications -->
 <div class="flat"><b>{{name}} &nbsp;|&nbsp; {{displayDate}} &nbsp;|&nbsp;</b> {{issuer}}</div>
-<!-- /ITEM:certifications -->
 <!-- /SLOT:certifications -->
 
 <h2>Skills &amp; Tools</h2>
-<div class="flat">
-<!-- SLOT:sharedSections.skillsFixed -->
-<!-- ITEM:sharedSections.skillsFixed -->
-<b>{{label}}:</b> {{value}} ·
-<!-- /ITEM:sharedSections.skillsFixed -->
-<!-- /SLOT:sharedSections.skillsFixed -->
-</div>
+<div class="flat">{{sharedSections.skillsHtml}}</div>
 
 </body></html>
