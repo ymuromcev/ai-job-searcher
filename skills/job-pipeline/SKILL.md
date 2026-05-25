@@ -276,7 +276,79 @@ After tiering, the engine will persist the assignments to `profile.json.company_
 
 Read `prepare_context.batch[i].salary` — pass through. Engine computes via `salary_calc.js`.
 
+**Step 6.5 — Strong-fit tailoring loop (per Strong row)**
+
+For every row classified as `Strong` in Step 4, run an autonomous tailoring loop **instead of** Step 7's archetype pick. Weak / Medium rows skip this step entirely and proceed to Step 7. The loop produces a fully tailored, role-specific structured resume by iterating against a coverage score until either the threshold is hit, growth stalls, or the iteration cap is reached.
+
+**Inputs per Strong row** (gather once before the loop):
+- `row_key` — `"<source>:<jobId>"` from `applications.tsv`.
+- `jd_text` — raw JD body (`batch[i].jdText`, fallback if `jdStructure` is absent).
+- `jd_structure` — `batch[i].jdStructure` (requirements / responsibilities / salary_text / location_text / full_text_excerpt).
+- `master_profile_path` — `profiles/<id>/master_profile.md`. Verify the file exists; if missing, escalate the row with reason `uncertain_about_fact` and skip the loop.
+- `storybank_path` — first existing path among `profiles/<id>/storybank.md`, then `profiles/<id>/interview-coach-state/coaching_state.md` (Jared's storybank lives inside the coaching state file under `## Storybank`); `null` if neither exists. The subagent reads the file as a single blob — no need to extract a specific section.
+- `profile_id` — resolved profile id.
+- `target_role_title` — JD title from `batch[i].title`.
+
+**Loop** (max 6 iterations):
+
+```text
+prev_resume_data = null
+missing_from_prev = []
+coverage_history = []   # array of coverage_pct per iteration, for delta calc
+
+for n in 1..6:
+  result = Task(
+    subagent: "resume-tailor-mirror",   # see .claude/agents/resume-tailor-mirror.md
+    inputs: {
+      row_key, jd_text, jd_structure,
+      master_profile_path, storybank_path,
+      profile_id, target_role_title,
+      iteration: n,
+      prev_resume_data,
+      missing_from_prev
+    }
+  )
+  # result = { coverage_pct, missing[], resume_data, coverage_table, uncertain_facts[] }
+  coverage_history.push(result.coverage_pct)
+
+  # Exit conditions, checked in order:
+  if result.coverage_pct >= 85:
+    exit_reason = "threshold_met"; break
+  if n >= 2 and (coverage_history[n-1] - coverage_history[n-2]) < 1:
+    exit_reason = "no_growth"; break
+  if n >= 6:
+    exit_reason = "iteration_cap_reached"; break
+
+  prev_resume_data = result.resume_data
+  missing_from_prev = result.missing
+```
+
+**Escalation decision** (after loop exit):
+
+- `final_coverage < 85 && last_delta < 1` → `tailorEscalated = true`, `tailorEscalationReason = "no_growth_below_threshold"`.
+- `final_coverage < 85 && last_delta >= 1` (still climbing, hit the cap) → `tailorEscalated = true`, `tailorEscalationReason = "iteration_cap_below_threshold"`.
+- `final_coverage >= 85 && uncertain_facts.length > 0` → `tailorEscalated = true`, `tailorEscalationReason = "uncertain_about_fact"`.
+- Otherwise → `tailorEscalated = false`, `tailorEscalationReason = null` (auto-ship).
+
+**Per-row fields to attach** (carried into the results.json entry written in Step 10):
+- `tailoredResume` — the final `resume_data` object from the last subagent run. Schema matches `engine/modules/resume/resume_docx.js` input.
+- `tailorCoverage` — final `coverage_pct` (0-100, number).
+- `tailorEscalated` — boolean.
+- `tailorEscalationReason` — one of `"no_growth_below_threshold" | "iteration_cap_below_threshold" | "uncertain_about_fact" | null`.
+- `tailorEscalationDetail` — `{ iterations: <int>, uncertain_facts: <subagent's uncertain_facts[]>, coverage_table: <last subagent's coverage_table> }`.
+
+**Where the helpers live.** Pure-helper utilities for coverage and escalation reporting exist at `engine/modules/tailor/coverage_score.js` and `engine/modules/tailor/escalation_report.js`. The SKILL **does not** call those modules directly — orchestration is done by this prose and the subagent. Helpers are referenced for engine-side validation and for any future deterministic reuse; SKILL-side decisions follow the rules above.
+
+**Stdout per Strong row** (mirror so the user sees progress):
+
+```
+tailoring <row_key> (Strong): iter 1 → coverage 62, iter 2 → 74, iter 3 → 83, iter 4 → 86 → ship
+tailoring <row_key> (Strong): iter 1 → 58, iter 2 → 71, iter 3 → 72, iter 4 → 72 → no_growth, escalate
+```
+
 **Step 7 — Archetype selection (per job)**
+
+**Skip rows where `fit_score == 'Strong'`** — they were handled by Step 6.5's tailoring loop and already carry `tailoredResume`. This step applies only to Weak / Medium rows.
 
 Choose the best resume archetype from `profiles/<id>/resume_versions.json` for this specific role. Prefer the archetype whose domain keywords overlap most with the JD / job title.
 
@@ -358,6 +430,13 @@ Per-row schema (`results[]` entry):
 - `fitRationale` — substantive 1-3 sentence rationale, user-facing.
 - `flags` — optional array of advisory strings (e.g. `["bridge-track", "early-stage"]`). Engine does not act on these; they surface in Notion `Notes` for the operator.
 - `clKey` + `clParagraphs` + `clBaseKey` + `resumeVer` + `salaryMin` + `salaryMax` + `city` + `state` + `workFormat` — present **iff** `fitScore` is `"Strong"` or `"Medium"`. For `"Weak"`, omit `clParagraphs` (the cover letter is generated on-demand if the operator triages "actually I want to apply" — RFC 034 §5 option A). The row still goes to Notion; the Cover Letter field in Notion will be empty.
+- **Strong-fit tailoring fields** (BL-123 / RFC 043) — emitted **only** when `fitScore == "Strong"` and Step 6.5 ran:
+  - `tailoredResume: object | null` — structured resume data matching `engine/modules/resume/resume_docx.js` input schema. The engine renders the per-job DOCX/PDF from this object instead of the archetype pick.
+  - `tailorCoverage: number | null` — final coverage score, 0-100.
+  - `tailorEscalated: boolean` — true when the loop exited without auto-ship (see escalation decision in Step 6.5).
+  - `tailorEscalationReason: "no_growth_below_threshold" | "iteration_cap_below_threshold" | "uncertain_about_fact" | null`.
+  - `tailorEscalationDetail: object | null` — `{ iterations, uncertain_facts, coverage_table }` capturing the loop's final state for operator review in Notion.
+  - For Weak / Medium rows these five fields are **absent or `null`** — the engine falls back to the archetype-pick path (`resumeVer`).
 
 Do **not** emit `decision` or `skipReason` — engines built against RFC 034 ignore the field with a warning; older engines may misroute the row. Do **not** include `clPath` (engine derives it) or `notionPageId` (engine creates the page itself).
 

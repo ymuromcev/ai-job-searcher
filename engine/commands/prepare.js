@@ -52,6 +52,16 @@ const { resolveProfilesDir } = require("../core/paths.js");
 const { slugifyCompany } = require("../core/company_slug.js");
 const { pickClBase } = require("../core/cl_base_matcher.js");
 const { generateCoverLetterPdf } = require("../modules/generators/cover_letter_pdf.js");
+const { generateResumeDocx } = require("../modules/generators/resume_docx.js");
+const {
+  classifyRow: classifyTailorRow,
+  buildEscalationRecord,
+  tailoredResumePath,
+} = require("../modules/tailor/dispatcher.js");
+const {
+  renderEscalationReport,
+  renderEscalationStdout,
+} = require("../modules/tailor/escalation_report.js");
 const { planDedup } = require("../core/tsv_dedup.js");
 const notionSync = require("../core/notion_sync.js");
 const { makeCompanyResolver } = require("../core/company_resolver.js");
@@ -655,6 +665,7 @@ function makeDefaultDeps() {
     mkdirp: (dir) => fs.mkdirSync(dir, { recursive: true }),
     copyFileSync: (src, dst) => fs.copyFileSync(src, dst),
     generateCoverLetterPdf,
+    generateResumeDocx,
     slugifyCompany,
     // RFC 022: per-row Notion push in commit phase. All Notion deps are
     // injectable so unit / integration tests can swap in a mock client +
@@ -1526,7 +1537,72 @@ async function runCommit(ctx, deps) {
     invalidFitScore: 0,
     invalidSkipReason: 0,
     fitWritten: 0,
+    // RFC 044 / BL-123: per-row tailor-loop accounting. `tailored` = Strong
+    // rows where the engine generated a tailored DOCX from SKILL output.
+    // `escalated` = SKILL flagged the row for triage; engine reverts to
+    // Inbox and records the row in the escalation report.
+    // `tailorMalformed` = Strong row arrived with a tailor field that
+    // failed shape validation; row falls through to the legacy archetype
+    // path with a one-line warn.
+    tailored: 0,
+    escalated: 0,
+    tailorMalformed: 0,
   };
+
+  // RFC 044 / BL-123 — tailor dispatch state. Keyed by row.key so the
+  // post-loop DOCX-generation pass and escalation-report pass can find
+  // the entries without re-classifying. Map preserves insertion order
+  // which keeps the escalation MD deterministic across runs.
+  const tailorPlan = new Map(); // row.key -> { classification, row, tailoredDocxRel? }
+  const escalations = [];
+
+  // Light-touch validation of the 5 new SKILL fields. Returns `true` if
+  // the row passes; `false` (with stderr warn) on shape mismatch — caller
+  // treats malformed rows as if the tailor fields were absent and falls
+  // through to the archetype path. We deliberately keep this loose:
+  // strict JSON-schema validation would force the SKILL to evolve in
+  // lockstep with the engine, which RFC 044 §"Forward-compat" explicitly
+  // wants to avoid.
+  function validateTailorFields(r) {
+    let ok = true;
+    if (r.tailoredResume !== undefined && r.tailoredResume !== null) {
+      if (typeof r.tailoredResume !== "object" || Array.isArray(r.tailoredResume)) {
+        stderr(
+          `warn: malformed tailoredResume for key ${r.key} — expected object, got ` +
+            `${Array.isArray(r.tailoredResume) ? "array" : typeof r.tailoredResume}; ` +
+            `falling back to archetype path`
+        );
+        ok = false;
+      }
+    }
+    if (r.tailorEscalated !== undefined && typeof r.tailorEscalated !== "boolean") {
+      stderr(
+        `warn: malformed tailorEscalated for key ${r.key} — expected boolean, got ` +
+          `${typeof r.tailorEscalated}; treating as not escalated`
+      );
+      ok = false;
+    }
+    if (
+      r.tailorCoverage !== undefined &&
+      r.tailorCoverage !== null &&
+      typeof r.tailorCoverage !== "number"
+    ) {
+      stderr(
+        `warn: malformed tailorCoverage for key ${r.key} — expected number, got ` +
+          `${typeof r.tailorCoverage}`
+      );
+      ok = false;
+    }
+    if (
+      r.tailorEscalationDetail !== undefined &&
+      r.tailorEscalationDetail !== null &&
+      (typeof r.tailorEscalationDetail !== "object" || Array.isArray(r.tailorEscalationDetail))
+    ) {
+      stderr(`warn: malformed tailorEscalationDetail for key ${r.key} — expected object`);
+      ok = false;
+    }
+    return ok;
+  }
   // RFC 034: track whether we've already warned about a legacy `decision`
   // field; we want exactly one stderr line per commit run regardless of how
   // many rows carry the field, so the operator notices but doesn't drown.
@@ -1555,9 +1631,44 @@ async function runCommit(ctx, deps) {
 
     const fitBeforeWrite = app.fit_score;
 
+    // RFC 044 / BL-123 — tailor dispatch. Validate the 5 new per-row
+    // fields, classify, then branch:
+    //   - escalated: stamp fit verdict, leave status="Inbox", record for
+    //                the batch escalation report. Skip CL + Notion push.
+    //   - tailored : take the legacy promotion path BUT remember the row
+    //                so we generate a DOCX from row.tailoredResume after
+    //                the loop (before CL writes / Notion push).
+    //   - archetype: unchanged legacy path (archetype-pick by resumeVer).
+    const tailorOk = validateTailorFields(r);
+    if (!tailorOk) updates.tailorMalformed++;
+    const classification = tailorOk ? classifyTailorRow(r) : "archetype";
+
+    if (classification === "escalated") {
+      // Status stays "Inbox" (revertToInbox isn't needed — we never
+      // promoted). Persist fit verdict so the row doesn't re-enter the
+      // SKILL on the next prepare run (operator triages in the MD
+      // report). cl_path / resume_ver remain whatever they were.
+      applyFitFields(app, r);
+      if (app.fit_score && app.fit_score !== fitBeforeWrite) updates.fitWritten++;
+      app.updatedAt = now;
+      escalations.push(buildEscalationRecord(r));
+      tailorPlan.set(r.key, { classification: "escalated", row: r });
+      updates.escalated++;
+      continue;
+    }
+
     // RFC 034: every entry in results.evaluated[] becomes a "To Apply" row.
-    // resumeVer is still validated against the profile's archetype keys.
-    if (r.resumeVer && validArchetypes.size > 0 && !validArchetypes.has(r.resumeVer)) {
+    // resumeVer is still validated against the profile's archetype keys —
+    // except for "tailored" rows (RFC 044 / BL-123): the SKILL owns the
+    // resume content via tailoredResume, so we skip the archetype-key
+    // check and overwrite r.resumeVer with the generated file path in
+    // the post-loop DOCX pass below.
+    if (
+      classification !== "tailored" &&
+      r.resumeVer &&
+      validArchetypes.size > 0 &&
+      !validArchetypes.has(r.resumeVer)
+    ) {
       updates.invalidArchetype++;
       stderr(
         `warn: unknown resumeVer "${r.resumeVer}" for key ${r.key} — treating as skipped ` +
@@ -1585,6 +1696,73 @@ async function runCommit(ctx, deps) {
     applyFitFields(app, r);
     if (app.fit_score && app.fit_score !== fitBeforeWrite) updates.fitWritten++;
     updates.toApply++;
+
+    // Remember tailored rows for the post-loop DOCX-generation pass.
+    // We defer the actual fs write to keep the per-row loop pure-ish
+    // (matches the existing CL pattern: TSV mutation here, generator
+    // call afterwards in its own pass).
+    if (classification === "tailored") {
+      tailorPlan.set(r.key, { classification: "tailored", row: r });
+    }
+  }
+
+  // RFC 044 / BL-123 — tailored DOCX generation pass.
+  //
+  // For every Strong row the SKILL marked as auto-shippable (tailored,
+  // not escalated), generate the DOCX from `row.tailoredResume` and
+  // record the relative path on the app row. This must run BEFORE the
+  // CL pass / Notion push so that `app.resume_ver` (which Notion's
+  // `resumeVersion` field reads from) holds the tailored file path
+  // rather than the legacy archetype key.
+  //
+  // Failure isolation: a per-row generator throw warns and falls back
+  // to the archetype path (leaves whatever `app.resume_ver` was set to
+  // by the loop above — i.e. the SKILL's resumeVer if it sent one).
+  // Other rows in the batch continue.
+  const dateStr = String(now).slice(0, 10);
+  const tailoredStats = { generated: 0, failed: 0, dryRun: 0 };
+  for (const [rowKey, entry] of tailorPlan) {
+    if (entry.classification !== "tailored") continue;
+    const app = byKey[rowKey];
+    if (!app) continue; // defensive — applyFitFields earlier would have warned
+    const slug = deps.slugifyCompany(app.companyName);
+    const relPath = tailoredResumePath(profileId, slug, dateStr);
+    const absPath = path.join(profile.paths.root, relPath);
+
+    if (flags.dryRun) {
+      stdout(`(dry-run) would write tailored resume ${relPath}`);
+      app.resume_ver = relPath;
+      entry.tailoredDocxRel = relPath;
+      tailoredStats.dryRun++;
+      continue;
+    }
+
+    try {
+      deps.mkdirp(path.dirname(absPath));
+      await deps.generateResumeDocx(entry.row.tailoredResume, absPath);
+      app.resume_ver = relPath;
+      // buildJobFieldsForNotion reads r.resumeVer for the Notion
+      // resumeVersion field. Mutating the in-memory result row keeps
+      // the tailored path as the source of truth for both TSV and
+      // Notion without threading a second parameter through the push.
+      entry.row.resumeVer = relPath;
+      entry.tailoredDocxRel = relPath;
+      tailoredStats.generated++;
+      updates.tailored++;
+    } catch (err) {
+      stderr(
+        `warn: failed to generate tailored resume for ${rowKey} (${relPath}): ${err.message} ` +
+          `— falling back to archetype resume_ver`
+      );
+      tailoredStats.failed++;
+    }
+  }
+  if (tailoredStats.generated > 0 || tailoredStats.failed > 0 || tailoredStats.dryRun > 0) {
+    const parts = [];
+    if (tailoredStats.generated > 0) parts.push(`${tailoredStats.generated} generated`);
+    if (tailoredStats.dryRun > 0) parts.push(`${tailoredStats.dryRun} dry-run`);
+    if (tailoredStats.failed > 0) parts.push(`${tailoredStats.failed} failed`);
+    stdout(`tailored resumes: ${parts.join(", ")}`);
   }
 
   // BL-14 / RFC 019 — engine-owned CL file writes.
@@ -1933,6 +2111,10 @@ async function runCommit(ctx, deps) {
   if (updates.invalidFitScore > 0) extras.push(`${updates.invalidFitScore} invalid fit_score`);
   if (updates.invalidSkipReason > 0)
     extras.push(`${updates.invalidSkipReason} invalid skip_reason`);
+  if (updates.tailorMalformed > 0)
+    extras.push(`${updates.tailorMalformed} malformed tailor field(s)`);
+  if (updates.tailored > 0) extras.push(`${updates.tailored} tailored DOCX`);
+  if (updates.escalated > 0) extras.push(`${updates.escalated} escalated`);
   if (tierStats.invalid > 0) extras.push(`${tierStats.invalid} invalid tier`);
   if (notionStats.pdfMissing + notionStats.notionFailed > 0) {
     extras.push(
@@ -1947,6 +2129,37 @@ async function runCommit(ctx, deps) {
       `fit verdicts: ${updates.fitWritten} new fit_score values persisted to TSV ` +
         `(future prepare runs will skip these rows)`
     );
+  }
+
+  // RFC 044 / BL-123 — escalation report.
+  //
+  // If any rows escalated this run, render a markdown report to
+  // `profiles/<id>/.tailor-state/escalations-<unix-ts>.md` so the
+  // operator has a stable artifact to triage. Also dump a short stdout
+  // table for the CLI session. Dry-run still prints stdout but does not
+  // write the MD file. Failure to write the MD warns and continues —
+  // never aborts the commit.
+  if (escalations.length > 0) {
+    const stdoutReport = renderEscalationStdout(escalations);
+    if (stdoutReport) stdout(stdoutReport);
+
+    if (!flags.dryRun) {
+      try {
+        const md = renderEscalationReport(escalations, { timestamp: new Date(now) });
+        const stateDir = path.join(profile.paths.root, ".tailor-state");
+        const reportPath = path.join(
+          stateDir,
+          `escalations-${Math.floor(new Date(now).getTime() / 1000)}.md`
+        );
+        deps.mkdirp(stateDir);
+        deps.writeFile(reportPath, md);
+        stdout(`tailor escalations: wrote ${reportPath}`);
+      } catch (err) {
+        stderr(`warn: failed to write tailor escalation report: ${err.message}`);
+      }
+    } else {
+      stdout(`(dry-run) would write tailor escalation report (${escalations.length} record(s))`);
+    }
   }
 
   if (flags.dryRun) {

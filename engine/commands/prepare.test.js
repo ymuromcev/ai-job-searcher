@@ -4129,3 +4129,353 @@ test("SKILL.md (RFC 039 §4.5): mentions jdStructure as preferred + jdText as fa
   assert.match(text, /jdText/, "SKILL.md must keep jdText for legacy fallback");
   assert.match(text, /fall back/i, "SKILL.md must describe the fallback");
 });
+
+// --- RFC 044 / BL-123 — tailor dispatch integration ------------------------
+//
+// runCommit should consume the 5 new per-row tailor fields from results.json:
+//   - tailored rows  → generate DOCX, override resume_ver with the file path,
+//                      push to Notion with the path as resumeVersion.
+//   - escalated rows → revert / stay Inbox, accumulate escalation record,
+//                      write MD report at end of run.
+//   - mixed batches  → tailored / escalated / archetype rows coexist; each
+//                      lands in the right bucket.
+//
+// All Notion / fs calls are mocked through the standard makeCommitDeps DI.
+
+test("prepare --phase commit (BL-123): tailored row generates DOCX and pushes with file path", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
+  const tailoredResume = {
+    contact: { name: "Test", phone: "555", email: "a@b.c", location: "SF" },
+    version: { summary: "tailored summary" },
+  };
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        fitScore: "Strong",
+        fitRationale: "great",
+        clKey: "stripe_pm_20260420",
+        clParagraphs: ["Hi.", "Bye."],
+        tailoredResume,
+        tailorCoverage: 92,
+        tailorEscalated: false,
+        tailorEscalationReason: null,
+        tailorEscalationDetail: null,
+      },
+    ],
+  };
+  let docxCalled = null;
+  const pushCalls = [];
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    generateResumeDocx: async (data, outPath) => {
+      docxCalled = { data, outPath };
+    },
+    generateCoverLetterPdf: async () => {},
+    fileExists: () => false, // force PDF generation path
+    mkdirp: () => {}, // no real fs writes under /fake
+    writeFile: () => {},
+    pushJobPage: async ({ jobFields }) => {
+      pushCalls.push(jobFields);
+      return { pageId: "page-tailored", dedup: false };
+    },
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+
+  // DOCX was generated from the tailored data, written under resumes/tailored/.
+  assert.ok(docxCalled, "generateResumeDocx must be called");
+  assert.deepEqual(docxCalled.data, tailoredResume);
+  // company_slug.js preserves case ("Stripe" not "stripe").
+  assert.match(docxCalled.outPath, /resumes\/tailored\/Stripe-2026-04-20\.docx$/);
+
+  // resume_ver on the TSV row is the tailored file path, not an archetype key.
+  const saved = deps._getSaved();
+  assert.equal(saved[0].resume_ver, "resumes/tailored/Stripe-2026-04-20.docx");
+  assert.equal(saved[0].status, "To Apply");
+
+  // Notion push received the path as resumeVersion (engine mutated r.resumeVer
+  // so buildJobFieldsForNotion picked it up).
+  assert.equal(pushCalls.length, 1);
+  assert.equal(pushCalls[0].resumeVersion, "resumes/tailored/Stripe-2026-04-20.docx");
+
+  // stdout reports tailored count.
+  assert.ok(ctx._lines.some((l) => /tailored resumes:.*1 generated/.test(l)));
+});
+
+test("prepare --phase commit (BL-123): escalated row stays Inbox, writes MD report, no Notion push", async () => {
+  const apps = [makeApp({ key: "gh:2", status: "Inbox" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:2",
+        fitScore: "Strong",
+        fitRationale: "tailor stuck",
+        company: "Acme",
+        targetRole: "PM",
+        tailoredResume: null,
+        tailorCoverage: 68,
+        tailorEscalated: true,
+        tailorEscalationReason: "no_growth_below_threshold",
+        tailorEscalationDetail: {
+          iterations: [
+            { n: 1, coverage_pct: 60, missing: ["sql", "python"] },
+            { n: 2, coverage_pct: 68, missing: ["python"] },
+          ],
+          uncertain_facts: [],
+        },
+      },
+    ],
+  };
+  let writtenPath = null;
+  let writtenContent = null;
+  const pushCalls = [];
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    mkdirp: () => {},
+    writeFile: (p, content) => {
+      writtenPath = p;
+      writtenContent = content;
+    },
+    pushJobPage: async () => {
+      pushCalls.push(1);
+      return { pageId: "x", dedup: false };
+    },
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+
+  // Row stayed Inbox, fit verdict was persisted so SKILL won't re-evaluate.
+  const saved = deps._getSaved();
+  assert.equal(saved[0].status, "Inbox");
+  assert.equal(saved[0].fit_score, "Strong");
+  assert.equal(saved[0].fit_rationale, "tailor stuck");
+
+  // No Notion push for escalated row.
+  assert.equal(pushCalls.length, 0);
+
+  // MD report was written under .tailor-state/.
+  assert.ok(writtenPath, "must write escalation MD");
+  assert.match(writtenPath, /\.tailor-state\/escalations-\d+\.md$/);
+  assert.match(writtenContent, /# Tailor escalations/);
+  assert.match(writtenContent, /Acme PM/);
+  assert.match(writtenContent, /no_growth_below_threshold/);
+
+  // stdout summary printed.
+  assert.ok(ctx._lines.some((l) => /Tailor escalations: 1/.test(l)));
+  assert.ok(ctx._lines.some((l) => /tailor escalations: wrote /.test(l)));
+});
+
+test("prepare --phase commit (BL-123): mixed batch — tailored + escalated + archetype each take correct path", async () => {
+  const apps = [
+    makeApp({ key: "gh:1", companyName: "Stripe", status: "Inbox" }),
+    makeApp({ key: "gh:2", companyName: "Acme", status: "Inbox" }),
+    makeApp({ key: "gh:3", companyName: "Brex", status: "Inbox" }),
+  ];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1", // tailored
+        fitScore: "Strong",
+        clKey: "stripe_cl",
+        clParagraphs: ["a", "b"],
+        tailoredResume: { contact: {}, version: { summary: "x" } },
+        tailorCoverage: 90,
+        tailorEscalated: false,
+      },
+      {
+        key: "gh:2", // escalated
+        fitScore: "Strong",
+        company: "Acme",
+        targetRole: "PM",
+        tailoredResume: null,
+        tailorCoverage: 60,
+        tailorEscalated: true,
+        tailorEscalationReason: "uncertain_about_fact",
+        tailorEscalationDetail: {
+          iterations: [{ n: 1, coverage_pct: 60, missing: [] }],
+          uncertain_facts: [{ fact: "led 10 PMs" }],
+        },
+      },
+      {
+        key: "gh:3", // archetype (Medium row, no tailor fields)
+        fitScore: "Medium",
+        clKey: "brex_cl",
+        clParagraphs: ["m1"],
+        resumeVer: "v1", // valid because validArchetypes is empty (no resume_versions)
+      },
+    ],
+  };
+  let docxCount = 0;
+  const pushedKeys = [];
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    generateResumeDocx: async () => {
+      docxCount++;
+    },
+    generateCoverLetterPdf: async () => {},
+    fileExists: () => false,
+    mkdirp: () => {},
+    writeFile: () => {},
+    pushJobPage: async ({ jobFields }) => {
+      pushedKeys.push(jobFields.key);
+      return { pageId: `p-${jobFields.key}`, dedup: false };
+    },
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+
+  // DOCX generated once (for the tailored row only).
+  assert.equal(docxCount, 1);
+
+  // Only the tailored + archetype rows hit Notion. Escalated row was held
+  // back at Inbox and never pushed.
+  assert.deepEqual(pushedKeys.sort(), ["gh:1", "gh:3"]);
+
+  const saved = deps._getSaved();
+  const byKey = Object.fromEntries(saved.map((a) => [a.key, a]));
+  assert.equal(byKey["gh:1"].status, "To Apply");
+  assert.match(byKey["gh:1"].resume_ver, /resumes\/tailored\//);
+  assert.equal(byKey["gh:2"].status, "Inbox"); // escalated
+  assert.equal(byKey["gh:3"].status, "To Apply"); // archetype
+  assert.equal(byKey["gh:3"].resume_ver, "v1"); // archetype key untouched
+});
+
+test("prepare --phase commit (BL-123): malformed tailoredResume warns and falls back to archetype", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        fitScore: "Strong",
+        clKey: "cl",
+        clParagraphs: ["x"],
+        resumeVer: "v_legacy",
+        tailoredResume: "not-an-object", // malformed
+      },
+    ],
+  };
+  let docxCalled = false;
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    generateResumeDocx: async () => {
+      docxCalled = true;
+    },
+    generateCoverLetterPdf: async () => {},
+    fileExists: () => false,
+    mkdirp: () => {},
+    writeFile: () => {},
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  assert.equal(docxCalled, false, "no DOCX on malformed tailoredResume");
+  assert.ok(ctx._errLines.some((l) => /malformed tailoredResume/.test(l)));
+  const saved = deps._getSaved();
+  // Row still promoted via archetype path.
+  assert.equal(saved[0].status, "To Apply");
+  assert.equal(saved[0].resume_ver, "v_legacy");
+});
+
+test("prepare --phase commit (BL-123): no escalations → no MD report write", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
+  const results = {
+    profileId: "testuser",
+    results: [{ key: "gh:1", fitScore: "Weak" }],
+  };
+  let writeCalls = 0;
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    writeFile: () => {
+      writeCalls++;
+    },
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  assert.equal(writeCalls, 0, "no MD write when escalations empty");
+  assert.ok(!ctx._lines.some((l) => /tailor escalations: wrote/.test(l)));
+});
+
+test("prepare --phase commit (BL-123): tailored row in dry-run does not generate DOCX", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        fitScore: "Strong",
+        tailoredResume: { contact: {}, version: { summary: "x" } },
+        tailorEscalated: false,
+      },
+    ],
+  };
+  let docxCalled = false;
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    generateResumeDocx: async () => {
+      docxCalled = true;
+    },
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json", dryRun: true } });
+  await cmd(ctx);
+  assert.equal(docxCalled, false);
+  assert.ok(ctx._lines.some((l) => /\(dry-run\) would write tailored resume/.test(l)));
+});
+
+test("prepare --phase commit (BL-123): generateResumeDocx failure falls back to archetype, other rows continue", async () => {
+  const apps = [
+    makeApp({ key: "gh:1", companyName: "FailCo", status: "Inbox" }),
+    makeApp({ key: "gh:2", companyName: "OkCo", status: "Inbox" }),
+  ];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        fitScore: "Strong",
+        resumeVer: "fallback_archetype",
+        tailoredResume: { contact: {}, version: { summary: "x" } },
+        tailorEscalated: false,
+      },
+      {
+        key: "gh:2",
+        fitScore: "Strong",
+        resumeVer: "v2",
+        tailoredResume: { contact: {}, version: { summary: "y" } },
+        tailorEscalated: false,
+      },
+    ],
+  };
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    mkdirp: () => {},
+    writeFile: () => {},
+    generateResumeDocx: async (_data, outPath) => {
+      if (/FailCo|failco/.test(outPath)) throw new Error("disk full");
+    },
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+  const saved = deps._getSaved();
+  const byKey = Object.fromEntries(saved.map((a) => [a.key, a]));
+  // gh:1 fell back to archetype key (resume_ver from r.resumeVer).
+  assert.equal(byKey["gh:1"].resume_ver, "fallback_archetype");
+  // gh:2 got its tailored path.
+  assert.match(byKey["gh:2"].resume_ver, /resumes\/tailored\//);
+  // stderr warns about the failure.
+  assert.ok(ctx._errLines.some((l) => /failed to generate tailored resume/.test(l)));
+});

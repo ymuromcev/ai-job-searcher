@@ -48,7 +48,15 @@ Thumbs.db
 *.swp
 *.swo
 .cursor/
-.claude/
+# .claude/ — ignore everything by default (worktrees, local settings,
+# caches), but re-include subagent definitions so the SKILL-driven
+# pipeline survives a fresh clone / new worktree (BL-123). Note: we
+# can't use `.claude/` (directory form) here because git won't let us
+# re-include children of an already-ignored parent — `.claude/*` only
+# matches direct children, leaving `agents/` reachable.
+.claude/*
+!.claude/agents/
+!.claude/agents/**
 
 # Obsidian: commit baseline config, ignore volatile per-user state
 .obsidian/workspace*.json
@@ -75,6 +83,9 @@ audit_*.md
 
 # Private maintainer tree (RFC 018) — backlog files, handoffs, pre-anonymization originals
 private/
+
+# Personal resume drafts / tailoring outputs (resume-tailor skill, manual edits)
+docs/resume/
 
 # Build artifacts
 dist/

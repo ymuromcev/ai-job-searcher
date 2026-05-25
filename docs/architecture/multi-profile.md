@@ -20,10 +20,13 @@ routes I/O accordingly.
 profiles/<id>/
   profile.json                # identity, modules, Notion DB ids, fit prompt
   filter_rules.json           # title / company / location blocklists + role_targets (RFC 030)
-  resume_versions.json        # archetypes -> resume DOCX content blocks
+  resume_versions.json        # archetypes -> resume DOCX content blocks (primary for archetype CV generation)
   cover_letter_versions.json  # archetypes -> CL content blocks
   cover_letter_template.md    # template with {{placeholders}}
   applications.tsv            # canonical pipeline state (v2 schema)
+  master_profile.md           # derived consolidated profile for tailoring subagents (RFC 043); regen via scripts/build_master_profile.js
+  interview-coach-state/
+    coaching_state.md         # STAR storybank, primary source for narrative depth (interview-coach skill)
   resumes/                    # generated DOCX + PDF artifacts
   cover_letters/              # generated PDF artifacts
   application_answers/        # per-application Q&A captures
