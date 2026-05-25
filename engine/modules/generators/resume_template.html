@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>{{contact.name}} — {{version.title}}</title>
+<style>
+@page { size: Letter; margin: 0.4in 0.55in; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 9.3pt; color: #111; line-height: 1.22; }
+.header-title { text-align: center; font-size: 12.5pt; font-weight: bold; letter-spacing: 0.3px; margin-bottom: 1px; }
+.contact { text-align: center; font-size: 8.8pt; color: #222; margin-bottom: 4px; }
+h2 { font-size: 10pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.4px; margin-top: 5px; margin-bottom: 2px; padding-bottom: 1px; border-bottom: 1pt solid #111; }
+.summary { font-size: 9.3pt; margin-bottom: 1px; }
+.role { break-inside: avoid; margin-top: 2px; }
+.role-line { font-weight: bold; font-size: 9.5pt; }
+.role-tag { font-size: 8.8pt; font-style: italic; color: #333; margin-bottom: 0px; }
+ul { padding-left: 12px; margin-bottom: 1px; list-style-type: none; }
+li { font-size: 9.3pt; margin-bottom: 0px; text-indent: -8px; padding-left: 8px; break-inside: avoid; }
+li::before { content: "- "; }
+.flat { font-size: 9.3pt; margin-bottom: 1px; }
+.flat b { font-weight: bold; }
+.proj-line { font-weight: bold; font-size: 9.5pt; }
+</style></head><body>
+
+<div class="header-title">{{contact.name}}, {{version.title}}</div>
+<div class="contact">{{contact.phone}} • {{contact.location}} • {{contact.email}} • {{contact.linkedin}}</div>
+
+<h2>Summary</h2>
+<div class="summary">{{version.summary}}</div>
+
+<h2>Professional Experience</h2>
+<!-- SLOT:sharedExperience -->
+<div class="role">
+<div class="role-line">{{roleLineHtml}}</div>
+<div class="role-tag">{{descriptionHtml}}</div>
+<ul>
+<!-- SLOT:bullets -->
+<li>{{html}}</li>
+<!-- /SLOT:bullets -->
+</ul>
+</div>
+<!-- /SLOT:sharedExperience -->
+
+<h2>Personal Projects</h2>
+<!-- SLOT:projects -->
+<div class="role">
+<div class="proj-line">{{projLineHtml}}</div>
+<div class="flat">{{descriptionHtml}}</div>
+</div>
+<!-- /SLOT:projects -->
+
+<h2>Education</h2>
+<!-- SLOT:sharedSections.education -->
+<div class="flat"><b>{{degree}} &nbsp;|&nbsp; {{dates}} &nbsp;|&nbsp;</b> {{school}}</div>
+<!-- /SLOT:sharedSections.education -->
+
+<h2>Certifications</h2>
+<!-- SLOT:certifications -->
+<div class="flat"><b>{{name}} &nbsp;|&nbsp; {{displayDate}} &nbsp;|&nbsp;</b> {{issuer}}</div>
+<!-- /SLOT:certifications -->
+
+<h2>Skills &amp; Tools</h2>
+<div class="flat">{{sharedSections.skillsHtml}}</div>
+
+</body></html>

@@ -12,7 +12,9 @@ const {
   loadMemory,
   normalizeSalaryConfig,
   normalizeGeo,
+  normalizeResumeLayout,
   checkPositiveGate,
+  DEFAULT_RESUME_LAYOUT,
   ID_REGEX,
 } = require("./profile_loader.js");
 
@@ -723,5 +725,80 @@ test("loadProfile: does NOT warn when role_targets has at least one populated tr
   const warnings = [];
   loadProfile("p", { profilesDir: dir, warn: (msg) => warnings.push(msg) });
   assert.equal(warnings.length, 0);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- BL-126 Block D: resume.layout normalisation ----------------------------
+
+test("normalizeResumeLayout: defaults to one_page when absent/null/empty", () => {
+  assert.deepEqual(normalizeResumeLayout(undefined), { layout: "one_page", warnings: [] });
+  assert.deepEqual(normalizeResumeLayout(null), { layout: "one_page", warnings: [] });
+  assert.deepEqual(normalizeResumeLayout(""), { layout: "one_page", warnings: [] });
+  assert.equal(DEFAULT_RESUME_LAYOUT, "one_page");
+});
+
+test("normalizeResumeLayout: accepts known presets verbatim", () => {
+  for (const v of ["one_page", "two_page", "ru_long"]) {
+    const { layout, warnings } = normalizeResumeLayout(v);
+    assert.equal(layout, v);
+    assert.deepEqual(warnings, []);
+  }
+});
+
+test("normalizeResumeLayout: unknown value falls back to one_page with warning", () => {
+  const { layout, warnings } = normalizeResumeLayout("triple_page");
+  assert.equal(layout, "one_page");
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /triple_page/);
+  assert.match(warnings[0], /one_page/);
+});
+
+test("loadProfile: surfaces resume.layout=two_page when set", () => {
+  const dir = makeTempProfiles();
+  writeProfile(dir, "p", {
+    id: "p",
+    resume: { versions_file: "rv.json", layout: "two_page" },
+  });
+  const profile = loadProfile("p", { ...SILENT_OPTS, profilesDir: dir });
+  assert.equal(profile.resume.layout, "two_page");
+  // Other resume fields preserved.
+  assert.equal(profile.resume.versions_file, "rv.json");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("loadProfile: resume.layout defaults to one_page when resume block absent", () => {
+  const dir = makeTempProfiles();
+  writeProfile(dir, "p", { id: "p" });
+  const profile = loadProfile("p", { ...SILENT_OPTS, profilesDir: dir });
+  assert.equal(profile.resume.layout, "one_page");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("loadProfile: resume.layout defaults to one_page when field absent on existing resume block", () => {
+  const dir = makeTempProfiles();
+  writeProfile(dir, "p", { id: "p", resume: { versions_file: "rv.json" } });
+  const profile = loadProfile("p", { ...SILENT_OPTS, profilesDir: dir });
+  assert.equal(profile.resume.layout, "one_page");
+  assert.equal(profile.resume.versions_file, "rv.json");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("loadProfile: unknown resume.layout warns via injected callback and falls back", () => {
+  const dir = makeTempProfiles();
+  writeProfile(dir, "p", {
+    id: "p",
+    resume: { layout: "triple_page" },
+  });
+  const warnings = [];
+  const profile = loadProfile("p", {
+    profilesDir: dir,
+    warn: (msg) => warnings.push(msg),
+  });
+  assert.equal(profile.resume.layout, "one_page");
+  // First warning may be the RFC 033 positive-gate warning; find the layout one.
+  const layoutWarn = warnings.find((w) => /resume\.layout/.test(w));
+  assert.ok(layoutWarn, `expected resume.layout warning, got: ${JSON.stringify(warnings)}`);
+  assert.match(layoutWarn, /triple_page/);
+  assert.match(layoutWarn, /one_page/);
   fs.rmSync(dir, { recursive: true, force: true });
 });

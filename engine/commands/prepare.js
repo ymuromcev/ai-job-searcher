@@ -53,10 +53,12 @@ const { slugifyCompany } = require("../core/company_slug.js");
 const { pickClBase } = require("../core/cl_base_matcher.js");
 const { generateCoverLetterPdf } = require("../modules/generators/cover_letter_pdf.js");
 const { generateResumeDocx } = require("../modules/generators/resume_docx.js");
+const { generateResumePdf } = require("../modules/generators/resume_pdf_chrome.js");
 const {
   classifyRow: classifyTailorRow,
   buildEscalationRecord,
   tailoredResumePath,
+  tailoredResumePathPdf,
 } = require("../modules/tailor/dispatcher.js");
 const {
   renderEscalationReport,
@@ -666,6 +668,7 @@ function makeDefaultDeps() {
     copyFileSync: (src, dst) => fs.copyFileSync(src, dst),
     generateCoverLetterPdf,
     generateResumeDocx,
+    generateResumePdf,
     slugifyCompany,
     // RFC 022: per-row Notion push in commit phase. All Notion deps are
     // injectable so unit / integration tests can swap in a mock client +
@@ -1726,32 +1729,59 @@ async function runCommit(ctx, deps) {
     const app = byKey[rowKey];
     if (!app) continue; // defensive — applyFitFields earlier would have warned
     const slug = deps.slugifyCompany(app.companyName);
-    const relPath = tailoredResumePath(profileId, slug, dateStr);
-    const absPath = path.join(profile.paths.root, relPath);
+    const docxRel = tailoredResumePath(profileId, slug, dateStr);
+    const pdfRel = tailoredResumePathPdf(profileId, slug, dateStr);
+    const docxAbs = path.join(profile.paths.root, docxRel);
+    const pdfAbs = path.join(profile.paths.root, pdfRel);
 
     if (flags.dryRun) {
-      stdout(`(dry-run) would write tailored resume ${relPath}`);
-      app.resume_ver = relPath;
-      entry.tailoredDocxRel = relPath;
+      stdout(`(dry-run) would write tailored resume ${docxRel} + ${pdfRel}`);
+      // BL-126 Block A: PDF is the canonical resume_ver in TSV/Notion.
+      app.resume_ver = pdfRel;
+      entry.tailoredDocxRel = docxRel;
+      entry.tailoredPdfRel = pdfRel;
       tailoredStats.dryRun++;
       continue;
     }
 
     try {
-      deps.mkdirp(path.dirname(absPath));
-      await deps.generateResumeDocx(entry.row.tailoredResume, absPath);
-      app.resume_ver = relPath;
+      deps.mkdirp(path.dirname(docxAbs));
+      // DOCX stays as a side artifact (re-edit / archive). PDF is canonical.
+      await deps.generateResumeDocx(entry.row.tailoredResume, docxAbs);
+      // BL-126 Block A: emit PDF alongside DOCX. Recruiters expect PDF;
+      // the TSV `resume_ver` and Notion `resumeVersion` reference the PDF.
+      // The renderer returns `{ path, pageCount }` (RFC 045 contract).
+      // We still defensively handle missing pageCount for forward-compat.
+      // BL-126 Block D: pass the profile's layout preset so the renderer
+      // picks the matching density preset. `profile.resume.layout` is
+      // normalized by profile_loader (default `one_page`).
+      const pdfResult = await deps.generateResumePdf(entry.row.tailoredResume, pdfAbs, {
+        layout: (profile.resume && profile.resume.layout) || "one_page",
+      });
+      const pageCount =
+        pdfResult && typeof pdfResult === "object" && typeof pdfResult.pageCount === "number"
+          ? pdfResult.pageCount
+          : null;
+      if (pageCount !== null && pageCount > 1) {
+        stderr(
+          `warn: tailored PDF for ${slug} is ${pageCount} pages (expected 1) — ` +
+            `consider compression hints: shorter summary, condense earlier roles, ` +
+            `drop low-impact bullets`
+        );
+      }
+      app.resume_ver = pdfRel;
       // buildJobFieldsForNotion reads r.resumeVer for the Notion
       // resumeVersion field. Mutating the in-memory result row keeps
-      // the tailored path as the source of truth for both TSV and
+      // the tailored PDF path as the source of truth for both TSV and
       // Notion without threading a second parameter through the push.
-      entry.row.resumeVer = relPath;
-      entry.tailoredDocxRel = relPath;
+      entry.row.resumeVer = pdfRel;
+      entry.tailoredDocxRel = docxRel;
+      entry.tailoredPdfRel = pdfRel;
       tailoredStats.generated++;
       updates.tailored++;
     } catch (err) {
       stderr(
-        `warn: failed to generate tailored resume for ${rowKey} (${relPath}): ${err.message} ` +
+        `warn: failed to generate tailored resume for ${rowKey} (${pdfRel}): ${err.message} ` +
           `— falling back to archetype resume_ver`
       );
       tailoredStats.failed++;

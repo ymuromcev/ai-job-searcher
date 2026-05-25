@@ -59,7 +59,7 @@ Return JSON only — **no markdown wrappers, no prose preamble, no trailing expl
   ],
   "resume_data": {
     "contact": { "name": "...", "phone": "...", "email": "...", "location": "...", "linkedin": "..." },
-    "version": { "title": "Plaid PM", "summary": "..." },
+    "version": { "title": "Product Manager, Payments Infra — Plaid", "summary": "..." },
     "sharedExperience": [
       {
         "role": "...",
@@ -115,12 +115,41 @@ Required field semantics:
 - `resume_data` — must conform to the schema consumed by `engine/modules/generators/resume_docx.js → generateResumeDocx(data, outputPath)`. See exact shape in that file's header comment. Bullets are arrays of rich-text segments `[{ text, bold? }]`. Bold is for mirrored JD phrases (keeps recruiter eye on lexical matches).
 - `coverage_table[].where` — dotted path into `resume_data` where the basis lives. Use `null` only when `status === "missing"`. **This is your audit trail — every non-missing row MUST have a real path.**
 
+## version.title rule
+
+`version.title` MUST mirror the JD role title and brand the target
+company — not your own generic positioning. It is the first line a
+recruiter reads; generic titles like "Senior Product Manager — Agentic
+AI & Productivity" waste that real estate and fail the lexical-mirror
+principle the same way generic bullets do.
+
+Format: `"<JD role title> — <Company short name>"`
+
+Good:
+- `"Product Manager (Builder) — Perplexity"`
+- `"Senior Product Manager, Payments Infra — Plaid"`
+- `"AI Product Lead — Anthropic"`
+
+Bad (generic, ignores JD specifics):
+- `"Senior Product Manager — Agentic AI & Productivity"`
+- `"Product Leader — FinTech"`
+- `"PM with 10+ years experience"`
+
+If the JD role title is long, abbreviate but keep the substantive
+modifier (e.g. "Builder", "Payments Infra", "Growth"). Take the company
+short name from `target_role_title` / the JD header — strip suffixes
+like "Inc.", "Labs", "AI" when redundant ("Perplexity" not "Perplexity
+AI" if the JD itself reads "Perplexity"). The same lexical-mirror /
+no-fabrication rules apply: do not invent a JD role title that isn't
+in the posting.
+
 ## How to tailor — the loop semantics that govern your work
 
 - **Threshold**: orchestrator stops at `coverage_pct >= 85`. Aim for it on this iteration if you can — don't sandbag for "room to grow".
 - **Iteration cap**: 6 total. If you receive `iteration_n: 6`, this is the last call. Be aggressive about mirroring; if there are facts you're unsure about, push them into `uncertain_facts` rather than fabricating.
 - **No-growth detection**: orchestrator exits if your `coverage_pct` is less than `prev_coverage + 1`. So on iteration N>1, you must actually improve over the previous draft. Re-read `missing_from_prev` and patch the bullets that should mirror those phrases.
 - **You do ONE iteration and return.** Do not internally loop "let me re-check, let me revise again". Single pass, single JSON.
+- After Compression rules applied, verify mirror coverage_pct did not drop more than 5pp vs the uncompressed pass — if it did, restore the dropped phrases by re-densifying bullets, not by expanding to 2 pages.
 
 ## Lexical mirror — the core principle
 
@@ -153,6 +182,20 @@ Specifically:
 If JD requires a skill that the candidate can reasonably pick up before an interview given their adjacent experience — JD wants Mixpanel, candidate has Amplitude + Superset; JD wants Linear, candidate has Jira + GitHub Projects — you MAY include the JD's term in the Skills section as a competent practitioner. **You may NOT claim years of experience or attach metrics to it.** No "5 years of Mixpanel" if there were zero years. Phrasing like "Familiar with: Mixpanel, Pendo, Hotjar" or just listing in a comma-separated skills line is acceptable. The bullet body of work must still reflect the actually-used tool.
 
 When in doubt — push into `uncertain_facts[]` instead of taking the risk. The orchestrator will surface it to the user for confirmation rather than silently shipping a fabrication.
+
+## Compression rules
+
+The renderer (`engine/modules/generators/resume_pdf.js`, OpenArt-style, 9.3pt body, 0.4×0.55 inch margins) is calibrated for a **one-page output**. Build the resume so it lands on exactly one page by construction — don't generate a sprawling 2-page draft and hope the renderer copes. Mirror coverage still takes precedence over page count, but the hard rules below should leave room for every required mirror phrase.
+
+- **Target: exactly 1 page** when rendered via `engine/modules/generators/resume_pdf.js`. If coverage and 1-pageness conflict, coverage wins — but exhaust densification before adding length.
+- **Summary**: ≤ 4 lines of body text (~3 sentences). Lead with role-fit framing, end with one differentiator + a JD-domain bridge sentence.
+- **Per-role bullets**: ≤ 4 bullets per role. Merge parallel-theme bullets ("event analytics A" + "event analytics B" → one bullet citing both metrics).
+- **Earlier PM roles**: any role >3 positions away from the current / most-recent role → collapse all such roles into a single block titled "Earlier PM roles" with one prose paragraph. Inside: company-bolded short clauses with key metrics, e.g. `**Company X** (location, domain): metric A, metric B, metric C.` Separator: ` `. Include the date span at the block level only.
+- **Personal Projects**: render as ONE section with a single prose paragraph (no per-project bullets). Lead with the most JD-relevant project bolded, then bridge to the others with ` ` separators.
+- **Skills & Tools**: prose paragraph (no bullets), grouped by theme with bolded JD-required terms.
+- **What NOT to compress**: any mirror phrase from `requiredKeywords` / the lexical-mirror plan; quantified metrics; certifications relevant to the JD; bolded JD keywords.
+
+For a worked example of the compressed structure (4-line summary, 4 bullets per main role, Earlier PM roles paragraph, single-paragraph Projects), see row 3 `tailoredResume` in `profiles/jared/prepare_results_20260525_204500.json`.
 
 ## Significance — which JD phrases go in coverage_table
 

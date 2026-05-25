@@ -8,7 +8,8 @@
 const fs = require("fs");
 const path = require("path");
 const { generateResumeDocx } = require("../engine/modules/generators/resume_docx");
-const { generateResumePdf } = require("../engine/modules/generators/resume_pdf");
+const { generateResumePdf } = require("../engine/modules/generators/resume_pdf_chrome");
+const { loadProfile } = require("../engine/core/profile_loader");
 
 const args = process.argv.slice(2);
 const profileIdx = args.indexOf("--profile");
@@ -16,6 +17,16 @@ const PROFILE = profileIdx !== -1 ? args[profileIdx + 1] : "jared";
 
 const ROOT = path.join(__dirname, "..", "profiles", PROFILE);
 const rvPath = path.join(ROOT, "resume_versions.json");
+
+// BL-126 Block D: read resume.layout density preset from profile.json so the
+// PDF renderer (Block B) picks the correct density table. Falls back to the
+// loader's default when the profile predates the field.
+let RESUME_LAYOUT;
+try {
+  RESUME_LAYOUT = loadProfile(PROFILE, { warn: () => {} }).resume.layout;
+} catch (_e) {
+  RESUME_LAYOUT = "one_page";
+}
 
 if (!fs.existsSync(rvPath)) {
   console.error(`resume_versions.json not found at ${rvPath}`);
@@ -84,7 +95,7 @@ async function main() {
       if (!isPdfOnly) {
         await generateResumeDocx(data, path.join(outDir, `${stem}.docx`));
       }
-      await generateResumePdf(data, path.join(outDir, `${stem}.pdf`));
+      await generateResumePdf(data, path.join(outDir, `${stem}.pdf`), { layout: RESUME_LAYOUT });
       console.log(`✓ ${key} (${isPdfOnly ? "pdf" : "docx+pdf"})`);
       generated++;
     } catch (e) {
