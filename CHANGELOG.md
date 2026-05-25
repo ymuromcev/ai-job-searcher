@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Changed
+
+- **Tailored resume PDF renderer pivoted from pdfkit to Chrome headless + HTML template (BL-126 / [RFC 045](rfc/045-html-chrome-resume-pdf.md), 2026-05-25)**. The old `pdfkit`-based `engine/modules/generators/resume_pdf.js` is deleted. The new renderer (`engine/modules/generators/resume_pdf_chrome.js`) drives Chrome headless against `engine/modules/generators/resume_template.html` (slot-based HTML/CSS template). Eliminates the font-corruption glitches and manual-positioning fragility of the pdfkit path and produces the 1-page OpenArt layout that matches the approved visual reference. Compression preprocessing (`compressForOnePage` → `compressEarlierRoles` / `capRoleBullets` / `compressProjects`) is enforced deterministically by the engine before render — the subagent's soft hints are no longer load-bearing. Public API is drop-in: `await generateResumePdf(data, outputPath, { layout })` → `{ path, pageCount }`. Callers (`engine/commands/prepare.js`, `scripts/regen_resumes.js`) rewired to the new renderer. **Requires Chrome or Chromium on the host**; the renderer probes `CHROME_BIN` first, then standard macOS/Linux install paths. 29 new unit tests cover compression, slot substitution, Chrome discovery, page-count parsing; full suite 1771/1771 passes. Git history retains the pdfkit implementation if anyone needs to spelunk.
+
 ### Style
 
 - **Prettier auto-format on tailor module + `build_master_profile`** (BL-123, 2026-05-25). `npm run format:check` was failing CI on 12 files (the BL-123 tailor module and BL-124 `build_master_profile` script were committed without running prettier). Auto-formatted; no behavioural changes; 1737/0 tests still pass.

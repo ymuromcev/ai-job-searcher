@@ -8,7 +8,7 @@
 const fs = require("fs");
 const path = require("path");
 const { generateResumeDocx } = require("../engine/modules/generators/resume_docx");
-const { generateResumePdf } = require("../engine/modules/generators/resume_pdf");
+const { generateResumePdf } = require("../engine/modules/generators/resume_pdf_chrome");
 const { loadProfile } = require("../engine/core/profile_loader");
 
 const args = process.argv.slice(2);

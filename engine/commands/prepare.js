@@ -53,7 +53,7 @@ const { slugifyCompany } = require("../core/company_slug.js");
 const { pickClBase } = require("../core/cl_base_matcher.js");
 const { generateCoverLetterPdf } = require("../modules/generators/cover_letter_pdf.js");
 const { generateResumeDocx } = require("../modules/generators/resume_docx.js");
-const { generateResumePdf } = require("../modules/generators/resume_pdf.js");
+const { generateResumePdf } = require("../modules/generators/resume_pdf_chrome.js");
 const {
   classifyRow: classifyTailorRow,
   buildEscalationRecord,
@@ -1750,10 +1750,8 @@ async function runCommit(ctx, deps) {
       await deps.generateResumeDocx(entry.row.tailoredResume, docxAbs);
       // BL-126 Block A: emit PDF alongside DOCX. Recruiters expect PDF;
       // the TSV `resume_ver` and Notion `resumeVersion` reference the PDF.
-      // The renderer may return `{ pageCount }` (Block B contract) or
-      // `undefined` (back-compat); we treat unknown page counts as a no-op
-      // for the overflow warning. TODO(BL-126 Block B): once resume_pdf.js
-      // is updated to expose pageCount, this branch will fire reliably.
+      // The renderer returns `{ path, pageCount }` (RFC 045 contract).
+      // We still defensively handle missing pageCount for forward-compat.
       // BL-126 Block D: pass the profile's layout preset so the renderer
       // picks the matching density preset. `profile.resume.layout` is
       // normalized by profile_loader (default `one_page`).
