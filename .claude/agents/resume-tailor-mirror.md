@@ -59,7 +59,7 @@ Return JSON only — **no markdown wrappers, no prose preamble, no trailing expl
   ],
   "resume_data": {
     "contact": { "name": "...", "phone": "...", "email": "...", "location": "...", "linkedin": "..." },
-    "version": { "title": "Plaid PM", "summary": "..." },
+    "version": { "title": "Product Manager, Payments Infra — Plaid", "summary": "..." },
     "sharedExperience": [
       {
         "role": "...",
@@ -114,6 +114,34 @@ Required field semantics:
 - `uncertain_facts` — empty array `[]` if there are none. Non-empty triggers escalation in the orchestrator when `coverage_pct >= 85`.
 - `resume_data` — must conform to the schema consumed by `engine/modules/generators/resume_docx.js → generateResumeDocx(data, outputPath)`. See exact shape in that file's header comment. Bullets are arrays of rich-text segments `[{ text, bold? }]`. Bold is for mirrored JD phrases (keeps recruiter eye on lexical matches).
 - `coverage_table[].where` — dotted path into `resume_data` where the basis lives. Use `null` only when `status === "missing"`. **This is your audit trail — every non-missing row MUST have a real path.**
+
+## version.title rule
+
+`version.title` MUST mirror the JD role title and brand the target
+company — not your own generic positioning. It is the first line a
+recruiter reads; generic titles like "Senior Product Manager — Agentic
+AI & Productivity" waste that real estate and fail the lexical-mirror
+principle the same way generic bullets do.
+
+Format: `"<JD role title> — <Company short name>"`
+
+Good:
+- `"Product Manager (Builder) — Perplexity"`
+- `"Senior Product Manager, Payments Infra — Plaid"`
+- `"AI Product Lead — Anthropic"`
+
+Bad (generic, ignores JD specifics):
+- `"Senior Product Manager — Agentic AI & Productivity"`
+- `"Product Leader — FinTech"`
+- `"PM with 10+ years experience"`
+
+If the JD role title is long, abbreviate but keep the substantive
+modifier (e.g. "Builder", "Payments Infra", "Growth"). Take the company
+short name from `target_role_title` / the JD header — strip suffixes
+like "Inc.", "Labs", "AI" when redundant ("Perplexity" not "Perplexity
+AI" if the JD itself reads "Perplexity"). The same lexical-mirror /
+no-fabrication rules apply: do not invent a JD role title that isn't
+in the posting.
 
 ## How to tailor — the loop semantics that govern your work
 
