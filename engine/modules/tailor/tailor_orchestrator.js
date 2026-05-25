@@ -157,8 +157,7 @@ async function runTailorLoop({
       target_role_title: targetRoleTitle,
       iteration: n,
       prev_resume_data: prevResumeData,
-      missing_from_prev:
-        iterations.length > 0 ? iterations[iterations.length - 1].missing : [],
+      missing_from_prev: iterations.length > 0 ? iterations[iterations.length - 1].missing : [],
     };
 
     // eslint-disable-next-line no-await-in-loop -- sequential by design (each
@@ -185,9 +184,7 @@ async function runTailorLoop({
     prevResumeData = lastResult.resume_data || prevResumeData;
   }
 
-  const finalCoverage = iterations.length
-    ? iterations[iterations.length - 1].coverage_pct
-    : 0;
+  const finalCoverage = iterations.length ? iterations[iterations.length - 1].coverage_pct : 0;
   const uncertainFacts = Array.isArray(lastResult && lastResult.uncertain_facts)
     ? lastResult.uncertain_facts
     : [];
@@ -195,11 +192,11 @@ async function runTailorLoop({
     ? lastResult.coverage_table
     : [];
 
-  const { escalate, reason: escalationReason } = decideEscalation(
-    finalCoverage,
-    uncertainFacts,
-    { threshold, noGrowthDelta, lastDelta },
-  );
+  const { escalate, reason: escalationReason } = decideEscalation(finalCoverage, uncertainFacts, {
+    threshold,
+    noGrowthDelta,
+    lastDelta,
+  });
 
   return {
     row_key: rowKey,

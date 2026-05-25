@@ -117,7 +117,10 @@ function buildSkillsInventory(rv) {
     for (const s of rv.shared_sections.skillsFixed) {
       if (!s.label || !s.value) continue;
       const set = buckets.get(s.label) || new Set();
-      for (const item of s.value.split("|").map((x) => x.trim()).filter(Boolean)) {
+      for (const item of s.value
+        .split("|")
+        .map((x) => x.trim())
+        .filter(Boolean)) {
         set.add(item);
       }
       buckets.set(s.label, set);
@@ -190,7 +193,10 @@ function applyClusters(bullets, clusterDefs, archetypes) {
       // Merge alternates too
       for (const alt of b.alternates || []) {
         if (!matched.angles.has(alt)) {
-          matched.angles.set(alt, { md: alt, used_in: new Set(b.used_in.includes("all") ? archetypes : b.used_in) });
+          matched.angles.set(alt, {
+            md: alt,
+            used_in: new Set(b.used_in.includes("all") ? archetypes : b.used_in),
+          });
         }
       }
     } else {
@@ -279,7 +285,10 @@ function renderMaster(rv, profileId, opts = {}) {
   out += "---\n\n";
 
   out += `# Master Profile — ${rv.contact?.name || profileId}\n\n`;
-  out += "_Generated file. Edit `resume_versions.json` (or storybank) and re-run `node scripts/build_master_profile.js --profile " + profileId + "` to regenerate. Manual edits to this file will be overwritten._\n\n";
+  out +=
+    "_Generated file. Edit `resume_versions.json` (or storybank) and re-run `node scripts/build_master_profile.js --profile " +
+    profileId +
+    "` to regenerate. Manual edits to this file will be overwritten._\n\n";
 
   // Contact
   out += "## Contact\n\n";
@@ -297,13 +306,15 @@ function renderMaster(rv, profileId, opts = {}) {
   if (typeof rv.career_narrative === "string" && rv.career_narrative.trim()) {
     out += rv.career_narrative.trim() + "\n\n";
   } else {
-    out += "<!-- TODO: add `career_narrative` to resume_versions.json. Placeholder until first manual fill. -->\n\n";
+    out +=
+      "<!-- TODO: add `career_narrative` to resume_versions.json. Placeholder until first manual fill. -->\n\n";
     out += `Across ${roleIds.length} roles spanning fintech, AI-native product execution, and consumer-growth startups, the candidate has shipped ${rv.versions ? Object.keys(rv.versions).length : 0} distinct PM archetype variants from a single career foundation. Edit this section manually.\n\n`;
   }
 
   // Visibility Schema
   out += "## Visibility Schema\n\n";
-  out += "Each role and section carries a Visibility tag controlling inclusion in generated CVs.\n\n";
+  out +=
+    "Each role and section carries a Visibility tag controlling inclusion in generated CVs.\n\n";
   out += "| Value | Meaning |\n";
   out += "|---|---|\n";
   out += "| `always` | Include in all resume variants |\n";
@@ -342,7 +353,11 @@ function renderMaster(rv, profileId, opts = {}) {
 
     // Baseline from shared_experience: single compound bullet (array of segments)
     const baselineBullet = rv.shared_experience?.[roleId];
-    if (Array.isArray(baselineBullet) && baselineBullet.length && typeof baselineBullet[0]?.text === "string") {
+    if (
+      Array.isArray(baselineBullet) &&
+      baselineBullet.length &&
+      typeof baselineBullet[0]?.text === "string"
+    ) {
       const md = segmentsToMarkdown(baselineBullet);
       const plain = segmentsToText(baselineBullet);
       // Always prepend if not already in dedup pool
@@ -398,14 +413,18 @@ function renderMaster(rv, profileId, opts = {}) {
       if (unmatched.length > 0) {
         out += "**Other achievements (not clustered):**\n\n";
         for (const b of unmatched) {
-          const covers = b.used_in.includes("all") || b.used_in.length >= archetypes.length ? ["all"] : b.used_in;
+          const covers =
+            b.used_in.includes("all") || b.used_in.length >= archetypes.length
+              ? ["all"]
+              : b.used_in;
           out += renderBulletWithMeta({ ...b, used_in: covers }, archetypes);
         }
       }
     } else {
       out += "**Achievements (deduped across archetypes):**\n\n";
       for (const b of versionBullets) {
-        const covers = b.used_in.includes("all") || b.used_in.length >= archetypes.length ? ["all"] : b.used_in;
+        const covers =
+          b.used_in.includes("all") || b.used_in.length >= archetypes.length ? ["all"] : b.used_in;
         out += renderBulletWithMeta({ ...b, used_in: covers }, archetypes);
       }
     }
@@ -451,7 +470,8 @@ function renderMaster(rv, profileId, opts = {}) {
 
   // Skills Inventory
   out += "## Skills Inventory\n\n";
-  out += "Full union of skills from `skillsFixed` + per-archetype `skillsProduct` / `skillsDomain`. Not filtered for any single CV — tailoring subagent picks per JD.\n\n";
+  out +=
+    "Full union of skills from `skillsFixed` + per-archetype `skillsProduct` / `skillsDomain`. Not filtered for any single CV — tailoring subagent picks per JD.\n\n";
   const inv = buildSkillsInventory(rv);
   for (const bucket of inv) {
     out += `### ${bucket.label}\n\n`;
@@ -476,13 +496,18 @@ function renderMaster(rv, profileId, opts = {}) {
   out += "## STAR Stories\n\n";
   out += `Full STAR-stories (Situation / Task / Action / Result + Earned Secret) live in:\n\n`;
   out += `\`profiles/${profileId}/interview-coach-state/coaching_state.md\`\n\n`;
-  out += "Tailoring subagents must read both this file AND `coaching_state.md` in parallel to assemble factual grounding for a tailored CV. Format: bilingual RU/EN, first-person STAR per `feedback_storybank_first_person`.\n\n";
+  out +=
+    "Tailoring subagents must read both this file AND `coaching_state.md` in parallel to assemble factual grounding for a tailored CV. Format: bilingual RU/EN, first-person STAR per `feedback_storybank_first_person`.\n\n";
 
   // Notes
   out += "## Notes\n\n";
-  out += "- `resume_versions.json` remains primary source for Weak/Medium archetype CV generation (job-pipeline Step 7). This master is derived.\n";
+  out +=
+    "- `resume_versions.json` remains primary source for Weak/Medium archetype CV generation (job-pipeline Step 7). This master is derived.\n";
   out += "- See `rfc/043-master-profile-schema.md` for full design rationale.\n";
-  out += "- Re-run `node scripts/build_master_profile.js --profile " + profileId + "` after any change to `resume_versions.json`.\n";
+  out +=
+    "- Re-run `node scripts/build_master_profile.js --profile " +
+    profileId +
+    "` after any change to `resume_versions.json`.\n";
 
   return out;
 }

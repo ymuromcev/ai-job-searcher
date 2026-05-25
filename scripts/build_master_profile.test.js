@@ -86,13 +86,9 @@ const fixtureRv = {
           { text: "30% conversion lift", bold: true },
           { text: ".", bold: false },
         ],
-        [
-          { text: "Built only-in-A bullet.", bold: false },
-        ],
+        [{ text: "Built only-in-A bullet.", bold: false }],
       ],
-      alfaBullets: [
-        [{ text: "Doubled partner traffic.", bold: false }],
-      ],
+      alfaBullets: [[{ text: "Doubled partner traffic.", bold: false }]],
       skillsProduct: ["A/B Testing", "Funnel Optimization"],
       skillsDomain: ["FinTech"],
       filename: "test_a.docx",
@@ -108,9 +104,7 @@ const fixtureRv = {
           { text: ".", bold: false },
         ], // same as ArchA — should dedupe
       ],
-      alfaBullets: [
-        [{ text: "Doubled partner traffic.", bold: false }],
-      ],
+      alfaBullets: [[{ text: "Doubled partner traffic.", bold: false }]],
       skillsProduct: ["A/B Testing", "Customer Interviews"],
       skillsDomain: ["FinTech", "Payments"],
       filename: "test_b.docx",
@@ -127,7 +121,11 @@ test("segmentsToText joins text segments", () => {
 
 test("segmentsToMarkdown wraps bold segments", () => {
   assert.equal(
-    segmentsToMarkdown([{ text: "a ", bold: false }, { text: "B", bold: true }, { text: " c", bold: false }]),
+    segmentsToMarkdown([
+      { text: "a ", bold: false },
+      { text: "B", bold: true },
+      { text: " c", bold: false },
+    ]),
     "a **B** c"
   );
 });
@@ -154,21 +152,31 @@ test("buildSkillsInventory unions across archetypes + skillsFixed", () => {
   const aiTools = inv.find((b) => b.label === "AI Tools");
   assert.deepEqual(aiTools.skills, ["ChatGPT", "Claude"]);
   const product = inv.find((b) => b.label.startsWith("Product"));
-  assert.deepEqual(product.skills.sort(), ["A/B Testing", "Customer Interviews", "Funnel Optimization"]);
+  assert.deepEqual(product.skills.sort(), [
+    "A/B Testing",
+    "Customer Interviews",
+    "Funnel Optimization",
+  ]);
   const domain = inv.find((b) => b.label.startsWith("Domain"));
   assert.deepEqual(domain.skills.sort(), ["FinTech", "Payments"]);
 });
 
 test("computeVisibility marks always when role spans >= threshold archetypes", () => {
   assert.deepEqual(computeVisibility(["A", "B"], 2, 2), { visibility: "always", variants: null });
-  assert.deepEqual(computeVisibility(["A"], 2, 2), { visibility: "variant-specific", variants: ["A"] });
+  assert.deepEqual(computeVisibility(["A"], 2, 2), {
+    visibility: "variant-specific",
+    variants: ["A"],
+  });
   assert.deepEqual(computeVisibility([], 2, 2), { visibility: "always", variants: null });
 });
 
 // ---------- render tests ----------
 
 test("renderMaster includes all required top-level sections", () => {
-  const md = renderMaster(fixtureRv, "testprofile", { generatedAt: "2026-05-24", sourceHash: "deadbeef" });
+  const md = renderMaster(fixtureRv, "testprofile", {
+    generatedAt: "2026-05-24",
+    sourceHash: "deadbeef",
+  });
   for (const section of [
     "## Contact",
     "## Career Narrative",
@@ -191,7 +199,10 @@ test("renderMaster includes all required top-level sections", () => {
 test("renderMaster tags all-coverage bullets with used_in: [all]", () => {
   const md = renderMaster(fixtureRv, "testprofile", { generatedAt: "2026-05-24", sourceHash: "x" });
   // The shipped-feature-X bullet is in both archetypes → "all"
-  assert.ok(/Shipped feature X[\s\S]*used_in: \[all\]/m.test(md), "shipped feature should be tagged [all]");
+  assert.ok(
+    /Shipped feature X[\s\S]*used_in: \[all\]/m.test(md),
+    "shipped feature should be tagged [all]"
+  );
 });
 
 test("renderMaster includes coaching_state.md reference for STAR Stories", () => {
@@ -205,7 +216,10 @@ test("main() writes master_profile.md and is idempotent", () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bmp-"));
   const profileDir = path.join(tmpRoot, "profiles", "testprof");
   fs.mkdirSync(profileDir, { recursive: true });
-  fs.writeFileSync(path.join(profileDir, "resume_versions.json"), JSON.stringify(fixtureRv, null, 2));
+  fs.writeFileSync(
+    path.join(profileDir, "resume_versions.json"),
+    JSON.stringify(fixtureRv, null, 2)
+  );
 
   const exit1 = main(["--profile", "testprof", "--root", tmpRoot], { generatedAt: "2026-05-24" });
   assert.equal(exit1, 0);
@@ -259,9 +273,24 @@ test("computeSourceHash is deterministic", () => {
 
 test("applyClusters routes bullets by match_patterns; first-match wins", () => {
   const bullets = [
-    { canonical: "Rebuilt partner API.", plain: "Rebuilt partner API.", used_in: ["ArchA"], alternates: [] },
-    { canonical: "Launched MFI integration for $500K.", plain: "Launched MFI integration for $500K.", used_in: ["ArchB"], alternates: [] },
-    { canonical: "Unrelated bullet.", plain: "Unrelated bullet.", used_in: ["ArchA"], alternates: [] },
+    {
+      canonical: "Rebuilt partner API.",
+      plain: "Rebuilt partner API.",
+      used_in: ["ArchA"],
+      alternates: [],
+    },
+    {
+      canonical: "Launched MFI integration for $500K.",
+      plain: "Launched MFI integration for $500K.",
+      used_in: ["ArchB"],
+      alternates: [],
+    },
+    {
+      canonical: "Unrelated bullet.",
+      plain: "Unrelated bullet.",
+      used_in: ["ArchA"],
+      alternates: [],
+    },
   ];
   const clusterDefs = [
     { id: "api", name: "API", canonical: "...", match_patterns: ["partner api"] },
@@ -278,7 +307,12 @@ test("applyClusters routes bullets by match_patterns; first-match wins", () => {
 
 test("renderCluster emits canonical + outcome + sorted angles", () => {
   const c = {
-    def: { id: "x", name: "Test Cluster", canonical: "Canonical statement.", outcome: "Key metric." },
+    def: {
+      id: "x",
+      name: "Test Cluster",
+      canonical: "Canonical statement.",
+      outcome: "Key metric.",
+    },
     angles: [
       { md: "Short angle.", used_in: ["ArchA"] },
       { md: "Wide angle.", used_in: ["ArchA", "ArchB", "ArchC"] },
@@ -306,7 +340,13 @@ test("renderMaster uses rv.career_narrative when provided", () => {
 });
 
 test("renderMaster uses rv.languages when provided", () => {
-  const rv = { ...fixtureRv, languages: [{ name: "English", level: "C1" }, { name: "Russian", level: "Native" }] };
+  const rv = {
+    ...fixtureRv,
+    languages: [
+      { name: "English", level: "C1" },
+      { name: "Russian", level: "Native" },
+    ],
+  };
   const md = renderMaster(rv, "testprofile");
   assert.ok(md.includes("- English — C1"));
   assert.ok(md.includes("- Russian — Native"));

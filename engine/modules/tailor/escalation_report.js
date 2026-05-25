@@ -89,9 +89,7 @@ function renderRecordDetails(rec) {
   lines.push(`- Escalation reason: \`${rec.escalation_reason || "n/a"}\``);
   lines.push(`- Final coverage: ${Number(rec.final_coverage_pct || 0)}%`);
 
-  const missingHi = Array.isArray(rec.missing_high_priority)
-    ? rec.missing_high_priority
-    : [];
+  const missingHi = Array.isArray(rec.missing_high_priority) ? rec.missing_high_priority : [];
   if (missingHi.length > 0) {
     lines.push("- Missing high-priority JD phrases:");
     for (const p of missingHi) lines.push(`  - "${p}"`);
@@ -142,10 +140,9 @@ function renderEscalationReport(records, opts = {}) {
     const missing = formatMissingList(rec.missing_high_priority);
     const uncertain = formatUncertainSummary(rec.uncertain_facts);
     const summary =
-      [missing !== "(none)" ? missing : "", uncertain].filter(Boolean).join(" | ") ||
-      "(none)";
+      [missing !== "(none)" ? missing : "", uncertain].filter(Boolean).join(" | ") || "(none)";
     lines.push(
-      `| ${jobLabel} | ${Number(rec.final_coverage_pct || 0)}% | ${rec.exit_reason || "?"} | ${summary} |`,
+      `| ${jobLabel} | ${Number(rec.final_coverage_pct || 0)}% | ${rec.exit_reason || "?"} | ${summary} |`
     );
   }
   lines.push("");
@@ -174,10 +171,9 @@ function renderEscalationStdout(records) {
   for (const rec of list) {
     const jobLabel = `${rec.company || ""} ${rec.target_role || ""}`.trim() || "Job";
     const hint =
-      formatUncertainSummary(rec.uncertain_facts) ||
-      formatMissingList(rec.missing_high_priority);
+      formatUncertainSummary(rec.uncertain_facts) || formatMissingList(rec.missing_high_priority);
     lines.push(
-      `${jobLabel} | ${Number(rec.final_coverage_pct || 0)}% | ${rec.escalation_reason || rec.exit_reason || "?"} | ${hint}`,
+      `${jobLabel} | ${Number(rec.final_coverage_pct || 0)}% | ${rec.escalation_reason || rec.exit_reason || "?"} | ${hint}`
     );
   }
   return lines.join("\n");

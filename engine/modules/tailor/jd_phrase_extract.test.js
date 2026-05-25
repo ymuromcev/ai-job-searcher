@@ -95,6 +95,6 @@ test("extractJDPhrases — calls llmCallFn with built prompt and returns parsed 
 test("extractJDPhrases — throws when llmCallFn missing", async () => {
   await assert.rejects(
     () => extractJDPhrases({ jdText: "x", jdStructure: {}, llmCallFn: null }),
-    /llmCallFn is required/,
+    /llmCallFn is required/
   );
 });

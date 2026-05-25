@@ -38,7 +38,7 @@ test("formatIterationsLine — coverage progression", () => {
       { n: 2, coverage_pct: 81 },
       { n: 3, coverage_pct: 88 },
     ]),
-    "62%, 81%, 88% (3 iters)",
+    "62%, 81%, 88% (3 iters)"
   );
   assert.equal(formatIterationsLine([{ n: 1, coverage_pct: 50 }]), "50% (1 iter)");
   assert.equal(formatIterationsLine([]), "(no iterations)");
@@ -48,10 +48,7 @@ test("formatIterationsLine — coverage progression", () => {
 test("formatMissingList — truncates after 4 with +N more", () => {
   assert.equal(formatMissingList([]), "(none)");
   assert.equal(formatMissingList(["a", "b"]), "a, b");
-  assert.equal(
-    formatMissingList(["a", "b", "c", "d", "e", "f"]),
-    "a, b, c, d, +2 more",
-  );
+  assert.equal(formatMissingList(["a", "b", "c", "d", "e", "f"]), "a, b, c, d, +2 more");
 });
 
 test("renderEscalationReport — single record produces summary + details", () => {

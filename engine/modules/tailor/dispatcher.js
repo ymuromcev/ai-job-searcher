@@ -75,24 +75,24 @@ function classifyRow(row) {
  */
 function buildEscalationRecord(row) {
   const r = row || {};
-  const detail = (r.tailorEscalationDetail && typeof r.tailorEscalationDetail === "object")
-    ? r.tailorEscalationDetail
-    : {};
+  const detail =
+    r.tailorEscalationDetail && typeof r.tailorEscalationDetail === "object"
+      ? r.tailorEscalationDetail
+      : {};
   const iterations = Array.isArray(detail.iterations) ? detail.iterations : [];
-  const uncertainFacts = Array.isArray(detail.uncertain_facts)
-    ? detail.uncertain_facts
-    : [];
+  const uncertainFacts = Array.isArray(detail.uncertain_facts) ? detail.uncertain_facts : [];
   // missing_high_priority is sourced from the last iteration's `missing`
   // list if the SKILL didn't pass it separately — it's the most useful
   // signal for "what would push coverage higher".
   const lastIter = iterations[iterations.length - 1] || {};
   const missingHighPriority = Array.isArray(detail.missing_high_priority)
     ? detail.missing_high_priority
-    : (Array.isArray(lastIter.missing) ? lastIter.missing : []);
+    : Array.isArray(lastIter.missing)
+      ? lastIter.missing
+      : [];
 
-  const finalCoveragePct = typeof r.tailorCoverage === "number"
-    ? r.tailorCoverage
-    : Number(r.tailorCoverage || 0);
+  const finalCoveragePct =
+    typeof r.tailorCoverage === "number" ? r.tailorCoverage : Number(r.tailorCoverage || 0);
 
   // The SKILL emits `tailorEscalationReason` (the action-oriented label).
   // The MD report has both `escalation_reason` (why escalate) and

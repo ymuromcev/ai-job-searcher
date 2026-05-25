@@ -27,7 +27,7 @@ test("findPartialMatch — finds rewordings within 50-char window", () => {
   // 3 tokens, need ceil(3 * 0.6) = 2 hits in a 50-char window.
   assert.equal(
     findPartialMatch("own product area", "responsible for own product end-to-end"),
-    true,
+    true
   );
   // Single-token degenerates to token presence.
   assert.equal(findPartialMatch("kubernetes", "we use kubernetes daily"), true);
@@ -75,8 +75,7 @@ test("computeCoverage — mixed exact + partial + missing yields correct pct", (
     { phrase: "scrum of scrums", priority: "low" }, // missing
     { phrase: "graphql", priority: "medium" }, // exact
   ];
-  const resume =
-    "Shipped kubernetes clusters; own product area end-to-end with graphql.";
+  const resume = "Shipped kubernetes clusters; own product area end-to-end with graphql.";
   const result = computeCoverage(phrases, resume);
   // matched=2, partial=1 → (2 + 0.5) / 4 = 0.625 → 63%
   assert.equal(result.coverage_pct, 63);

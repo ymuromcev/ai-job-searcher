@@ -39,10 +39,10 @@ test("decideExit — threshold beats no_growth", () => {
 });
 
 test("decideEscalation — no_growth_below_threshold", () => {
-  assert.deepEqual(
-    decideEscalation(70, [], { threshold: 85, noGrowthDelta: 1, lastDelta: 0 }),
-    { escalate: true, reason: "no_growth_below_threshold" },
-  );
+  assert.deepEqual(decideEscalation(70, [], { threshold: 85, noGrowthDelta: 1, lastDelta: 0 }), {
+    escalate: true,
+    reason: "no_growth_below_threshold",
+  });
 });
 
 test("decideEscalation — uncertain_about_fact at threshold", () => {
@@ -52,15 +52,15 @@ test("decideEscalation — uncertain_about_fact at threshold", () => {
       noGrowthDelta: 1,
       lastDelta: 5,
     }),
-    { escalate: true, reason: "uncertain_about_fact" },
+    { escalate: true, reason: "uncertain_about_fact" }
   );
 });
 
 test("decideEscalation — clean auto-ship", () => {
-  assert.deepEqual(
-    decideEscalation(90, [], { threshold: 85, noGrowthDelta: 1, lastDelta: 5 }),
-    { escalate: false, reason: null },
-  );
+  assert.deepEqual(decideEscalation(90, [], { threshold: 85, noGrowthDelta: 1, lastDelta: 5 }), {
+    escalate: false,
+    reason: null,
+  });
 });
 
 test("runTailorLoop — threshold_met on iteration 2, no escalation", async () => {
@@ -141,10 +141,10 @@ test("runTailorLoop — iteration_cap_reached with steady growth below threshold
 });
 
 test("decideEscalation — iteration_cap_below_threshold (still climbing)", () => {
-  assert.deepEqual(
-    decideEscalation(70, [], { threshold: 85, noGrowthDelta: 1, lastDelta: 5 }),
-    { escalate: true, reason: "iteration_cap_below_threshold" },
-  );
+  assert.deepEqual(decideEscalation(70, [], { threshold: 85, noGrowthDelta: 1, lastDelta: 5 }), {
+    escalate: true,
+    reason: "iteration_cap_below_threshold",
+  });
 });
 
 test("runTailorLoop — threshold met with uncertain_facts → escalate", async () => {
@@ -220,7 +220,7 @@ test("runTailorLoop — throws when subagentCallFn missing", async () => {
         targetRoleTitle: "PM",
         subagentCallFn: null,
       }),
-    /subagentCallFn is required/,
+    /subagentCallFn is required/
   );
 });
 

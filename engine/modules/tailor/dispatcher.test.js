@@ -3,11 +3,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const {
-  classifyRow,
-  buildEscalationRecord,
-  tailoredResumePath,
-} = require("./dispatcher.js");
+const { classifyRow, buildEscalationRecord, tailoredResumePath } = require("./dispatcher.js");
 
 // --- classifyRow -------------------------------------------------------------
 

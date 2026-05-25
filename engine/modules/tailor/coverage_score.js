@@ -170,9 +170,7 @@ function computeCoverage(jdPhrases, resumeText) {
   }
 
   const total = phrases.length;
-  const coverage_pct = Math.round(
-    ((matched.length * 1.0 + partial.length * 0.5) / total) * 100,
-  );
+  const coverage_pct = Math.round(((matched.length * 1.0 + partial.length * 0.5) / total) * 100);
 
   return {
     coverage_pct,

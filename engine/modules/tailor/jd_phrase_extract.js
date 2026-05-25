@@ -66,9 +66,7 @@ Rules:
 function buildPhrasePrompt(jdText, jdStructure) {
   const struct = jdStructure && typeof jdStructure === "object" ? jdStructure : {};
   const requirements = Array.isArray(struct.requirements) ? struct.requirements : [];
-  const responsibilities = Array.isArray(struct.responsibilities)
-    ? struct.responsibilities
-    : [];
+  const responsibilities = Array.isArray(struct.responsibilities) ? struct.responsibilities : [];
 
   const sections = [
     PROMPT_HEADER,
@@ -77,9 +75,7 @@ function buildPhrasePrompt(jdText, jdStructure) {
     requirements.length ? requirements.map((r) => `- ${r}`).join("\n") : "(none)",
     "",
     "## Pre-extracted responsibilities",
-    responsibilities.length
-      ? responsibilities.map((r) => `- ${r}`).join("\n")
-      : "(none)",
+    responsibilities.length ? responsibilities.map((r) => `- ${r}`).join("\n") : "(none)",
     "",
     "## Raw JD text",
     String(jdText || "").trim() || "(empty)",
@@ -112,7 +108,9 @@ function parsePhrasesFromLLM(raw) {
   const out = [];
   for (const item of arr) {
     if (!item || typeof item !== "object") continue;
-    const phrase = String(item.phrase || "").replace(/\s+/g, " ").trim();
+    const phrase = String(item.phrase || "")
+      .replace(/\s+/g, " ")
+      .trim();
     const category = String(item.category || "").toLowerCase();
     const priority = String(item.priority || "").toLowerCase();
     if (!phrase) continue;
