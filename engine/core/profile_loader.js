@@ -16,6 +16,13 @@ const path = require("path");
 
 const ID_REGEX = /^[a-z][a-z0-9_-]*$/;
 
+// BL-126 Block D: valid resume layout density presets. The PDF renderer
+// (Block B) consumes the normalized value via `generateResumePdf(data, path,
+// { layout })`. Unknown values fall back to `one_page` with a warn — additive
+// presets must be added here AND in the renderer's preset table.
+const VALID_RESUME_LAYOUTS = new Set(["one_page", "two_page", "ru_long"]);
+const DEFAULT_RESUME_LAYOUT = "one_page";
+
 function validateId(id) {
   if (typeof id !== "string" || !ID_REGEX.test(id)) {
     throw new Error(`invalid profile id: ${JSON.stringify(id)}`);
@@ -117,6 +124,19 @@ function loadProfile(id, options = {}) {
   // L-4 (RFC 013): per-profile geo block. Canonical shape consumed by
   // filter.js / prepare.js / validate.js via geo_enforcer.
   result.geo = normalizeGeo(profile.geo);
+
+  // BL-126 Block D: resume layout density preset. Normalised onto
+  // `result.resume.layout` so call sites pass it through as the 3rd opts
+  // arg to `generateResumePdf(data, path, { layout })`. Unknown values
+  // warn (via `options.warn`) and fall back to the default.
+  const { layout: normalizedLayout, warnings: layoutWarnings } = normalizeResumeLayout(
+    profile.resume && profile.resume.layout
+  );
+  result.resume = { ...(profile.resume || {}), layout: normalizedLayout };
+  if (layoutWarnings.length > 0) {
+    const warn = typeof options.warn === "function" ? options.warn : defaultWarn;
+    for (const msg of layoutWarnings) warn(`profile "${id}": ${msg}`);
+  }
 
   // RFC 033: warn if the profile has no positive title gate. The blocklist
   // alone is fundamentally the wrong tool for "I want roles shaped like X" —
@@ -386,6 +406,34 @@ function loadSecrets(id, env = process.env) {
   return out;
 }
 
+// --- Resume layout (BL-126 Block D) -----------------------------------------
+//
+// Schema (profile.json):
+//   "resume": { ..., "layout": "one_page" | "two_page" | "ru_long" }
+//
+// Returns: { layout: string, warnings: string[] }
+//   layout    — always a valid preset (DEFAULT_RESUME_LAYOUT on unknown/absent)
+//   warnings  — human-readable strings for unknown-value fallbacks
+//
+// Wired in `loadProfile` so every CLI invocation surfaces unknown values
+// once at load time. Engine call sites read `profile.resume.layout` and
+// pass it as the 3rd opts arg to `generateResumePdf(data, path, { layout })`.
+// The PDF renderer (BL-126 Block B) owns the preset → density table.
+function normalizeResumeLayout(raw) {
+  const warnings = [];
+  if (raw === undefined || raw === null || raw === "") {
+    return { layout: DEFAULT_RESUME_LAYOUT, warnings };
+  }
+  if (typeof raw !== "string" || !VALID_RESUME_LAYOUTS.has(raw)) {
+    warnings.push(
+      `resume.layout=${JSON.stringify(raw)} is not one of ` +
+        `${Array.from(VALID_RESUME_LAYOUTS).join(", ")}; falling back to ${DEFAULT_RESUME_LAYOUT}`
+    );
+    return { layout: DEFAULT_RESUME_LAYOUT, warnings };
+  }
+  return { layout: raw, warnings };
+}
+
 // --- Geo block (L-4 / RFC 013) ----------------------------------------------
 //
 // Schema (profile.json):
@@ -471,7 +519,10 @@ module.exports = {
   loadMemory,
   normalizeSalaryConfig,
   normalizeGeo,
+  normalizeResumeLayout,
   checkPositiveGate,
   VALID_GEO_MODES,
+  VALID_RESUME_LAYOUTS,
+  DEFAULT_RESUME_LAYOUT,
   ID_REGEX,
 };

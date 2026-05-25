@@ -19,7 +19,8 @@
   "resume": {
     "versions_file": "resume_versions.example.json",
     "output_dir": "resumes",
-    "master_format": "docx"
+    "master_format": "docx",
+    "layout": "one_page"
   },
   "cover_letter": {
     "config_file": "cover_letter_versions.example.json",
