@@ -76,6 +76,9 @@ audit_*.md
 # Private maintainer tree (RFC 018) — backlog files, handoffs, pre-anonymization originals
 private/
 
+# Personal resume drafts / tailoring outputs (resume-tailor skill, manual edits)
+docs/resume/
+
 # Build artifacts
 dist/
 build/

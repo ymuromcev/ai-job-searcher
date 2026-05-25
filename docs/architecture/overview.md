@@ -164,6 +164,47 @@ Per-profile customization: archetypes are declared in
 `profiles/<id>/cover_letter_versions.json`. The engine doesn't know
 about specific archetypes; profiles do.
 
+### 4a. Master profile (consolidated) — for from-scratch tailoring
+
+`profiles/<id>/master_profile.md` is a **derived** consolidated profile
+built from `resume_versions.json` (+ a link to `interview-coach-state/coaching_state.md`).
+It is the single-source-of-truth a tailoring subagent reads when
+building a CV **from scratch** for a specific JD — rather than
+selecting from the 16 pre-built archetypes in `resume_versions.json`.
+
+Build / regenerate:
+
+```bash
+node scripts/build_master_profile.js --profile <id>
+```
+
+The script is idempotent (md5-stable output across runs) and writes
+YAML frontmatter with a `source_hash` so drift from
+`resume_versions.json` is detectable. See
+[RFC 043](../../rfc/043-master-profile-schema.md) for the full schema
+and design decisions.
+
+**Two-file architecture:**
+- `master_profile.md` — derived; rebuilt from `resume_versions.json`.
+  Career narrative + Visibility schema + Roles with achievement
+  clusters (canonical + outcome + per-archetype angles) + Projects +
+  Skills + Languages + Certifications + Notes. STAR storybank is
+  **referenced by link, not copied** (avoid drift).
+- `interview-coach-state/coaching_state.md` — manual primary;
+  authored / extended by the `interview-coach` skill. 15+ STAR
+  stories with full Earned Secret depth. Tailoring subagents read
+  both files in parallel.
+
+**Relationship to existing artifacts:**
+- `resume_versions.json` remains primary for the archetype-pick path
+  (Weak / Medium fit → `prepare` picks an archetype → `regen_resumes.js`
+  generates DOCX from blocks). Not touched by master-profile flow.
+- `master_profile.md` is consumed by the Strong-fit tailoring loop
+  (BL-123, in flight) — subagent reads master + storybank + JD,
+  composes a CV without committing to a single archetype.
+- Storybank stays the single source for narrative depth; the build
+  script never duplicates STAR content into master.
+
 ## 5. Notion sync — hybrid model
 
 `notion_sync.js` uses two paths:

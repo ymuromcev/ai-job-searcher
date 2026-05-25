@@ -84,6 +84,12 @@ lives in `profiles/<id>/`.
 - **Check** — Reads Gmail replies via Claude MCP, classifies
   (rejection / interview invite / info request / recruiter
   outreach), updates Notion status and adds comments.
+- **Master profile (for from-scratch tailoring)** — `node scripts/build_master_profile.js --profile <id>` consolidates
+  `resume_versions.json` + a link to the STAR storybank into
+  `profiles/<id>/master_profile.md` — a single-source profile a tailoring
+  subagent reads when building a CV from scratch for a specific JD
+  (rather than picking from the pre-built archetypes). Idempotent;
+  schema in [RFC 043](rfc/043-master-profile-schema.md).
 - **Onboarding skill** — `/onboard-profile` walks a new candidate
   through a six-block questionnaire in chat, writes their `intake.md`
   inside `profiles/<id>/`, then provisions `profile.json` /
