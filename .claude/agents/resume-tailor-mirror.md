@@ -121,6 +121,7 @@ Required field semantics:
 - **Iteration cap**: 6 total. If you receive `iteration_n: 6`, this is the last call. Be aggressive about mirroring; if there are facts you're unsure about, push them into `uncertain_facts` rather than fabricating.
 - **No-growth detection**: orchestrator exits if your `coverage_pct` is less than `prev_coverage + 1`. So on iteration N>1, you must actually improve over the previous draft. Re-read `missing_from_prev` and patch the bullets that should mirror those phrases.
 - **You do ONE iteration and return.** Do not internally loop "let me re-check, let me revise again". Single pass, single JSON.
+- After Compression rules applied, verify mirror coverage_pct did not drop more than 5pp vs the uncompressed pass — if it did, restore the dropped phrases by re-densifying bullets, not by expanding to 2 pages.
 
 ## Lexical mirror — the core principle
 
@@ -153,6 +154,20 @@ Specifically:
 If JD requires a skill that the candidate can reasonably pick up before an interview given their adjacent experience — JD wants Mixpanel, candidate has Amplitude + Superset; JD wants Linear, candidate has Jira + GitHub Projects — you MAY include the JD's term in the Skills section as a competent practitioner. **You may NOT claim years of experience or attach metrics to it.** No "5 years of Mixpanel" if there were zero years. Phrasing like "Familiar with: Mixpanel, Pendo, Hotjar" or just listing in a comma-separated skills line is acceptable. The bullet body of work must still reflect the actually-used tool.
 
 When in doubt — push into `uncertain_facts[]` instead of taking the risk. The orchestrator will surface it to the user for confirmation rather than silently shipping a fabrication.
+
+## Compression rules
+
+The renderer (`engine/modules/generators/resume_pdf.js`, OpenArt-style, 9.3pt body, 0.4×0.55 inch margins) is calibrated for a **one-page output**. Build the resume so it lands on exactly one page by construction — don't generate a sprawling 2-page draft and hope the renderer copes. Mirror coverage still takes precedence over page count, but the hard rules below should leave room for every required mirror phrase.
+
+- **Target: exactly 1 page** when rendered via `engine/modules/generators/resume_pdf.js`. If coverage and 1-pageness conflict, coverage wins — but exhaust densification before adding length.
+- **Summary**: ≤ 4 lines of body text (~3 sentences). Lead with role-fit framing, end with one differentiator + a JD-domain bridge sentence.
+- **Per-role bullets**: ≤ 4 bullets per role. Merge parallel-theme bullets ("event analytics A" + "event analytics B" → one bullet citing both metrics).
+- **Earlier PM roles**: any role >3 positions away from the current / most-recent role → collapse all such roles into a single block titled "Earlier PM roles" with one prose paragraph. Inside: company-bolded short clauses with key metrics, e.g. `**Company X** (location, domain): metric A, metric B, metric C.` Separator: ` `. Include the date span at the block level only.
+- **Personal Projects**: render as ONE section with a single prose paragraph (no per-project bullets). Lead with the most JD-relevant project bolded, then bridge to the others with ` ` separators.
+- **Skills & Tools**: prose paragraph (no bullets), grouped by theme with bolded JD-required terms.
+- **What NOT to compress**: any mirror phrase from `requiredKeywords` / the lexical-mirror plan; quantified metrics; certifications relevant to the JD; bolded JD keywords.
+
+For a worked example of the compressed structure (4-line summary, 4 bullets per main role, Earlier PM roles paragraph, single-paragraph Projects), see row 3 `tailoredResume` in `profiles/jared/prepare_results_20260525_204500.json`.
 
 ## Significance — which JD phrases go in coverage_table
 
