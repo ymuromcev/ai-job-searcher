@@ -47,6 +47,8 @@ Before running any command, verify:
 
 ### scan
 
+**Pre-step (mandatory if profile has `discovery:indeed`):** refresh `profiles/<id>/.indeed-state/raw_indeed.json` via Chrome MCP **before** running scan. Indeed has no public API; the file rots silently and scan picks up stale data without warning. Full playbook (browser select → navigate Indeed search URLs → parse cards → filter → Blob download → mv to ingest_file) is in `~/.claude/scheduled-tasks/job-scan-lily/SKILL.md` Step 0 — same logic applies to any profile with `discovery:indeed` in modules, just swap the profile id and ingest path. If Chrome isn't connected → skip the refresh (don't ask the user) and note it in the final report. See incident: Eric Grove DDS missed for 25 days because the file wasn't refreshed (2026-05-23).
+
 ```
 node engine/cli.js scan --profile <id> [--dry-run] [--verbose]
 ```
