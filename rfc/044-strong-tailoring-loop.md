@@ -342,3 +342,13 @@ Post-approval discovery: node engine не имеет Anthropic SDK / LLM invocat
 - Новый escalation reason `iteration_cap_below_threshold` добавлен для ясности: отделяет «модель ещё росла, но упёрлась в cap» от `no_growth_below_threshold` («застряла»). User видит разницу в escalation report и решает — поднять cap или обогатить master profile.
 - Добавлена секция «results.json schema extension» — контракт SKILL → engine (5 новых полей на Strong-строку).
 - Sections без изменений: research summary, lexical mirror rationale, threshold rationale, loop semantics, escalation surface, no-fabrication guard, olegvg mining, tests, out-of-scope, open questions, notes.
+
+## 2026-05-25 — acceptance test findings (BL-123 Step 14)
+
+Acceptance test прогнали end-to-end на jared: subagent live на Calendly Staff PM (coverage 64%, 4 uncertain_facts, 22 exact-match lexical mirror hits) + engine `prepare --phase commit --dry-run` на synthetic results.json с 3 строками (escalated / tailored / archetype). Все три route'а отработали: tailored → DOCX path `resumes/tailored/<slug>-<date>.docx`, escalated → status stays Inbox + escalation report MD + stdout summary, archetype → legacy resumeVer path. Engine wire подтверждён.
+
+Два бага, найденных живым прогоном, исправлены тем же коммитом:
+
+1. **Storybank path**: SKILL.md Step 6.5 указывал `profiles/<id>/storybank.md` — у Jared такого файла нет, storybank живёт внутри `profiles/<id>/interview-coach-state/coaching_state.md` под секцией `## Storybank` (см. `master_profile.md` строка 486 — это документированная ссылка). SKILL.md теперь резолвит первый существующий из двух путей. Subagent doc уже был корректен (показывал coaching_state.md в примере) — туда правка не нужна.
+
+2. **Location requirements исключены из mirror**: subagent в acceptance test'е положил "San Francisco Bay Area" и "hybrid / office 1-2 times a week" в `missing[]` и в `uncertain_facts` — но геолокация — это upstream concern, enforced в `engine/core/geo_enforcer.js` ДО того как row доходит до subagent (BL-24 «US-anywhere wins»). Если row пришёл — geo check пройден или deferred. Mirroring location в резюме — шум: candidate's location уже в `contact.location`, и это весь resume-level location signal. `.claude/agents/resume-tailor-mirror.md` §"Significance" теперь явно исключает location requirements из `missing[]` / `coverage_pct` / `coverage_table` / `uncertain_facts`.

@@ -285,7 +285,7 @@ For every row classified as `Strong` in Step 4, run an autonomous tailoring loop
 - `jd_text` — raw JD body (`batch[i].jdText`, fallback if `jdStructure` is absent).
 - `jd_structure` — `batch[i].jdStructure` (requirements / responsibilities / salary_text / location_text / full_text_excerpt).
 - `master_profile_path` — `profiles/<id>/master_profile.md`. Verify the file exists; if missing, escalate the row with reason `uncertain_about_fact` and skip the loop.
-- `storybank_path` — `profiles/<id>/storybank.md` if present, else `null`.
+- `storybank_path` — first existing path among `profiles/<id>/storybank.md`, then `profiles/<id>/interview-coach-state/coaching_state.md` (Jared's storybank lives inside the coaching state file under `## Storybank`); `null` if neither exists. The subagent reads the file as a single blob — no need to extract a specific section.
 - `profile_id` — resolved profile id.
 - `target_role_title` — JD title from `batch[i].title`.
 

@@ -164,7 +164,9 @@ You decide. Heuristic: a "significant" JD phrase is one whose absence from the r
 - **Quantitative / scale signals** ("global team", "distributed teams", "Fortune 500 customers", "billion-row datasets").
 - **Seniority / scope markers** if the JD explicitly names them ("staff-level", "principal", "cross-functional").
 
-Exclude: generic verbs ("collaborate", "communicate", "drive"), filler phrases ("strong sense of ownership"), boilerplate EOE language.
+Exclude:
+- Generic verbs ("collaborate", "communicate", "drive"), filler phrases ("strong sense of ownership"), boilerplate EOE language.
+- **Location requirements** — anything about where the candidate must live, hybrid/office days, time-zone overlap, relocation, work-from-X clauses. These are upstream concerns enforced by `engine/core/geo_enforcer.js` BEFORE the row ever reaches this subagent (BL-24). If the row arrived in your input, the geo check already passed (or was deferred to the user). Mirroring "San Francisco Bay Area" or "willing to come into office 1-2 times per week" in the resume is noise — never put it in `missing[]`, never count it in `coverage_pct`, never add a `coverage_table` row for it, never surface it as an `uncertain_facts` entry. The candidate's location is in `contact.location` and that's the whole resume-level location signal.
 
 Target table size for a typical PM JD: 30–50 rows. Fewer than ~20 suggests you're under-extracting; more than ~80 suggests you're padding.
 
