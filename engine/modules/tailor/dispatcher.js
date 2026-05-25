@@ -137,8 +137,27 @@ function tailoredResumePath(profileId, slug, date) {
   return path.posix.join("resumes", "tailored", `${slug}-${date}.docx`);
 }
 
+/**
+ * Compute the on-disk path for a tailored resume PDF (relative to the
+ * profile root). Mirrors `tailoredResumePath` but with a `.pdf` extension.
+ * BL-126 Block A: PDF is emitted alongside DOCX in the commit phase and
+ * becomes the canonical `resume_ver` (TSV / Notion) — recruiters expect
+ * PDF; DOCX stays as a side artifact for archive / re-edit.
+ *
+ *   resumes/tailored/<slug>-<YYYY-MM-DD>.pdf
+ *
+ * @param {string} profileId — unused in the path itself (parity with DOCX helper)
+ * @param {string} slug      — company slug (caller computes via slugifyCompany)
+ * @param {string} date      — YYYY-MM-DD string (caller computes from `now`)
+ * @returns {string} relative POSIX path
+ */
+function tailoredResumePathPdf(profileId, slug, date) {
+  return path.posix.join("resumes", "tailored", `${slug}-${date}.pdf`);
+}
+
 module.exports = {
   classifyRow,
   buildEscalationRecord,
   tailoredResumePath,
+  tailoredResumePathPdf,
 };

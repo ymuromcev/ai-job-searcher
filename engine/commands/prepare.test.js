@@ -1099,6 +1099,10 @@ function makeCommitDeps(apps, overrides = {}) {
       pushCounter += 1;
       return { pageId: `notion-page-${pushCounter}`, dedup: false };
     },
+    // BL-126 Block A: tailored commit phase emits PDF alongside DOCX.
+    // Default mock returns pageCount=1 (single-page; no overflow warning).
+    // Tests that exercise the overflow branch override this.
+    generateResumePdf: async () => ({ pageCount: 1 }),
     formatSalaryDisplay: () => "$100-200K ($150K mid)",
     now: () => "2026-04-20T13:00:00.000Z",
     _getSaved: () => savedApps,
@@ -4192,18 +4196,148 @@ test("prepare --phase commit (BL-123): tailored row generates DOCX and pushes wi
   // company_slug.js preserves case ("Stripe" not "stripe").
   assert.match(docxCalled.outPath, /resumes\/tailored\/Stripe-2026-04-20\.docx$/);
 
-  // resume_ver on the TSV row is the tailored file path, not an archetype key.
+  // BL-126 Block A: resume_ver on the TSV row is the tailored PDF path
+  // (DOCX stays as side artifact). Notion's resumeVersion also picks up
+  // the PDF via r.resumeVer mutation.
   const saved = deps._getSaved();
-  assert.equal(saved[0].resume_ver, "resumes/tailored/Stripe-2026-04-20.docx");
+  assert.equal(saved[0].resume_ver, "resumes/tailored/Stripe-2026-04-20.pdf");
   assert.equal(saved[0].status, "To Apply");
 
-  // Notion push received the path as resumeVersion (engine mutated r.resumeVer
-  // so buildJobFieldsForNotion picked it up).
+  // Notion push received the PDF path as resumeVersion.
   assert.equal(pushCalls.length, 1);
-  assert.equal(pushCalls[0].resumeVersion, "resumes/tailored/Stripe-2026-04-20.docx");
+  assert.equal(pushCalls[0].resumeVersion, "resumes/tailored/Stripe-2026-04-20.pdf");
 
   // stdout reports tailored count.
   assert.ok(ctx._lines.some((l) => /tailored resumes:.*1 generated/.test(l)));
+});
+
+// --- BL-126 Block A: PDF emit + page-overflow warning -----------------------
+
+test("prepare --phase commit (BL-126 Block A): tailored row emits PDF + DOCX, resume_ver = PDF path", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
+  const tailoredResume = {
+    contact: { name: "Test", phone: "555", email: "a@b.c", location: "SF" },
+    version: { summary: "tailored summary" },
+  };
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        fitScore: "Strong",
+        clKey: "stripe_pm_20260420",
+        clParagraphs: ["Hi.", "Bye."],
+        tailoredResume,
+        tailorEscalated: false,
+      },
+    ],
+  };
+  let pdfCalled = null;
+  let docxCalled = null;
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    generateResumeDocx: async (data, outPath) => {
+      docxCalled = { data, outPath };
+    },
+    // Page-overflow case: 2-page PDF must trigger the stderr warning.
+    generateResumePdf: async (data, outPath) => {
+      pdfCalled = { data, outPath };
+      return { pageCount: 2 };
+    },
+    generateCoverLetterPdf: async () => {},
+    fileExists: () => false,
+    mkdirp: () => {},
+    writeFile: () => {},
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+
+  // Both generators called with same tailoredResume.
+  assert.ok(docxCalled, "DOCX generator must be called");
+  assert.ok(pdfCalled, "PDF generator must be called");
+  assert.deepEqual(pdfCalled.data, tailoredResume);
+  assert.match(docxCalled.outPath, /resumes\/tailored\/Stripe-2026-04-20\.docx$/);
+  assert.match(pdfCalled.outPath, /resumes\/tailored\/Stripe-2026-04-20\.pdf$/);
+
+  // resume_ver written to TSV is the PDF path (not DOCX, not archetype).
+  const saved = deps._getSaved();
+  assert.equal(saved[0].resume_ver, "resumes/tailored/Stripe-2026-04-20.pdf");
+
+  // Page-overflow warning fired with compression hints.
+  assert.ok(
+    ctx._errLines.some((l) => /tailored PDF for Stripe is 2 pages/.test(l)),
+    "stderr must warn on PDF > 1 page"
+  );
+  assert.ok(
+    ctx._errLines.some((l) => /compression hints/.test(l)),
+    "warning must include compression hints"
+  );
+});
+
+test("prepare --phase commit (BL-126 Block A): single-page PDF does not trigger overflow warning", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        fitScore: "Strong",
+        tailoredResume: { contact: {}, version: { summary: "x" } },
+        tailorEscalated: false,
+      },
+    ],
+  };
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    generateResumeDocx: async () => {},
+    generateResumePdf: async () => ({ pageCount: 1 }),
+    fileExists: () => false,
+    mkdirp: () => {},
+    writeFile: () => {},
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  assert.ok(
+    !ctx._errLines.some((l) => /tailored PDF for.*pages/.test(l)),
+    "no overflow warning expected at pageCount=1"
+  );
+});
+
+test("prepare --phase commit (BL-126 Block A): unknown pageCount (legacy renderer) does not warn", async () => {
+  // Back-compat: if generateResumePdf returns undefined (older signature
+  // before Block B lands), we treat the page count as unknown and skip
+  // the warning rather than mis-firing.
+  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        fitScore: "Strong",
+        tailoredResume: { contact: {}, version: { summary: "x" } },
+        tailorEscalated: false,
+      },
+    ],
+  };
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    generateResumeDocx: async () => {},
+    generateResumePdf: async () => undefined, // legacy signature
+    fileExists: () => false,
+    mkdirp: () => {},
+    writeFile: () => {},
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+  assert.ok(!ctx._errLines.some((l) => /tailored PDF for.*pages/.test(l)));
+  // resume_ver still set to PDF path even when renderer returns undefined.
+  const saved = deps._getSaved();
+  assert.equal(saved[0].resume_ver, "resumes/tailored/Stripe-2026-04-20.pdf");
 });
 
 test("prepare --phase commit (BL-123): escalated row stays Inbox, writes MD report, no Notion push", async () => {
