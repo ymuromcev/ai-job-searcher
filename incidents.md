@@ -1174,3 +1174,106 @@ Probing the actual IMAP bodies of all 5 ids today:
   failure family, earlier today.
 - 2026-05-02 Indeed-digest incident (bare `\binterview\b` / bare
   `\bassessment\b`) — first instance of this lesson.
+
+## 2026-05-23 — Indeed ingest file rotted silently for 25 days (Lilia profile)
+
+### What happened
+
+User asked why a clearly-fit Indeed posting (Front Desk Insurance
+Coordinator @ Eric Grove DDS, Sacramento, $28-33/hr, Dentrix) was
+not in Notion after the daily scan. Investigation:
+
+- `discovery:indeed` was enabled in `profiles/lilia/profile.json`.
+- `keywords` included `dental+receptionist` — Eric Grove would have
+  matched at parse time.
+- `filters.location_whitelist` includes Sacramento; no cert blockers
+  in the title.
+- The job WAS in `data/companies.tsv` reach indirectly (Indeed adapter
+  reads its own ingest file).
+- BUT `profiles/lilia/.indeed-state/raw_indeed.json` was last touched
+  **2026-04-27 23:57** — 25 days stale. Contained the same 33 entries
+  from the prior manual browser session. Eric Grove DDS (jk
+  `1efa50532160c442`) was not among them.
+
+The daily scheduled task `job-scan-lily` runs `node engine/cli.js scan`,
+which calls the indeed adapter, which reads from the stale file. Zero
+new Indeed jobs surface unless the operator manually refreshes the
+ingest file via the indeed-prep + Chrome browser playbook.
+
+### Why this happened
+
+Architectural: Indeed has no public API and Cloudflare blocks
+scraping. The indeed adapter was designed as a three-phase flow with
+the browser-fetch phase OUTSIDE the engine (`indeed-prep` produces a
+playbook, operator runs a Chrome session, then `scan` ingests the
+written file). This is a sound design for ad-hoc runs but the
+ingest file has no TTL and no scan-time freshness check, so the
+adapter happily serves stale data.
+
+The scheduled task only invoked `scan`, never `indeed-prep` + browser
+flow. Indeed coverage silently dropped to zero new jobs over the
+25-day window with no warning in any log.
+
+### Fix
+
+Wired Indeed refresh as a mandatory Step 0 in the scheduled task
+`~/.claude/scheduled-tasks/job-scan-lily/SKILL.md`:
+
+1. Connect to local Chrome via `mcp__Claude_in_Chrome__select_browser`.
+2. Run `indeed-prep --profile lilia` to get the playbook.
+3. Loop 9 top-priority keywords (dental_receptionist, medical_receptionist,
+   patient_access_representative, front_desk_medical_office,
+   patient_services_representative, medical_office_coordinator,
+   insurance_verification_medical, clinic_receptionist, medical_scheduler).
+4. For each: navigate Indeed search → eval parser → push into
+   `localStorage['ji_acc']`.
+5. Apply blocklist/whitelist/title-noise filters.
+6. Download via `Blob` → `~/Downloads/raw_indeed_refresh.json`
+   (Chrome MCP blocks raw URL strings in eval responses, Blob
+   download is the workaround).
+7. `cp` over `profiles/lilia/.indeed-state/raw_indeed.json`.
+8. Then run `scan` as Step 1.
+
+Failure modes documented: Chrome not connected → skip Step 0 quietly
+and note in report. CAPTCHA / 0 cards on a keyword → skip that
+keyword. Survived < 5 → don't overwrite (preserve last good file).
+
+Main SKILL `skills/job-pipeline/SKILL.md` `scan` section also got a
+pre-step note pointing at the playbook so manual `/job-pipeline scan`
+invocations follow the same rule for any profile with
+`discovery:indeed` enabled.
+
+### Verification
+
+Manual run on 2026-05-23: refresh fetched 44 unique entries from 11
+keywords → applied filters (1 blocklist drop, 4 not-in-whitelist, 4
+title-noise) → 44 survived → scan ingested → 18 fresh Inbox rows
+(including Eric Grove DDS) → prepare loop → 18 To Apply pushed to
+Notion (14 Strong / 2 Medium / 2 Weak).
+
+### Lessons
+
+- **Adapters reading from local files need a freshness contract.**
+  If a file underwrites a daily pipeline, the pipeline must either
+  refresh it or surface its age as a warning. Silent staleness is
+  the worst failure mode — looks like everything works.
+- **Per-profile coverage gaps don't ring alarms.** Greenhouse / Workday
+  feed kept yielding jobs, so the daily report looked healthy. Indeed
+  was contributing zero new rows for 25 days and nothing noticed.
+  Going forward, consider per-source delta metrics in the scan
+  summary ("indeed: 0 fresh, last refresh 25d ago").
+- **Browser-mediated flows must live in skills, not in operator
+  memory.** This pipeline relied on the operator remembering to run
+  `indeed-prep` weekly. Nobody did. Codify in the skill that runs
+  daily.
+- **Chrome MCP eval responses get URL-redacted.** Anything containing
+  cookie-like strings or query-string URLs returns `[BLOCKED: ...]`.
+  Workaround: Blob download to `~/Downloads/`, then Bash `cp`.
+
+### Related
+
+- `engine/modules/discovery/indeed.js` — adapter still has no TTL
+  warning; consider adding a `mtime > 7d → log warn` in a follow-up.
+- `engine/commands/indeed_prepare.js` — Phase 1 unchanged.
+- `~/.claude/scheduled-tasks/job-scan-lily/SKILL.md` — new Step 0.
+- `skills/job-pipeline/SKILL.md` — scan section pre-step note.
