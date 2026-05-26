@@ -45,6 +45,10 @@ const {
   titleMentionsCandidateGeo,
 } = require("../core/geo_enforcer.js");
 const { findHardBlockers } = require("../core/hard_blockers.js");
+const {
+  compilePatterns: compileRequirementBlockerPatterns,
+  applyRequirementBlockers,
+} = require("../core/requirement_blockers.js");
 const { findTitleBlocklistHit } = require("../core/filter.js");
 const { evaluateJob } = require("../core/evaluate_job.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
@@ -526,6 +530,50 @@ function applyHardBlockers(aliveResults, jdByAppKey, profile) {
   return { aliveResults: surviving, hardBlockerSkipped };
 }
 
+// RFC 046 / BL-B: requirement-blocker pass. Runs IMMEDIATELY AFTER
+// `applyHardBlockers` against the same alive set, with the precedence rule
+// from §10.5 enforced by call order: hard_blockers fire first, anything
+// surviving is checked against the operator's regex patterns. A blocked row
+// goes to `skipped[]` with `reason="requirement_blocker:<reason>"`; it gets
+// archived via the same RFC 035 path as hard_blockers and never reaches the
+// SKILL.
+//
+// Patterns are compiled ONCE per `runPre` invocation (see `runPre` body) and
+// passed in pre-compiled so the per-row cost is just O(patterns × fields).
+//
+// Rows without fetched JD body pass through (defensive — mirror
+// `applyHardBlockers`). Empty `compiledPatterns` short-circuits to no-op.
+function applyRequirementBlockersPass(aliveResults, jdByAppKey, compiledPatterns) {
+  if (!Array.isArray(compiledPatterns) || compiledPatterns.length === 0) {
+    return { aliveResults, requirementBlockerSkipped: [] };
+  }
+
+  const surviving = [];
+  const requirementBlockerSkipped = [];
+  for (const urlRes of aliveResults) {
+    const jd = jdByAppKey[urlRes.key];
+    const jdText = jd && jd.text ? jd.text : "";
+    if (!jdText) {
+      surviving.push(urlRes);
+      continue;
+    }
+    const structuredJD = extractJDStructure(jdText);
+    const result = applyRequirementBlockers(structuredJD, compiledPatterns);
+    if (!result.hit) {
+      surviving.push(urlRes);
+      continue;
+    }
+    const fullReason = `requirement_blocker:${result.reason}`;
+    requirementBlockerSkipped.push({
+      key: urlRes.key,
+      reason: fullReason,
+      reasons: [fullReason],
+      url: urlRes.url,
+    });
+  }
+  return { aliveResults: surviving, requirementBlockerSkipped };
+}
+
 // Compute skip-reason breakdown from a flat list of skip records.
 function computeSkipReasons(skipped) {
   const skipReasons = {};
@@ -782,6 +830,18 @@ async function runPre(ctx, deps) {
   // {mode:"unrestricted"} from normalizeGeo (no-op for Jared).
   const filterRules = { ...(profile.filterRules || {}), geo: profile.geo };
 
+  // RFC 046 / BL-B: compile requirement_blocker patterns ONCE per run. Bad
+  // entries are dropped with a stderr warning; the count is surfaced on
+  // `prepare_context.stats.requirement_blocker_pattern_errors` (RFC 046 §10.6)
+  // so silent config errors stay visible to the operator.
+  const rawRequirementBlockerPatterns =
+    (profile.filterRules &&
+      profile.filterRules.requirement_blockers &&
+      profile.filterRules.requirement_blockers.patterns) ||
+    [];
+  const { compiled: compiledRequirementPatterns, errors: requirementBlockerPatternErrors } =
+    compileRequirementBlockerPatterns(rawRequirementBlockerPatterns);
+
   const applicationsPath = profile.paths.applicationsTsv;
   const loaded = deps.loadApplications(applicationsPath);
 
@@ -858,11 +918,19 @@ async function runPre(ctx, deps) {
     profileForHB
   );
 
+  // RFC 046 / BL-B: requirement_blocker pass runs AFTER hard_blockers — per
+  // §10.5 precedence rule, the structured hard-blocker reasons get priority
+  // when both could fire on the same row.
+  const {
+    aliveResults: aliveAfterRB,
+    requirementBlockerSkipped,
+  } = applyRequirementBlockersPass(aliveAfterHB, jdByAppKey, compiledRequirementPatterns);
+
   // Assemble batch entries. Track unique companies in batch whose tier is
   // unknown — SKILL Step 5.7 will assign them and pass back via results
   // (G-11/G-15: "Claude должен выставлять тиры самостоятельно").
   const unknownTierSet = new Set();
-  const batchOut = aliveAfterHB.map((urlRes) =>
+  const batchOut = aliveAfterRB.map((urlRes) =>
     buildBatchEntry(
       urlRes,
       jdByAppKey[urlRes.key],
@@ -888,6 +956,7 @@ async function runPre(ctx, deps) {
     ...filteredOut,
     ...deadSkipped,
     ...hardBlockerSkipped,
+    ...requirementBlockerSkipped,
   ];
   // G-12: skip-reason breakdown so the user sees WHY 12 jobs got skipped
   // (company_cap: 5, title_blocklist: 2, url_dead: 1, …) instead of just
@@ -964,6 +1033,11 @@ async function runPre(ctx, deps) {
       unknownTierCompanies: unknownTierCompanies.length,
       inboxExhausted,
       skipReasons,
+      // RFC 046 §10.6 / BL-B: surface bad operator pattern entries (invalid
+      // regex / invalid kebab-case reason / empty match_in) so silent config
+      // errors stay visible. The pipeline keeps running on the remaining
+      // patterns; this is the single-line summary for the operator.
+      requirement_blocker_pattern_errors: requirementBlockerPatternErrors.length,
     },
     inbox_health,
   };
@@ -1056,6 +1130,18 @@ async function runPreTopup(ctx, deps) {
   const profile = deps.loadProfile(profileId, { profilesDir });
   const filterRules = { ...(profile.filterRules || {}), geo: profile.geo };
   const contextPath = path.join(profile.paths.root, "prepare_context.json");
+
+  // RFC 046 / BL-B: compile requirement_blocker patterns once per topup pass.
+  // Same shape as `runPre` — we re-compile rather than read prev.stats so the
+  // operator can edit `filter_rules.json` between fresh and topup and get
+  // the updated patterns in effect.
+  const rawRequirementBlockerPatterns =
+    (profile.filterRules &&
+      profile.filterRules.requirement_blockers &&
+      profile.filterRules.requirement_blockers.patterns) ||
+    [];
+  const { compiled: compiledRequirementPatterns, errors: requirementBlockerPatternErrors } =
+    compileRequirementBlockerPatterns(rawRequirementBlockerPatterns);
 
   // 1) Load existing context.
   let prev;
@@ -1176,8 +1262,15 @@ async function runPreTopup(ctx, deps) {
     profileForHB
   );
 
+  // RFC 046 / BL-B: requirement_blocker pass mirrors runPre's wiring —
+  // hard_blockers fire first (§10.5), requirement_blockers fire on survivors.
+  const {
+    aliveResults: aliveAfterRB,
+    requirementBlockerSkipped,
+  } = applyRequirementBlockersPass(aliveAfterHB, jdByAppKey, compiledRequirementPatterns);
+
   const unknownTierSet = new Set(prevUnknownTiers);
-  const newEntries = aliveAfterHB.map((urlRes) =>
+  const newEntries = aliveAfterRB.map((urlRes) =>
     buildBatchEntry(
       urlRes,
       jdByAppKey[urlRes.key],
@@ -1203,6 +1296,7 @@ async function runPreTopup(ctx, deps) {
     ...deadSkipped,
     ...droppedFromQueue,
     ...hardBlockerSkipped,
+    ...requirementBlockerSkipped,
   ];
 
   // Remaining queue: apps that were eligible but not URL-checked yet, plus any
@@ -1249,6 +1343,10 @@ async function runPreTopup(ctx, deps) {
       topupRuns: (prevStats.topupRuns || 0) + 1,
       inboxExhausted,
       skipReasons: mergedSkipReasons,
+      // RFC 046 §10.6 / BL-B: re-emit error counter on every topup write so
+      // the latest value reflects this run's compile attempt (operator may
+      // have edited filter_rules between fresh and topup).
+      requirement_blocker_pattern_errors: requirementBlockerPatternErrors.length,
     },
     inbox_health: merged_inbox_health,
   };

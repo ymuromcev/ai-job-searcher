@@ -68,6 +68,14 @@ const ENGINE_SKIP_REASONS = Object.freeze(
 // path uses the FULL string verbatim as the TSV `skip_reason`.
 const HARD_BLOCKER_PREFIX = "hard_blocker:";
 
+// RFC 046 / BL-B: requirement-blocker reason family. Wildcard prefix; the
+// suffix is the operator-supplied kebab-case label from a matching
+// `filter_rules.requirement_blockers.patterns[].reason` entry (e.g.
+// `requirement_blocker:advanced-degree-required`). Validated at config-load
+// time (`^[a-z][a-z0-9-]{1,40}$`); the runtime predicate stays permissive
+// and accepts any non-empty suffix.
+const REQUIREMENT_BLOCKER_PREFIX = "requirement_blocker:";
+
 // Synthetic reasons surfaced in `prepare_context.skipped[]` for SKILL
 // context. They DO NOT trigger archive writes — the rows already have
 // `fit_score=Weak` / `skip_reason=weak_fit` / `skip_reason=duplicate`
@@ -90,6 +98,12 @@ function isEngineSkipReason(reason) {
   if (reason.startsWith(HARD_BLOCKER_PREFIX) && reason.length > HARD_BLOCKER_PREFIX.length) {
     return true;
   }
+  if (
+    reason.startsWith(REQUIREMENT_BLOCKER_PREFIX) &&
+    reason.length > REQUIREMENT_BLOCKER_PREFIX.length
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -97,5 +111,6 @@ module.exports = {
   ENGINE_SKIP_REASONS,
   ALREADY_EVALUATED_REASONS,
   HARD_BLOCKER_PREFIX,
+  REQUIREMENT_BLOCKER_PREFIX,
   isEngineSkipReason,
 };
