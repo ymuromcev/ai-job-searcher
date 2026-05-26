@@ -437,7 +437,7 @@ Per-row schema (`results[]` entry):
   - `tailorCoverage: number | null` — final coverage score, 0-100.
   - `tailorEscalated: boolean` — true when the loop exited without auto-ship (see escalation decision in Step 6.5).
   - `tailorEscalationReason: "no_growth_below_threshold" | "iteration_cap_below_threshold" | "uncertain_about_fact" | null`.
-  - `tailorEscalationDetail: object | null` — `{ iterations, uncertain_facts, coverage_table }` capturing the loop's final state for operator review in Notion.
+  - `tailorEscalationDetail: object | null` — `{ iterations, uncertain_facts, coverage_table }` capturing the loop's final state for operator review in Notion. Engine's commit phase (BL-D) also consumes `coverage_table` to render a cross-job coverage matrix at `profiles/<id>/.tailor-state/coverage-matrix-<batchTs>.md`; keep the array intact (per-entry shape `{jd_phrase, status, ...}` from the subagent).
   - For Weak / Medium rows these five fields are **absent or `null`** — the engine falls back to the archetype-pick path (`resumeVer`).
 
 Do **not** emit `decision` or `skipReason` — engines built against RFC 034 ignore the field with a warning; older engines may misroute the row. Do **not** include `clPath` (engine derives it) or `notionPageId` (engine creates the page itself).
