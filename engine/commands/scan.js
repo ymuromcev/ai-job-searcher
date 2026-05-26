@@ -102,6 +102,15 @@ function applyTargetFilters(grouped, profile) {
     const filtered = [];
     for (const t of targets) {
       const name = String(t.name || "").toLowerCase();
+      // BL-130: per-row `disabled` flag in companies.tsv extra_json. Set when
+      // a company has gone dark (acquired, migrated off the ATS, public board
+      // closed) and we want scan to stop probing without deleting the row.
+      // `disabled_reason` is the human-readable why; surfaced in the warn line.
+      if (t && t.disabled === true) {
+        const reason = t.disabled_reason ? `disabled:${t.disabled_reason}` : "disabled";
+        dropped.push({ source, name: t.name, reason });
+        continue;
+      }
       if (blacklist.has(name)) {
         dropped.push({ source, name: t.name, reason: "blacklist" });
         continue;
