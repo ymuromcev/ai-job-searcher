@@ -247,6 +247,41 @@ Your entire response is a single JSON object. Examples of what to **NOT** emit:
 
 The orchestrator will `JSON.parse(stdout)` and fail loudly on anything else.
 
+### NO markdown literals inside string values — hard rule (BL-C)
+
+The renderer prints every string value verbatim. It does **not** parse markdown. So markdown syntax inside any string in `resume_data` shows up literally in the PDF.
+
+This applies to **every** string field: `version.summary`, `version.title`, role `description`, every bullet segment's `text:`, project descriptions, skill `value`s. No exceptions.
+
+**Forbidden inside string values:**
+
+- `**bold**` / `__bold__` — bold pairs.
+- `*italic*` / `_italic_` — italic pairs.
+- `` `code` `` — backticks.
+- `[label](url)` — markdown links.
+- `#`, `##`, `###` — headings.
+- `-`, `*` at line start — list markers.
+
+**To make text bold inside a bullet** — split the bullet into segments and set `bold:true` on the bold segment. The bullet is an array of `{text, bold}` objects, not one string. Example:
+
+DON'T:
+```json
+{"text": "Drove **30% conversion lift** through 40+ A/B experiments.", "bold": false}
+```
+
+DO:
+```json
+[
+  {"text": "Drove ", "bold": false},
+  {"text": "30% conversion lift", "bold": true},
+  {"text": " through 40+ A/B experiments.", "bold": false}
+]
+```
+
+**`version.summary` is a single string** — it cannot carry bold. Write it as flat prose. If you feel a phrase deserves emphasis, lead with it or restructure the sentence; do not wrap it in `**...**`.
+
+Real bug this rule prevents (Perplexity PM Builder, 2026-05-25): subagent emitted `"summary": "...Perplexity, where **Computer** has the strongest enterprise wedge... **40+ A/B experiments, 30% CR lift, $500k/mo** new revenue..."`. The asterisks printed literally in the PDF.
+
 ## What to do if you can't produce a coherent draft
 
 If the master profile is empty / unreadable, or the JD is too thin to extract significant phrases, or your inputs are otherwise malformed, return:
