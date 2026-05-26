@@ -105,6 +105,28 @@ test("applyPrepareFilter: passes clean jobs", () => {
   assert.equal(skipped.length, 0);
 });
 
+// BL-A (2026-05-25): `calcareers` source is excluded from prepare entirely —
+// rows reach TSV via scan but never enter the SKILL pipeline. Format requires
+// a different application flow (separate command, future work).
+test("applyPrepareFilter: excludes calcareers source from prepare", () => {
+  const apps = [
+    makeApp({
+      key: "calcareers:518107",
+      source: "calcareers",
+      jobId: "518107",
+      companyName: "High Desert State Prison",
+      title: "Plant Operations Analyst",
+    }),
+    makeApp({ key: "greenhouse:2", companyName: "Stripe", title: "PM" }),
+  ];
+  const { passed, skipped } = applyPrepareFilter(apps, {}, {});
+  assert.equal(passed.length, 1);
+  assert.equal(passed[0].source, "greenhouse");
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].reason, "source_excluded_from_prepare");
+  assert.equal(skipped[0].source, "calcareers");
+});
+
 test("applyPrepareFilter: blocks company_blocklist", () => {
   const apps = [
     makeApp({ companyName: "BadCo", title: "PM" }),
