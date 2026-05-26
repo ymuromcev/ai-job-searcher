@@ -142,34 +142,36 @@ test("buildEscalationRecord: explicit missing_high_priority wins over last iter"
 
 // --- tailoredResumePath ------------------------------------------------------
 
-test("tailoredResumePath: formats relative POSIX path with slug + date", () => {
-  const p = tailoredResumePath("jared", "stripe", "2026-05-24");
-  assert.equal(p, "resumes/tailored/stripe-2026-05-24.docx");
+test("tailoredResumePath: formats relative POSIX path with company + role + YYYYMMDD", () => {
+  // BL-F: filename is `<companySlug>_<roleSlug>_<YYYYMMDD>` so multiple Strong
+  // rows at the same company on the same day don't collide.
+  const p = tailoredResumePath("jared", "stripe", "senior-pm-ads", "20260524");
+  assert.equal(p, "resumes/tailored/stripe_senior-pm-ads_20260524.docx");
 });
 
 test("tailoredResumePath: profile id does not leak into the path", () => {
   // Path is relative to profile root, so profileId is intentionally unused
   // in the output. This guards against an accidental change to embed it.
-  const p = tailoredResumePath("anyone", "acme-inc", "2026-01-01");
-  assert.equal(p, "resumes/tailored/acme-inc-2026-01-01.docx");
+  const p = tailoredResumePath("anyone", "acme-inc", "product-manager", "20260101");
+  assert.equal(p, "resumes/tailored/acme-inc_product-manager_20260101.docx");
 });
 
 // --- tailoredResumePathPdf (BL-126 Block A) ---------------------------------
 
 test("tailoredResumePathPdf: formats relative POSIX path with .pdf extension", () => {
-  const p = tailoredResumePathPdf("jared", "stripe", "2026-05-24");
-  assert.equal(p, "resumes/tailored/stripe-2026-05-24.pdf");
+  const p = tailoredResumePathPdf("jared", "stripe", "senior-pm-ads", "20260524");
+  assert.equal(p, "resumes/tailored/stripe_senior-pm-ads_20260524.pdf");
 });
 
 test("tailoredResumePathPdf: mirrors DOCX path under the same directory", () => {
   // The PDF and DOCX must land side-by-side so a regen / archive sweep
   // doesn't have to know about two output trees.
-  const docx = tailoredResumePath("jared", "acme-inc", "2026-01-01");
-  const pdf = tailoredResumePathPdf("jared", "acme-inc", "2026-01-01");
+  const docx = tailoredResumePath("jared", "acme-inc", "product-manager", "20260101");
+  const pdf = tailoredResumePathPdf("jared", "acme-inc", "product-manager", "20260101");
   assert.equal(docx.replace(/\.docx$/, ".pdf"), pdf);
 });
 
 test("tailoredResumePathPdf: profile id does not leak into the path", () => {
-  const p = tailoredResumePathPdf("anyone", "brex", "2026-01-01");
-  assert.equal(p, "resumes/tailored/brex-2026-01-01.pdf");
+  const p = tailoredResumePathPdf("anyone", "brex", "head-of-product", "20260101");
+  assert.equal(p, "resumes/tailored/brex_head-of-product_20260101.pdf");
 });
