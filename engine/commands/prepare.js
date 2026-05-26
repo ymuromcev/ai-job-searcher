@@ -68,6 +68,7 @@ const {
   renderEscalationReport,
   renderEscalationStdout,
 } = require("../modules/tailor/escalation_report.js");
+const { buildMatrix: buildCoverageMatrix } = require("../core/coverage_matrix.js");
 const { planDedup } = require("../core/tsv_dedup.js");
 const notionSync = require("../core/notion_sync.js");
 const { makeCompanyResolver } = require("../core/company_resolver.js");
@@ -2311,6 +2312,52 @@ async function runCommit(ctx, deps) {
       }
     } else {
       stdout(`(dry-run) would write tailor escalation report (${escalations.length} record(s))`);
+    }
+  }
+
+  // BL-D — coverage matrix report.
+  //
+  // After all tailored rows have been processed, render a phrase × row_key
+  // matrix from the per-row `coverage_table` (carried inside
+  // `tailorEscalationDetail`, written by the resume-tailor-mirror subagent).
+  // The artifact gives the operator a cross-job view: which JD phrases
+  // matched across the batch, and which phrases never matched in any row
+  // (gaps in master_profile relative to this batch's JDs). Skipped when
+  // no tailored row carries a non-empty coverage_table.
+  const coverageRows = [];
+  for (const [rowKey, entry] of tailorPlan) {
+    const detail =
+      entry.row && entry.row.tailorEscalationDetail ? entry.row.tailorEscalationDetail : null;
+    const table = detail && Array.isArray(detail.coverage_table) ? detail.coverage_table : null;
+    if (table && table.length > 0) {
+      coverageRows.push({ row_key: rowKey, coverage_table: table });
+    }
+  }
+  if (coverageRows.length > 0) {
+    // Derive a stable batch timestamp from the results filename
+    // (`prepare_results_<YYYYMMDD_HHMMSS>.json`). Falls back to the same
+    // unix-ts used by the escalation report when the basename doesn't
+    // match the convention.
+    const resultsBase = path.basename(flags.resultsFile || "");
+    const tsMatch = resultsBase.match(/prepare_results_([0-9_]+)\.json$/);
+    const batchTs = tsMatch
+      ? tsMatch[1]
+      : String(Math.floor(new Date(now).getTime() / 1000));
+    const md = buildCoverageMatrix(coverageRows, { batchTs });
+    if (md) {
+      if (!flags.dryRun) {
+        try {
+          const stateDir = path.join(profile.paths.root, ".tailor-state");
+          const matrixPath = path.join(stateDir, `coverage-matrix-${batchTs}.md`);
+          deps.mkdirp(stateDir);
+          deps.writeFile(matrixPath, md);
+          stdout(`coverage matrix: wrote ${matrixPath}`);
+        } catch (err) {
+          stderr(`warn: failed to write coverage matrix report: ${err.message}`);
+        }
+      } else {
+        stdout(`(dry-run) would write coverage matrix (${coverageRows.length} tailored row(s))`);
+      }
     }
   }
 
