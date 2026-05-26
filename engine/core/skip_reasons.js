@@ -52,6 +52,12 @@ const ENGINE_SKIP_REASONS = Object.freeze(
     "geo_title_excluded",
     // URL liveness (checkUrls)
     "url_dead",
+    // BL-A (2026-05-25): sources excluded from prepare engine-wide.
+    // `calcareers` rows reach TSV via scan but are not routed through the
+    // SKILL — the format requires a different application flow (separate
+    // command, future work). Set lives in `PREPARE_SOURCE_EXCLUDE` in
+    // `commands/prepare.js`.
+    "source_excluded_from_prepare",
   ])
 );
 

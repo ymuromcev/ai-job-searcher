@@ -190,6 +190,13 @@ function jobFromTsv(app) {
   };
 }
 
+// BL-A (2026-05-25): sources excluded from prepare entirely.
+// Rows from these sources are ingested by scan (kept in TSV as a triage
+// pool) but never surface to the SKILL — the format requires a different
+// application flow that lives outside the standard prepare pipeline.
+// A separate command will handle them later.
+const PREPARE_SOURCE_EXCLUDE = new Set(["calcareers"]);
+
 function applyPrepareFilter(apps, rules, activeCounts) {
   const counts = { ...activeCounts };
   const passed = [];
@@ -206,6 +213,19 @@ function applyPrepareFilter(apps, rules, activeCounts) {
   delete rulesNoGeo.geo;
 
   for (const app of apps) {
+    // BL-A: source-level exclude (runs before evaluateJob — sources in
+    // PREPARE_SOURCE_EXCLUDE never enter the SKILL pipeline regardless of
+    // profile config).
+    if (PREPARE_SOURCE_EXCLUDE.has(String(app.source || "").toLowerCase())) {
+      skipped.push({
+        key: app.key,
+        reason: "source_excluded_from_prepare",
+        source: app.source,
+        url: app.url,
+      });
+      continue;
+    }
+
     const evalJob = jobFromTsv(app);
 
     // Pass 1: blocklists + requirelist + cap + location_blocklist
