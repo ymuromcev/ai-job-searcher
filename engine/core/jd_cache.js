@@ -406,6 +406,96 @@ function formatIcims(html, job) {
   return parts.join("\n").trim();
 }
 
+// Ashby public posting API. Per-board endpoint returns the full job list with
+// `descriptionHtml` / `descriptionPlain` inline:
+//   https://api.ashbyhq.com/posting-api/job-board/{org}?includeCompensation=true
+// The per-job route (/posting-api/job-board/{org}/{id}) is auth-gated (401),
+// so we fetch the board and locate the job by `id`. The board is small enough
+// (~100-200 KB) and the response is cacheable per (org, job) by the existing
+// cacheKey scheme — no extra in-memory dedupe needed for the first pass.
+const ASHBY_API_BASE = "https://api.ashbyhq.com/posting-api/job-board";
+// Org slug shape mirrors the discovery adapter target (`target.slug`):
+// lowercase alphanumeric + dash, no path separators or unicode tricks.
+const ASHBY_SLUG_RE = /^[a-z0-9-]{1,64}$/;
+// Ashby job IDs are canonical UUID v4: 8-4-4-4-12 lowercase hex.
+const ASHBY_JOB_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+function buildAshbyApiUrl(job) {
+  if (!job || typeof job.slug !== "string" || typeof job.jobId !== "string") return null;
+  if (!ASHBY_SLUG_RE.test(job.slug)) return null;
+  if (!ASHBY_JOB_ID_RE.test(job.jobId)) return null;
+  return `${ASHBY_API_BASE}/${encodeURIComponent(job.slug)}?includeCompensation=true`;
+}
+
+function formatAshby(data, job) {
+  if (!data || typeof data !== "object") return null;
+  const jobs = Array.isArray(data.jobs) ? data.jobs : null;
+  if (!jobs) return null;
+  const wanted = job && typeof job.jobId === "string" ? job.jobId : "";
+  const entry = jobs.find((j) => j && typeof j === "object" && j.id === wanted);
+  if (!entry) return null;
+
+  const descHtml = typeof entry.descriptionHtml === "string" ? entry.descriptionHtml : "";
+  const descPlain = typeof entry.descriptionPlain === "string" ? entry.descriptionPlain : "";
+  // Prefer HTML (richer structure — bullets, headings) then fall back to plain.
+  // stripHtml flattens both to the same shape extractRequirements expects.
+  let body = "";
+  if (descHtml) body = stripHtml(descHtml);
+  if (!body && descPlain) body = descPlain.trim();
+  if (!body) return null;
+
+  const title = (typeof entry.title === "string" && entry.title) || (job && job.title) || "";
+
+  // Primary location + secondaryLocations[].location joined into one printable
+  // line. Schema.org-shaped `address.postalAddress` is ignored — `location`
+  // field is the human label Ashby surfaces in its UI.
+  const locParts = [];
+  if (typeof entry.location === "string" && entry.location.trim()) {
+    locParts.push(entry.location.trim());
+  }
+  if (Array.isArray(entry.secondaryLocations)) {
+    for (const sec of entry.secondaryLocations) {
+      if (sec && typeof sec.location === "string" && sec.location.trim()) {
+        locParts.push(sec.location.trim());
+      }
+    }
+  }
+  const location = locParts.join(" / ");
+
+  // Schedule line: employmentType + workplaceType when present.
+  // employmentType seen in the wild: "FullTime", "PartTime", "Contract",
+  // "Intern", "Temporary". Normalize the CamelCase to the same labels
+  // Workable produces for downstream extractSchedule.
+  const EMPLOYMENT_MAP = {
+    FullTime: "Full-time",
+    PartTime: "Part-time",
+    Contract: "Contract",
+    Temporary: "Temporary",
+    Intern: "Internship",
+  };
+  const empRaw = typeof entry.employmentType === "string" ? entry.employmentType : "";
+  const empLabel = EMPLOYMENT_MAP[empRaw] || (empRaw ? empRaw : "");
+  // workplaceType: "Remote" / "Hybrid" / "Onsite" — sometimes null.
+  // isRemote is a separate boolean; fall back to it when workplaceType missing.
+  let workplaceLabel = "";
+  if (typeof entry.workplaceType === "string" && entry.workplaceType.trim()) {
+    const w = entry.workplaceType.trim();
+    workplaceLabel = w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  } else if (entry.isRemote === true) {
+    workplaceLabel = "Remote";
+  }
+  const scheduleLine = [empLabel, workplaceLabel].filter(Boolean).join(" · ");
+
+  const parts = [`TITLE: ${title}`];
+  if (location) parts.push(`LOCATION: ${location}`);
+  if (scheduleLine) parts.push(`SCHEDULE: ${scheduleLine}`);
+  // Ashby doesn't surface a req-ID-style externalId on the posting-api; the
+  // UUID `id` itself is the closest thing. Skip REQ ID line — no signal.
+  parts.push("");
+  parts.push(body);
+  return parts.join("\n").trim();
+}
+
 // --- Source registry --------------------------------------------------------
 //
 // SUPPORTED — discovery sources for which jd_cache has a fetcher.
@@ -414,7 +504,15 @@ function formatIcims(html, job) {
 // in their search result). Each exemption MUST carry a reason — the
 // adapter↔jd_cache coverage test (engine/core/jd_cache.test.js) will fail
 // if a new adapter source appears in neither set.
-const SUPPORTED = new Set(["greenhouse", "lever", "workday", "icims", "taleo", "workable"]);
+const SUPPORTED = new Set([
+  "greenhouse",
+  "lever",
+  "workday",
+  "icims",
+  "taleo",
+  "workable",
+  "ashby",
+]);
 
 const JD_UNSUPPORTED = new Map([
   // Feed / aggregator adapters — the search result the adapter produces
@@ -430,7 +528,6 @@ const JD_UNSUPPORTED = new Map([
   // ATS adapters with documented gaps (no JD fetcher yet — tracked as
   // follow-ups). Listed here so the coverage test stays green; remove
   // an entry once the matching fetcher lands.
-  ["ashby", "ATS — JD fetcher not yet implemented (gap audited 2026-05-18)"],
   ["smartrecruiters", "ATS — JD fetcher not yet implemented (gap audited 2026-05-18)"],
   ["oracle_cloud", "ATS — JD fetcher not yet implemented (gap audited 2026-05-18)"],
 ]);
@@ -520,6 +617,19 @@ async function fetchJd(job, cacheDir, deps = {}) {
       if (!res.ok) return { key, status: "not_found" };
       const data = await res.json();
       text = formatWorkable(data, job);
+    } else if (source === "ashby") {
+      // Ashby per-board JSON. URL is rebuilt from job.slug + validated UUID
+      // job.jobId so a tampered url field cannot redirect the fetch.
+      const url = buildAshbyApiUrl(job);
+      if (!url) return { key, status: "not_found" };
+      const res = await d.fetchFn(url, {
+        timeoutMs: 15000,
+        retries: 1,
+        headers: { "User-Agent": HTML_UA },
+      });
+      if (!res.ok) return { key, status: "not_found" };
+      const data = await res.json();
+      text = formatAshby(data, job);
     } else if (source === "taleo") {
       // SSRF guard: only fetch from the explicit Taleo host allow-list. The
       // adapter already wrote `job.url` with a vetted host, but we re-check
@@ -589,8 +699,10 @@ module.exports = {
   formatIcims,
   formatTaleo,
   formatWorkable,
+  formatAshby,
   buildWorkdayApiUrl,
   buildWorkableApiUrl,
+  buildAshbyApiUrl,
   extractJsonLdJob,
   isAllowedTaleoHost,
 };

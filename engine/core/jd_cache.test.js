@@ -12,8 +12,10 @@ const {
   formatIcims,
   formatTaleo,
   formatWorkable,
+  formatAshby,
   buildWorkdayApiUrl,
   buildWorkableApiUrl,
+  buildAshbyApiUrl,
   extractJsonLdJob,
   isAllowedTaleoHost,
 } = require("./jd_cache.js");
@@ -164,7 +166,13 @@ test("Lever: cache miss fetches and writes text", async () => {
 // --- fetchJd: unsupported source ---------------------------------------------
 
 test("unsupported source returns status=unsupported", async () => {
-  const job = { source: "ashby", slug: "ramp", jobId: "x", title: "PM", companyName: "Ramp" };
+  const job = {
+    source: "smartrecruiters",
+    slug: "ramp",
+    jobId: "x",
+    title: "PM",
+    companyName: "Ramp",
+  };
   const { deps } = makeDeps();
   const result = await fetchJd(job, CACHE_DIR, deps);
   assert.equal(result.status, "unsupported");
@@ -227,7 +235,7 @@ test("fetchAll processes all jobs and returns same count", async () => {
   const jobs = [
     { source: "greenhouse", slug: "affirm", jobId: "1", title: "PM", companyName: "Affirm" },
     { source: "lever", slug: "stripe", jobId: "2", title: "PM", companyName: "Stripe" },
-    { source: "ashby", slug: "ramp", jobId: "3", title: "PM", companyName: "Ramp" },
+    { source: "smartrecruiters", slug: "ramp", jobId: "3", title: "PM", companyName: "Ramp" },
   ];
   const ghData = { title: "PM", content: "desc", location: { name: "SF" } };
   const leverData = { text: "PM", categories: {}, descriptionPlain: "desc" };
@@ -916,6 +924,249 @@ test("Workable: cache hit on second call (no second fetch)", async () => {
   const cachePath = `${CACHE_DIR}/${cacheKey(WORKABLE_JOB)}`;
   const { deps } = makeDeps({ existing: { [cachePath]: cachedText } });
   const result = await fetchJd(WORKABLE_JOB, CACHE_DIR, deps);
+  assert.equal(result.status, "cached");
+  assert.equal(result.text, cachedText);
+});
+
+// --- Ashby (BL-129) ----------------------------------------------------------
+
+const ASHBY_JOB = {
+  source: "ashby",
+  slug: "perplexity",
+  jobId: "043d6a58-87a1-4e3c-bf47-4dc351b94cf4",
+  title: "Member of Technical Staff (Software Engineer, Monetization)",
+  companyName: "Perplexity",
+  url: "https://jobs.ashbyhq.com/perplexity/043d6a58-87a1-4e3c-bf47-4dc351b94cf4",
+};
+const ASHBY_API_URL =
+  "https://api.ashbyhq.com/posting-api/job-board/perplexity?includeCompensation=true";
+
+// Real-shape fixture mirrored from a recon probe on 2026-05-25 against
+// api.ashbyhq.com/posting-api/job-board/perplexity. Two-job payload — the
+// fetcher must select by `id`, not just take the first entry.
+const ASHBY_API_PAYLOAD = {
+  jobs: [
+    {
+      id: "deadbeef-0000-0000-0000-000000000000",
+      title: "Decoy Role (should not be picked)",
+      employmentType: "FullTime",
+      location: "Nowhere",
+      descriptionHtml: "<p>This is not the job we want.</p>",
+      descriptionPlain: "This is not the job we want.",
+    },
+    {
+      id: "043d6a58-87a1-4e3c-bf47-4dc351b94cf4",
+      title: "Member of Technical Staff (Software Engineer, Monetization)",
+      employmentType: "FullTime",
+      location: "San Francisco",
+      workplaceType: null,
+      isRemote: null,
+      secondaryLocations: [
+        { location: "New York City" },
+        { location: "" }, // empty string must be filtered out
+      ],
+      descriptionHtml:
+        "<p>Perplexity is AI for people who expect more.</p>" +
+        "<h3>Why Perplexity is Different</h3>" +
+        "<ul><li>Craftsmanship.</li><li>Ownership.</li></ul>" +
+        "<h3>What you'll do</h3>" +
+        "<ul><li>Build billing abstractions.</li></ul>",
+      descriptionPlain: "Perplexity is AI for people who expect more...",
+    },
+  ],
+};
+
+test("buildAshbyApiUrl builds per-board URL from slug", () => {
+  assert.equal(buildAshbyApiUrl(ASHBY_JOB), ASHBY_API_URL);
+});
+
+test("buildAshbyApiUrl rejects malformed slug / jobId (SSRF guard)", () => {
+  const bad = [
+    { ...ASHBY_JOB, slug: "Evil/Path" },
+    { ...ASHBY_JOB, slug: "" },
+    { ...ASHBY_JOB, slug: "has spaces" },
+    { ...ASHBY_JOB, slug: "../escape" },
+    { ...ASHBY_JOB, slug: 123 },
+    { ...ASHBY_JOB, jobId: "not-a-uuid" },
+    { ...ASHBY_JOB, jobId: "" },
+    { ...ASHBY_JOB, jobId: "043d6a58-87a1-4e3c-bf47-4dc351b94cf4 evil" },
+    { ...ASHBY_JOB, jobId: "043D6A58-87A1-4E3C-BF47-4DC351B94CF4" }, // uppercase not allowed
+  ];
+  for (const job of bad) {
+    assert.equal(
+      buildAshbyApiUrl(job),
+      null,
+      `should reject slug=${JSON.stringify(job.slug)} jobId=${JSON.stringify(job.jobId)}`
+    );
+  }
+});
+
+test("formatAshby selects job by id and emits TITLE / LOCATION / SCHEDULE + body", () => {
+  const text = formatAshby(ASHBY_API_PAYLOAD, ASHBY_JOB);
+  assert.ok(text);
+  assert.match(text, /^TITLE: Member of Technical Staff \(Software Engineer, Monetization\)/m);
+  assert.match(text, /^LOCATION: San Francisco \/ New York City$/m);
+  assert.match(text, /^SCHEDULE: Full-time$/m);
+  // Description body present, decoy job absent.
+  assert.match(text, /Perplexity is AI for people who expect more/);
+  assert.match(text, /Why Perplexity is Different/);
+  assert.match(text, /Craftsmanship/);
+  assert.ok(!/Decoy Role/.test(text), "decoy job must not leak into output");
+  assert.ok(!/This is not the job we want/.test(text), "decoy body must not leak");
+});
+
+test("formatAshby returns null when job id is missing from board", () => {
+  const data = {
+    jobs: [
+      { id: "deadbeef-0000-0000-0000-000000000000", title: "X", descriptionHtml: "<p>x</p>" },
+    ],
+  };
+  assert.equal(formatAshby(data, ASHBY_JOB), null);
+});
+
+test("formatAshby returns null when descriptionHtml and descriptionPlain both empty", () => {
+  const data = {
+    jobs: [
+      {
+        id: ASHBY_JOB.jobId,
+        title: "X",
+        employmentType: "FullTime",
+        descriptionHtml: "",
+        descriptionPlain: "",
+      },
+    ],
+  };
+  assert.equal(formatAshby(data, ASHBY_JOB), null, "header-only payload must not poison cache");
+});
+
+test("formatAshby falls back to descriptionPlain when descriptionHtml empty", () => {
+  const data = {
+    jobs: [
+      {
+        id: ASHBY_JOB.jobId,
+        title: "X",
+        descriptionHtml: "",
+        descriptionPlain: "Plain text body.",
+      },
+    ],
+  };
+  const text = formatAshby(data, ASHBY_JOB);
+  assert.ok(text);
+  assert.match(text, /Plain text body\./);
+});
+
+test("formatAshby: workplaceType / isRemote produce SCHEDULE workplace label", () => {
+  const data = {
+    jobs: [
+      {
+        id: ASHBY_JOB.jobId,
+        title: "X",
+        employmentType: "FullTime",
+        workplaceType: "Remote",
+        descriptionPlain: "Body.",
+      },
+    ],
+  };
+  const text = formatAshby(data, ASHBY_JOB);
+  assert.match(text, /^SCHEDULE: Full-time · Remote$/m);
+
+  const data2 = {
+    jobs: [
+      {
+        id: ASHBY_JOB.jobId,
+        title: "X",
+        employmentType: "Contract",
+        workplaceType: null,
+        isRemote: true,
+        descriptionPlain: "Body.",
+      },
+    ],
+  };
+  const text2 = formatAshby(data2, ASHBY_JOB);
+  assert.match(text2, /^SCHEDULE: Contract · Remote$/m);
+});
+
+test("formatAshby: tolerates non-object input and malformed jobs array", () => {
+  assert.equal(formatAshby(null, ASHBY_JOB), null);
+  assert.equal(formatAshby("string", ASHBY_JOB), null);
+  assert.equal(formatAshby({}, ASHBY_JOB), null);
+  assert.equal(formatAshby({ jobs: null }, ASHBY_JOB), null);
+  assert.equal(formatAshby({ jobs: "not-an-array" }, ASHBY_JOB), null);
+});
+
+test("Ashby: cache miss fetches board JSON, formats, writes text", async () => {
+  const { deps, written } = makeDeps({
+    fetchFn: makeFetchFn({ [ASHBY_API_URL]: { status: 200, body: ASHBY_API_PAYLOAD } }),
+  });
+  const result = await fetchJd(ASHBY_JOB, CACHE_DIR, deps);
+  assert.equal(result.status, "fetched");
+  assert.ok(result.text.includes("TITLE: Member of Technical Staff"));
+  assert.ok(result.text.includes("LOCATION: San Francisco / New York City"));
+  assert.ok(result.text.includes("Perplexity is AI"));
+  const writtenPath = `${CACHE_DIR}/${cacheKey(ASHBY_JOB)}`;
+  assert.equal(written[writtenPath], result.text);
+});
+
+test("Ashby: 404 returns status=not_found, no cache write", async () => {
+  const { deps, written } = makeDeps({
+    fetchFn: makeFetchFn({ [ASHBY_API_URL]: { status: 404, body: {} } }),
+  });
+  const result = await fetchJd(ASHBY_JOB, CACHE_DIR, deps);
+  assert.equal(result.status, "not_found");
+  assert.equal(Object.keys(written).length, 0);
+});
+
+test("Ashby: board missing the requested jobId returns not_found", async () => {
+  const { deps, written } = makeDeps({
+    fetchFn: makeFetchFn({
+      [ASHBY_API_URL]: {
+        status: 200,
+        body: { jobs: [{ id: "00000000-0000-0000-0000-000000000000", title: "Other" }] },
+      },
+    }),
+  });
+  const result = await fetchJd(ASHBY_JOB, CACHE_DIR, deps);
+  assert.equal(result.status, "not_found");
+  assert.equal(Object.keys(written).length, 0);
+});
+
+test("Ashby: malformed jobId short-circuits to not_found (no fetch)", async () => {
+  let fetched = false;
+  const { deps } = makeDeps({
+    fetchFn: async () => {
+      fetched = true;
+      return { ok: true, status: 200, async json() {}, async text() {} };
+    },
+  });
+  const badJob = { ...ASHBY_JOB, jobId: "../../evil" };
+  const result = await fetchJd(badJob, CACHE_DIR, deps);
+  assert.equal(result.status, "not_found");
+  assert.equal(fetched, false, "fetchFn must not be called for unsafe jobId");
+});
+
+test("Ashby: passes User-Agent header to fetchFn", async () => {
+  let seenOpts = null;
+  const { deps } = makeDeps({
+    fetchFn: async (url, opts) => {
+      seenOpts = opts;
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return ASHBY_API_PAYLOAD;
+        },
+      };
+    },
+  });
+  await fetchJd(ASHBY_JOB, CACHE_DIR, deps);
+  assert.ok(seenOpts && seenOpts.headers && /Mozilla/.test(seenOpts.headers["User-Agent"]));
+});
+
+test("Ashby: cache hit on second call (no second fetch)", async () => {
+  const cachedText = "TITLE: Member of Technical Staff\nSCHEDULE: Full-time\n\nBody.";
+  const cachePath = `${CACHE_DIR}/${cacheKey(ASHBY_JOB)}`;
+  const { deps } = makeDeps({ existing: { [cachePath]: cachedText } });
+  const result = await fetchJd(ASHBY_JOB, CACHE_DIR, deps);
   assert.equal(result.status, "cached");
   assert.equal(result.text, cachedText);
 });
