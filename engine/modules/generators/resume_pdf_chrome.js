@@ -32,9 +32,7 @@ const crypto = require("crypto");
 function pickFirstTextRun(bulletRuns) {
   if (typeof bulletRuns === "string") return bulletRuns;
   if (Array.isArray(bulletRuns)) {
-    return bulletRuns
-      .map((r) => (r && typeof r.text === "string" ? r.text : ""))
-      .join("");
+    return bulletRuns.map((r) => (r && typeof r.text === "string" ? r.text : "")).join("");
   }
   return "";
 }
@@ -238,7 +236,10 @@ function substituteScalars(str, scopes) {
     const value = resolvePath(path, scopes);
     if (value == null) return "";
     // Allow HTML pass-through for designated keys (last path segment).
-    const lastSegment = path.replace(/^\.\.\//g, "").split(".").pop();
+    const lastSegment = path
+      .replace(/^\.\.\//g, "")
+      .split(".")
+      .pop();
     if (HTML_SAFE_KEYS.has(lastSegment)) return String(value);
     return htmlEscape(value);
   });
@@ -459,12 +460,7 @@ function findChromeBin() {
 
   // 3. Linux: which
   if (process.platform === "linux") {
-    const candidates = [
-      "google-chrome",
-      "chromium",
-      "chromium-browser",
-      "google-chrome-stable",
-    ];
+    const candidates = ["google-chrome", "chromium", "chromium-browser", "google-chrome-stable"];
     for (const c of candidates) {
       try {
         const found = execSync(`which ${c}`, { stdio: ["ignore", "pipe", "ignore"] })
@@ -558,7 +554,7 @@ async function renderOnce(prepared, outputPath) {
     template = fs.readFileSync(TEMPLATE_PATH, "utf8");
   } catch (err) {
     throw new Error(
-      `generateResumePdf: cannot read resume_template.html at ${TEMPLATE_PATH}: ${err.message}`,
+      `generateResumePdf: cannot read resume_template.html at ${TEMPLATE_PATH}: ${err.message}`
     );
   }
   const html = renderHtml(prepared, template);

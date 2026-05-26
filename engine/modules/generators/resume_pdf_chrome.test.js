@@ -63,10 +63,7 @@ test("compressForOnePage: 5 roles → 2 full + Earlier paragraph", () => {
 
 test("compressForOnePage: preserves all bullets by default (mirror-coverage)", () => {
   const data = {
-    sharedExperience: [
-      makeRole("R1", "2024", 6),
-      makeRole("R2", "2023", 7),
-    ],
+    sharedExperience: [makeRole("R1", "2024", 6), makeRole("R2", "2023", 7)],
     projects: [],
   };
   const out = compressForOnePage(data);
@@ -78,10 +75,7 @@ test("compressForOnePage: preserves all bullets by default (mirror-coverage)", (
 
 test("compressForOnePage: opt-in bulletCap caps each role", () => {
   const data = {
-    sharedExperience: [
-      makeRole("R1", "2024", 6),
-      makeRole("R2", "2023", 7),
-    ],
+    sharedExperience: [makeRole("R1", "2024", 6), makeRole("R2", "2023", 7)],
     projects: [],
   };
   const out = compressForOnePage(data, 4);
@@ -146,10 +140,7 @@ test("runsToHtml: empty array → empty string", () => {
 });
 
 test("runsToHtml: escapes < and & in text", () => {
-  assert.equal(
-    runsToHtml([{ text: "x < y & z", bold: true }]),
-    "<b>x &lt; y &amp; z</b>",
-  );
+  assert.equal(runsToHtml([{ text: "x < y & z", bold: true }]), "<b>x &lt; y &amp; z</b>");
 });
 
 test("runsToHtml: non-array input → empty", () => {
@@ -190,8 +181,7 @@ test("renderHtml: HTML-safe fields pass through (bulletsHtml)", () => {
 // ============================================================================
 
 test("renderHtml: SLOT iterates over array", () => {
-  const tpl =
-    "<ul><!-- SLOT:roles --><li>{{role}}</li><!-- /SLOT:roles --></ul>";
+  const tpl = "<ul><!-- SLOT:roles --><li>{{role}}</li><!-- /SLOT:roles --></ul>";
   const data = { roles: [{ role: "PM" }, { role: "ENG" }] };
   assert.equal(renderHtml(data, tpl), "<ul><li>PM</li><li>ENG</li></ul>");
 });
@@ -220,15 +210,11 @@ test("renderHtml: nested ITEM iterates inner array", () => {
       },
     ],
   };
-  assert.equal(
-    renderHtml(data, tpl),
-    "<h2>PM</h2><ul><li>shipped X</li><li>drove Y</li></ul>",
-  );
+  assert.equal(renderHtml(data, tpl), "<h2>PM</h2><ul><li>shipped X</li><li>drove Y</li></ul>");
 });
 
 test("renderHtml: ../parent path resolves up one scope", () => {
-  const tpl =
-    "<!-- SLOT:roles --><div>{{role}} at {{../company}}</div><!-- /SLOT:roles -->";
+  const tpl = "<!-- SLOT:roles --><div>{{role}} at {{../company}}</div><!-- /SLOT:roles -->";
   const data = { company: "ACME", roles: [{ role: "PM" }, { role: "ENG" }] };
   assert.equal(renderHtml(data, tpl), "<div>PM at ACME</div><div>ENG at ACME</div>");
 });
@@ -312,9 +298,7 @@ test("countPages: single-page PDF marker → 1", async () => {
 
 test("countPages: 3-page synthetic", async () => {
   const tmp = path.join(os.tmpdir(), `synthetic-3-${process.pid}-${Date.now()}.pdf`);
-  const fake =
-    "%PDF-1.4\n" +
-    "/Type /Pages\n/Type /Page\n/Type /Page\n/Type /Page\n";
+  const fake = "%PDF-1.4\n" + "/Type /Pages\n/Type /Page\n/Type /Page\n/Type /Page\n";
   fs.writeFileSync(tmp, fake);
   try {
     assert.equal(await countPages(tmp), 3);
@@ -353,7 +337,11 @@ test("generateResumePdf: end-to-end with mocked htmlToPdf", async (t) => {
   }
   t.after(() => {
     if (createdTemplate) {
-      try { fs.unlinkSync(tplPath); } catch { /* ignore */ }
+      try {
+        fs.unlinkSync(tplPath);
+      } catch {
+        /* ignore */
+      }
     }
   });
 
@@ -368,13 +356,15 @@ test("generateResumePdf: end-to-end with mocked htmlToPdf", async (t) => {
         sharedExperience: [],
         projects: [],
       },
-      outPath,
+      outPath
     );
     assert.equal(result.path, outPath);
     assert.equal(result.pageCount, 1);
 
     // Verify tmp HTML was cleaned up (no new resume-*.html files left behind)
-    const tmpDirAfter = fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("resume-") && f.endsWith(".html"));
+    const tmpDirAfter = fs
+      .readdirSync(os.tmpdir())
+      .filter((f) => f.startsWith("resume-") && f.endsWith(".html"));
     const leaked = tmpDirAfter.filter((f) => !tmpDirBefore.has(f));
     assert.equal(leaked.length, 0, `tmp HTML leaked: ${leaked.join(", ")}`);
   } finally {
@@ -402,7 +392,11 @@ test("generateResumePdf: cleans up tmp HTML even on htmlToPdf failure", async (t
   }
   t.after(() => {
     if (createdTemplate) {
-      try { fs.unlinkSync(tplPath); } catch { /* ignore */ }
+      try {
+        fs.unlinkSync(tplPath);
+      } catch {
+        /* ignore */
+      }
     }
   });
 
@@ -411,10 +405,12 @@ test("generateResumePdf: cleans up tmp HTML even on htmlToPdf failure", async (t
 
   await assert.rejects(
     mod.generateResumePdf({ contact: { name: "X" }, sharedExperience: [], projects: [] }, outPath),
-    /simulated chrome failure/,
+    /simulated chrome failure/
   );
 
-  const tmpDirAfter = fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("resume-") && f.endsWith(".html"));
+  const tmpDirAfter = fs
+    .readdirSync(os.tmpdir())
+    .filter((f) => f.startsWith("resume-") && f.endsWith(".html"));
   const leaked = tmpDirAfter.filter((f) => !tmpDirBefore.has(f));
   assert.equal(leaked.length, 0, `tmp HTML leaked on failure: ${leaked.join(", ")}`);
 });

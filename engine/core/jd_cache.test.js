@@ -1017,9 +1017,7 @@ test("formatAshby selects job by id and emits TITLE / LOCATION / SCHEDULE + body
 
 test("formatAshby returns null when job id is missing from board", () => {
   const data = {
-    jobs: [
-      { id: "deadbeef-0000-0000-0000-000000000000", title: "X", descriptionHtml: "<p>x</p>" },
-    ],
+    jobs: [{ id: "deadbeef-0000-0000-0000-000000000000", title: "X", descriptionHtml: "<p>x</p>" }],
   };
   assert.equal(formatAshby(data, ASHBY_JOB), null);
 });

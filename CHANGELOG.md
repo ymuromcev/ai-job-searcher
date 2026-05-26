@@ -16,6 +16,8 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Style
 
+- **Prettier auto-format on resume_pdf_chrome (BL-126) + resume_template.html + jd_cache.test (BL-129)** (2026-05-25). Three BL-126 files (`resume_pdf_chrome.js`, `resume_pdf_chrome.test.js`, `resume_template.html`) were committed pre-Prettier on main and CI started catching them on the BL-129 PR. `jd_cache.test.js` (BL-129) had the same nit. No behavioural changes — purely whitespace.
+
 - **Prettier auto-format on tailor module + `build_master_profile`** (BL-123, 2026-05-25). `npm run format:check` was failing CI on 12 files (the BL-123 tailor module and BL-124 `build_master_profile` script were committed without running prettier). Auto-formatted; no behavioural changes; 1737/0 tests still pass.
 
 ### Added
