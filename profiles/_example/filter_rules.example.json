@@ -48,5 +48,9 @@
     ],
     "years_required_max": 15,
     "cert_blockers": []
+  },
+  "requirement_blockers": {
+    "_description": "RFC 046 / BL-B — operator-owned regex escape hatch that runs AFTER hard_blockers. Each pattern is a JS regex source plus a kebab-case `reason` label; a match removes the row pre-SKILL with `skip_reason=requirement_blocker:<reason>`. `flags` defaults to 'i'. `match_in` defaults to ['requirements', 'full_text_excerpt'] — allowed values: 'requirements', 'responsibilities', 'full_text_excerpt'. Reason label must match /^[a-z][a-z0-9-]{1,40}$/. Invalid regex/reason entries are dropped at load with a stderr warning; the count surfaces on prepare_context.stats.requirement_blocker_pattern_errors.",
+    "patterns": []
   }
 }
