@@ -325,10 +325,19 @@ for n in 1..6:
   missing_from_prev = result.missing
 ```
 
+**Anti-pattern — do NOT short-circuit the loop (BL-132).** The three exit conditions above (`threshold_met`, `no_growth` at `n >= 2`, `iteration_cap_reached` at `n == 6`) are the **only** valid reasons to stop. Token cost is acceptable — Strong-fit tailoring is the highest-leverage step in the entire pipeline, and the scheduled job-scan task budgets for the full loop. Specifically:
+
+- **Do not** stop after iter 1 because "the autonomous session is expensive" or "the operator is not present to approve more cost". The scheduled task is the place where the loop should run in full; an operator-attended rerun is exactly the cost this loop was designed to avoid.
+- **Do not** stop after iter 2 or 3 because "coverage is reasonable, ship it". Reasonable < 85 is what the escalation flow is for, not an exit shortcut. Each extra iteration tends to add 3–8 coverage points until growth flattens — `no_growth` will fire when it actually flattens; don't pre-empt it.
+- **Do not** emit `tailorEscalationReason: "iteration_cap_below_threshold"` unless `iterations == 6`. By definition that reason means "still climbing, hit the cap at six". Emitting it after iter 1–5 misleads the operator into thinking the row needs review when in fact the orchestrator gave up early.
+- **Do** keep going through the full 6 iterations when `delta >= 1` and `coverage < 85`, even if iter-2 or iter-3 coverage already looks "good enough".
+
+If a Strong row genuinely cannot proceed (e.g. `master_profile.md` is missing and the subagent escalates `uncertain_about_fact` on iter 1), use a `tailorEscalationReason` that honestly describes what happened. `iteration_cap_below_threshold` is reserved for `n == 6`.
+
 **Escalation decision** (after loop exit):
 
 - `final_coverage < 85 && last_delta < 1` → `tailorEscalated = true`, `tailorEscalationReason = "no_growth_below_threshold"`.
-- `final_coverage < 85 && last_delta >= 1` (still climbing, hit the cap) → `tailorEscalated = true`, `tailorEscalationReason = "iteration_cap_below_threshold"`.
+- `final_coverage < 85 && last_delta >= 1` (still climbing, hit the cap — requires `iterations == 6`) → `tailorEscalated = true`, `tailorEscalationReason = "iteration_cap_below_threshold"`.
 - `final_coverage >= 85 && uncertain_facts.length > 0` → `tailorEscalated = true`, `tailorEscalationReason = "uncertain_about_fact"`.
 - Otherwise → `tailorEscalated = false`, `tailorEscalationReason = null` (auto-ship).
 
