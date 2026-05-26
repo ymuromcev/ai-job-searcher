@@ -96,6 +96,10 @@ function parseSlugFromUrl(source, url) {
     const m = u.match(/jobs\.lever\.co\/([^/?#]+)\//i);
     return m ? m[1] : "";
   }
+  if (source === "ashby") {
+    const m = u.match(/jobs\.ashbyhq\.com\/([^/?#]+)\//i);
+    return m ? m[1] : "";
+  }
   return "";
 }
 
