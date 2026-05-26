@@ -4216,18 +4216,18 @@ test("prepare --phase commit (BL-123): tailored row generates DOCX and pushes wi
   assert.ok(docxCalled, "generateResumeDocx must be called");
   assert.deepEqual(docxCalled.data, tailoredResume);
   // company_slug.js preserves case ("Stripe" not "stripe").
-  assert.match(docxCalled.outPath, /resumes\/tailored\/Stripe-2026-04-20\.docx$/);
+  assert.match(docxCalled.outPath, /resumes\/tailored\/Stripe_senior-product-manager_20260420\.docx$/);
 
   // BL-126 Block A: resume_ver on the TSV row is the tailored PDF path
   // (DOCX stays as side artifact). Notion's resumeVersion also picks up
   // the PDF via r.resumeVer mutation.
   const saved = deps._getSaved();
-  assert.equal(saved[0].resume_ver, "resumes/tailored/Stripe-2026-04-20.pdf");
+  assert.equal(saved[0].resume_ver, "resumes/tailored/Stripe_senior-product-manager_20260420.pdf");
   assert.equal(saved[0].status, "To Apply");
 
   // Notion push received the PDF path as resumeVersion.
   assert.equal(pushCalls.length, 1);
-  assert.equal(pushCalls[0].resumeVersion, "resumes/tailored/Stripe-2026-04-20.pdf");
+  assert.equal(pushCalls[0].resumeVersion, "resumes/tailored/Stripe_senior-product-manager_20260420.pdf");
 
   // stdout reports tailored count.
   assert.ok(ctx._lines.some((l) => /tailored resumes:.*1 generated/.test(l)));
@@ -4280,12 +4280,12 @@ test("prepare --phase commit (BL-126 Block A): tailored row emits PDF + DOCX, re
   assert.ok(docxCalled, "DOCX generator must be called");
   assert.ok(pdfCalled, "PDF generator must be called");
   assert.deepEqual(pdfCalled.data, tailoredResume);
-  assert.match(docxCalled.outPath, /resumes\/tailored\/Stripe-2026-04-20\.docx$/);
-  assert.match(pdfCalled.outPath, /resumes\/tailored\/Stripe-2026-04-20\.pdf$/);
+  assert.match(docxCalled.outPath, /resumes\/tailored\/Stripe_senior-product-manager_20260420\.docx$/);
+  assert.match(pdfCalled.outPath, /resumes\/tailored\/Stripe_senior-product-manager_20260420\.pdf$/);
 
   // resume_ver written to TSV is the PDF path (not DOCX, not archetype).
   const saved = deps._getSaved();
-  assert.equal(saved[0].resume_ver, "resumes/tailored/Stripe-2026-04-20.pdf");
+  assert.equal(saved[0].resume_ver, "resumes/tailored/Stripe_senior-product-manager_20260420.pdf");
 
   // Page-overflow warning fired with compression hints.
   assert.ok(
@@ -4359,7 +4359,7 @@ test("prepare --phase commit (BL-126 Block A): unknown pageCount (legacy rendere
   assert.ok(!ctx._errLines.some((l) => /tailored PDF for.*pages/.test(l)));
   // resume_ver still set to PDF path even when renderer returns undefined.
   const saved = deps._getSaved();
-  assert.equal(saved[0].resume_ver, "resumes/tailored/Stripe-2026-04-20.pdf");
+  assert.equal(saved[0].resume_ver, "resumes/tailored/Stripe_senior-product-manager_20260420.pdf");
 });
 
 test("prepare --phase commit (BL-123): escalated row stays Inbox, writes MD report, no Notion push", async () => {

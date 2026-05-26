@@ -122,19 +122,29 @@ function buildEscalationRecord(row) {
  * profile root). Returned as a forward-slash POSIX path so it matches
  * the convention used by `applications.tsv` (e.g. `cl_path`).
  *
- *   resumes/tailored/<slug>-<YYYY-MM-DD>.docx
+ *   resumes/tailored/<companySlug>_<roleSlug>_<YYYYMMDD>.docx
  *
- * @param {string} profileId — unused in the path itself but kept in the
+ * BL-F: the filename includes the role slug so multiple Strong rows at
+ * the same company on the same day don't overwrite each other. Underscore
+ * separators + compact YYYYMMDD mirror the `clKey` convention used by
+ * cover-letter files (e.g. `Perplexity_pm-builder_20260525`).
+ *
+ * @param {string} profileId   — unused in the path itself but kept in the
  *   signature so callers can swap to an absolute-path variant later
  *   without touching call sites.
- * @param {string} slug      — company slug (caller computes via slugifyCompany)
- * @param {string} date      — YYYY-MM-DD string (caller computes from `now`)
+ * @param {string} companySlug — company slug (caller computes via slugifyCompany)
+ * @param {string} roleSlug    — role slug (caller computes via slugifyRole)
+ * @param {string} dateStamp   — YYYYMMDD string, no separators
  * @returns {string} relative POSIX path
  */
-function tailoredResumePath(profileId, slug, date) {
+function tailoredResumePath(profileId, companySlug, roleSlug, dateStamp) {
   // path.posix.join keeps the separator stable across macOS / Linux /
   // (hypothetical) Windows callers; tsv consumers split on "/".
-  return path.posix.join("resumes", "tailored", `${slug}-${date}.docx`);
+  return path.posix.join(
+    "resumes",
+    "tailored",
+    `${companySlug}_${roleSlug}_${dateStamp}.docx`
+  );
 }
 
 /**
@@ -144,15 +154,20 @@ function tailoredResumePath(profileId, slug, date) {
  * becomes the canonical `resume_ver` (TSV / Notion) — recruiters expect
  * PDF; DOCX stays as a side artifact for archive / re-edit.
  *
- *   resumes/tailored/<slug>-<YYYY-MM-DD>.pdf
+ *   resumes/tailored/<companySlug>_<roleSlug>_<YYYYMMDD>.pdf
  *
- * @param {string} profileId — unused in the path itself (parity with DOCX helper)
- * @param {string} slug      — company slug (caller computes via slugifyCompany)
- * @param {string} date      — YYYY-MM-DD string (caller computes from `now`)
+ * @param {string} profileId   — unused in the path itself (parity with DOCX helper)
+ * @param {string} companySlug — company slug (caller computes via slugifyCompany)
+ * @param {string} roleSlug    — role slug (caller computes via slugifyRole)
+ * @param {string} dateStamp   — YYYYMMDD string, no separators
  * @returns {string} relative POSIX path
  */
-function tailoredResumePathPdf(profileId, slug, date) {
-  return path.posix.join("resumes", "tailored", `${slug}-${date}.pdf`);
+function tailoredResumePathPdf(profileId, companySlug, roleSlug, dateStamp) {
+  return path.posix.join(
+    "resumes",
+    "tailored",
+    `${companySlug}_${roleSlug}_${dateStamp}.pdf`
+  );
 }
 
 module.exports = {

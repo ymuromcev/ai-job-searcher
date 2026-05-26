@@ -54,6 +54,7 @@ const { evaluateJob } = require("../core/evaluate_job.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 const { slugifyCompany } = require("../core/company_slug.js");
+const { slugifyRole } = require("../core/role_slug.js");
 const { pickClBase } = require("../core/cl_base_matcher.js");
 const { generateCoverLetterPdf } = require("../modules/generators/cover_letter_pdf.js");
 const { generateResumeDocx } = require("../modules/generators/resume_docx.js");
@@ -743,6 +744,7 @@ function makeDefaultDeps() {
     generateResumeDocx,
     generateResumePdf,
     slugifyCompany,
+    slugifyRole,
     // RFC 022: per-row Notion push in commit phase. All Notion deps are
     // injectable so unit / integration tests can swap in a mock client +
     // resolver without hitting the network.
@@ -1846,14 +1848,16 @@ async function runCommit(ctx, deps) {
   // by the loop above — i.e. the SKILL's resumeVer if it sent one).
   // Other rows in the batch continue.
   const dateStr = String(now).slice(0, 10);
+  const dateStamp = dateStr.replace(/-/g, ""); // YYYYMMDD for BL-F filename format
   const tailoredStats = { generated: 0, failed: 0, dryRun: 0 };
   for (const [rowKey, entry] of tailorPlan) {
     if (entry.classification !== "tailored") continue;
     const app = byKey[rowKey];
     if (!app) continue; // defensive — applyFitFields earlier would have warned
     const slug = deps.slugifyCompany(app.companyName);
-    const docxRel = tailoredResumePath(profileId, slug, dateStr);
-    const pdfRel = tailoredResumePathPdf(profileId, slug, dateStr);
+    const roleSlug = deps.slugifyRole(app.title);
+    const docxRel = tailoredResumePath(profileId, slug, roleSlug, dateStamp);
+    const pdfRel = tailoredResumePathPdf(profileId, slug, roleSlug, dateStamp);
     const docxAbs = path.join(profile.paths.root, docxRel);
     const pdfAbs = path.join(profile.paths.root, pdfRel);
 
