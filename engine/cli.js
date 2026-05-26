@@ -22,6 +22,7 @@ const KNOWN_COMMANDS = [
   "indeed-prep",
   "answer",
   "reclassify",
+  "retro-tailor",
 ];
 
 const PARSE_OPTIONS = {
@@ -75,6 +76,12 @@ Commands:
              processed_messages.json (last 30 days). Dry-run by default;
              --apply mutates the JSON, --apply --notion adds per-row
              interactive Notion page updates. See RFC 028 / BL-44.
+  retro-tailor Re-tailor Strong rows currently in "To Apply" that landed in
+             Notion BEFORE the RFC-044 tailoring loop existed. Default phase
+             is recon (scans TSV, writes retro_tailor_context.json). With
+             --apply --results-file <path>, generates tailored DOCX/PDF and
+             updates the existing Notion page's Resume Version. Cover letter
+             is NOT regenerated. See RFC 047 / BL-133.
 
 Flags:
   --profile <id>       Profile id (required for all commands). Lowercase, alphanum + - _.
@@ -129,6 +136,15 @@ reclassify flags:
   --limit <N>            Cap entries per run (smoke / dry-run friendly).
   --verbose              Print per-id fetch progress + log "unchanged" rows.
 
+retro-tailor flags:
+  --apply                Required for the commit phase. Without --apply (or
+                         with --dry-run), runs recon only.
+  --results-file <path>  Required with --apply. SKILL-produced results.json
+                         with per-row tailoredResume / tailorEscalated fields.
+  --batch <N>            Cap candidate count per recon (default 30).
+  --since <YYYY-MM-DD>   Skip candidates older than this date (recon only).
+  --dry-run              Recon-only mode without writing the context file.
+
 answer flags:
   --phase <search|push>  Required. "search" looks up existing Q&A by company+role+question
                          and prints a JSON match report. "push" reads --results-file and
@@ -180,6 +196,7 @@ function defaultCommands() {
     "indeed-prep": require("./commands/indeed_prepare.js"),
     answer: require("./commands/answer.js"),
     reclassify: require("./commands/reclassify.js"),
+    "retro-tailor": require("./commands/retro_tailor.js"),
   };
 }
 
