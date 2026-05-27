@@ -80,12 +80,29 @@ const {
   isEngineSkipReason,
 } = require("../core/skip_reasons.js");
 
-// Active statuses that count toward the company cap. "To Apply" is included
+// Statuses that count toward the company cap. "To Apply" is included
 // because every triaged-and-prepared row is committed to be applied —
 // counting it prevents over-preparing for the same company. "Inbox" is NOT
-// counted: those rows are pre-triage and may yet be archived. Also excluded:
-// Archived / Rejected / Closed / No Response. (RFC 014 / TSV 9-status set.)
-const CAP_ACTIVE_STATUSES = new Set(["To Apply", "Applied", "Interview", "Offer"]);
+// counted: those rows are pre-triage and may yet be archived. "Archived" is
+// NOT counted: the row never made it out of the engine's pre-screen.
+//
+// BL-136 (2026-05-27): `Rejected` / `Closed` / `No Response` now DO count.
+// Reasoning: with the rolling 30-day window the cap means "how aggressively
+// have I been pinging this company recently". A Rejected/Closed within the
+// window is still a recent touchpoint; flooding the same company with a 4th
+// pitch right after they said no doesn't help. Outside the window, those
+// rows age out naturally — see `buildActiveCounts` for the window cutoff.
+const CAP_ACTIVE_STATUSES = new Set([
+  "To Apply",
+  "Applied",
+  "Interview",
+  "Offer",
+  "Rejected",
+  "Closed",
+  "No Response",
+]);
+
+const DEFAULT_CAP_WINDOW_DAYS = 30;
 
 const DEFAULT_BATCH_SIZE = 30;
 
@@ -115,14 +132,58 @@ function escapeRegex(s) {
 
 // --- Filtering ---------------------------------------------------------------
 
-function buildActiveCounts(apps) {
+// BL-136 (2026-05-27): rolling-window company cap.
+//
+// `windowDays` (default 30) is a positive integer. Only TSV rows whose
+// `updatedAt` falls within the last `windowDays` days from `now` count
+// toward the cap. Rows older than the window have aged out — the company
+// becomes "live" again for fresh applications.
+//
+// Backward compatibility: if `windowDays` is explicitly `null` or
+// `undefined`, the function falls back to the legacy all-time count so
+// profiles that haven't added `company_cap.window_days` to their
+// `filter_rules.json` don't break on first run after upgrade. This
+// fallback will be removed in the next release; new profiles should set
+// `window_days` (the `_example` template defaults to 30).
+//
+// `now` defaults to `new Date()` and exists for test determinism.
+function buildActiveCounts(apps, options = {}) {
   const counts = {};
+  const windowDays = options.windowDays === undefined ? null : options.windowDays;
+  const useWindow = windowDays !== null && Number.isFinite(windowDays) && windowDays > 0;
+
+  let cutoffMs = null;
+  if (useWindow) {
+    const now = options.now instanceof Date ? options.now : new Date();
+    cutoffMs = now.getTime() - windowDays * 24 * 60 * 60 * 1000;
+  }
+
   for (const app of apps) {
     if (!CAP_ACTIVE_STATUSES.has(app.status)) continue;
+    if (useWindow) {
+      const ts = app.updatedAt ? Date.parse(app.updatedAt) : NaN;
+      // Skip rows without a parseable updatedAt — they're either malformed
+      // or pre-schema, and counting them in a "last 30 days" window would
+      // silently re-introduce the all-time leak BL-136 set out to fix.
+      if (!Number.isFinite(ts)) continue;
+      if (ts < cutoffMs) continue;
+    }
     const co = app.companyName;
     counts[co] = (counts[co] || 0) + 1;
   }
   return counts;
+}
+
+// Read the configured cap window (in days) from filter_rules. Returns
+// `null` to mean "use legacy all-time count" (BC fallback — see
+// `buildActiveCounts`). A non-numeric value or value ≤ 0 also falls back.
+function resolveCapWindowDays(rules) {
+  const cap = rules && rules.company_cap;
+  if (!cap || typeof cap !== "object") return null;
+  if (!Object.prototype.hasOwnProperty.call(cap, "window_days")) return null;
+  const v = cap.window_days;
+  if (!Number.isFinite(v) || v <= 0) return null;
+  return v;
 }
 
 // BL-9 (TSV schema v4): drop rows the SKILL has already judged in a previous
@@ -901,7 +962,11 @@ async function runPre(ctx, deps) {
     );
   }
 
-  const activeCounts = buildActiveCounts(apps);
+  // BL-136: cap is now counted over a rolling window (default 30d). Window
+  // is configured via filter_rules.company_cap.window_days; missing field
+  // falls back to legacy all-time count for one release.
+  const capWindowDays = resolveCapWindowDays(filterRules);
+  const activeCounts = buildActiveCounts(apps, { windowDays: capWindowDays });
   const { passed, skipped: filteredOut } = applyPrepareFilter(
     notYetEvaluated,
     filterRules,
@@ -1281,7 +1346,9 @@ async function runPreTopup(ctx, deps) {
 
   // 5) applyPrepareFilter (rules may have changed; cap counts include the
   //    fresh batch entries that are now To Apply / about to be).
-  const activeCounts = buildActiveCounts(apps);
+  // BL-136: same rolling-window contract as the pre-phase call site.
+  const capWindowDays = resolveCapWindowDays(filterRules);
+  const activeCounts = buildActiveCounts(apps, { windowDays: capWindowDays });
   // Pre-account for prevBatch entries: they're going to become To Apply, so
   // count them toward the cap. Without this, topup could push past the cap.
   for (const e of prevBatch) {
@@ -2597,6 +2664,7 @@ module.exports.makePrepareCommand = makePrepareCommand;
 module.exports.applyPrepareFilter = applyPrepareFilter;
 module.exports.filterAlreadyEvaluated = filterAlreadyEvaluated;
 module.exports.buildActiveCounts = buildActiveCounts;
+module.exports.resolveCapWindowDays = resolveCapWindowDays;
 module.exports.fillUpAliveBatch = fillUpAliveBatch;
 module.exports.computeInboxExhausted = computeInboxExhausted;
 module.exports.computeInboxHealth = computeInboxHealth;
