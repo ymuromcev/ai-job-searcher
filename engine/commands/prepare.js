@@ -154,16 +154,29 @@ function buildActiveCounts(apps) {
 // re-archive it is wasted work. The synthetic skip reason
 // `already_evaluated_archived` keeps the row visible in `skipped[]` for the
 // SKILL's information without triggering another TSV write.
+// RFC 049 / BL-135: rows with fit_score=Weak AND empty notion_page_id are
+// "orphans" — judged before BL-80 landed (or by some later regression),
+// never made it to Notion. We route them into a third `alreadyEvaluated`
+// bucket so commit-phase can carry the verdict through to Notion without
+// re-paying SKILL tokens. Weak rows that DO have a notion_page_id are
+// already in Notion (RFC 034 forward path) and continue to be dropped.
 function filterAlreadyEvaluated(apps) {
   const passed = [];
   const skipped = [];
+  const alreadyEvaluated = [];
   for (const app of apps) {
     if (app.status === "Archived") {
       skipped.push({ key: app.key, reason: "already_evaluated_archived", url: app.url });
       continue;
     }
     if (app.fit_score === "Weak" || app.skip_reason === "weak_fit") {
-      skipped.push({ key: app.key, reason: "already_evaluated_weak", url: app.url });
+      // RFC 049: orphan detection. Empty notion_page_id => never reached
+      // Notion => route to carry-over instead of dropping.
+      if (!app.notion_page_id || app.notion_page_id === "") {
+        alreadyEvaluated.push(app);
+      } else {
+        skipped.push({ key: app.key, reason: "already_evaluated_weak", url: app.url });
+      }
       continue;
     }
     if (app.skip_reason === "duplicate") {
@@ -172,7 +185,7 @@ function filterAlreadyEvaluated(apps) {
     }
     passed.push(app);
   }
-  return { passed, skipped };
+  return { passed, skipped, alreadyEvaluated };
 }
 
 // RFC 040 / BL-92: `applyPrepareFilter` is now a thin loop over
@@ -866,13 +879,25 @@ async function runPre(ctx, deps) {
   // BL-9: pre-filter rows the SKILL has already evaluated in an earlier run.
   // These never reach URL-check / JD-fetch / SKILL judgement, so we don't
   // re-pay the token cost on every run.
-  const { passed: notYetEvaluated, skipped: alreadyEvaluatedSkips } =
-    filterAlreadyEvaluated(inboxApps);
+  // RFC 049 / BL-135: filterAlreadyEvaluated now also returns
+  // `alreadyEvaluated[]` — orphan Weak rows (fit_score=Weak + empty
+  // notion_page_id) that never reached Notion. Commit-phase carries them
+  // through using the persisted verdict; no SKILL re-evaluation.
+  const {
+    passed: notYetEvaluated,
+    skipped: alreadyEvaluatedSkips,
+    alreadyEvaluated: orphanEvaluatedApps,
+  } = filterAlreadyEvaluated(inboxApps);
   if (alreadyEvaluatedSkips.length > 0) {
     stdout(
       `already-evaluated: ${alreadyEvaluatedSkips.length} skipped (` +
         `${alreadyEvaluatedSkips.filter((s) => s.reason === "already_evaluated_weak").length} weak, ` +
         `${alreadyEvaluatedSkips.filter((s) => s.reason === "already_evaluated_duplicate").length} duplicate)`
+    );
+  }
+  if (orphanEvaluatedApps.length > 0) {
+    stdout(
+      `already-evaluated: carry-over ${orphanEvaluatedApps.length} (orphan Weak from prior runs — will push to Notion in commit)`
     );
   }
 
@@ -1011,6 +1036,23 @@ async function runPre(ctx, deps) {
   // can migrate (or fail loudly) instead of silently re-using stale fields.
   // Bump only when shape changes break consumers; the SKILL must handle
   // unknown major versions defensively. Reader contract: "if absent, treat as 1".
+  // RFC 049 / BL-135: serializable shape for orphan carry-over rows. Commit
+  // phase reads this from prepare_context.json, synthesizes results-style
+  // entries, and pushes through the existing Notion-push pipeline.
+  const alreadyEvaluatedOut = orphanEvaluatedApps.map((app) => ({
+    key: app.key,
+    companyName: app.companyName,
+    title: app.title,
+    url: app.url,
+    source: app.source,
+    jobId: app.jobId,
+    fitScore: app.fit_score,
+    fitRationale: app.fit_rationale || "",
+    clKey: app.cl_key || "",
+    clPath: app.cl_path || "",
+    resumeVer: app.resume_ver || "",
+  }));
+
   const context = {
     version: 1,
     profileId,
@@ -1021,12 +1063,14 @@ async function runPre(ctx, deps) {
     salaryConfig: profile.salaryConfig || null,
     batchSize,
     batch: batchOut,
+    alreadyEvaluated: alreadyEvaluatedOut,
     skipped: allSkipped,
     deferredQueue,
     unknownTierCompanies,
     stats: {
       inboxTotal: inboxApps.length,
       alreadyEvaluated: alreadyEvaluatedSkips.length,
+      alreadyEvaluatedCarryOver: alreadyEvaluatedOut.length,
       afterFilter: passed.length,
       inBatch: batchOut.length,
       urlChecked: allUrlResults.length,
@@ -1215,13 +1259,23 @@ async function runPreTopup(ctx, deps) {
   }
 
   // 4) filterAlreadyEvaluated (commit may have written new Weak / duplicate verdicts).
-  const { passed: notYetEvaluated, skipped: alreadyEvaluatedSkips } =
-    filterAlreadyEvaluated(liveQueueApps);
+  // RFC 049 / BL-135: also collects orphan Weak rows (fit_score=Weak +
+  // empty notion_page_id) into `alreadyEvaluated[]` for carry-over.
+  const {
+    passed: notYetEvaluated,
+    skipped: alreadyEvaluatedSkips,
+    alreadyEvaluated: orphanEvaluatedApps,
+  } = filterAlreadyEvaluated(liveQueueApps);
   if (alreadyEvaluatedSkips.length > 0) {
     stdout(
       `topup: ${alreadyEvaluatedSkips.length} already-evaluated dropped (` +
         `${alreadyEvaluatedSkips.filter((s) => s.reason === "already_evaluated_weak").length} weak, ` +
         `${alreadyEvaluatedSkips.filter((s) => s.reason === "already_evaluated_duplicate").length} duplicate)`
+    );
+  }
+  if (orphanEvaluatedApps.length > 0) {
+    stdout(
+      `topup: ${orphanEvaluatedApps.length} carry-over orphan Weak appended to alreadyEvaluated[]`
     );
   }
 
@@ -1317,6 +1371,34 @@ async function runPreTopup(ctx, deps) {
   const mergedBatchKeys = new Set(mergedBatch.map((e) => e.key));
   const inboxExhausted = computeInboxExhausted(apps, mergedBatchKeys);
   const mergedSkipReasons = computeSkipReasons([...prevSkipped, ...newSkipped]);
+
+  // RFC 049 / BL-135: carry-over bucket. Merge fresh-run carry-over (already
+  // on prev) with new orphan rows surfaced by THIS topup pass. Deduped by key
+  // (a row could in principle appear in both if commit hasn't run between
+  // fresh and topup — defensive).
+  const prevAlreadyEvaluated = Array.isArray(prev.alreadyEvaluated)
+    ? prev.alreadyEvaluated
+    : [];
+  const newAlreadyEvaluatedOut = orphanEvaluatedApps.map((app) => ({
+    key: app.key,
+    companyName: app.companyName,
+    title: app.title,
+    url: app.url,
+    source: app.source,
+    jobId: app.jobId,
+    fitScore: app.fit_score,
+    fitRationale: app.fit_rationale || "",
+    clKey: app.cl_key || "",
+    clPath: app.cl_path || "",
+    resumeVer: app.resume_ver || "",
+  }));
+  const _seenAEKeys = new Set(prevAlreadyEvaluated.map((e) => e.key));
+  const mergedAlreadyEvaluated = [...prevAlreadyEvaluated];
+  for (const entry of newAlreadyEvaluatedOut) {
+    if (_seenAEKeys.has(entry.key)) continue;
+    mergedAlreadyEvaluated.push(entry);
+    _seenAEKeys.add(entry.key);
+  }
   // RFC 024 (BL-28): keep `inbox_health` written from every prepare_context.json
   // writer so the SKILL contract is uniform regardless of which mode produced
   // the final context (fresh / topup; weak-fallback was removed in RFC 034).
@@ -1331,12 +1413,14 @@ async function runPreTopup(ctx, deps) {
     mode: "topup",
     generatedAt: deps.now(),
     batch: mergedBatch,
+    alreadyEvaluated: mergedAlreadyEvaluated,
     skipped: [...prevSkipped, ...newSkipped],
     deferredQueue: stillQueuedKeys,
     unknownTierCompanies: [...unknownTierSet].sort(),
     stats: {
       ...prevStats,
       alreadyEvaluated: (prevStats.alreadyEvaluated || 0) + alreadyEvaluatedSkips.length,
+      alreadyEvaluatedCarryOver: mergedAlreadyEvaluated.length,
       inBatch: mergedBatch.length,
       urlChecked: (prevStats.urlChecked || 0) + allUrlResults.length,
       urlAlive: (prevStats.urlAlive || 0) + aliveResults.length,
@@ -1435,6 +1519,28 @@ async function loadPrepareContextByKey(profile, deps, stderr) {
     if (entry && entry.key) byKey[entry.key] = entry;
   }
   return byKey;
+}
+
+// RFC 049 / BL-135: load the orphan-evaluated carry-over array from
+// prepare_context.json. Returns an empty array when the file is missing,
+// unreadable, malformed, or doesn't yet have the field (older context
+// files). Silent on absence; the caller is the only consumer and treats
+// `[]` identically to "no carry-over this run".
+function loadAlreadyEvaluatedCarryOver(profile, deps) {
+  const contextPath = path.join(profile.paths.root, "prepare_context.json");
+  let raw;
+  try {
+    raw = deps.readFile(contextPath);
+  } catch (_err) {
+    return [];
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (_err) {
+    return [];
+  }
+  return Array.isArray(parsed && parsed.alreadyEvaluated) ? parsed.alreadyEvaluated : [];
 }
 
 // Assembles the flat field payload for one Notion job page. Pure: takes app
@@ -1541,6 +1647,55 @@ async function runCommit(ctx, deps) {
 
   const byKey = Object.fromEntries(apps.map((a) => [a.key, a]));
   const now = deps.now();
+
+  // RFC 049 / BL-135: synthesize results-style entries for orphan rows
+  // carried in `prepare_context.alreadyEvaluated[]`. Each entry replays
+  // the persisted verdict (fit_score + fit_rationale) without re-paying
+  // SKILL tokens. We prepend so the carry-over batch lands deterministically
+  // before fresh SKILL results in stdout / Notion order, and so a
+  // results.json entry for the same key (rare, but possible if operator
+  // re-evaluated) wins via the dedup-by-`_seenKeys` set in the Notion-push
+  // partition further down.
+  const carryOverRaw = loadAlreadyEvaluatedCarryOver(profile, deps);
+  const skillResultKeys = new Set(results.map((r) => r.key));
+  let carryOverSynth = 0;
+  const synthesized = [];
+  for (const c of carryOverRaw) {
+    if (!c || !c.key) continue;
+    // Dedup: if results.json already has this key (operator triggered a
+    // fresh eval since the carry-over was written), prefer the SKILL entry.
+    if (skillResultKeys.has(c.key)) continue;
+    const app = byKey[c.key];
+    if (!app) continue; // row was deleted from TSV — drop silently
+    // Defensive: only synthesize for rows still in Inbox without notion_page_id.
+    // If commit-phase already pushed this in a prior run (e.g. interrupted
+    // session), don't double-push.
+    if (app.notion_page_id) continue;
+    if (app.status && app.status !== "Inbox") continue;
+    const synth = {
+      key: c.key,
+      fitScore: c.fitScore,
+      fitRationale: c.fitRationale,
+    };
+    if (c.clKey) synth.clKey = c.clKey;
+    if (c.clPath) synth.clPath = c.clPath;
+    if (c.resumeVer) synth.resumeVer = c.resumeVer;
+    // RFC 049 §5: warn on Medium/Strong carry-over with empty cl_path
+    // — Notion will show empty Cover Letter; operator can re-prepare for
+    // a fresh SKILL pass if they care.
+    if (c.fitScore !== "Weak" && (!c.clPath || c.clPath === "")) {
+      stderr(
+        `warn: carry-over row ${c.key} has fitScore=${c.fitScore} but cl_path empty — ` +
+          `Notion will show empty CL; re-run prepare to regenerate via SKILL`
+      );
+    }
+    synthesized.push(synth);
+    carryOverSynth++;
+  }
+  if (carryOverSynth > 0) {
+    stdout(`carry-over: synthesized ${carryOverSynth} orphan evaluated row(s) for Notion push`);
+    results = [...synthesized, ...results];
+  }
 
   // Persist tier assignments from SKILL Step 5.7 (G-11/G-15). The results
   // file may carry a top-level `companyTiers` map. Validate values, drop
@@ -1665,6 +1820,9 @@ async function runCommit(ctx, deps) {
     invalidFitScore: 0,
     invalidSkipReason: 0,
     fitWritten: 0,
+    // RFC 049 / BL-135: rows pushed via the orphan carry-over path
+    // (synthesized from prepare_context.alreadyEvaluated[]).
+    carryOver: carryOverSynth,
     // RFC 044 / BL-123: per-row tailor-loop accounting. `tailored` = Strong
     // rows where the engine generated a tailored DOCX from SKILL output.
     // `escalated` = SKILL flagged the row for triage; engine reverts to
@@ -2297,6 +2455,7 @@ async function runCommit(ctx, deps) {
     extras.push(`${updates.tailorMalformed} malformed tailor field(s)`);
   if (updates.tailored > 0) extras.push(`${updates.tailored} tailored DOCX`);
   if (updates.escalated > 0) extras.push(`${updates.escalated} escalated`);
+  if (updates.carryOver > 0) extras.push(`${updates.carryOver} carry-over (RFC 049)`);
   if (tierStats.invalid > 0) extras.push(`${tierStats.invalid} invalid tier`);
   if (notionStats.pdfMissing + notionStats.notionFailed > 0) {
     extras.push(

@@ -288,11 +288,15 @@ test("applyPrepareFilter: title_requirelist slash-compound — PM part passes wh
 
 // --- filterAlreadyEvaluated (BL-9, TSV v4) -----------------------------------
 
-test("filterAlreadyEvaluated: drops fit_score=Weak rows with reason already_evaluated_weak", () => {
+test("filterAlreadyEvaluated: drops fit_score=Weak rows (in Notion) with reason already_evaluated_weak", () => {
+  // RFC 049 / BL-135: only Weak rows WITH a notion_page_id are dropped via
+  // skipped[] — those already reached Notion in a prior run (RFC 034 forward
+  // path). Weak rows with empty notion_page_id are orphans and route to
+  // alreadyEvaluated[] (see the dedicated test below).
   const apps = [
     makeApp({ key: "gh:1", fit_score: "Strong" }),
     makeApp({ key: "gh:2", fit_score: "Medium" }),
-    makeApp({ key: "gh:3", fit_score: "Weak" }),
+    makeApp({ key: "gh:3", fit_score: "Weak", notion_page_id: "p3" }),
     makeApp({ key: "gh:4" }), // never evaluated → empty
   ];
   const { passed, skipped } = filterAlreadyEvaluated(apps);
@@ -306,10 +310,14 @@ test("filterAlreadyEvaluated: drops fit_score=Weak rows with reason already_eval
   assert.equal(skipped[0].reason, "already_evaluated_weak");
 });
 
-test("filterAlreadyEvaluated: drops skip_reason=weak_fit (legacy alias for fit_score=Weak)", () => {
+test("filterAlreadyEvaluated: drops skip_reason=weak_fit (legacy alias for fit_score=Weak, in Notion)", () => {
   // SKILL writes both fit_score=Weak AND skip_reason=weak_fit; either signal
   // alone must produce the same skip outcome (defensive against partial writes).
-  const apps = [makeApp({ key: "gh:1", fit_score: "", skip_reason: "weak_fit" })];
+  // RFC 049 / BL-135: row carries notion_page_id, so it lands in skipped[]
+  // (the orphan-carry-over branch only fires when notion_page_id is empty).
+  const apps = [
+    makeApp({ key: "gh:1", fit_score: "", skip_reason: "weak_fit", notion_page_id: "p1" }),
+  ];
   const { passed, skipped } = filterAlreadyEvaluated(apps);
   assert.equal(passed.length, 0);
   assert.equal(skipped.length, 1);
@@ -332,6 +340,55 @@ test("filterAlreadyEvaluated: empty fit fields → all pass through unchanged", 
   const { passed, skipped } = filterAlreadyEvaluated(apps);
   assert.equal(passed.length, 2);
   assert.equal(skipped.length, 0);
+});
+
+// --- filterAlreadyEvaluated orphan carry-over (RFC 049 / BL-135) -------------
+
+test("filterAlreadyEvaluated (RFC 049): Weak + empty notion_page_id routes to alreadyEvaluated[]", () => {
+  // Mixed pool: fresh, post-BL-80 Weak (already in Notion), orphan Weak,
+  // and a duplicate. Each lands in the correct bucket.
+  const apps = [
+    makeApp({ key: "gh:1" }), // fresh
+    makeApp({ key: "gh:2", fit_score: "Weak", notion_page_id: "p2" }), // in Notion → skip
+    makeApp({ key: "gh:3", fit_score: "Weak", notion_page_id: "" }), // orphan → carry-over
+    makeApp({ key: "gh:4", fit_score: "Weak" }), // notion_page_id falsy → carry-over
+    makeApp({ key: "gh:5", skip_reason: "duplicate" }), // duplicate → skip
+  ];
+  const { passed, skipped, alreadyEvaluated } = filterAlreadyEvaluated(apps);
+  assert.equal(passed.length, 1);
+  assert.equal(passed[0].key, "gh:1");
+  assert.equal(alreadyEvaluated.length, 2);
+  assert.deepEqual(
+    alreadyEvaluated.map((a) => a.key).sort(),
+    ["gh:3", "gh:4"]
+  );
+  assert.equal(skipped.length, 2);
+  const reasons = skipped.map((s) => `${s.key}:${s.reason}`).sort();
+  assert.deepEqual(reasons, ["gh:2:already_evaluated_weak", "gh:5:already_evaluated_duplicate"]);
+});
+
+test("filterAlreadyEvaluated (RFC 049): legacy skip_reason=weak_fit also routes to carry-over when notion_page_id empty", () => {
+  // Pre-BL-9 alias path: a row tagged `skip_reason: weak_fit` with empty
+  // notion_page_id is structurally identical to an orphan Weak.
+  const apps = [makeApp({ key: "gh:1", skip_reason: "weak_fit", notion_page_id: "" })];
+  const { passed, skipped, alreadyEvaluated } = filterAlreadyEvaluated(apps);
+  assert.equal(passed.length, 0);
+  assert.equal(skipped.length, 0);
+  assert.equal(alreadyEvaluated.length, 1);
+  assert.equal(alreadyEvaluated[0].key, "gh:1");
+});
+
+test("filterAlreadyEvaluated (RFC 049): archived rows still go to skipped (carry-over does not steal them)", () => {
+  // Archived branch fires before the Weak branch — even a Weak+empty
+  // notion_page_id row that's Archived must NOT enter carry-over.
+  const apps = [
+    makeApp({ key: "gh:1", status: "Archived", fit_score: "Weak", notion_page_id: "" }),
+  ];
+  const { passed, skipped, alreadyEvaluated } = filterAlreadyEvaluated(apps);
+  assert.equal(passed.length, 0);
+  assert.equal(alreadyEvaluated.length, 0);
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].reason, "already_evaluated_archived");
 });
 
 // --- prepare --phase pre (unit) ----------------------------------------------
@@ -382,6 +439,54 @@ test("prepare --phase pre: writes prepare_context.json with correct shape", asyn
   assert.equal(ctx2.batch[0].urlAlive, true);
   assert.ok(ctx2.stats);
   assert.equal(ctx2.stats.inboxTotal, 1);
+  // RFC 049 / BL-135: alreadyEvaluated[] always present (empty when no orphans).
+  assert.ok(Array.isArray(ctx2.alreadyEvaluated));
+  assert.equal(ctx2.alreadyEvaluated.length, 0);
+});
+
+test("prepare --phase pre (RFC 049 / BL-135): orphan Weak rows surface in alreadyEvaluated[]", async () => {
+  // Mix of: one fresh Inbox row, one orphan Weak (no notion_page_id), one
+  // post-BL-80 Weak already in Notion. Only the fresh goes to batch[]; only
+  // the orphan goes to alreadyEvaluated[].
+  const apps = [
+    makeApp({ key: "gh:1", status: "Inbox", title: "Senior Product Manager" }),
+    makeApp({
+      key: "gh:2",
+      status: "Inbox",
+      fit_score: "Weak",
+      fit_rationale: "Stale verdict from pre-BL-80 era.",
+      notion_page_id: "",
+      title: "PM",
+      companyName: "Acme",
+    }),
+    makeApp({
+      key: "gh:3",
+      status: "Inbox",
+      fit_score: "Weak",
+      notion_page_id: "p3-existing",
+    }),
+  ];
+  const deps = makePrepDeps(apps);
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx();
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+  const written = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+
+  assert.equal(written.batch.length, 1);
+  assert.equal(written.batch[0].key, "gh:1");
+
+  assert.equal(written.alreadyEvaluated.length, 1);
+  const orphan = written.alreadyEvaluated[0];
+  assert.equal(orphan.key, "gh:2");
+  assert.equal(orphan.fitScore, "Weak");
+  assert.equal(orphan.fitRationale, "Stale verdict from pre-BL-80 era.");
+  assert.equal(orphan.companyName, "Acme");
+  assert.equal(orphan.title, "PM");
+  assert.equal(orphan.clKey, "");
+  assert.equal(orphan.clPath, "");
+
+  assert.equal(written.stats.alreadyEvaluatedCarryOver, 1);
 });
 
 // RFC 030: roleTargets surface in prepare_context.json (with patterns stripped)
@@ -574,12 +679,22 @@ test("prepare --phase pre: only picks fresh apps (status='To Apply' AND no notio
 });
 
 test("prepare --phase pre (BL-9): already-evaluated rows skip URL-check and do not enter batch", async () => {
-  // Three Inbox rows — one Weak (already evaluated), one duplicate, one fresh.
-  // Only the fresh row should reach checkUrls and the resulting batch.
+  // Three Inbox rows — one Weak in Notion (already evaluated, post-BL-80),
+  // one duplicate, one fresh. Only the fresh row should reach checkUrls and
+  // the resulting batch.
+  // RFC 049 / BL-135: Weak row carries notion_page_id so it stays on the
+  // skipped[] path (this test covers the "already in Notion" branch; the
+  // orphan branch has its own dedicated test).
   const apps = [
-    makeApp({ key: "gh:1", fit_score: "Weak", skip_reason: "weak_fit" }),
-    makeApp({ key: "gh:2", skip_reason: "duplicate" }),
-    makeApp({ key: "gh:3" }), // fresh
+    makeApp({
+      key: "gh:1",
+      status: "Inbox",
+      fit_score: "Weak",
+      skip_reason: "weak_fit",
+      notion_page_id: "p1",
+    }),
+    makeApp({ key: "gh:2", status: "Inbox", skip_reason: "duplicate" }),
+    makeApp({ key: "gh:3", status: "Inbox" }), // fresh
   ];
   const checkedKeys = [];
   const deps = makePrepDeps(apps, {
@@ -1142,6 +1257,178 @@ function makeCommitDeps(apps, overrides = {}) {
     ...overrides,
   };
 }
+
+// --- prepare --phase commit: orphan carry-over (RFC 049 / BL-135) -----------
+
+test("prepare --phase commit (RFC 049): orphan Weak from prepare_context.alreadyEvaluated[] reaches Notion", async () => {
+  // Orphan Weak row sitting in Inbox with persisted fit verdict + empty
+  // notion_page_id. results.json has zero entries (SKILL had nothing fresh
+  // to judge). The carry-over loader synthesizes a results entry, the
+  // commit loop promotes the row to "To Apply" and pushes to Notion.
+  const apps = [
+    makeApp({
+      key: "gh:1",
+      status: "Inbox",
+      fit_score: "Weak",
+      fit_rationale: "Mid-cap fintech analyst not a strong PM fit.",
+      notion_page_id: "",
+      cl_path: "",
+      cl_key: "",
+      companyName: "OldCo",
+      title: "PM",
+    }),
+  ];
+  const resultsJson = { profileId: "testuser", results: [] };
+  const contextJson = {
+    profileId: "testuser",
+    batch: [],
+    alreadyEvaluated: [
+      {
+        key: "gh:1",
+        companyName: "OldCo",
+        title: "PM",
+        url: "https://example.com/1",
+        source: "greenhouse",
+        jobId: "1",
+        fitScore: "Weak",
+        fitRationale: "Mid-cap fintech analyst not a strong PM fit.",
+        clKey: "",
+        clPath: "",
+        resumeVer: "",
+      },
+    ],
+  };
+  const deps = makeCommitDeps(apps, {
+    readFile: (p) => {
+      if (/prepare_context\.json$/.test(p)) return JSON.stringify(contextJson);
+      return JSON.stringify(resultsJson);
+    },
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+  const saved = deps._getSaved();
+  assert.ok(saved, "saveApplications should have been called");
+  const app = saved[0];
+  assert.equal(app.status, "To Apply", "carry-over row promoted to To Apply");
+  assert.ok(app.notion_page_id, "carry-over row got a Notion page id");
+  assert.equal(app.fit_score, "Weak", "persisted fit_score preserved");
+  // No CL paragraphs, no clKey — Cover Letter field stays empty (RFC 034 §5 A).
+  assert.equal(app.cl_path, "", "Weak carry-over has no CL");
+});
+
+test("prepare --phase commit (RFC 049): carry-over Notion failure reverts row to Inbox", async () => {
+  // Push throws → revertToInbox restores status + clears push artifacts.
+  // The persisted fit_score stays (verdict is still valid; only push failed).
+  const apps = [
+    makeApp({
+      key: "gh:1",
+      status: "Inbox",
+      fit_score: "Weak",
+      fit_rationale: "stale",
+      notion_page_id: "",
+    }),
+  ];
+  const contextJson = {
+    alreadyEvaluated: [
+      {
+        key: "gh:1",
+        companyName: "OldCo",
+        title: "PM",
+        url: "https://x/1",
+        source: "greenhouse",
+        jobId: "1",
+        fitScore: "Weak",
+        fitRationale: "stale",
+        clKey: "",
+        clPath: "",
+        resumeVer: "",
+      },
+    ],
+  };
+  const deps = makeCommitDeps(apps, {
+    readFile: (p) => {
+      if (/prepare_context\.json$/.test(p)) return JSON.stringify(contextJson);
+      return JSON.stringify({ profileId: "testuser", results: [] });
+    },
+    pushJobPage: async () => {
+      throw new Error("notion 503");
+    },
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  const saved = deps._getSaved();
+  const app = saved[0];
+  assert.equal(app.status, "Inbox", "Notion failure → revert to Inbox");
+  assert.equal(app.notion_page_id || "", "");
+  // Fit verdict survives — only the push action couldn't complete.
+  assert.equal(app.fit_score, "Weak");
+});
+
+test("prepare --phase commit (RFC 049): if results.json already has the key, SKILL entry wins (no dedup double-push)", async () => {
+  // Operator re-evaluated gh:1 in this run (e.g. ran prepare end-to-end
+  // with a fresh SKILL pass that re-judged the orphan). Both buckets
+  // reference the same key; the synth must be skipped so we don't queue
+  // two push attempts for one row.
+  const apps = [
+    makeApp({
+      key: "gh:1",
+      status: "Inbox",
+      fit_score: "Weak",
+      fit_rationale: "old",
+      notion_page_id: "",
+    }),
+  ];
+  const resultsJson = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        fitScore: "Medium",
+        fitRationale: "fresh re-eval",
+        clParagraphs: ["P1", "P2", "P3", "P4"],
+        clKey: "gh1_cl",
+      },
+    ],
+  };
+  const contextJson = {
+    alreadyEvaluated: [
+      {
+        key: "gh:1",
+        companyName: "OldCo",
+        title: "PM",
+        url: "https://x/1",
+        source: "greenhouse",
+        jobId: "1",
+        fitScore: "Weak",
+        fitRationale: "old",
+        clKey: "",
+        clPath: "",
+        resumeVer: "",
+      },
+    ],
+  };
+  // Track push count — must be exactly 1.
+  let pushCount = 0;
+  const deps = makeCommitDeps(apps, {
+    readFile: (p) => {
+      if (/prepare_context\.json$/.test(p)) return JSON.stringify(contextJson);
+      return JSON.stringify(resultsJson);
+    },
+    pushJobPage: async () => {
+      pushCount++;
+      return { pageId: `np-${pushCount}`, dedup: false };
+    },
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+  assert.equal(pushCount, 1, "exactly one push, not two");
+  const saved = deps._getSaved();
+  assert.equal(saved[0].fit_score, "Medium", "fresh SKILL verdict wins");
+});
 
 test("prepare --phase commit: evaluated row sets status=To Apply + fields", async () => {
   const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
@@ -2491,12 +2778,21 @@ test("prepare --phase pre topup (BL-9 Step 4): drops keys that have moved out of
 });
 
 test("prepare --phase pre topup (BL-9 Step 4): drops keys whose commit added fit_score=Weak", async () => {
-  // Between fresh and topup, the SKILL committed a Weak verdict on gh:2.
-  // filterAlreadyEvaluated must drop it with already_evaluated_weak.
+  // Between fresh and topup, the SKILL committed a Weak verdict on gh:2
+  // AND commit pushed it to Notion (notion_page_id="p2"). RFC 049 / BL-135:
+  // post-BL-80 Weak rows in Notion are dropped via skipped[]; orphan Weak
+  // (no notion_page_id) would route to alreadyEvaluated[] instead.
   const apps = [
     makeApp({ key: "gh:0", status: "To Apply", notion_page_id: "p0" }),
     makeApp({ key: "gh:1", status: "To Apply", notion_page_id: "p1" }),
-    makeApp({ key: "gh:2", fit_score: "Weak", skip_reason: "weak_fit", jobId: "2" }),
+    makeApp({
+      key: "gh:2",
+      status: "Inbox",
+      fit_score: "Weak",
+      skip_reason: "weak_fit",
+      jobId: "2",
+      notion_page_id: "p2",
+    }),
     makeApp({ key: "gh:3", jobId: "3" }),
   ];
   const prevContext = {
