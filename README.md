@@ -118,6 +118,52 @@ Set expectations explicitly:
 
 ## Quick start
 
+You don't need to clone the repo by hand. Open [Claude Code](https://claude.com/claude-code)
+(desktop app, **Code** tab), point it at any folder, and in the chat
+type one line:
+
+```
+install job-searcher from https://github.com/ymuromcev/ai-job-searcher
+```
+
+Claude will run `npx -y github:ymuromcev/ai-job-searcher install` for
+you. The installer clones the tool into `~/.ai-job-searcher/`, installs
+dependencies, runs the smoke tests, and wires three skills
+(`onboard-profile`, `job-pipeline`, `interview-coach`) into your
+`~/.claude/skills/` directory.
+
+**Then close Claude Code and open it again** — Claude Code reads its
+skills at session start, so a restart is required. After restart, in
+any Claude Code chat:
+
+```
+/onboard-profile me
+```
+
+The [`onboard-profile`](skills/onboard-profile/SKILL.md) skill walks
+you through six question blocks (identity, career + filters, resumes,
+cover-letter voice, Notion, job sources), writes
+`~/.ai-job-searcher/profiles/me/intake.md` as you answer, then
+provisions your `profile.json`, generates filter rules and resume
+archetypes, and creates two Notion databases — all in a single
+conversation. End-to-end ~15 minutes for most people. The skill never
+asks you to paste a token in chat — it points you at the `.env` file
+and only verifies the variable name is present.
+
+To **update** later (after a `git push` from this repo), run the same
+install command again — it does `git pull` instead of clone, and your
+profiles + tokens are untouched.
+
+### Requirements
+
+- macOS or Linux (Windows is not supported).
+- Node 20+ (the installer checks and fails with a clear message if not).
+- [Claude Code](https://claude.com/claude-code) (any recent version).
+
+### For developers
+
+If you are forking the engine or contributing code, the manual path is:
+
 ```bash
 git clone https://github.com/ymuromcev/ai-job-searcher.git
 cd ai-job-searcher
@@ -126,35 +172,16 @@ npm run setup-hooks          # installs the PII pre-commit guard
 npm test                     # ~1000 tests, no network required
 ```
 
-That sets up the engine. To actually run a job search you need a
-profile. Onboarding is a conversation with Claude:
+Note that this clones into the cwd, **not** into `~/.ai-job-searcher/`,
+so Claude Code skills will not be wired up. Run `node scripts/install.js`
+from inside the clone (or `npx -y github:ymuromcev/ai-job-searcher install`)
+to wire the skills.
 
-```bash
-claude
-# in the Claude chat:
-> /onboard-profile me
-```
-
-The [`onboard-profile`](skills/onboard-profile/SKILL.md) skill walks
-you through six question blocks (identity, career + filters, resumes,
-cover-letter voice, Notion, job sources), writes `profiles/me/intake.md`
-as you answer, then provisions your `profile.json`, generates filter
-rules and resume archetypes, and creates two Notion databases — all
-in a single conversation. End-to-end ~15 minutes for most people.
-
-The skill never asks you to paste a token in chat — it points you at
-the `.env` file and only verifies the variable name is present.
-
-### Scripted onboarding (no Claude)
-
-If you don't want to use Claude for the onboarding step — for example,
-you're scripting CI fixtures or testing the wizard end-to-end — see
-[scripts/stage18/README.md](scripts/stage18/README.md). The intake
-template lives at
-[`profiles/_example/intake.template.md`](profiles/_example/intake.template.md);
-you fill it in by hand and run `parse_intake.js` + `deploy_profile.js`
-yourself. Day-to-day pipeline use still requires Claude (the
-`prepare` step is AI-driven), so most users should prefer the skill.
+For scripted CI onboarding without a Claude session, see
+[scripts/stage18/README.md](scripts/stage18/README.md) — fill
+[`profiles/_example/intake.template.md`](profiles/_example/intake.template.md)
+by hand and run `parse_intake.js` + `deploy_profile.js`. Day-to-day
+pipeline use still requires Claude (the `prepare` step is AI-driven).
 
 ## Commands
 

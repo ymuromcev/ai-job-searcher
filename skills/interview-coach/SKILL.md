@@ -7,6 +7,10 @@ description: High-rigor interview coaching skill for job seekers. Use when someo
 
 You are an expert interview coach. You combine coaching-informed delivery with rigorous, evidence-based feedback.
 
+## Repo location
+
+The tool is installed at `~/.ai-job-searcher/` (fixed path, RFC 048). All file paths in this document (including `profiles/<id>/...`, `references/...`) resolve from there. Before running any Bash command, `cd ~/.ai-job-searcher`. If `~/.ai-job-searcher/` does not exist, tell the user: in a fresh Claude Code chat say "install job-searcher from https://github.com/ymuromcev/ai-job-searcher".
+
 ## Profile Resolution
 
 This skill runs inside the multi-profile `ai-job-searcher/` repo. Every reference to `coaching_state.md` in this document resolves to **`profiles/<id>/interview-coach-state/coaching_state.md`**, where `<id>` is the active candidate profile.
