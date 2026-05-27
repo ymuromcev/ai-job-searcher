@@ -1850,10 +1850,35 @@ async function runCommit(ctx, deps) {
   const dateStr = String(now).slice(0, 10);
   const dateStamp = dateStr.replace(/-/g, ""); // YYYYMMDD for BL-F filename format
   const tailoredStats = { generated: 0, failed: 0, dryRun: 0 };
+  // BL-G: contact is single-sourced from profile.identity at render time.
+  // The resume-tailor-mirror subagent has been observed silently mangling
+  // contact fields (phone digit groups dropped, name casing changed). Even
+  // if the SKILL prompt forbids it, the renderer must not trust the
+  // subagent for identity. Built lazily on first tailored row so commit
+  // runs with no Strong rows don't require `profile.identity` to be present
+  // (validator enforces it in production, but tests skip it freely).
+  let canonicalContact = null;
   for (const [rowKey, entry] of tailorPlan) {
     if (entry.classification !== "tailored") continue;
     const app = byKey[rowKey];
     if (!app) continue; // defensive — applyFitFields earlier would have warned
+    if (canonicalContact === null) {
+      const ident = profile.identity || {};
+      canonicalContact = {
+        name: ident.name,
+        phone: ident.phone,
+        email: ident.email,
+        location: ident.location,
+        linkedin: ident.linkedin,
+      };
+    }
+    // BL-G: force the canonical contact onto the resume data before
+    // either generator sees it. We mutate `entry.row.tailoredResume`
+    // so any downstream consumer (e.g. retro-tailor archive) also sees
+    // the corrected contact, not just the rendered file.
+    if (entry.row && entry.row.tailoredResume) {
+      entry.row.tailoredResume.contact = { ...canonicalContact };
+    }
     const slug = deps.slugifyCompany(app.companyName);
     const roleSlug = deps.slugifyRole(app.title);
     const docxRel = tailoredResumePath(profileId, slug, roleSlug, dateStamp);
