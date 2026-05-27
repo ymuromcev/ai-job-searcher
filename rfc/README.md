@@ -38,6 +38,7 @@ Status lives in each RFC's YAML frontmatter (`status: implemented`). The table b
 | [028](028-reclassify-historical-other.md) | Reclassify historical `OTHER` via IMAP | accepted | M | 2026-05-12 |
 | [029](029-ats-sender-coverage.md) | ATS-sender search coverage in `check` tick | accepted | M | 2026-05-12 |
 | [030](030-unified-role-targets.md) | Unified role-targets (single source for scan + LLM fit) | accepted | M | 2026-05-13 |
+| [048](048-install-bootstrap.md) | Install bootstrap: `npx` one-liner that wires skills into Claude Code | accepted | M | 2026-05-27 |
 
 > Index reconciled with frontmatter on 2026-05-05 (RFC 018 phase 1.e back-fill); RFCs 019–029 not yet back-filled — live frontmatter is canonical. To update: edit the frontmatter in the RFC file and reflect the change here.
 

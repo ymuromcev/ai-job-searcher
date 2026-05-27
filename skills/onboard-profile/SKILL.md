@@ -11,10 +11,25 @@ You ask one block of questions at a time, write the answers to
 the session drops), and at the end you run the deploy scripts that
 actually provision the profile.
 
-**You drive the conversation.** The user clones the repo, types `claude`,
-and says "onboard me as profile bob" (or just "onboard me" — then you
-ask for the id). They never edit a file by hand. They never paste
-tokens into chat.
+**You drive the conversation.** The user opens Claude Code, types
+"onboard me as profile bob" (or just "onboard me" — then you ask for
+the id), and answers your questions. They never edit a file by hand.
+They never paste tokens into chat.
+
+---
+
+## Repo location
+
+The tool is installed at `~/.ai-job-searcher/` (fixed path, RFC 048).
+**Run every Bash command in this skill from `~/.ai-job-searcher/`.**
+Either `cd ~/.ai-job-searcher` once at the start of execution, or prefix
+each command with `cd ~/.ai-job-searcher && ...`. All relative paths in
+this document (`profiles/<id>/...`, `engine/cli.js`, `scripts/stage18/...`)
+resolve from there.
+
+If `~/.ai-job-searcher/` does not exist when you start, the tool is
+not installed. Tell the user to run, in a fresh Claude Code chat:
+"install job-searcher from https://github.com/ymuromcev/ai-job-searcher".
 
 ---
 

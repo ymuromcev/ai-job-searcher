@@ -21,6 +21,21 @@ If no mode is specified, show this help and ask which to run.
 
 ---
 
+## Repo location
+
+The tool is installed at `~/.ai-job-searcher/` (fixed path, RFC 048).
+**Run every Bash command in this skill from `~/.ai-job-searcher/`.**
+Either `cd ~/.ai-job-searcher` once at the start of execution, or
+prefix each command with `cd ~/.ai-job-searcher && ...`. All relative
+paths in this document (`data/`, `profiles/`, `engine/`, `scripts/`)
+resolve from there.
+
+If `~/.ai-job-searcher/` does not exist, the tool is not installed.
+Tell the user: in a fresh Claude Code chat say "install job-searcher
+from https://github.com/ymuromcev/ai-job-searcher".
+
+---
+
 ## Required context per session
 
 Before running any command, verify:
@@ -31,7 +46,7 @@ Before running any command, verify:
    - **Session-sticky**: once a non-default profile is resolved in a session, keep using it for subsequent commands in the same session. Switch back to `jared` only on an explicit phrase like "switch to Jared" / "для Джареда".
    - **Ask only when ambiguous**: if the phrase mentions a name that doesn't match any profile dir, ask once (list valid profiles), then stick.
    - Always pass the resolved id to the CLI via `--profile <id>`.
-2. **Working directory** = `ai-job-searcher/` (public repo clone at `~/Desktop/Claude Code/ai-job-searcher/`). All commands resolve `data/` and `profiles/` relative to cwd.
+2. **Working directory** — see Repo location section above.
 3. **Secrets in env**. For profile `<id>`, the CLI reads `<ID_UPPER>_*` env vars only:
    - `JARED_NOTION_TOKEN` (required for sync)
    - `JARED_USAJOBS_API_KEY`, `JARED_USAJOBS_EMAIL` (required if discovery:usajobs is enabled)

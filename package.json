@@ -4,6 +4,9 @@
   "description": "Multi-profile job search pipeline: one engine, multiple candidates.",
   "type": "commonjs",
   "main": "engine/cli.js",
+  "bin": {
+    "ai-job-searcher": "scripts/install.js"
+  },
   "scripts": {
     "test": "node --test 'engine/**/*.test.js' 'skills/**/*.test.js' 'scripts/**/*.test.js'",
     "lint": "eslint .",
