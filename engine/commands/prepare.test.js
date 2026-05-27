@@ -1076,6 +1076,16 @@ function makeCommitDeps(apps, overrides = {}) {
     id: "testuser",
     filterRules: {},
     company_tiers: {},
+    // BL-G: canonical contact for tailored-resume render override. Validator
+    // guarantees this block is populated in production; default it here so
+    // commit-phase tests don't crash on `profile.identity.name`.
+    identity: {
+      name: "JARED MOORE",
+      phone: "+1 (916) 261-261-9",
+      email: "ymuromcev@gmail.com",
+      location: "Sacramento, CA",
+      linkedin: "linkedin.com/in/ymuromcev",
+    },
     // RFC 022: runCommit needs jobs_pipeline_db_id + companies_db_id to push.
     // Tests that don't care about Notion still get the happy-path mocks below,
     // so to_apply rows survive the push pass and tests assert post-push state.
@@ -4214,7 +4224,11 @@ test("prepare --phase commit (BL-123): tailored row generates DOCX and pushes wi
 
   // DOCX was generated from the tailored data, written under resumes/tailored/.
   assert.ok(docxCalled, "generateResumeDocx must be called");
-  assert.deepEqual(docxCalled.data, tailoredResume);
+  // BL-G: contact is overridden from profile.identity at render time so we
+  // assert the non-contact payload survives + the contact is canonical.
+  assert.deepEqual(docxCalled.data.version, tailoredResume.version);
+  assert.equal(docxCalled.data.contact.phone, "+1 (916) 261-261-9");
+  assert.equal(docxCalled.data.contact.email, "ymuromcev@gmail.com");
   // company_slug.js preserves case ("Stripe" not "stripe").
   assert.match(docxCalled.outPath, /resumes\/tailored\/Stripe_senior-product-manager_20260420\.docx$/);
 
@@ -4231,6 +4245,76 @@ test("prepare --phase commit (BL-123): tailored row generates DOCX and pushes wi
 
   // stdout reports tailored count.
   assert.ok(ctx._lines.some((l) => /tailored resumes:.*1 generated/.test(l)));
+});
+
+// --- BL-G: contact override from profile.identity ---------------------------
+//
+// The resume-tailor-mirror subagent has been observed silently mangling
+// contact fields (e.g. phone digit groups dropped, name casing changed).
+// The renderer must NEVER trust the subagent for identity — contact is
+// single-sourced from profile.identity at render time.
+
+test("prepare --phase commit (BL-G): mangled subagent contact is overridden by profile.identity", async () => {
+  const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
+  // Simulate the bug: subagent emitted a phone with the middle group dropped,
+  // wrong name casing, and a junk linkedin. All five contact fields should
+  // come back as profile.identity values.
+  const tailoredResume = {
+    contact: {
+      name: "jared moore",
+      phone: "+1 (916) 261-9",
+      email: "wrong@example.com",
+      location: "Mountain View, CA",
+      linkedin: "linkedin.com/in/wrong",
+    },
+    version: { summary: "tailored summary" },
+  };
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        fitScore: "Strong",
+        clKey: "stripe_pm_20260420",
+        clParagraphs: ["Hi.", "Bye."],
+        tailoredResume,
+        tailorEscalated: false,
+      },
+    ],
+  };
+  let docxData = null;
+  let pdfData = null;
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    generateResumeDocx: async (data) => {
+      docxData = data;
+    },
+    generateResumePdf: async (data) => {
+      pdfData = data;
+      return { pageCount: 1 };
+    },
+    generateCoverLetterPdf: async () => {},
+    fileExists: () => false,
+    mkdirp: () => {},
+    writeFile: () => {},
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+
+  // Both renderers received canonical contact from profile.identity, not
+  // the subagent's mangled values.
+  const expected = {
+    name: "JARED MOORE",
+    phone: "+1 (916) 261-261-9",
+    email: "ymuromcev@gmail.com",
+    location: "Sacramento, CA",
+    linkedin: "linkedin.com/in/ymuromcev",
+  };
+  assert.deepEqual(docxData.contact, expected);
+  assert.deepEqual(pdfData.contact, expected);
+  // Non-contact payload preserved.
+  assert.equal(docxData.version.summary, "tailored summary");
 });
 
 // --- BL-126 Block A: PDF emit + page-overflow warning -----------------------
@@ -4279,7 +4363,9 @@ test("prepare --phase commit (BL-126 Block A): tailored row emits PDF + DOCX, re
   // Both generators called with same tailoredResume.
   assert.ok(docxCalled, "DOCX generator must be called");
   assert.ok(pdfCalled, "PDF generator must be called");
-  assert.deepEqual(pdfCalled.data, tailoredResume);
+  // BL-G: contact is canonicalized from profile.identity; rest of payload identical.
+  assert.deepEqual(pdfCalled.data.version, tailoredResume.version);
+  assert.equal(pdfCalled.data.contact.phone, "+1 (916) 261-261-9");
   assert.match(docxCalled.outPath, /resumes\/tailored\/Stripe_senior-product-manager_20260420\.docx$/);
   assert.match(pdfCalled.outPath, /resumes\/tailored\/Stripe_senior-product-manager_20260420\.pdf$/);
 
