@@ -351,6 +351,46 @@ test("scan redacts secret values from adapter error messages", async () => {
   assert.match(joined, /\*\*\*/);
 });
 
+test("applyTargetFilters drops rows flagged disabled in extra_json (BL-130)", () => {
+  // `disabled: true` lives in companies.tsv extra_json. groupBySource merges
+  // extra into each target, so the flag arrives here as target.disabled.
+  // Disabled rows must be dropped BEFORE adapters run (no HTTP probe at all)
+  // and must show up in _dropped with a structured reason for the warn line.
+  const grouped = {
+    lever: [
+      { name: "Klarna", slug: "klarna", disabled: true, disabled_reason: "migrated to Deel" },
+      { name: "Spring Labs", slug: "springlabs", disabled: true },
+      { name: "Stripe", slug: "stripe" },
+    ],
+    greenhouse: [
+      { name: "Bilt Rewards", slug: "biltrewards", disabled: true, disabled_reason: "migrated to Gem" },
+      { name: "Affirm", slug: "affirm" },
+    ],
+  };
+
+  const result = applyTargetFilters(grouped, { discovery: {} });
+
+  assert.equal(result.lever.length, 1);
+  assert.equal(result.lever[0].name, "Stripe");
+  assert.equal(result.greenhouse.length, 1);
+  assert.equal(result.greenhouse[0].name, "Affirm");
+
+  assert.equal(result._dropped.length, 3);
+  const klarna = result._dropped.find((d) => d.name === "Klarna");
+  assert.ok(klarna);
+  assert.equal(klarna.source, "lever");
+  assert.equal(klarna.reason, "disabled:migrated to Deel");
+
+  const springlabs = result._dropped.find((d) => d.name === "Spring Labs");
+  assert.ok(springlabs);
+  assert.equal(springlabs.reason, "disabled"); // no reason supplied
+
+  const bilt = result._dropped.find((d) => d.name === "Bilt Rewards");
+  assert.ok(bilt);
+  assert.equal(bilt.source, "greenhouse");
+  assert.equal(bilt.reason, "disabled:migrated to Gem");
+});
+
 test("applyTargetFilters applies blacklist (whitelist retired in BL-68)", () => {
   const grouped = {
     greenhouse: [
