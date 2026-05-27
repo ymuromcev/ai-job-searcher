@@ -338,10 +338,7 @@ test("detectCwdIsClone: cwd has no .git → false", () => {
 // --- formatTimestamp --------------------------------------------------------
 
 test("formatTimestamp: utc components zero-padded + milliseconds", () => {
-  assert.equal(
-    formatTimestamp(new Date(Date.UTC(2026, 0, 5, 3, 4, 5, 7))),
-    "20260105-030405-007",
-  );
+  assert.equal(formatTimestamp(new Date(Date.UTC(2026, 0, 5, 3, 4, 5, 7))), "20260105-030405-007");
 });
 
 // --- main: fresh install trace ---------------------------------------------
@@ -445,7 +442,7 @@ test("main: fresh install — clones, installs, tests, links all 3 skills", () =
     const target = `${installPath}/skills/${name}`;
     assert.ok(
       symlinkCalls.some((c) => c[1] === target && c[2] === link),
-      `expected symlink for ${name}`,
+      `expected symlink for ${name}`
     );
   }
 
@@ -577,7 +574,7 @@ test("main: Node 18 → fails preflight, no work done", () => {
   assert.equal(
     ctx.calls.filter((c) => c[0] === "runStreaming").length,
     0,
-    "no shell calls when preflight fails",
+    "no shell calls when preflight fails"
   );
 });
 
@@ -594,8 +591,7 @@ test("main: cwd is a separate clone → final note about redundant copy", () => 
       `${cwd}/.git`,
     ]),
     execResponses: {
-      [`git -C ${cwd} remote get-url origin`]:
-        "https://github.com/ymuromcev/ai-job-searcher.git\n",
+      [`git -C ${cwd} remote get-url origin`]: "https://github.com/ymuromcev/ai-job-searcher.git\n",
     },
   });
 

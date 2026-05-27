@@ -67,21 +67,17 @@ function detectInstallState({ installPath, fsCtx, execCtx }) {
     return {
       state: "conflict",
       message:
-        `${installPath} already exists and is not a git clone. ` +
-        `Move or rename it, then rerun.`,
+        `${installPath} already exists and is not a git clone. ` + `Move or rename it, then rerun.`,
     };
   }
   let remote;
   try {
-    remote = execCtx
-      .run("git", ["-C", installPath, "remote", "get-url", "origin"])
-      .trim();
+    remote = execCtx.run("git", ["-C", installPath, "remote", "get-url", "origin"]).trim();
   } catch {
     return {
       state: "conflict",
       message:
-        `${installPath} exists but has no 'origin' remote. ` +
-        `Move or rename it, then rerun.`,
+        `${installPath} exists but has no 'origin' remote. ` + `Move or rename it, then rerun.`,
     };
   }
   if (!isOurRemote(remote)) {
@@ -195,8 +191,7 @@ function makeRealCtx() {
       copyFileSync: (a, b, flags) => fs.copyFileSync(a, b, flags),
     },
     exec: {
-      run: (cmd, args, opts = {}) =>
-        execFileSync(cmd, args, { encoding: "utf8", ...opts }),
+      run: (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: "utf8", ...opts }),
       runStreaming: (cmd, args, opts = {}) =>
         execFileSync(cmd, args, { stdio: "inherit", ...opts }),
     },
@@ -211,13 +206,11 @@ function executeFreshClone({ installPath, ctx }) {
 }
 
 function checkCleanTree({ installPath, ctx }) {
-  const status = ctx.exec
-    .run("git", ["-C", installPath, "status", "--porcelain"])
-    .trim();
+  const status = ctx.exec.run("git", ["-C", installPath, "status", "--porcelain"]).trim();
   if (status) {
     ctx.err(
       `${installPath} has local changes:\n${status}\n` +
-        `Move them aside (or delete ${installPath} and run install again), then rerun.`,
+        `Move them aside (or delete ${installPath} and run install again), then rerun.`
     );
     return false;
   }
@@ -240,9 +233,7 @@ function executeSkillLink(plan, ctx) {
       ctx.log(`  ${plan.name}: already linked.`);
       return;
     case "missing-source":
-      ctx.err(
-        `  ${plan.name}: source ${plan.source} missing in the cloned repo — skipping.`,
-      );
+      ctx.err(`  ${plan.name}: source ${plan.source} missing in the cloned repo — skipping.`);
       return;
     case "create":
       ctx.fs.mkdirSync(path.dirname(plan.target), { recursive: true });
@@ -253,9 +244,7 @@ function executeSkillLink(plan, ctx) {
       ctx.fs.renameSync(plan.target, plan.backupPath);
       ctx.fs.mkdirSync(path.dirname(plan.target), { recursive: true });
       ctx.fs.symlinkSync(plan.source, plan.target, "dir");
-      ctx.log(
-        `  ${plan.name}: existing entry moved to ${plan.backupPath}, then linked.`,
-      );
+      ctx.log(`  ${plan.name}: existing entry moved to ${plan.backupPath}, then linked.`);
       return;
     default:
       throw new Error(`unknown skill-link action: ${plan.action}`);
@@ -335,12 +324,10 @@ function main({
   });
   if (cwdCheck.isClone) {
     ctx.log("");
-    ctx.log(
-      `Note: you ran this from inside another clone at ${cwdCheck.cwd}.`,
-    );
+    ctx.log(`Note: you ran this from inside another clone at ${cwdCheck.cwd}.`);
     ctx.log(
       `The canonical copy now lives at ${installPath}. You can delete ` +
-        `${cwdCheck.cwd} if you don't need it.`,
+        `${cwdCheck.cwd} if you don't need it.`
     );
   }
 
@@ -364,8 +351,7 @@ if (require.main === module) {
   const cmd = args[0] || "install";
   if (cmd !== "install") {
     console.error(
-      `Unknown subcommand: ${cmd}.\n` +
-        `Usage: npx -y github:ymuromcev/ai-job-searcher install`,
+      `Unknown subcommand: ${cmd}.\n` + `Usage: npx -y github:ymuromcev/ai-job-searcher install`
     );
     process.exit(1);
   }
