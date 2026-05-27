@@ -24,6 +24,7 @@ Commands:
 | `answer` | Two-phase application Q&A reuse + push to Notion Application Q&A DB. |
 | `indeed-prep` | Print Indeed scan playbook for a browser MCP. Phase 1 of the Indeed ingest flow. |
 | `reclassify` | Re-run the email classifier across historical `OTHER` entries in `processed_messages.json` (30-day window). Dry-run by default. |
+| `retro-tailor` | Re-tailor Strong rows already in `To Apply` whose resume predates the RFC-044 tailoring loop. Recon by default; `--apply --results-file` commits. |
 
 The dispatcher also runs deterministic post-command hooks. Today the only hook is `scan → sync`: a successful `scan` automatically chains a `sync --apply` (suppressed by `--no-sync` or `--dry-run`).
 
@@ -356,6 +357,53 @@ Common errors:
 - `gmail credentials missing` — namespaced `<ID>_GMAIL_USER` or `<ID>_GMAIL_APP_PASSWORD` env vars absent. Same credentials as `check --auto`; generate the app-password at <https://myaccount.google.com/apppasswords>.
 - `error: IMAP batch fetch failed after retries` — transient IMAP failures retry with exponential backoff (up to 5 attempts); this surfaces only when the whole batch fails. Re-run later.
 - `error: missing <ID>_NOTION_TOKEN — Notion updates skipped` — `--apply --notion` was requested but no Notion token is configured. The JSON state has already been written; rerun with `--notion` once the token is set.
+
+### retro-tailor
+
+Synopsis: `node engine/cli.js retro-tailor --profile <id> [--dry-run] [--apply] [--results-file <path>] [--batch <n>] [--since <iso>]`
+
+Re-tailors Strong rows currently in `To Apply` whose resume was generated before the RFC-044 Strong-fit tailoring loop existed. Detection signal: TSV `resume_ver` does not start with `resumes/tailored/`. Two phases:
+
+- **Recon (default)**: scan TSV, identify candidates, pre-fetch JDs (cache-aware), write `profiles/<id>/retro_tailor_context.json` with per-row JD payloads. The SKILL session reads this context and drives the same Step 6.5 tailoring loop the regular `prepare` pipeline uses, in batches of 5 with operator confirmation between batches.
+- **Commit (`--apply --results-file <path>`)**: read SKILL-produced results.json, generate tailored DOCX + PDF, update TSV `resume_ver`, update existing Notion page's `Resume Version` field via `pages.update`. Cover letter is **not** regenerated.
+
+Prerequisite: run `node engine/cli.js sync --profile <id> --apply` first so the TSV reflects current Notion statuses (rows that moved to Applied/Rejected/Closed are excluded automatically).
+
+Flags:
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--profile <id>` | string | — | Required. |
+| `--dry-run` | boolean | false | Recon-only mode without writing `retro_tailor_context.json`. Without `--apply`, recon already runs read-only mutations except for the context file; `--dry-run` suppresses that single write. |
+| `--apply` | boolean | false | Switches to commit phase. Requires `--results-file`. |
+| `--results-file <path>` | string | — | Required with `--apply`. SKILL-produced JSON with per-row tailor fields (`tailoredResume`, `tailorCoverage`, `tailorEscalated`, `tailorEscalationReason`, `tailorEscalationDetail`) plus `notionPageId`. |
+| `--batch <n>` | int | 30 | Cap candidate count per recon. Token-budget control for large backlogs. |
+| `--since <iso>` | string | — | Recon only. Skip candidates whose `updatedAt` (or `createdAt` fallback) is older than the given `YYYY-MM-DD`. |
+
+Outputs and side effects:
+
+- Recon: writes `profiles/<id>/retro_tailor_context.json` (overwritten per run). Prints scanned / strong-to-apply / already-tailored / candidates counts; JD-fetch ok/failed; deferred count when above `--batch`.
+- Commit: per row — generates DOCX at `profiles/<id>/resumes/tailored/<CompanySlug>_<roleSlug>_<YYYYMMDD>.docx` plus PDF (canonical for TSV / Notion). Updates TSV `resume_ver` only AFTER the Notion update succeeds (rollback semantics: on Notion failure, files on disk stay but TSV stays pointing at the old archetype value).
+- Escalated rows accumulate into `profiles/<id>/.tailor-state/retro-escalations-<unix-ts>.md` (separate filename prefix from regular prepare-commit escalations).
+
+Example:
+
+```bash
+# Recon: see what would get re-tailored
+node engine/cli.js retro-tailor --profile <id>
+
+# Limit to rows updated in the last week, cap at 5 per run
+node engine/cli.js retro-tailor --profile <id> --since 2026-05-19 --batch 5
+
+# Commit (after the SKILL session writes results.json)
+node engine/cli.js retro-tailor --profile <id> --apply --results-file ./results.json
+```
+
+Common errors:
+
+- `error: --results-file <path> is required for --apply` — commit phase needs the SKILL output. Run recon first; the SKILL session reads `retro_tailor_context.json` and writes results to disk.
+- `warn: <key> status is "Applied" — skipped. Did you sync since recon?` — TSV moved between recon and commit. Re-run `sync --apply`, then re-run recon to refresh the candidate set.
+- `warn: <ID>_NOTION_TOKEN missing — Notion updates skipped` — `.env` is missing the per-profile Notion token. DOCX/PDF were generated on disk, but TSV `resume_ver` was not updated. Fix `.env` and re-run.
 
 ## Environment variables
 

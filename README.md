@@ -171,6 +171,7 @@ node engine/cli.js <command> --profile <id> [flags]
 | `check` | Read Gmail replies via Claude MCP and update Notion status. |
 | `indeed-prep` | One-off helper for Indeed scraping prep (manual login flow). |
 | `answer` | Generate or reuse application answers and push back to Notion Q&A DB. |
+| `retro-tailor` | Re-tailor Strong rows currently in `To Apply` whose resume predates the RFC-044 tailoring loop. |
 
 `node engine/cli.js --help` prints the same list with full flag docs.
 
