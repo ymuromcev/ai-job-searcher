@@ -6,6 +6,7 @@ const {
   applyPrepareFilter,
   filterAlreadyEvaluated,
   buildActiveCounts,
+  resolveCapWindowDays,
   computeInboxExhausted,
   computeInboxHealth,
   isFreshInboxApp,
@@ -79,18 +80,210 @@ function makeDeadUrl(row) {
 
 // --- buildActiveCounts -------------------------------------------------------
 
-test("buildActiveCounts: counts To Apply, Applied, Interview, Offer (skips Archived)", () => {
+// BL-136 (2026-05-27): widened the cap-active set to include Rejected /
+// Closed / No Response. With no `windowDays` option supplied, the legacy
+// all-time count is used (BC fallback — preserved for one release).
+test("buildActiveCounts: legacy all-time counts To Apply/Applied/Interview/Offer/Rejected/Closed (skips Archived/Inbox)", () => {
   const apps = [
     makeApp({ companyName: "Stripe", status: "To Apply" }),
     makeApp({ companyName: "Stripe", status: "Applied" }),
     makeApp({ companyName: "Ramp", status: "Interview" }),
     makeApp({ companyName: "Ramp", status: "Archived" }),
     makeApp({ companyName: "Brex", status: "Closed" }),
+    makeApp({ companyName: "Brex", status: "Rejected" }),
+    makeApp({ companyName: "Plaid", status: "Inbox" }),
   ];
   const counts = buildActiveCounts(apps);
   assert.equal(counts["Stripe"], 2);
   assert.equal(counts["Ramp"], 1);
-  assert.equal(counts["Brex"], undefined);
+  assert.equal(counts["Brex"], 2);
+  assert.equal(counts["Plaid"], undefined);
+});
+
+// --- BL-136: rolling-window company_cap ------------------------------------
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function daysAgo(now, n) {
+  return new Date(now.getTime() - n * DAY_MS).toISOString();
+}
+
+test("BL-136 buildActiveCounts: 0 apps in last 30d → cap = 3 (three new rows pass)", () => {
+  const now = new Date("2026-05-27T12:00:00.000Z");
+  // Two old apps to the same company, both >30d old → don't count.
+  const apps = [
+    makeApp({ companyName: "Stripe", status: "Applied", updatedAt: daysAgo(now, 90) }),
+    makeApp({
+      key: "gh:old2",
+      companyName: "Stripe",
+      status: "Applied",
+      updatedAt: daysAgo(now, 60),
+    }),
+  ];
+  const counts = buildActiveCounts(apps, { windowDays: 30, now });
+  assert.equal(counts["Stripe"], undefined);
+
+  const fresh = [
+    makeApp({ key: "gh:n1", companyName: "Stripe" }),
+    makeApp({ key: "gh:n2", companyName: "Stripe" }),
+    makeApp({ key: "gh:n3", companyName: "Stripe" }),
+  ];
+  const rules = { company_cap: { max_active: 3, window_days: 30 } };
+  const { passed, skipped } = applyPrepareFilter(fresh, rules, counts);
+  assert.equal(passed.length, 3);
+  assert.equal(skipped.length, 0);
+});
+
+test("BL-136 buildActiveCounts: 1 app in last 30d → cap = 2 (two new rows pass)", () => {
+  const now = new Date("2026-05-27T12:00:00.000Z");
+  const apps = [
+    makeApp({ companyName: "Stripe", status: "Applied", updatedAt: daysAgo(now, 10) }),
+    makeApp({
+      key: "gh:old",
+      companyName: "Stripe",
+      status: "Applied",
+      updatedAt: daysAgo(now, 200),
+    }),
+  ];
+  const counts = buildActiveCounts(apps, { windowDays: 30, now });
+  assert.equal(counts["Stripe"], 1);
+
+  const fresh = [
+    makeApp({ key: "gh:n1", companyName: "Stripe" }),
+    makeApp({ key: "gh:n2", companyName: "Stripe" }),
+    makeApp({ key: "gh:n3", companyName: "Stripe" }),
+  ];
+  const rules = { company_cap: { max_active: 3, window_days: 30 } };
+  const { passed, skipped } = applyPrepareFilter(fresh, rules, counts);
+  assert.equal(passed.length, 2);
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].reason, "company_cap");
+});
+
+test("BL-136 buildActiveCounts: 3 apps in last 30d → cap = 0 (no new rows pass)", () => {
+  const now = new Date("2026-05-27T12:00:00.000Z");
+  const apps = [
+    makeApp({ key: "gh:a", companyName: "Stripe", status: "Applied", updatedAt: daysAgo(now, 5) }),
+    makeApp({
+      key: "gh:b",
+      companyName: "Stripe",
+      status: "Interview",
+      updatedAt: daysAgo(now, 15),
+    }),
+    makeApp({
+      key: "gh:c",
+      companyName: "Stripe",
+      status: "Rejected",
+      updatedAt: daysAgo(now, 25),
+    }),
+  ];
+  const counts = buildActiveCounts(apps, { windowDays: 30, now });
+  assert.equal(counts["Stripe"], 3);
+
+  const fresh = [
+    makeApp({ key: "gh:n1", companyName: "Stripe" }),
+    makeApp({ key: "gh:n2", companyName: "Stripe" }),
+  ];
+  const rules = { company_cap: { max_active: 3, window_days: 30 } };
+  const { passed, skipped } = applyPrepareFilter(fresh, rules, counts);
+  assert.equal(passed.length, 0);
+  assert.equal(skipped.length, 2);
+  assert.equal(skipped[0].reason, "company_cap");
+});
+
+test("BL-136 buildActiveCounts: 5 apps all-time but 0 in last 30d → cap = 3 (the regression test)", () => {
+  const now = new Date("2026-05-27T12:00:00.000Z");
+  // Five old applications to the same company, all >30d old. Under the
+  // legacy all-time count, this company would be permanently blocked
+  // (5 >= max_active=3). Under the rolling-window cap, the budget is full.
+  const apps = [
+    makeApp({ key: "gh:a", companyName: "Stripe", status: "Applied", updatedAt: daysAgo(now, 35) }),
+    makeApp({ key: "gh:b", companyName: "Stripe", status: "Applied", updatedAt: daysAgo(now, 60) }),
+    makeApp({ key: "gh:c", companyName: "Stripe", status: "Rejected", updatedAt: daysAgo(now, 90) }),
+    makeApp({ key: "gh:d", companyName: "Stripe", status: "Closed", updatedAt: daysAgo(now, 120) }),
+    makeApp({ key: "gh:e", companyName: "Stripe", status: "Interview", updatedAt: daysAgo(now, 180) }),
+  ];
+  const counts = buildActiveCounts(apps, { windowDays: 30, now });
+  assert.equal(counts["Stripe"], undefined);
+
+  const fresh = [
+    makeApp({ key: "gh:n1", companyName: "Stripe" }),
+    makeApp({ key: "gh:n2", companyName: "Stripe" }),
+    makeApp({ key: "gh:n3", companyName: "Stripe" }),
+  ];
+  const rules = { company_cap: { max_active: 3, window_days: 30 } };
+  const { passed, skipped } = applyPrepareFilter(fresh, rules, counts);
+  assert.equal(passed.length, 3);
+  assert.equal(skipped.length, 0);
+});
+
+test("BL-136 buildActiveCounts: missing window_days → fallback to all-time count", () => {
+  const now = new Date("2026-05-27T12:00:00.000Z");
+  const apps = [
+    makeApp({ key: "gh:a", companyName: "Stripe", status: "Applied", updatedAt: daysAgo(now, 200) }),
+    makeApp({ key: "gh:b", companyName: "Stripe", status: "Applied", updatedAt: daysAgo(now, 400) }),
+    makeApp({ key: "gh:c", companyName: "Stripe", status: "Applied", updatedAt: daysAgo(now, 5) }),
+  ];
+  // No window_days on the rules → resolveCapWindowDays returns null →
+  // buildActiveCounts uses all-time count, mirroring pre-BL-136 behaviour.
+  const rules = { company_cap: { max_active: 3 } };
+  const windowDays = resolveCapWindowDays(rules);
+  assert.equal(windowDays, null);
+  const counts = buildActiveCounts(apps, { windowDays });
+  assert.equal(counts["Stripe"], 3);
+
+  const fresh = [makeApp({ key: "gh:n1", companyName: "Stripe" })];
+  const { passed, skipped } = applyPrepareFilter(fresh, rules, counts);
+  assert.equal(passed.length, 0);
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].reason, "company_cap");
+});
+
+test("BL-136 buildActiveCounts: row with unparseable updatedAt is dropped when windowed", () => {
+  const now = new Date("2026-05-27T12:00:00.000Z");
+  const apps = [
+    makeApp({ companyName: "Stripe", status: "Applied", updatedAt: "" }),
+    makeApp({ key: "gh:2", companyName: "Stripe", status: "Applied", updatedAt: "not-a-date" }),
+    makeApp({ key: "gh:3", companyName: "Stripe", status: "Applied", updatedAt: daysAgo(now, 1) }),
+  ];
+  const counts = buildActiveCounts(apps, { windowDays: 30, now });
+  assert.equal(counts["Stripe"], 1);
+});
+
+test("BL-136 buildActiveCounts: window override per-company via filter_rules.company_cap.overrides", () => {
+  const now = new Date("2026-05-27T12:00:00.000Z");
+  // 2 in-window apps to VIP, cap=1 default but override=5 → 3 fresh rows fit.
+  const apps = [
+    makeApp({ companyName: "VIP", status: "Applied", updatedAt: daysAgo(now, 5) }),
+    makeApp({ key: "gh:2", companyName: "VIP", status: "Applied", updatedAt: daysAgo(now, 15) }),
+  ];
+  const counts = buildActiveCounts(apps, { windowDays: 30, now });
+  assert.equal(counts["VIP"], 2);
+
+  const fresh = [
+    makeApp({ key: "gh:n1", companyName: "VIP" }),
+    makeApp({ key: "gh:n2", companyName: "VIP" }),
+    makeApp({ key: "gh:n3", companyName: "VIP" }),
+  ];
+  const rules = {
+    company_cap: { max_active: 1, window_days: 30, overrides: { VIP: 5 } },
+  };
+  const { passed, skipped } = applyPrepareFilter(fresh, rules, counts);
+  assert.equal(passed.length, 3);
+  assert.equal(skipped.length, 0);
+});
+
+test("BL-136 resolveCapWindowDays: parses sensible values, rejects junk", () => {
+  assert.equal(resolveCapWindowDays(null), null);
+  assert.equal(resolveCapWindowDays({}), null);
+  assert.equal(resolveCapWindowDays({ company_cap: {} }), null);
+  assert.equal(resolveCapWindowDays({ company_cap: { window_days: 30 } }), 30);
+  assert.equal(resolveCapWindowDays({ company_cap: { window_days: 7 } }), 7);
+  // Zero / negative / non-numeric → fallback to legacy all-time.
+  assert.equal(resolveCapWindowDays({ company_cap: { window_days: 0 } }), null);
+  assert.equal(resolveCapWindowDays({ company_cap: { window_days: -5 } }), null);
+  assert.equal(resolveCapWindowDays({ company_cap: { window_days: "30" } }), null);
+  assert.equal(resolveCapWindowDays({ company_cap: { window_days: null } }), null);
 });
 
 // --- applyPrepareFilter ------------------------------------------------------

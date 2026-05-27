@@ -2,9 +2,10 @@
   "_description": "Pre-Notion filter rules. Applied BEFORE creating Notion pages. Jobs matching these rules go straight to Archive in TSV, never reach Notion.",
   "company_cap": {
     "max_active": 3,
-    "active_statuses": ["Applied", "To Apply", "Interview", "Offer"],
+    "window_days": 30,
+    "active_statuses": ["Applied", "To Apply", "Interview", "Offer", "Rejected", "Closed"],
     "action": "Archive",
-    "note": "ATS systems may deprioritize candidates with too many applications to same company",
+    "note": "Count active applications per company within a rolling window (BL-136). Default 30 days — older rows age out so dormant companies become live again. Statuses counted: To Apply, Applied, Interview, Offer, Rejected, Closed; Inbox and Archived do NOT count.",
     "overrides": {}
   },
   "company_blocklist": {
