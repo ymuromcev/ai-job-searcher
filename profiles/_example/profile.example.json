@@ -27,6 +27,14 @@
     "template_file": "cover_letter_template.example.md",
     "output_dir": "cover_letters"
   },
+  "_answer_example_comment": "Optional per-profile answer style enforcement (RFC 050 / BL-138). When enabled, the push-phase CLI sanitizer applies deterministic regex rules to the answer before Notion + local backup. style_guidance is free-form prose read by the SKILL during generation (Step 5a) for context-dependent rules that cannot be regex'd. Both fields are opt-in — omit the block entirely to disable.",
+  "answer": {
+    "style_sanitizer": {
+      "enabled": false,
+      "rules": ["tilde_to_about", "em_dash_to_hyphen", "x_multiplier_to_times"]
+    },
+    "style_guidance": ""
+  },
   "notion": {
     "jobs_pipeline_db_id": "REPLACE_WITH_YOUR_NOTION_DATABASE_ID",
     "property_map": {

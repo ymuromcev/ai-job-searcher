@@ -27,6 +27,7 @@ const { makeClient } = require("../core/notion_sync.js");
 const { searchAnswers, createAnswerPage, updateAnswerPage } = require("../core/qa_notion.js");
 const { dedupKey } = require("../core/qa_dedup.js");
 const { categorize, CATEGORIES } = require("../core/qa_categorize.js");
+const { sanitize: sanitizeStyle } = require("../modules/answer/style_sanitizer.js");
 
 // --- helpers -----------------------------------------------------------------
 
@@ -223,9 +224,31 @@ async function runPush(ctx, deps) {
 
   const client = deps.makeClient(token);
 
+  // Per-profile style sanitizer (RFC 050 / BL-138).
+  // Opt-in via profile.answer.style_sanitizer.enabled === true. Sanitizer
+  // runs BEFORE local backup and Notion push so both reflect the cleaned
+  // answer. A sanitizer exception must NOT block the push — it falls back
+  // to the original answer with a stderr warning.
+  let answerForPush = draft.answer;
+  const styleCfg = profile && profile.answer && profile.answer.style_sanitizer;
+  if (styleCfg && styleCfg.enabled === true) {
+    try {
+      const { sanitized, changes } = sanitizeStyle(
+        draft.answer,
+        Array.isArray(styleCfg.rules) ? styleCfg.rules : []
+      );
+      answerForPush = sanitized;
+      for (const c of changes) {
+        stderr(`[style-sanitizer] rule=${c.rule} "${c.before}" -> "${c.after}"`);
+      }
+    } catch (e) {
+      stderr(`[style-sanitizer] error: ${e.message} — using original answer`);
+    }
+  }
+
   const fields = {
     question: draft.question,
-    answer: draft.answer,
+    answer: answerForPush,
     category: draft.category || null,
     role: draft.role,
     company: draft.company,
@@ -247,7 +270,9 @@ async function runPush(ctx, deps) {
     dateStamp: todayStamp(),
   });
   const backupPath = nextAvailableBackupPath(backupDir, baseName, deps.fs);
-  deps.fs.writeFileSync(backupPath, buildBackupMarkdown(draft), "utf8");
+  // Backup uses sanitized answer to keep parity with what's pushed to Notion.
+  const draftForBackup = answerForPush === draft.answer ? draft : { ...draft, answer: answerForPush };
+  deps.fs.writeFileSync(backupPath, buildBackupMarkdown(draftForBackup), "utf8");
 
   let action, page;
   try {
