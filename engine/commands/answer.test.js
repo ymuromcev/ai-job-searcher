@@ -473,3 +473,91 @@ test("runPush works with the real loadSecrets dep contract", async () => {
   const code = await cmd(ctx);
   assert.equal(code, 0);
 });
+
+// ---------- push phase: per-profile style sanitizer (BL-138 / RFC 050) -------
+
+function makeStyleProfileLoader(answerBlock) {
+  return () => ({
+    notion: { application_qa_db_id: "qa-db-1" },
+    answer: answerBlock,
+  });
+}
+
+test("runPush: style_sanitizer applies all 3 rules when enabled (BL-138)", async () => {
+  const file = "/tmp/draft-style.json";
+  const draft = {
+    company: "Linear",
+    role: "PM",
+    question: "Why?",
+    answer: "We saw ~5 — 10x growth.",
+    category: "Motivation",
+  };
+  const fakeFs = makeFakeFs({ [file]: JSON.stringify(draft) });
+  let createCall = null;
+  const cmd = makeAnswerCommand({
+    loadProfile: makeStyleProfileLoader({
+      style_sanitizer: {
+        enabled: true,
+        rules: ["tilde_to_about", "em_dash_to_hyphen", "x_multiplier_to_times"],
+      },
+    }),
+    makeClient: () => ({}),
+    createAnswerPage: async (_c, _d, fields) => {
+      createCall = fields;
+      return { id: "p", url: null };
+    },
+    fs: fakeFs,
+    resolveProfilesDir: () => "/tmp/profiles",
+  });
+  const ctx = makeCtx({ phase: "push", flags: { resultsFile: file } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+  assert.equal(createCall.answer, "We saw about 5 - 10 times growth.");
+  // Backup written with sanitized answer too
+  const written = Object.values(fakeFs._written)[0];
+  assert.match(written, /about 5/);
+  assert.match(written, /10 times/);
+  // stderr log present
+  assert.match(ctx._err.text(), /\[style-sanitizer\] rule=tilde_to_about/);
+});
+
+test("runPush: style_sanitizer skipped when enabled === false (BL-138)", async () => {
+  const file = "/tmp/draft-style-off.json";
+  const draft = { company: "Linear", role: "PM", question: "Why?", answer: "~5 — 10x" };
+  const fakeFs = makeFakeFs({ [file]: JSON.stringify(draft) });
+  let createCall = null;
+  const cmd = makeAnswerCommand({
+    loadProfile: makeStyleProfileLoader({ style_sanitizer: { enabled: false } }),
+    makeClient: () => ({}),
+    createAnswerPage: async (_c, _d, fields) => {
+      createCall = fields;
+      return { id: "p", url: null };
+    },
+    fs: fakeFs,
+    resolveProfilesDir: () => "/tmp/profiles",
+  });
+  const ctx = makeCtx({ phase: "push", flags: { resultsFile: file } });
+  await cmd(ctx);
+  assert.equal(createCall.answer, "~5 — 10x"); // untouched
+  assert.equal(ctx._err.text(), ""); // no sanitizer log
+});
+
+test("runPush: style_sanitizer skipped when answer block missing (BL-138)", async () => {
+  const file = "/tmp/draft-no-style.json";
+  const draft = { company: "X", role: "Y", question: "Z", answer: "~5 stays" };
+  const fakeFs = makeFakeFs({ [file]: JSON.stringify(draft) });
+  let createCall = null;
+  const cmd = makeAnswerCommand({
+    loadProfile: makeProfileLoader(), // no answer block
+    makeClient: () => ({}),
+    createAnswerPage: async (_c, _d, fields) => {
+      createCall = fields;
+      return { id: "p", url: null };
+    },
+    fs: fakeFs,
+    resolveProfilesDir: () => "/tmp/profiles",
+  });
+  const ctx = makeCtx({ phase: "push", flags: { resultsFile: file } });
+  await cmd(ctx);
+  assert.equal(createCall.answer, "~5 stays");
+});

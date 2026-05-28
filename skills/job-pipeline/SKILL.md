@@ -758,6 +758,8 @@ If the `memory` block is absent or any file is missing, fall back to `profiles/<
 
 **Step 5 — Generate the answer.** Apply [Humanizer Rules](#humanizer-rules-prepare--answer-modes) throughout. Default character limit: see `feedback_210_char_limit.md` (210 chars unless the form specifies otherwise; for essay-type questions like Linear's, ignore the default and write a fuller answer).
 
+**Step 5a — Per-profile style guidance (RFC 050 / BL-138).** If `profile.answer.style_guidance` is present (a free-form string), apply it during generation. This is the reliable channel for context-dependent style rules (pronoun discipline, domain-specific phrasing) that cannot be deterministically post-processed. Deterministic regex-level rules (`~N` → `about N`, em dash → hyphen, `Nx` → `N times`) run automatically in the push-phase CLI sanitizer if `profile.answer.style_sanitizer.enabled === true` — no need to enforce those during generation.
+
 **Step 6 — Show + categorize.** Show draft to the user. Mention `category_suggestion` from search response and confirm or adjust. Wait for approval signals: "пойдет" / "ok" / "good" / "submitted" / "залил".
 
 **Step 7 — Write the draft file.**
