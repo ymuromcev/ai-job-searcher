@@ -8,7 +8,7 @@ tags: [discovery, ats, ultipro, ukg, lilia]
 refs: [BL-39, BL-30, RFC-025, RFC-032]
 ---
 
-# RFC 048 — UltiPro / UKG Pro Recruiting adapter
+# RFC 051 — UltiPro / UKG Pro Recruiting adapter
 
 - **Status:** Proposed (recon-validated)
 - **Author:** ymuromcev / Claude
