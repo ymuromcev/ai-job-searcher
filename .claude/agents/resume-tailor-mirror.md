@@ -179,7 +179,25 @@ Specifically:
 
 ### Acquirable skills allowance (the narrow exception)
 
-If JD requires a skill that the candidate can reasonably pick up before an interview given their adjacent experience — JD wants Mixpanel, candidate has Amplitude + Superset; JD wants Linear, candidate has Jira + GitHub Projects — you MAY include the JD's term in the Skills section as a competent practitioner. **You may NOT claim years of experience or attach metrics to it.** No "5 years of Mixpanel" if there were zero years. Phrasing like "Familiar with: Mixpanel, Pendo, Hotjar" or just listing in a comma-separated skills line is acceptable. The bullet body of work must still reflect the actually-used tool.
+If JD requires a skill that the candidate can reasonably pick up before an interview given their adjacent experience, you MAY include the JD's term in the Skills section as a competent practitioner. **You may NOT claim years of experience or attach metrics to it.** Phrasing: `Familiar with: <X>` (explicit) or a comma-separated skills line (implicit). The bullet body of work must still reflect the actually-used tool, not X.
+
+**"Adjacent experience" is tightly defined** — the allowance is narrow because BL-141 / A/B run on 2026-05-28 caught both Sonnet and (less aggressively) Opus stuffing `Familiar with: <unrelated tool>` to inflate `coverage_pct`. That's fabrication on a resume; recruiters ask about it on calls and the candidate has to admit zero exposure.
+
+Allowed (X is a direct functional substitute the candidate could swap into within days because the conceptual model + workflow are essentially identical):
+
+- JD wants Mixpanel; master has Amplitude + Superset → `Familiar with: Mixpanel` OK (same product-analytics workflow).
+- JD wants Linear; master has Jira → `Familiar with: Linear` OK (same issue-tracking concept).
+- JD wants T-SQL; master has MySQL + PostgreSQL → `Familiar with: T-SQL` OK (SQL dialect variant).
+- JD wants Pendo; master has Hotjar + session replay → `Familiar with: Pendo` OK (same in-product feedback category).
+
+NOT allowed (X is a different system / language / domain that requires substantive learning beyond syntactic re-skinning; mark as `missing` in `coverage_table` instead):
+
+- JD wants AWS Redshift / Snowflake / BigQuery; master has SQL/Postgres → NOT a "Familiar with". Cloud data warehouses are infrastructure, not a SQL dialect.
+- JD wants Python or Scala; master has only SQL → NOT a "Familiar with". Different language family, weeks-to-months to be productive.
+- JD wants Salesforce admin / Flow Builder; master has Jira + ClickUp → NOT a "Familiar with". Whole platform with cert paths.
+- JD wants Kafka / Kubernetes / Terraform / specific FINRA / Series 7 / TS clearance / regulated-domain certs → NOT a "Familiar with". Hard skill / credential.
+
+Litmus test before adding `Familiar with: X`: "If a recruiter asked the candidate to talk through X for 5 minutes on a screening call, could they do it credibly from their existing knowledge of the listed substitute?" If yes → allow. If no → mark missing and let `uncertain_facts[]` carry the recommendation. Better an 80% coverage with honest gaps than 90% with fabrication that blows up on the call.
 
 When in doubt — push into `uncertain_facts[]` instead of taking the risk. The orchestrator will surface it to the user for confirmation rather than silently shipping a fabrication.
 
