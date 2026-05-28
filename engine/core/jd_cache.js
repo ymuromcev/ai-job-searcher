@@ -496,6 +496,53 @@ function formatAshby(data, job) {
   return parts.join("\n").trim();
 }
 
+// --- UltiPro / UKG Pro Recruiting JD fetcher --------------------------------
+//
+// New-gen UUID JobBoard publishes a public `OpportunityDetail` HTML page,
+// server-rendered (no JS needed for the description body). The discovery
+// adapter (`engine/modules/discovery/ultipro.js`) already validated the URL's
+// shape before storing it on `job.url` (host/tenant/boardId all regex-gated),
+// so we trust the URL but still cap response size and require the recruiting
+// `.ultipro.com` host.
+
+const ULTIPRO_HOST_RE = /^[a-z0-9]{1,32}\.ultipro\.com$/;
+
+// Description body lives inside `<div class="opportunity-description">…</div>`
+// in new-gen rendering. Fallback to `<div id="JobDescription">` from the
+// classic shell where the SPA still ships some legacy markup.
+const ULTIPRO_DESC_RE =
+  /<div[^>]*class="[^"]*opportunity-description[^"]*"[^>]*>([\s\S]*?)<\/div>/i;
+const ULTIPRO_DESC_FALLBACK_RE =
+  /<div[^>]*id="JobDescription"[^>]*>([\s\S]*?)<\/div>/i;
+
+function isAllowedUltiproHost(hostname) {
+  return typeof hostname === "string" && ULTIPRO_HOST_RE.test(hostname);
+}
+
+function extractUltiproBody(html) {
+  for (const re of [ULTIPRO_DESC_RE, ULTIPRO_DESC_FALLBACK_RE]) {
+    const m = re.exec(html);
+    if (m && m[1]) return m[1];
+  }
+  return null;
+}
+
+function formatUltipro(html, job) {
+  if (typeof html !== "string" || !html) return null;
+  const raw = extractUltiproBody(html);
+  if (!raw) return null;
+  const body = stripHtml(raw);
+  if (!body) return null;
+  const parts = [`TITLE: ${(job && job.title) || ""}`];
+  const loc = Array.isArray(job && job.locations) ? job.locations.join(" / ") : "";
+  if (loc) parts.push(`LOCATION: ${loc}`);
+  const req = job && job.rawExtra && job.rawExtra.requisition;
+  if (req) parts.push(`REQ ID: ${req}`);
+  parts.push("");
+  parts.push(body);
+  return parts.join("\n").trim();
+}
+
 // --- Source registry --------------------------------------------------------
 //
 // SUPPORTED — discovery sources for which jd_cache has a fetcher.
@@ -512,6 +559,7 @@ const SUPPORTED = new Set([
   "taleo",
   "workable",
   "ashby",
+  "ultipro",
 ]);
 
 const JD_UNSUPPORTED = new Map([
@@ -658,6 +706,34 @@ async function fetchJd(job, cacheDir, deps = {}) {
       }
       const capped = html.length > MAX_HTML_BYTES ? html.slice(0, MAX_HTML_BYTES) : html;
       text = formatTaleo(capped, job);
+    } else if (source === "ultipro") {
+      // SSRF guard: only fetch from `*.ultipro.com`. Adapter already builds
+      // the URL from regex-validated host/tenant/boardId, but we re-check
+      // here so an attacker-tampered TSV row cannot redirect the GET.
+      if (!job.url || typeof job.url !== "string") {
+        return { key, status: "not_found" };
+      }
+      let parsed;
+      try {
+        parsed = new URL(job.url);
+      } catch {
+        return { key, status: "not_found" };
+      }
+      if (parsed.protocol !== "https:" || !isAllowedUltiproHost(parsed.hostname)) {
+        return { key, status: "not_found" };
+      }
+      const res = await d.fetchFn(job.url, {
+        timeoutMs: 15000,
+        retries: 1,
+        headers: { "User-Agent": HTML_UA },
+      });
+      if (!res.ok) return { key, status: "not_found" };
+      const html = await res.text();
+      if (typeof html !== "string" || html.length === 0) {
+        return { key, status: "not_found" };
+      }
+      const capped = html.length > MAX_HTML_BYTES ? html.slice(0, MAX_HTML_BYTES) : html;
+      text = formatUltipro(capped, job);
     }
   } catch (err) {
     return { key, status: "error", error: err.message };
@@ -700,9 +776,11 @@ module.exports = {
   formatTaleo,
   formatWorkable,
   formatAshby,
+  formatUltipro,
   buildWorkdayApiUrl,
   buildWorkableApiUrl,
   buildAshbyApiUrl,
   extractJsonLdJob,
   isAllowedTaleoHost,
+  isAllowedUltiproHost,
 };

@@ -20,6 +20,30 @@ async function fetchJson(fetchFn, url, opts = {}) {
   return res.json();
 }
 
+// POST variant for ATS endpoints that require JSON-body requests (e.g. UltiPro
+// `LoadSearchResults`). Headers from caller are merged into a minimal default
+// set; caller can override `Content-Type` if the endpoint expects something
+// non-standard. Mirrors fetchJson error semantics (throw with status on !ok).
+async function fetchJsonPost(fetchFn, url, body, opts = {}) {
+  const headers = {
+    "Content-Type": "application/json; charset=UTF-8",
+    Accept: "application/json",
+    ...(opts.headers || {}),
+  };
+  const res = await fetchFn(url, {
+    ...opts,
+    method: "POST",
+    body: typeof body === "string" ? body : JSON.stringify(body),
+    headers,
+  });
+  if (!res.ok) {
+    const err = new Error(`HTTP ${res.status} for POST ${url}`);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
 // Runs async fn per target with bounded concurrency (default 4, hard-capped
 // at 8 to stay polite on public ATS endpoints). Errors per-target are captured
 // (logged via ctx.logger) and do NOT abort the batch.
@@ -62,4 +86,4 @@ function makeCtx(ctx) {
   };
 }
 
-module.exports = { fetchJson, runTargets, makeCtx };
+module.exports = { fetchJson, fetchJsonPost, runTargets, makeCtx };
