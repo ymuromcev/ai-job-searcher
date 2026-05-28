@@ -99,6 +99,20 @@ archives per scan). Profile-specific scoring still happens downstream in
 Current members: `adzuna`, `remoteok`, `the_muse`, `usajobs`, `calcareers`,
 `indeed` (browser-ingest staging file, but conceptually keyword-driven).
 
+**Low-coverage adapters (BL-145 audit, 2026-05-27).** Three feed/keyword
+adapters return technically valid data but a thin slice that rarely
+survives profile-side filtering. Keep enabled (cost is near-zero), but
+do not expect them to be primary lead sources:
+
+- `the_muse` — `?category=Product` feed returns only ~8 jobs total
+  globally on page 0. Useful as a long-tail signal, not a pipeline driver.
+- `workable` — adapter is healthy; coverage is bottlenecked by how many
+  Workable tenants are configured in `data/companies.tsv` (1 row at
+  audit time). To raise yield, add more tenants — not adapter code.
+- `remoteok` — global remote-tech feed. Fits profiles whose target
+  roles overlap with remote SWE/Design/Marketing. Counter-indicated
+  for profiles outside that scope (e.g. patient-facing front-desk).
+
 **Where to put a new adapter.** If it is `https://<vendor>.<ats>.com/<slug>`
 shaped — per-company — it is fetch-all; model it after `greenhouse.js`,
 build on `_ats.js`, and never read profile filter rules from inside. If it
