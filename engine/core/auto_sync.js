@@ -17,10 +17,7 @@ const path = require("path");
 const profileLoader = require("../core/profile_loader.js");
 const applicationsTsv = require("../core/applications_tsv.js");
 const { resolveProfilesDir } = require("../core/paths.js");
-const {
-  planArchiveMoves,
-  applyArchiveMoves,
-} = require("./archive_used_artifacts.js");
+const { planArchiveMoves, applyArchiveMoves } = require("./archive_used_artifacts.js");
 
 const DEFAULT_DEPS = {
   loadProfile: profileLoader.loadProfile,

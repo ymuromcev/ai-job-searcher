@@ -149,9 +149,7 @@ function planArchiveMoves({ rows, profileRoot, fs }) {
           kind: art.kind,
           field: art.field,
         });
-        warnings.push(
-          `archive: target exists for ${row.key} (${toRel}) — not overwriting`
-        );
+        warnings.push(`archive: target exists for ${row.key} (${toRel}) — not overwriting`);
         continue;
       }
 
@@ -182,7 +180,7 @@ function planArchiveMoves({ rows, profileRoot, fs }) {
  * @returns {{moved: number, skipped: number, warnings: string[], byMonth: object}}
  */
 function applyArchiveMoves(plan, { fs, tsvUpdater, logger }) {
-  const warnings = (plan && plan.warnings ? plan.warnings.slice() : []);
+  const warnings = plan && plan.warnings ? plan.warnings.slice() : [];
   let moved = 0;
   const byMonth = { cv: new Set(), cl: new Set() };
 

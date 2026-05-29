@@ -7,10 +7,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const {
-  compilePatterns,
-  applyRequirementBlockers,
-} = require("./requirement_blockers.js");
+const { compilePatterns, applyRequirementBlockers } = require("./requirement_blockers.js");
 
 // Silence the stderr warnings from `compilePatterns` during the test run so
 // the test output is grep-able. Each test that exercises an error path

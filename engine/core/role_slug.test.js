@@ -10,15 +10,11 @@ test("slugifyRole: simple title → lowercase dash-joined", () => {
 
 test("slugifyRole: punctuation and parentheses collapsed to dashes", () => {
   assert.equal(slugifyRole("Product Manager (Builder)"), "product-manager-builder");
-  assert.equal(
-    slugifyRole("Senior PM, Ads & Measurement"),
-    "senior-pm-ads-measurement"
-  );
+  assert.equal(slugifyRole("Senior PM, Ads & Measurement"), "senior-pm-ads-measurement");
 });
 
 test("slugifyRole: caps to default maxLen=40 and re-trims trailing dash", () => {
-  const long =
-    "Member of Technical Staff (Forward Deployed Engineer, Applied AI)";
+  const long = "Member of Technical Staff (Forward Deployed Engineer, Applied AI)";
   const out = slugifyRole(long);
   assert.ok(out.length <= 40, `length=${out.length}: ${out}`);
   assert.ok(!out.endsWith("-"), `ends with dash: ${out}`);
