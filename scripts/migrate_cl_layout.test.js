@@ -45,6 +45,27 @@ test("planRow: PDF already at canonical path + no MD → skipped (idempotent)", 
   assert.equal(plan.newClPath, "cover_letters/Affirm/Affirm_senior_pm_20260505.pdf");
 });
 
+test("planRow: BL-152 guard — cl_path already under cover_letters/tailored/ → skipped, untouched", () => {
+  const plan = planRow(
+    makeApp({ cl_path: "cover_letters/tailored/Affirm/Affirm_senior_pm_20260505.pdf" }),
+    ROOT,
+    { fileExists: () => true }
+  );
+  assert.equal(plan.skip, true);
+  assert.match(plan.reason, /already tailored/);
+  assert.equal(plan.newClPath, "cover_letters/tailored/Affirm/Affirm_senior_pm_20260505.pdf");
+});
+
+test("planRow: BL-152 guard — cl_path under cover_letters/archive/ → skipped, untouched", () => {
+  const plan = planRow(
+    makeApp({ cl_path: "cover_letters/archive/2026-05/Affirm_senior_pm_20260505.pdf" }),
+    ROOT,
+    { fileExists: () => true }
+  );
+  assert.equal(plan.skip, true);
+  assert.match(plan.reason, /archived/);
+});
+
 test("planRow: PDF flat in cover_letters/, MD flat too → plans both moves + canonical cl_path", () => {
   const flatPdf = `${ROOT}/cover_letters/Affirm_senior_pm_20260505.pdf`;
   const flatMd = `${ROOT}/cover_letters/Affirm_senior_pm_20260505.md`;

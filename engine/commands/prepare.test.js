@@ -2387,25 +2387,25 @@ test("prepare --phase commit (BL-14): to_apply with clParagraphs writes MD + PDF
     ].join("\n\n") + "\n"
   );
 
-  // PDF written into cover_letters/<slug>/
+  // PDF written into cover_letters/tailored/<slug>/ (BL-152).
   assert.equal(rec.pdfs.length, 1);
   assert.equal(
     rec.pdfs[0].path,
-    "/fake/profiles/testuser/cover_letters/Affirm/Affirm_Senior_PM_20260505.pdf"
+    "/fake/profiles/testuser/cover_letters/tailored/Affirm/Affirm_Senior_PM_20260505.pdf"
   );
   assert.deepEqual(rec.pdfs[0].paragraphs, results.results[0].clParagraphs);
 
   // PDF dir was mkdir'd before generation.
-  assert.ok(rec.mkdirs.includes("/fake/profiles/testuser/cover_letters/Affirm"));
+  assert.ok(rec.mkdirs.includes("/fake/profiles/testuser/cover_letters/tailored/Affirm"));
 
   // TSV cl_path = canonical relative PDF path.
   const saved = deps._getSaved();
-  assert.equal(saved[0].cl_path, "cover_letters/Affirm/Affirm_Senior_PM_20260505.pdf");
+  assert.equal(saved[0].cl_path, "cover_letters/tailored/Affirm/Affirm_Senior_PM_20260505.pdf");
 });
 
 test("prepare --phase commit (BL-14): existing PDF is preserved (idempotent)", async () => {
   const apps = [makeApp({ key: "gh:1", status: "Inbox", companyName: "Stripe" })];
-  const pdfPath = "/fake/profiles/testuser/cover_letters/Stripe/Stripe_PM_20260505.pdf";
+  const pdfPath = "/fake/profiles/testuser/cover_letters/tailored/Stripe/Stripe_PM_20260505.pdf";
   const results = {
     profileId: "testuser",
     results: [
@@ -2435,7 +2435,7 @@ test("prepare --phase commit (BL-14): existing PDF is preserved (idempotent)", a
   assert.equal(rec.mkdirs.length, 0);
   // cl_path still points at the canonical PDF (the existing one).
   const saved = deps._getSaved();
-  assert.equal(saved[0].cl_path, "cover_letters/Stripe/Stripe_PM_20260505.pdf");
+  assert.equal(saved[0].cl_path, "cover_letters/tailored/Stripe/Stripe_PM_20260505.pdf");
 });
 
 test("prepare --phase commit (BL-14): slugifies company with ampersand into folder name", async () => {
@@ -2462,9 +2462,9 @@ test("prepare --phase commit (BL-14): slugifies company with ampersand into fold
   await cmd(ctx);
 
   assert.match(rec.writes[0].path, /cover_letters_md\/Procter_and_Gamble\//);
-  assert.match(rec.pdfs[0].path, /cover_letters\/Procter_and_Gamble\//);
+  assert.match(rec.pdfs[0].path, /cover_letters\/tailored\/Procter_and_Gamble\//);
   const saved = deps._getSaved();
-  assert.equal(saved[0].cl_path, "cover_letters/Procter_and_Gamble/PG_PM_20260505.pdf");
+  assert.equal(saved[0].cl_path, "cover_letters/tailored/Procter_and_Gamble/PG_PM_20260505.pdf");
 });
 
 test("prepare --phase commit (BL-14): dry-run does not write files but plans cl_path", async () => {

@@ -68,6 +68,19 @@ function planRow(app, profileRoot, { fileExists, listKnownFiles = () => [] } = {
     return out;
   }
 
+  // BL-152 guard: CLs already under cover_letters/tailored/ (the
+  // archive-eligible layout) or cover_letters/archive/ must NOT be pulled
+  // back to the flat cover_letters/<slug>/ layout this BL-14 migration
+  // targets — doing so would silently re-break archive-eligibility. Leave
+  // them untouched.
+  const clNorm = cl.replace(/\\/g, "/");
+  if (clNorm.startsWith("cover_letters/tailored/") || clNorm.startsWith("cover_letters/archive/")) {
+    out.skip = true;
+    out.reason = "already tailored/archived (BL-152)";
+    out.newClPath = cl;
+    return out;
+  }
+
   const baseName = path.basename(cl);
   const stem = baseName.replace(/\.(md|pdf)$/i, "");
   const slug = slugifyCompany(app.companyName);

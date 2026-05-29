@@ -125,6 +125,21 @@ test("(a) Applied / Interview / Offer / Rejected / Closed / No Response → move
   }
 });
 
+test("(a2) BL-152: cover_letters/tailored/ CL (no resume) → move-candidate", () => {
+  // Regression for BL-152: engine now writes CLs under cover_letters/tailored/.
+  // A row with only a tailored CL (archetype resume referenced by name) must
+  // still produce exactly one CL move into cover_letters/archive/.
+  const r = row({
+    resume_ver: "Risk_Fraud", // archetype, never archived
+    cl_path: "cover_letters/tailored/sutter-health/cl_receptionist_20260520.pdf",
+  });
+  const fs = makeFs([abs(r.cl_path)]);
+  const plan = planArchiveMoves({ rows: [r], profileRoot: PROFILE_ROOT, fs });
+  assert.equal(plan.moves.length, 1, "expected exactly one CL move");
+  assert.equal(plan.moves[0].kind, "cl");
+  assert.equal(plan.moves[0].toRel, "cover_letters/archive/2026-05/cl_receptionist_20260520.pdf");
+});
+
 test("(b) Inbox / To Apply / In Review → stay in place", () => {
   for (const status of ["Inbox", "To Apply", "In Review", "Archived"]) {
     const r = row({ key: `greenhouse:${status}`, status });

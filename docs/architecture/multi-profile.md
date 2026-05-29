@@ -27,8 +27,8 @@ profiles/<id>/
   master_profile.md           # derived consolidated profile for tailoring subagents (RFC 043); regen via scripts/build_master_profile.js
   interview-coach-state/
     coaching_state.md         # STAR storybank, primary source for narrative depth (interview-coach skill)
-  resumes/                    # generated DOCX + PDF artifacts
-  cover_letters/              # generated PDF artifacts
+  resumes/                    # generated DOCX + PDF artifacts (tailored/ + archive/)
+  cover_letters/              # generated PDF artifacts (tailored/ active, archive/ swept by RFC 054)
   application_answers/        # per-application Q&A captures
   .gmail-state/               # gitignored: check_context, raw_emails, processed_messages
   .stage18/                   # gitignored: onboarding wizard state
