@@ -88,7 +88,10 @@ function makeDeps(apps, overrides = {}) {
     },
     mkdirp: () => {},
     slugifyCompany: (s) => String(s || "").replace(/\s+/g, "-"),
-    slugifyRole: (s) => String(s || "").toLowerCase().replace(/\s+/g, "-"),
+    slugifyRole: (s) =>
+      String(s || "")
+        .toLowerCase()
+        .replace(/\s+/g, "-"),
     generateResumeDocx: async () => {},
     generateResumePdf: async () => ({ pageCount: 1 }),
     makeNotionClient: () => ({}),
@@ -286,7 +289,9 @@ test("recon: JD-fetch failure excludes the row from the context", async () => {
   const deps = makeDeps(apps, {
     fetchJds: async (inputs) =>
       inputs.map((i, idx) =>
-        idx === 0 ? { key: i.key, text: "", status: "error" } : { key: i.key, text: "JD", status: "ok" }
+        idx === 0
+          ? { key: i.key, text: "", status: "error" }
+          : { key: i.key, text: "JD", status: "ok" }
       ),
   });
   const cmd = makeRetroTailorCommand(deps);
@@ -356,8 +361,14 @@ test("commit: tailored row generates DOCX+PDF, updates TSV + Notion", async () =
   // DOCX + PDF were generated.
   assert.ok(docxCalled, "DOCX must be generated");
   assert.ok(pdfCalled, "PDF must be generated");
-  assert.match(docxCalled.outPath, /resumes\/tailored\/Stripe_senior-product-manager_20260526\.docx$/);
-  assert.match(pdfCalled.outPath, /resumes\/tailored\/Stripe_senior-product-manager_20260526\.pdf$/);
+  assert.match(
+    docxCalled.outPath,
+    /resumes\/tailored\/Stripe_senior-product-manager_20260526\.docx$/
+  );
+  assert.match(
+    pdfCalled.outPath,
+    /resumes\/tailored\/Stripe_senior-product-manager_20260526\.pdf$/
+  );
 
   // TSV was updated.
   const saved = deps._getSaved();
@@ -422,9 +433,7 @@ test("commit: escalated row does not touch TSV or Notion, escalation MD written"
 
   // Escalation MD written with retro- prefix.
   const writes = deps._getWrites();
-  const escalationPaths = Object.keys(writes).filter((p) =>
-    /retro-escalations-\d+\.md$/.test(p)
-  );
+  const escalationPaths = Object.keys(writes).filter((p) => /retro-escalations-\d+\.md$/.test(p));
   assert.equal(escalationPaths.length, 1);
 });
 

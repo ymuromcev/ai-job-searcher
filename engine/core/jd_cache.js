@@ -512,8 +512,7 @@ const ULTIPRO_HOST_RE = /^[a-z0-9]{1,32}\.ultipro\.com$/;
 // classic shell where the SPA still ships some legacy markup.
 const ULTIPRO_DESC_RE =
   /<div[^>]*class="[^"]*opportunity-description[^"]*"[^>]*>([\s\S]*?)<\/div>/i;
-const ULTIPRO_DESC_FALLBACK_RE =
-  /<div[^>]*id="JobDescription"[^>]*>([\s\S]*?)<\/div>/i;
+const ULTIPRO_DESC_FALLBACK_RE = /<div[^>]*id="JobDescription"[^>]*>([\s\S]*?)<\/div>/i;
 
 function isAllowedUltiproHost(hostname) {
   return typeof hostname === "string" && ULTIPRO_HOST_RE.test(hostname);

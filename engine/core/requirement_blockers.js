@@ -23,11 +23,7 @@
 // engine-internal reason families (`geo_metro_miss`, `cert_required`).
 const REASON_LABEL_RE = /^[a-z][a-z0-9-]{1,40}$/;
 
-const ALLOWED_MATCH_IN = new Set([
-  "requirements",
-  "responsibilities",
-  "full_text_excerpt",
-]);
+const ALLOWED_MATCH_IN = new Set(["requirements", "responsibilities", "full_text_excerpt"]);
 
 const DEFAULT_MATCH_IN = ["requirements", "full_text_excerpt"];
 const DEFAULT_FLAGS = "i";
@@ -142,7 +138,8 @@ function compilePatterns(rawPatterns) {
         const err = {
           pattern: source,
           reason,
-          error: "match_in had no valid entries (allowed: requirements / responsibilities / full_text_excerpt)",
+          error:
+            "match_in had no valid entries (allowed: requirements / responsibilities / full_text_excerpt)",
         };
         errors.push(err);
         warn(err);
@@ -189,16 +186,12 @@ function applyRequirementBlockers(jdStructure, compiledPatterns) {
   }
 
   // Pre-compute per-field text once per row.
-  const requirementsArr = Array.isArray(jdStructure.requirements)
-    ? jdStructure.requirements
-    : [];
+  const requirementsArr = Array.isArray(jdStructure.requirements) ? jdStructure.requirements : [];
   const responsibilitiesArr = Array.isArray(jdStructure.responsibilities)
     ? jdStructure.responsibilities
     : [];
   const excerpt =
-    typeof jdStructure.full_text_excerpt === "string"
-      ? jdStructure.full_text_excerpt
-      : "";
+    typeof jdStructure.full_text_excerpt === "string" ? jdStructure.full_text_excerpt : "";
 
   const requirementsText = requirementsArr.join("\n");
   const responsibilitiesText = responsibilitiesArr.join("\n");

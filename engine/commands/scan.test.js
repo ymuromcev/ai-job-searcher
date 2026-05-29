@@ -363,7 +363,12 @@ test("applyTargetFilters drops rows flagged disabled in extra_json (BL-130)", ()
       { name: "Stripe", slug: "stripe" },
     ],
     greenhouse: [
-      { name: "Bilt Rewards", slug: "biltrewards", disabled: true, disabled_reason: "migrated to Gem" },
+      {
+        name: "Bilt Rewards",
+        slug: "biltrewards",
+        disabled: true,
+        disabled_reason: "migrated to Gem",
+      },
       { name: "Affirm", slug: "affirm" },
     ],
   };

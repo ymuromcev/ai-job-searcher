@@ -121,16 +121,13 @@ async function runRecon(ctx, deps) {
   const applicationsPath = profile.paths.applicationsTsv;
   const { apps } = deps.loadApplications(applicationsPath);
 
-  const batchSize =
-    Number.isFinite(flags.batch) && flags.batch > 0 ? flags.batch : DEFAULT_BATCH;
+  const batchSize = Number.isFinite(flags.batch) && flags.batch > 0 ? flags.batch : DEFAULT_BATCH;
   const sinceISO = flags.since || "";
 
   // Count Strong+To Apply rows for the diagnostic line, independent of the
   // tailored-prefix check — operator wants to see "X of Y Strong already
   // tailored" so they know retro-tailor is converging over time.
-  const strongToApply = apps.filter(
-    (a) => a.status === "To Apply" && a.fit_score === "Strong"
-  );
+  const strongToApply = apps.filter((a) => a.status === "To Apply" && a.fit_score === "Strong");
   const alreadyTailored = strongToApply.filter((a) =>
     String(a.resume_ver || "").startsWith(TAILORED_PREFIX)
   );
@@ -226,9 +223,7 @@ async function runRecon(ctx, deps) {
   };
 
   if (flags.dryRun) {
-    stdout(
-      `(dry-run) would write retro_tailor_context.json with ${batchOut.length} rows`
-    );
+    stdout(`(dry-run) would write retro_tailor_context.json with ${batchOut.length} rows`);
     return 0;
   }
 
@@ -340,9 +335,7 @@ async function runCommit(ctx, deps) {
     // Auto-ship branch: must have a tailoredResume object.
     if (!r.tailoredResume || typeof r.tailoredResume !== "object") {
       stats.skipped++;
-      stderr(
-        `warn: ${r.key} is neither escalated nor has tailoredResume — skipped`
-      );
+      stderr(`warn: ${r.key} is neither escalated nor has tailoredResume — skipped`);
       continue;
     }
 
@@ -401,9 +394,7 @@ async function runCommit(ctx, deps) {
       });
     } catch (err) {
       stats.docxFailed++;
-      stderr(
-        `warn: failed to generate tailored resume for ${r.key} (${pdfRel}): ${err.message}`
-      );
+      stderr(`warn: failed to generate tailored resume for ${r.key} (${pdfRel}): ${err.message}`);
     }
   }
 
@@ -412,8 +403,7 @@ async function runCommit(ctx, deps) {
   // failure (files on disk are idempotent; the missing Notion update is
   // surfaced via the rollback).
   if (tailoredRows.length > 0) {
-    const secrets =
-      (deps.loadSecrets && deps.loadSecrets(profileId, ctx.env || process.env)) || {};
+    const secrets = (deps.loadSecrets && deps.loadSecrets(profileId, ctx.env || process.env)) || {};
     const token = secrets.NOTION_TOKEN || null;
     const jobsDbId = profile.notion && profile.notion.jobs_pipeline_db_id;
     const propertyMap =

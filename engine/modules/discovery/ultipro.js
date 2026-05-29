@@ -33,12 +33,10 @@ const MAX_PAGES = 40;
 // corrupted companies.tsv row cannot build an arbitrary URL.
 const HOST_RE = /^[a-z0-9]{1,32}$/;
 const TENANT_RE = /^[A-Za-z0-9]{1,32}$/;
-const BOARD_ID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const BOARD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function resolveBase(target) {
-  const extra =
-    (target && (target.rawExtra || target.extraJson || target.extra)) || {};
+  const extra = (target && (target.rawExtra || target.extraJson || target.extra)) || {};
   const host = String(extra.host || "recruiting").toLowerCase();
   const tenant = String(target && target.slug ? target.slug : "");
   const boardId = String(extra.boardId || extra.board || "");
@@ -86,9 +84,7 @@ function formatLocation(loc) {
 }
 
 function mapJob(target, resolved, raw) {
-  const jobId = String(
-    (raw && (raw.Id || raw.RequisitionNumber)) || ""
-  ).trim();
+  const jobId = String((raw && (raw.Id || raw.RequisitionNumber)) || "").trim();
   if (!jobId) return null;
   const url = `${resolved.base}/OpportunityDetail?opportunityId=${encodeURIComponent(jobId)}`;
   const locations = Array.isArray(raw.Locations)

@@ -59,8 +59,14 @@ const TARGET = {
 };
 
 test("ultipro.discover happy path — paginates via Skip/Top until totalCount", async () => {
-  const page0 = { opportunities: Array.from({ length: 50 }, (_, i) => makeJob(i + 1)), totalCount: 73 };
-  const page1 = { opportunities: Array.from({ length: 23 }, (_, i) => makeJob(i + 51)), totalCount: 73 };
+  const page0 = {
+    opportunities: Array.from({ length: 50 }, (_, i) => makeJob(i + 1)),
+    totalCount: 73,
+  };
+  const page1 = {
+    opportunities: Array.from({ length: 23 }, (_, i) => makeJob(i + 51)),
+    totalCount: 73,
+  };
   const fetchFn = makeFetch([
     { status: 200, body: page0 },
     { status: 200, body: page1 },
@@ -174,7 +180,10 @@ test("ultipro mapJob: IsRemote location yields 'Remote' string", async () => {
   const page0 = {
     opportunities: [
       makeJob(1, {
-        Locations: [{ IsRemote: true }, { Address: { City: "Sacramento", State: "CA", CountryCode: "USA" } }],
+        Locations: [
+          { IsRemote: true },
+          { Address: { City: "Sacramento", State: "CA", CountryCode: "USA" } },
+        ],
       }),
     ],
     totalCount: 1,
@@ -190,7 +199,13 @@ test("ultipro.resolveBase rejects malformed host/boardId/tenant", () => {
   const { resolveBase } = ultipro._internal;
   assert.equal(resolveBase({ slug: TENANT, rawExtra: { boardId: BOARD } }).host, "recruiting");
   assert.equal(resolveBase({ slug: TENANT, rawExtra: { host: "bad.host", boardId: BOARD } }), null);
-  assert.equal(resolveBase({ slug: "../etc/passwd", rawExtra: { host: HOST, boardId: BOARD } }), null);
-  assert.equal(resolveBase({ slug: TENANT, rawExtra: { host: HOST, boardId: "not-a-uuid" } }), null);
+  assert.equal(
+    resolveBase({ slug: "../etc/passwd", rawExtra: { host: HOST, boardId: BOARD } }),
+    null
+  );
+  assert.equal(
+    resolveBase({ slug: TENANT, rawExtra: { host: HOST, boardId: "not-a-uuid" } }),
+    null
+  );
   assert.equal(resolveBase({ slug: TENANT, rawExtra: {} }), null);
 });
