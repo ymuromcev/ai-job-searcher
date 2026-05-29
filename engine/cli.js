@@ -61,11 +61,15 @@ Usage:
 
 Commands:
   scan       Discover new jobs across configured ATS adapters, append them
-             to the shared pool + per-profile applications, then auto-sync
-             with Notion. Pass --no-sync to skip the Notion sync step.
+             to the shared pool + per-profile applications. Auto-syncs with
+             Notion BEFORE running (BL-151 / RFC 054). Pass --no-sync to skip.
   validate   Pre-flight: URL liveness, company cap, TSV hygiene.
-  sync       Reconcile per-profile applications with Notion. Default: dry-run.
-  prepare    Two-phase fresh-row triage (status="To Apply" + no notion_page_id). See --phase.
+  sync       Reconcile per-profile applications with Notion + archive used
+             tailored CV/CL artifacts for rows past To Apply (BL-151).
+             Default: dry-run.
+  prepare    Two-phase fresh-row triage (status="To Apply" + no notion_page_id).
+             Auto-syncs with Notion BEFORE running (BL-151). Pass --no-sync to skip.
+             See --phase.
   check      Two-phase Gmail response polling. See --prepare / --apply.
   indeed-prep Print Indeed scan playbook for Claude browser MCP (URLs + JS snippet
              + filter context). Phase 1 of the Indeed ingest flow.
@@ -270,38 +274,41 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
     return 1;
   }
 
-  // Code-first pipeline hooks: deterministic post-command steps that must
-  // always run in sequence. These never require AI — they live here so the
-  // pipeline works without a Claude skill.
+  // Code-first pipeline pre-hooks: deterministic steps that must run
+  // BEFORE the main command. These never require AI — they live here so
+  // the pipeline works without a Claude skill.
   //
-  // scan → sync: after every scan, reconcile TSV with Notion so the Inbox
-  // counter is accurate and any Notion status changes are pulled back.
-  // Skip with --no-sync or --dry-run.
-  const PIPELINE_HOOKS = {
+  // scan / prepare → auto-sync (BL-151 / RFC 054): before every scan or
+  // prepare, reconcile TSV with Notion (so downstream filters / cap
+  // counters / fit-eval read fresh state) and archive used tailored
+  // artifacts (CV + CL) for rows whose status moved past To Apply.
+  // Skip with --no-sync. `scan --dry-run` also skips for parity with the
+  // prior post-hook semantics (dry-run preview never mutates).
+  const { runAutoSync } = require("./core/auto_sync.js");
+  const PIPELINE_PRE_HOOKS = {
     scan: async (c, h) => {
-      if (c.flags.noSync || c.flags.dryRun) return 0;
-      const syncHandler = h.sync;
-      if (!syncHandler) return 0;
-      c.stdout("--- sync ---");
+      if (c.flags.noSync || c.flags.dryRun) return;
       try {
-        const syncCode = await syncHandler({ ...c, flags: { ...c.flags, apply: true } });
-        return Number.isInteger(syncCode) ? syncCode : 0;
+        await runAutoSync(c.profileId, c, h);
       } catch (e) {
-        // Sync failure is non-fatal for scan: warn but don't fail the overall
-        // command. Common case: NOTION_TOKEN not configured yet.
         c.stderr(`warn: auto-sync failed: ${e.message}`);
-        return 0;
+      }
+    },
+    prepare: async (c, h) => {
+      if (c.flags.noSync) return;
+      try {
+        await runAutoSync(c.profileId, c, h);
+      } catch (e) {
+        c.stderr(`warn: auto-sync failed: ${e.message}`);
       }
     },
   };
 
   try {
+    const preHook = PIPELINE_PRE_HOOKS[ctx.command];
+    if (preHook) await preHook(ctx, handlers);
     const code = await handler(ctx);
     const exitCode = Number.isInteger(code) ? code : 0;
-    if (exitCode === 0) {
-      const hook = PIPELINE_HOOKS[ctx.command];
-      if (hook) await hook(ctx, handlers);
-    }
     return exitCode;
   } catch (e) {
     writeErr(`error: ${e.message}`);

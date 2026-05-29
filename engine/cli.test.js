@@ -194,16 +194,23 @@ test("KNOWN_COMMANDS lists exactly the supported commands", () => {
   ]);
 });
 
-test("scan auto-triggers sync --apply after success (pipeline hook)", async () => {
+test("scan auto-triggers sync --apply BEFORE main work (pre-hook)", async () => {
+  // BL-151 / RFC 054: auto-sync runs before scan so downstream filters
+  // / cap counters / fit-eval see fresh Notion state.
   const s = makeStreams();
   const syncCalls = [];
+  const callOrder = [];
   const code = await runCli({
     argv: ["scan", "--profile", "jared"],
     stdout: s.stdout,
     stderr: s.stderr,
     commands: {
-      scan: spyCommand(() => 0),
+      scan: spyCommand(() => {
+        callOrder.push("scan");
+        return 0;
+      }),
       sync: async (ctx) => {
+        callOrder.push("sync");
         syncCalls.push(ctx);
         return 0;
       },
@@ -212,7 +219,8 @@ test("scan auto-triggers sync --apply after success (pipeline hook)", async () =
   assert.equal(code, 0);
   assert.equal(syncCalls.length, 1);
   assert.equal(syncCalls[0].flags.apply, true);
-  assert.match(s.out(), /--- sync ---/);
+  assert.deepEqual(callOrder, ["sync", "scan"]);
+  assert.match(s.out(), /\[sync\] pulling Notion → TSV \(jared\)/);
 });
 
 test("scan --no-sync skips the auto-sync hook", async () => {
@@ -270,7 +278,10 @@ test("scan hook: sync failure is non-fatal — scan still exits 0", async () => 
   assert.match(s.err(), /auto-sync failed/);
 });
 
-test("scan hook does not run when scan itself fails", async () => {
+test("scan pre-hook still runs sync when scan itself fails afterward", async () => {
+  // BL-151 / RFC 054: with a pre-hook, sync has already run by the time
+  // scan fails — that's fine, we want the TSV up to date regardless.
+  // The scan exit code is preserved.
   const s = makeStreams();
   const syncCalls = [];
   const code = await runCli({
@@ -286,6 +297,47 @@ test("scan hook does not run when scan itself fails", async () => {
     },
   });
   assert.equal(code, 1);
+  assert.equal(syncCalls.length, 1);
+});
+
+test("prepare pre-hook also auto-triggers sync", async () => {
+  // BL-151 / RFC 054: prepare gets the same auto-sync hook so it never
+  // reasons over stale Notion state.
+  const s = makeStreams();
+  const syncCalls = [];
+  const code = await runCli({
+    argv: ["prepare", "--profile", "jared", "--phase", "pre"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: {
+      prepare: spyCommand(() => 0),
+      sync: async (ctx) => {
+        syncCalls.push(ctx);
+        return 0;
+      },
+    },
+  });
+  assert.equal(code, 0);
+  assert.equal(syncCalls.length, 1);
+  assert.equal(syncCalls[0].flags.apply, true);
+});
+
+test("prepare --no-sync skips the auto-sync hook", async () => {
+  const s = makeStreams();
+  const syncCalls = [];
+  const code = await runCli({
+    argv: ["prepare", "--profile", "jared", "--phase", "pre", "--no-sync"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: {
+      prepare: spyCommand(() => 0),
+      sync: async (ctx) => {
+        syncCalls.push(ctx);
+        return 0;
+      },
+    },
+  });
+  assert.equal(code, 0);
   assert.equal(syncCalls.length, 0);
 });
 

@@ -15,6 +15,7 @@
 // Default mode is **dry-run** — prints planned changes without touching
 // local TSV. `--apply` is required to commit any mutation.
 
+const fs = require("fs");
 const path = require("path");
 
 const profileLoader = require("../core/profile_loader.js");
@@ -22,6 +23,7 @@ const { secretEnvName } = profileLoader;
 const applications = require("../core/applications_tsv.js");
 const notion = require("../core/notion_sync.js");
 const { resolveProfilesDir } = require("../core/paths.js");
+const archiveSweep = require("../core/archive_used_artifacts.js");
 
 // Canonical map lives in notion_sync.js — all Notion-touching commands
 // share it. Re-export here as a const so the rest of this file stays
@@ -37,6 +39,13 @@ const DEFAULT_DEPS = {
   fetchJobsFromDatabase: notion.fetchJobsFromDatabase,
   updateCalloutBlock: notion.updateCalloutBlock,
   now: () => new Date().toISOString(),
+  // BL-151 / RFC 054: archive-sweep facade. Defaults to the real `fs`
+  // module; tests inject in-memory fakes.
+  archiveFs: {
+    existsSync: (p) => fs.existsSync(p),
+    mkdirSync: (p, opts) => fs.mkdirSync(p, opts),
+    renameSync: (from, to) => fs.renameSync(from, to),
+  },
 };
 
 function reconcilePull(apps, notionPages, propertyMap) {
@@ -148,6 +157,44 @@ function makeSyncCommand(overrides = {}) {
         `saved ${merged.length} applications to ${applicationsPath} ` +
           `(${pulled.length} updated from Notion)`
       );
+    }
+
+    // BL-151 / RFC 054: archive used tailored artifacts for rows whose
+    // status moved past To Apply (Applied / Interview / Offer / Rejected
+    // / Closed / No Response). Runs on every --apply so manual `sync
+    // --apply` invocations behave identically to the auto-sync pre-hook.
+    try {
+      const post = Array.from(byKey.values());
+      const plan = archiveSweep.planArchiveMoves({
+        rows: post,
+        profileRoot: profile.paths.root,
+        fs: deps.archiveFs,
+      });
+      if (plan.moves.length > 0 || plan.skipped.length > 0) {
+        const byKeyMutable = new Map(post.map((a) => [a.key, { ...a }]));
+        const tsvUpdater = (rowKey, patch) => {
+          const row = byKeyMutable.get(rowKey);
+          if (!row) return;
+          Object.assign(row, patch);
+        };
+        const result = archiveSweep.applyArchiveMoves(plan, {
+          fs: deps.archiveFs,
+          tsvUpdater,
+          logger: { warn: (m) => ctx.stderr(`[sync] warn: ${m}`) },
+        });
+        if (result.moved > 0) {
+          deps.saveApplications(applicationsPath, Array.from(byKeyMutable.values()));
+          const dirs = (result.byMonth.cv || [])
+            .map((d) => `${d}/`)
+            .concat((result.byMonth.cl || []).map((d) => `${d}/`));
+          const dirStr = dirs.length > 0 ? ` → ${dirs.join(", ")}` : "";
+          stdout(
+            `[sync] archived ${result.moved} used artifact${result.moved === 1 ? "" : "s"}${dirStr}`
+          );
+        }
+      }
+    } catch (err) {
+      ctx.stderr(`  warn: archive sweep failed: ${err.message}`);
     }
 
     // Update the hub callout counter if the profile has one configured.
