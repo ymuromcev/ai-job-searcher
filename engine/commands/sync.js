@@ -48,7 +48,19 @@ const DEFAULT_DEPS = {
   },
 };
 
-function reconcilePull(apps, notionPages, propertyMap) {
+// Reconcile Notion → local TSV. Pure: no I/O, no Date.now(). `now` (ISO
+// string) is passed in so added rows get deterministic createdAt/updatedAt.
+//
+// Returns { updates, adds }:
+//   updates — { before, after } pairs for existing local rows whose
+//             notion_page_id / status drifted from Notion (Notion wins).
+//   adds    — full TSV row objects for Notion pages with NO matching local
+//             row. This makes the pull additive: the fly.io cron's stale
+//             TSV picks up apps created on the operator's Mac (RFC 055).
+//
+// Idempotent: on a rerun the previously-added rows now exist locally, so
+// they match in the update pass and never re-appear in `adds`.
+function reconcilePull(apps, notionPages, propertyMap, now) {
   // Notion is source of truth for status (and notion_page_id, naturally).
   // We match by `key` field if present in the Notion property map; otherwise
   // by composite (source, jobId).
@@ -56,21 +68,27 @@ function reconcilePull(apps, notionPages, propertyMap) {
   const sourceField = propertyMap.source && propertyMap.source.field;
   const jobIdField = propertyMap.jobId && propertyMap.jobId.field;
 
-  const byKey = new Map();
-  for (const page of notionPages) {
+  const matchKeyFor = (page) => {
     const k = keyField ? page.key : null;
     const composite =
       sourceField && jobIdField && page.source && page.jobId
         ? `${String(page.source).toLowerCase()}:${page.jobId}`
         : null;
-    const matchKey = k || composite;
+    return k || composite;
+  };
+
+  const byKey = new Map();
+  for (const page of notionPages) {
+    const matchKey = matchKeyFor(page);
     if (matchKey) byKey.set(matchKey, page);
   }
 
   const updates = [];
+  const consumed = new Set();
   for (const app of apps) {
     const page = byKey.get(app.key);
     if (!page) continue;
+    consumed.add(app.key);
     const next = { ...app };
     let changed = false;
     if (page.notionPageId && app.notion_page_id !== page.notionPageId) {
@@ -83,7 +101,38 @@ function reconcilePull(apps, notionPages, propertyMap) {
     }
     if (changed) updates.push({ before: app, after: next });
   }
-  return updates;
+
+  // Any Notion page whose matchKey was not consumed by an existing local row
+  // becomes an add. Build a full v5 TSV row so save() round-trips cleanly.
+  const adds = [];
+  for (const [matchKey, page] of byKey) {
+    if (consumed.has(matchKey)) continue;
+    const source = page.source ? String(page.source) : "notion";
+    adds.push({
+      key: matchKey,
+      source,
+      jobId: page.jobId || "",
+      companyName: page.companyName || "",
+      title: page.title || "",
+      url: page.url || "",
+      locations: Array.isArray(page.locations) ? page.locations.map(String) : [],
+      status: page.status || "",
+      notion_page_id: page.notionPageId || "",
+      resume_ver: "",
+      cl_key: "",
+      salary_min: "",
+      salary_max: "",
+      cl_path: "",
+      createdAt: now,
+      updatedAt: now,
+      fit_score: "",
+      fit_rationale: "",
+      fit_evaluated_at: "",
+      skip_reason: "",
+    });
+  }
+
+  return { updates, adds };
 }
 
 function makeSyncCommand(overrides = {}) {
@@ -124,18 +173,26 @@ function makeSyncCommand(overrides = {}) {
 
     // PULL phase always runs (read-only against Notion) so users see what
     // Notion state will land locally, whether they passed --apply or not.
-    let pulled = [];
+    let updates = [];
+    let adds = [];
     let pullErrors = 0;
     try {
       const pages = await deps.fetchJobsFromDatabase(getClient(), databaseId, propertyMap);
-      pulled = reconcilePull(apps, pages, propertyMap);
-      stdout(`pull plan: ${pulled.length} local row(s) would change from Notion state`);
-      for (const u of pulled.slice(0, 10)) {
+      ({ updates, adds } = reconcilePull(apps, pages, propertyMap, deps.now()));
+      stdout(
+        `pull plan: ${updates.length} local row(s) would change from Notion state, ` +
+          `${adds.length} new row(s) would be added`
+      );
+      for (const u of updates.slice(0, 10)) {
         stdout(
           `  pull: ${u.before.key} | status ${u.before.status || "(none)"} → ${u.after.status || "(none)"}`
         );
       }
-      if (pulled.length > 10) stdout(`  … and ${pulled.length - 10} more`);
+      if (updates.length > 10) stdout(`  … and ${updates.length - 10} more`);
+      for (const a of adds.slice(0, 10)) {
+        stdout(`  add: ${a.key} | status ${a.status || "(none)"}`);
+      }
+      if (adds.length > 10) stdout(`  … and ${adds.length - 10} more`);
     } catch (err) {
       pullErrors += 1;
       ctx.stderr(`  pull error: ${err.message}`);
@@ -146,16 +203,20 @@ function makeSyncCommand(overrides = {}) {
       return pullErrors > 0 ? 1 : 0;
     }
 
-    // Apply pull updates into the keyed map, then save once.
-    for (const u of pulled) {
+    // Apply pull updates + adds into the keyed map, then save once.
+    for (const u of updates) {
       byKey.set(u.before.key, { ...u.after, updatedAt: deps.now() });
     }
-    if (pulled.length) {
+    for (const row of adds) {
+      byKey.set(row.key, row);
+    }
+    const changedCount = updates.length + adds.length;
+    if (changedCount) {
       const merged = Array.from(byKey.values());
       deps.saveApplications(applicationsPath, merged);
       stdout(
         `saved ${merged.length} applications to ${applicationsPath} ` +
-          `(${pulled.length} updated from Notion)`
+          `(${updates.length} updated from Notion, ${adds.length} added)`
       );
     }
 
