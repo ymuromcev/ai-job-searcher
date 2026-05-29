@@ -26,7 +26,7 @@ Commands:
 | `reclassify` | Re-run the email classifier across historical `OTHER` entries in `processed_messages.json` (30-day window). Dry-run by default. |
 | `retro-tailor` | Re-tailor Strong rows already in `To Apply` whose resume predates the RFC-044 tailoring loop. Recon by default; `--apply --results-file` commits. |
 
-The dispatcher also runs deterministic post-command hooks. Today the only hook is `scan → sync`: a successful `scan` automatically chains a `sync --apply` (suppressed by `--no-sync` or `--dry-run`).
+The dispatcher also runs deterministic pre-command hooks (BL-151 / RFC 054). Today both `scan` and `prepare` auto-trigger `sync --apply` before their main work runs, so downstream filters / cap counters / fit-eval read fresh Notion state. The sync command itself also archives engine-tailored CV/CL files for rows whose status moved past `To Apply` (Applied / Interview / Offer / Rejected / Closed / No Response). The pre-hook is suppressed by `--no-sync`; `scan --dry-run` also suppresses it for parity with the prior dry-run-never-mutates behaviour.
 
 ## Global flags
 
@@ -55,8 +55,8 @@ Flags:
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | `--profile <id>` | string | — | Required. |
-| `--dry-run` | boolean | false | Skip TSV writes; report counts only. Suppresses the auto-sync hook. |
-| `--no-sync` | boolean | false | Skip the post-scan auto-sync hook. |
+| `--dry-run` | boolean | false | Skip TSV writes; report counts only. Suppresses the auto-sync pre-hook. |
+| `--no-sync` | boolean | false | Skip the auto-sync pre-hook (BL-151 / RFC 054). |
 | `--verbose` | boolean | false | Adapter-level warn lines + secret-redactor count. |
 
 Outputs and side effects:
@@ -64,7 +64,7 @@ Outputs and side effects:
 - Appends to `data/jobs.tsv` (shared pool).
 - Appends to `profiles/<id>/applications.tsv` (`status: Inbox` for passed rows, `Archived` for filter-rejected).
 - Appends to `profiles/<id>/filter_rejections.log` (one JSON object per line).
-- On success, automatically runs `sync --apply` unless `--dry-run` or `--no-sync`.
+- BEFORE running, auto-triggers `sync --apply` (Notion → TSV pull + archive sweep) unless `--dry-run` or `--no-sync` (BL-151 / RFC 054).
 
 Example:
 
@@ -123,7 +123,7 @@ Common errors:
 
 ### prepare
 
-Synopsis: `node engine/cli.js prepare --profile <id> --phase <pre|commit> [--mode <fresh|topup>] [--batch <n>] [--need <k>] [--results-file <path>] [--dry-run]`
+Synopsis: `node engine/cli.js prepare --profile <id> --phase <pre|commit> [--mode <fresh|topup>] [--batch <n>] [--need <k>] [--results-file <path>] [--dry-run] [--no-sync]`
 
 Two-phase fresh-row triage. `--phase pre` enriches every fresh row (status `Inbox` or `To Apply` without `notion_page_id`) with URL-liveness, JD fetch, salary calc, and writes `prepare_context.json` for the `job-pipeline` skill to consume. `--phase commit` reads a SKILL-produced results file and, for every evaluated row, flips status to `To Apply`, generates the cover letter (when `clParagraphs` is present), pushes the Notion page, and back-fills `notion_page_id` / `salaryMin` / `salaryMax` / `clPath`. A legacy `decision` field on a row is tolerated — the engine logs one warning per run and ignores it.
 
@@ -145,6 +145,7 @@ Flags:
 | `--need <k>` | int | deficit | Used by `--phase pre --mode topup`. Number of new alive entries to append. Default fills the deficit (`batchSize - len(currentBatch)`). |
 | `--results-file <path>` | string | — | Required for `--phase commit`. JSON produced by the SKILL. |
 | `--dry-run` | boolean | false | `pre`: skip writing `prepare_context.json`. `commit`: skip TSV write. |
+| `--no-sync` | boolean | false | Skip the auto-sync pre-hook (BL-151 / RFC 054). |
 
 Outputs and side effects:
 
@@ -178,6 +179,8 @@ Common errors:
 Synopsis: `node engine/cli.js sync --profile <id> [--dry-run] [--apply] [--no-callout]`
 
 One-way pull from the per-profile Notion Jobs Pipeline DB into `applications.tsv`. Notion is source of truth for `status` and `notion_page_id`; both are reconciled by row `key` (or composite `source:jobId` when present). Push is intentionally absent — rows reach Notion only through `prepare`.
+
+Under `--apply`, the command also archives engine-tailored CV/CL artifacts (BL-151 / RFC 054). Rows whose status moved past `To Apply` (`Applied` / `Interview` / `Offer` / `Rejected` / `Closed` / `No Response`) have their tailored DOCX/PDF moved from `resumes/tailored/` to `cv/archive/YYYY-MM/<basename>` and from `cover_letters/tailored/` to `cover_letters/archive/YYYY-MM/<basename>`. YYYY-MM is derived from the row's `updatedAt` (fallback `createdAt`, then `"unknown"`). TSV `resume_ver` / `cl_path` are rewritten to the new archive paths so Notion-linked file URLs keep resolving. Archetype paths (anything not under one of the three `tailored/` prefixes) are never moved.
 
 Flags:
 

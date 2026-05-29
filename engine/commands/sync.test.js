@@ -316,3 +316,105 @@ test("sync dry-run does not update the callout block or print setup prompt", asy
   assert.equal(calloutCalls.length, 0);
   assert.doesNotMatch(out.all(), /hub callout/);
 });
+
+// BL-151 / RFC 054: archive used tailored artifacts on --apply ----------------
+
+function fakeArchiveFs(initialFiles = []) {
+  const path = require("path");
+  const files = new Set(initialFiles.map((p) => path.normalize(p)));
+  const calls = { mkdir: [], rename: [] };
+  return {
+    files,
+    calls,
+    existsSync: (p) => files.has(path.normalize(p)),
+    mkdirSync: (p) => calls.mkdir.push(p),
+    renameSync: (from, to) => {
+      const f = path.normalize(from);
+      const t = path.normalize(to);
+      if (!files.has(f)) {
+        const err = new Error(`ENOENT: ${from}`);
+        err.code = "ENOENT";
+        throw err;
+      }
+      files.delete(f);
+      files.add(t);
+      calls.rename.push({ from, to });
+    },
+  };
+}
+
+test("sync --apply archives tailored artifacts for rows past To Apply (BL-151)", async () => {
+  const path = require("path");
+  const profileRoot = "/tmp/profiles/jared";
+  const taggedApp = fakeApp({
+    key: "greenhouse:9",
+    jobId: "9",
+    notion_page_id: "p9",
+    status: "Applied",
+    resume_ver: "resumes/tailored/affirm_pm_20260520.docx",
+    cl_path: "cover_letters/tailored/affirm_pm_20260520.pdf",
+    updatedAt: "2026-05-21T00:00:00Z",
+  });
+  const archiveFs = fakeArchiveFs([
+    path.join(profileRoot, taggedApp.resume_ver),
+    path.join(profileRoot, taggedApp.cl_path),
+  ]);
+  const saved = [];
+  const { deps } = makeDeps({
+    loadApplications: () => ({ apps: [taggedApp] }),
+    fetchJobsFromDatabase: async () => [], // no pull changes
+    saveApplications: (file, apps) => saved.push({ file, apps }),
+  });
+  deps.archiveFs = archiveFs;
+  const { ctx, out } = makeCtx({ flags: { dryRun: false, apply: true, verbose: false } });
+  const code = await makeSyncCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(archiveFs.calls.rename.length, 2);
+  assert.equal(saved.length, 1);
+  const savedRow = saved[0].apps.find((a) => a.key === "greenhouse:9");
+  assert.equal(savedRow.resume_ver, "cv/archive/2026-05/affirm_pm_20260520.docx");
+  assert.equal(savedRow.cl_path, "cover_letters/archive/2026-05/affirm_pm_20260520.pdf");
+  assert.match(out.all(), /\[sync\] archived 2 used artifacts/);
+});
+
+test("sync --apply does not archive when no rows are eligible", async () => {
+  const path = require("path");
+  // App is still in "To Apply" → no archive trigger.
+  const app = fakeApp({
+    status: "To Apply",
+    resume_ver: "resumes/tailored/x_y_20260520.docx",
+    cl_path: "cover_letters/tailored/x_y_20260520.pdf",
+  });
+  const archiveFs = fakeArchiveFs([
+    path.join("/tmp/profiles/jared", app.resume_ver),
+    path.join("/tmp/profiles/jared", app.cl_path),
+  ]);
+  const { deps } = makeDeps({
+    loadApplications: () => ({ apps: [app] }),
+    fetchJobsFromDatabase: async () => [],
+  });
+  deps.archiveFs = archiveFs;
+  const { ctx, out } = makeCtx({ flags: { dryRun: false, apply: true, verbose: false } });
+  await makeSyncCommand(deps)(ctx);
+  assert.equal(archiveFs.calls.rename.length, 0);
+  assert.doesNotMatch(out.all(), /\[sync\] archived/);
+});
+
+test("sync dry-run does NOT archive (mutations gated on --apply)", async () => {
+  const path = require("path");
+  const app = fakeApp({
+    status: "Applied",
+    resume_ver: "resumes/tailored/x_y_20260520.docx",
+    cl_path: "",
+  });
+  const archiveFs = fakeArchiveFs([path.join("/tmp/profiles/jared", app.resume_ver)]);
+  const { deps } = makeDeps({
+    loadApplications: () => ({ apps: [app] }),
+    fetchJobsFromDatabase: async () => [],
+  });
+  deps.archiveFs = archiveFs;
+  const { ctx, out } = makeCtx(); // dry-run by default
+  await makeSyncCommand(deps)(ctx);
+  assert.equal(archiveFs.calls.rename.length, 0);
+  assert.doesNotMatch(out.all(), /\[sync\] archived/);
+});
