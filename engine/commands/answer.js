@@ -271,7 +271,8 @@ async function runPush(ctx, deps) {
   });
   const backupPath = nextAvailableBackupPath(backupDir, baseName, deps.fs);
   // Backup uses sanitized answer to keep parity with what's pushed to Notion.
-  const draftForBackup = answerForPush === draft.answer ? draft : { ...draft, answer: answerForPush };
+  const draftForBackup =
+    answerForPush === draft.answer ? draft : { ...draft, answer: answerForPush };
   deps.fs.writeFileSync(backupPath, buildBackupMarkdown(draftForBackup), "utf8");
 
   let action, page;

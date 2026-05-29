@@ -243,10 +243,7 @@ test("(h) Both resume_ver AND cl_path archive for the same row", () => {
     tsvUpdater: (key, patch) => patches.push({ key, patch }),
   });
   assert.equal(patches.length, 2);
-  assert.deepEqual(
-    patches.map((p) => Object.keys(p.patch)[0]).sort(),
-    ["cl_path", "resume_ver"]
-  );
+  assert.deepEqual(patches.map((p) => Object.keys(p.patch)[0]).sort(), ["cl_path", "resume_ver"]);
 });
 
 test("(i) Row with no cl_path → only resume_ver considered", () => {
@@ -277,10 +274,14 @@ test("applyArchiveMoves: rename failure surfaces as a warning, does not throw", 
 });
 
 test("TRIGGER_STATUSES contains exactly the 6 confirmed statuses", () => {
-  assert.deepEqual(
-    Array.from(TRIGGER_STATUSES).sort(),
-    ["Applied", "Closed", "Interview", "No Response", "Offer", "Rejected"]
-  );
+  assert.deepEqual(Array.from(TRIGGER_STATUSES).sort(), [
+    "Applied",
+    "Closed",
+    "Interview",
+    "No Response",
+    "Offer",
+    "Rejected",
+  ]);
 });
 
 test("planArchiveMoves: row whose path is already under archive prefix is silently skipped", () => {

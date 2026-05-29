@@ -1014,10 +1014,11 @@ async function runPre(ctx, deps) {
   // RFC 046 / BL-B: requirement_blocker pass runs AFTER hard_blockers — per
   // §10.5 precedence rule, the structured hard-blocker reasons get priority
   // when both could fire on the same row.
-  const {
-    aliveResults: aliveAfterRB,
-    requirementBlockerSkipped,
-  } = applyRequirementBlockersPass(aliveAfterHB, jdByAppKey, compiledRequirementPatterns);
+  const { aliveResults: aliveAfterRB, requirementBlockerSkipped } = applyRequirementBlockersPass(
+    aliveAfterHB,
+    jdByAppKey,
+    compiledRequirementPatterns
+  );
 
   // Assemble batch entries. Track unique companies in batch whose tier is
   // unknown — SKILL Step 5.7 will assign them and pass back via results
@@ -1388,10 +1389,11 @@ async function runPreTopup(ctx, deps) {
 
   // RFC 046 / BL-B: requirement_blocker pass mirrors runPre's wiring —
   // hard_blockers fire first (§10.5), requirement_blockers fire on survivors.
-  const {
-    aliveResults: aliveAfterRB,
-    requirementBlockerSkipped,
-  } = applyRequirementBlockersPass(aliveAfterHB, jdByAppKey, compiledRequirementPatterns);
+  const { aliveResults: aliveAfterRB, requirementBlockerSkipped } = applyRequirementBlockersPass(
+    aliveAfterHB,
+    jdByAppKey,
+    compiledRequirementPatterns
+  );
 
   const unknownTierSet = new Set(prevUnknownTiers);
   const newEntries = aliveAfterRB.map((urlRes) =>
@@ -1443,9 +1445,7 @@ async function runPreTopup(ctx, deps) {
   // on prev) with new orphan rows surfaced by THIS topup pass. Deduped by key
   // (a row could in principle appear in both if commit hasn't run between
   // fresh and topup — defensive).
-  const prevAlreadyEvaluated = Array.isArray(prev.alreadyEvaluated)
-    ? prev.alreadyEvaluated
-    : [];
+  const prevAlreadyEvaluated = Array.isArray(prev.alreadyEvaluated) ? prev.alreadyEvaluated : [];
   const newAlreadyEvaluatedOut = orphanEvaluatedApps.map((app) => ({
     key: app.key,
     companyName: app.companyName,
@@ -2595,9 +2595,7 @@ async function runCommit(ctx, deps) {
     // match the convention.
     const resultsBase = path.basename(flags.resultsFile || "");
     const tsMatch = resultsBase.match(/prepare_results_([0-9_]+)\.json$/);
-    const batchTs = tsMatch
-      ? tsMatch[1]
-      : String(Math.floor(new Date(now).getTime() / 1000));
+    const batchTs = tsMatch ? tsMatch[1] : String(Math.floor(new Date(now).getTime() / 1000));
     const md = buildCoverageMatrix(coverageRows, { batchTs });
     if (md) {
       if (!flags.dryRun) {

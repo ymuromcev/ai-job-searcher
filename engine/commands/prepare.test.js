@@ -199,9 +199,19 @@ test("BL-136 buildActiveCounts: 5 apps all-time but 0 in last 30d → cap = 3 (t
   const apps = [
     makeApp({ key: "gh:a", companyName: "Stripe", status: "Applied", updatedAt: daysAgo(now, 35) }),
     makeApp({ key: "gh:b", companyName: "Stripe", status: "Applied", updatedAt: daysAgo(now, 60) }),
-    makeApp({ key: "gh:c", companyName: "Stripe", status: "Rejected", updatedAt: daysAgo(now, 90) }),
+    makeApp({
+      key: "gh:c",
+      companyName: "Stripe",
+      status: "Rejected",
+      updatedAt: daysAgo(now, 90),
+    }),
     makeApp({ key: "gh:d", companyName: "Stripe", status: "Closed", updatedAt: daysAgo(now, 120) }),
-    makeApp({ key: "gh:e", companyName: "Stripe", status: "Interview", updatedAt: daysAgo(now, 180) }),
+    makeApp({
+      key: "gh:e",
+      companyName: "Stripe",
+      status: "Interview",
+      updatedAt: daysAgo(now, 180),
+    }),
   ];
   const counts = buildActiveCounts(apps, { windowDays: 30, now });
   assert.equal(counts["Stripe"], undefined);
@@ -220,8 +230,18 @@ test("BL-136 buildActiveCounts: 5 apps all-time but 0 in last 30d → cap = 3 (t
 test("BL-136 buildActiveCounts: missing window_days → fallback to all-time count", () => {
   const now = new Date("2026-05-27T12:00:00.000Z");
   const apps = [
-    makeApp({ key: "gh:a", companyName: "Stripe", status: "Applied", updatedAt: daysAgo(now, 200) }),
-    makeApp({ key: "gh:b", companyName: "Stripe", status: "Applied", updatedAt: daysAgo(now, 400) }),
+    makeApp({
+      key: "gh:a",
+      companyName: "Stripe",
+      status: "Applied",
+      updatedAt: daysAgo(now, 200),
+    }),
+    makeApp({
+      key: "gh:b",
+      companyName: "Stripe",
+      status: "Applied",
+      updatedAt: daysAgo(now, 400),
+    }),
     makeApp({ key: "gh:c", companyName: "Stripe", status: "Applied", updatedAt: daysAgo(now, 5) }),
   ];
   // No window_days on the rules → resolveCapWindowDays returns null →
@@ -551,10 +571,7 @@ test("filterAlreadyEvaluated (RFC 049): Weak + empty notion_page_id routes to al
   assert.equal(passed.length, 1);
   assert.equal(passed[0].key, "gh:1");
   assert.equal(alreadyEvaluated.length, 2);
-  assert.deepEqual(
-    alreadyEvaluated.map((a) => a.key).sort(),
-    ["gh:3", "gh:4"]
-  );
+  assert.deepEqual(alreadyEvaluated.map((a) => a.key).sort(), ["gh:3", "gh:4"]);
   assert.equal(skipped.length, 2);
   const reasons = skipped.map((s) => `${s.key}:${s.reason}`).sort();
   assert.deepEqual(reasons, ["gh:2:already_evaluated_weak", "gh:5:already_evaluated_duplicate"]);
@@ -4719,7 +4736,10 @@ test("prepare --phase commit (BL-123): tailored row generates DOCX and pushes wi
   assert.equal(docxCalled.data.contact.phone, "+1 (916) 261-261-9");
   assert.equal(docxCalled.data.contact.email, "ymuromcev@gmail.com");
   // company_slug.js preserves case ("Stripe" not "stripe").
-  assert.match(docxCalled.outPath, /resumes\/tailored\/Stripe_senior-product-manager_20260420\.docx$/);
+  assert.match(
+    docxCalled.outPath,
+    /resumes\/tailored\/Stripe_senior-product-manager_20260420\.docx$/
+  );
 
   // BL-126 Block A: resume_ver on the TSV row is the tailored PDF path
   // (DOCX stays as side artifact). Notion's resumeVersion also picks up
@@ -4730,7 +4750,10 @@ test("prepare --phase commit (BL-123): tailored row generates DOCX and pushes wi
 
   // Notion push received the PDF path as resumeVersion.
   assert.equal(pushCalls.length, 1);
-  assert.equal(pushCalls[0].resumeVersion, "resumes/tailored/Stripe_senior-product-manager_20260420.pdf");
+  assert.equal(
+    pushCalls[0].resumeVersion,
+    "resumes/tailored/Stripe_senior-product-manager_20260420.pdf"
+  );
 
   // stdout reports tailored count.
   assert.ok(ctx._lines.some((l) => /tailored resumes:.*1 generated/.test(l)));
@@ -4855,8 +4878,14 @@ test("prepare --phase commit (BL-126 Block A): tailored row emits PDF + DOCX, re
   // BL-G: contact is canonicalized from profile.identity; rest of payload identical.
   assert.deepEqual(pdfCalled.data.version, tailoredResume.version);
   assert.equal(pdfCalled.data.contact.phone, "+1 (916) 261-261-9");
-  assert.match(docxCalled.outPath, /resumes\/tailored\/Stripe_senior-product-manager_20260420\.docx$/);
-  assert.match(pdfCalled.outPath, /resumes\/tailored\/Stripe_senior-product-manager_20260420\.pdf$/);
+  assert.match(
+    docxCalled.outPath,
+    /resumes\/tailored\/Stripe_senior-product-manager_20260420\.docx$/
+  );
+  assert.match(
+    pdfCalled.outPath,
+    /resumes\/tailored\/Stripe_senior-product-manager_20260420\.pdf$/
+  );
 
   // resume_ver written to TSV is the PDF path (not DOCX, not archetype).
   const saved = deps._getSaved();

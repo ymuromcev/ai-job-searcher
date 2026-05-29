@@ -140,11 +140,7 @@ function buildEscalationRecord(row) {
 function tailoredResumePath(profileId, companySlug, roleSlug, dateStamp) {
   // path.posix.join keeps the separator stable across macOS / Linux /
   // (hypothetical) Windows callers; tsv consumers split on "/".
-  return path.posix.join(
-    "resumes",
-    "tailored",
-    `${companySlug}_${roleSlug}_${dateStamp}.docx`
-  );
+  return path.posix.join("resumes", "tailored", `${companySlug}_${roleSlug}_${dateStamp}.docx`);
 }
 
 /**
@@ -163,11 +159,7 @@ function tailoredResumePath(profileId, companySlug, roleSlug, dateStamp) {
  * @returns {string} relative POSIX path
  */
 function tailoredResumePathPdf(profileId, companySlug, roleSlug, dateStamp) {
-  return path.posix.join(
-    "resumes",
-    "tailored",
-    `${companySlug}_${roleSlug}_${dateStamp}.pdf`
-  );
+  return path.posix.join("resumes", "tailored", `${companySlug}_${roleSlug}_${dateStamp}.pdf`);
 }
 
 module.exports = {

@@ -14,7 +14,9 @@ test("style_sanitizer: KNOWN_RULES exports the three implemented rules", () => {
 // --- tilde_to_about ---------------------------------------------------------
 
 test("style_sanitizer: tilde_to_about replaces ~N with 'about N'", () => {
-  const { sanitized, changes } = sanitize("we had ~5 candidates and ~120 calls", ["tilde_to_about"]);
+  const { sanitized, changes } = sanitize("we had ~5 candidates and ~120 calls", [
+    "tilde_to_about",
+  ]);
   assert.equal(sanitized, "we had about 5 candidates and about 120 calls");
   assert.equal(changes.length, 2);
   assert.equal(changes[0].rule, "tilde_to_about");
@@ -29,7 +31,9 @@ test("style_sanitizer: tilde_to_about preserves ~/.bashrc and ~user (no digit fo
 // --- em_dash_to_hyphen ------------------------------------------------------
 
 test("style_sanitizer: em_dash_to_hyphen replaces — with ' - '", () => {
-  const { sanitized, changes } = sanitize("I led the team — we shipped on time", ["em_dash_to_hyphen"]);
+  const { sanitized, changes } = sanitize("I led the team — we shipped on time", [
+    "em_dash_to_hyphen",
+  ]);
   assert.equal(sanitized, "I led the team - we shipped on time");
   assert.equal(changes.length, 1);
 });
@@ -49,19 +53,25 @@ test("style_sanitizer: em_dash_to_hyphen leaves regular hyphens alone", () => {
 // --- x_multiplier_to_times --------------------------------------------------
 
 test("style_sanitizer: x_multiplier_to_times replaces 10x with '10 times'", () => {
-  const { sanitized, changes } = sanitize("we saw 10x growth and 2.5x speedup", ["x_multiplier_to_times"]);
+  const { sanitized, changes } = sanitize("we saw 10x growth and 2.5x speedup", [
+    "x_multiplier_to_times",
+  ]);
   assert.equal(sanitized, "we saw 10 times growth and 2.5 times speedup");
   assert.equal(changes.length, 2);
 });
 
 test("style_sanitizer: x_multiplier_to_times preserves identifier tokens like 'box' and 'tex'", () => {
-  const { sanitized, changes } = sanitize("the box has a tex file and a regex", ["x_multiplier_to_times"]);
+  const { sanitized, changes } = sanitize("the box has a tex file and a regex", [
+    "x_multiplier_to_times",
+  ]);
   assert.equal(sanitized, "the box has a tex file and a regex");
   assert.equal(changes.length, 0);
 });
 
 test("style_sanitizer: x_multiplier_to_times preserves URL hosts like 2x.example.com", () => {
-  const { sanitized, changes } = sanitize("see 2x.example.com for the asset", ["x_multiplier_to_times"]);
+  const { sanitized, changes } = sanitize("see 2x.example.com for the asset", [
+    "x_multiplier_to_times",
+  ]);
   assert.equal(sanitized, "see 2x.example.com for the asset");
   assert.equal(changes.length, 0);
 });
