@@ -2177,8 +2177,12 @@ async function runCommit(ctx, deps) {
   // For every evaluated row that includes `clParagraphs: string[]`, write
   // the cover letter into both layouts:
   //   - MD:  profiles/<id>/cover_letters_md/<CompanySlug>/<clKey>.md
-  //   - PDF: profiles/<id>/cover_letters/<CompanySlug>/<clKey>.pdf
-  // and override `app.cl_path` with the canonical relative PDF path. RFC 034:
+  //   - PDF: profiles/<id>/cover_letters/tailored/<CompanySlug>/<clKey>.pdf
+  // and override `app.cl_path` with the canonical relative PDF path. The
+  // `tailored/` segment (BL-152) puts engine-generated CLs under the same
+  // archive-eligible prefix as tailored resumes, so the BL-151 / RFC 054
+  // sweep moves them to cover_letters/archive/ once a row hits Applied+.
+  // RFC 034:
   // Weak rows arrive without `clParagraphs` by design — they still reach
   // Notion as "To Apply" but with an empty Cover Letter field; the operator
   // generates a CL on-demand later if they triage to apply. PDF writes are
@@ -2218,7 +2222,7 @@ async function runCommit(ctx, deps) {
       }
       const slug = deps.slugifyCompany(app.companyName);
       const mdRel = `cover_letters_md/${slug}/${r.clKey}.md`;
-      const pdfRel = `cover_letters/${slug}/${r.clKey}.pdf`;
+      const pdfRel = `cover_letters/tailored/${slug}/${r.clKey}.pdf`;
       const mdAbs = path.join(profileRoot, mdRel);
       const pdfAbs = path.join(profileRoot, pdfRel);
 
@@ -2459,7 +2463,7 @@ async function runCommit(ctx, deps) {
             // failed — refuse to push (Notion would show a dangling filename).
             if (r.clKey && !pdfReadyKeys.has(r.key)) {
               const slug = deps.slugifyCompany(app.companyName);
-              const pdfRel = `cover_letters/${slug}/${r.clKey}.pdf`;
+              const pdfRel = `cover_letters/tailored/${slug}/${r.clKey}.pdf`;
               stderr(
                 `warn: PDF not written for ${r.key} (${pdfRel}) — Notion push skipped, row reverted to Inbox`
               );

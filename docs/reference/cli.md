@@ -150,7 +150,7 @@ Flags:
 Outputs and side effects:
 
 - `--phase pre` writes `profiles/<id>/.skill-state/prepare_context.json` (alive rows + JDs + salary plan + filter context).
-- `--phase commit` rewrites `profiles/<id>/applications.tsv`. May also write generated cover-letter / resume artifacts under `profiles/<id>/cover_letters/` and `resumes/`, and create Notion pages.
+- `--phase commit` rewrites `profiles/<id>/applications.tsv`. May also write generated cover-letter / resume artifacts under `profiles/<id>/cover_letters/tailored/` and `resumes/tailored/` (the archive-eligible layout — BL-152 / RFC 054), and create Notion pages.
 
 Example (autonomous loop driven by the SKILL — operator runs only `/job-pipeline prepare`):
 
