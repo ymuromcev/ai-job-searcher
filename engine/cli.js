@@ -302,6 +302,19 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
         c.stderr(`warn: auto-sync failed: ${e.message}`);
       }
     },
+    // RFC 055 (Change A): the fly.io cron runs `check --auto --apply` daily
+    // and builds its Gmail search from the local TSV. Without a pull, that
+    // TSV is stale (new apps are created on the operator's Mac + Notion,
+    // never on the fly volume). Auto-sync before check so the now-additive
+    // reconcilePull lands the full active set before check reads the TSV.
+    check: async (c, h) => {
+      if (c.flags.noSync) return;
+      try {
+        await runAutoSync(c.profileId, c, h);
+      } catch (e) {
+        c.stderr(`warn: auto-sync failed: ${e.message}`);
+      }
+    },
   };
 
   try {

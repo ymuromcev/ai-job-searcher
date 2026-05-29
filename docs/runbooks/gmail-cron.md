@@ -223,10 +223,17 @@ invariant — keep it that way.
 
 ### State sync between Mac and fly.io
 
-Two parallel state stores exist (Mac local + fly.io volume). They're
-deliberately not auto-synced. Notion is the source of truth for status;
-each side's `processed_messages.json` prevents re-processing on its own
-side.
+Two parallel state stores exist (Mac local + fly.io volume). Notion is
+the source of truth for status; each side's `processed_messages.json`
+prevents re-processing on its own side.
+
+Since RFC 055, `check` runs the auto-sync pre-hook (like `scan` /
+`prepare`): it pulls Notion -> TSV **additively** before reading the
+local TSV, creating rows for any Notion application the local TSV did
+not list. So the fly volume's `applications.tsv` is no longer a frozen
+copy -- every tick it reconstructs the full active set from Notion and
+the cron tracks every applied job, not just the ones present at deploy
+time. Pass `--no-sync` to skip the pull (e.g. offline debugging).
 
 If one side processes the same email the other side already saw, you
 get one extra Notion comment. Status itself is idempotent.

@@ -341,6 +341,71 @@ test("prepare --no-sync skips the auto-sync hook", async () => {
   assert.equal(syncCalls.length, 0);
 });
 
+test("check pre-hook auto-triggers sync (RFC 055)", async () => {
+  // RFC 055: the fly.io cron runs `check --auto --apply` daily. Auto-sync
+  // first so the (now additive) pull lands the full active set before
+  // check reads the TSV.
+  const s = makeStreams();
+  const syncCalls = [];
+  const callOrder = [];
+  const code = await runCli({
+    argv: ["check", "--profile", "jared", "--auto", "--apply"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: {
+      check: spyCommand(() => {
+        callOrder.push("check");
+        return 0;
+      }),
+      sync: async (ctx) => {
+        callOrder.push("sync");
+        syncCalls.push(ctx);
+        return 0;
+      },
+    },
+  });
+  assert.equal(code, 0);
+  assert.equal(syncCalls.length, 1);
+  assert.equal(syncCalls[0].flags.apply, true);
+  assert.deepEqual(callOrder, ["sync", "check"]);
+});
+
+test("check --no-sync skips the auto-sync hook (RFC 055)", async () => {
+  const s = makeStreams();
+  const syncCalls = [];
+  const code = await runCli({
+    argv: ["check", "--profile", "jared", "--no-sync"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: {
+      check: spyCommand(() => 0),
+      sync: async (ctx) => {
+        syncCalls.push(ctx);
+        return 0;
+      },
+    },
+  });
+  assert.equal(code, 0);
+  assert.equal(syncCalls.length, 0);
+});
+
+test("check hook: sync failure is non-fatal — check still exits 0 (RFC 055)", async () => {
+  const s = makeStreams();
+  const code = await runCli({
+    argv: ["check", "--profile", "jared"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: {
+      check: spyCommand(() => 0),
+      sync: async () => {
+        throw new Error("no token");
+      },
+    },
+  });
+  assert.equal(code, 0);
+  assert.match(s.err(), /auto-sync failed/);
+});
+
 test("runCli passes prepare-specific flags to handler", async () => {
   const s = makeStreams();
   const prepare = spyCommand(() => 0);

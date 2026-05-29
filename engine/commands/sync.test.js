@@ -130,6 +130,50 @@ test("sync --apply applies pull updates from Notion (status wins)", async () => 
   assert.match(out.all(), /status To Apply → Applied/);
 });
 
+test("sync --apply adds a new row for a Notion page with no local match (RFC 055)", async () => {
+  const saved = [];
+  const { deps } = makeDeps({
+    loadApplications: () => ({ apps: [fakeApp({ jobId: "1" })] }),
+    saveApplications: (file, apps) => saved.push({ file, apps }),
+    fetchJobsFromDatabase: async () => [
+      {
+        notionPageId: "p2",
+        key: "lever:abc",
+        source: "lever",
+        jobId: "abc",
+        companyName: "Stripe",
+        title: "Senior PM",
+        status: "Interview",
+      },
+    ],
+  });
+  const { ctx, out } = makeCtx({ flags: { dryRun: false, apply: true, verbose: false } });
+  const code = await makeSyncCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(saved.length, 1);
+  const addedRow = saved[0].apps.find((a) => a.key === "lever:abc");
+  assert.ok(addedRow, "added row is persisted");
+  assert.equal(addedRow.notion_page_id, "p2");
+  assert.equal(addedRow.status, "Interview");
+  assert.match(out.all(), /1 added/);
+});
+
+test("sync dry-run reports add count but does not save (RFC 055)", async () => {
+  const { deps, calls } = makeDeps({
+    loadApplications: () => ({ apps: [] }),
+    fetchJobsFromDatabase: async () => [
+      { notionPageId: "p2", key: "lever:abc", source: "lever", jobId: "abc", status: "Applied" },
+    ],
+  });
+  const { ctx, out } = makeCtx(); // dry-run by default
+  const code = await makeSyncCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(calls.saveApplications.length, 0, "dry-run must not write");
+  assert.match(out.all(), /1 new row\(s\) would be added/);
+  assert.match(out.all(), /add: lever:abc/);
+  assert.match(out.all(), /\(dry-run/);
+});
+
 test("sync --apply with no pull changes does not save TSV", async () => {
   const { deps, calls } = makeDeps();
   const { ctx } = makeCtx({ flags: { dryRun: false, apply: true, verbose: false } });
@@ -192,6 +236,8 @@ test("sync exits 1 on pull failure", async () => {
   assert.match(out.all(), /pull error.*notion 502/);
 });
 
+const NOW = "2026-04-20T00:00:00Z";
+
 test("reconcilePull matches by key and reports status changes", () => {
   const apps = [
     fakeApp({ key: "greenhouse:1", jobId: "1", status: "To Apply", notion_page_id: "" }),
@@ -201,10 +247,81 @@ test("reconcilePull matches by key and reports status changes", () => {
     { notionPageId: "p1", key: "greenhouse:1", status: "Applied" },
     { notionPageId: "p2", key: "greenhouse:2", status: "Applied" }, // no change
   ];
-  const updates = reconcilePull(apps, pages, DEFAULT_PROPERTY_MAP);
+  const { updates, adds } = reconcilePull(apps, pages, DEFAULT_PROPERTY_MAP, NOW);
   assert.equal(updates.length, 1);
   assert.equal(updates[0].after.notion_page_id, "p1");
   assert.equal(updates[0].after.status, "Applied");
+  assert.equal(adds.length, 0, "all pages matched existing rows → no adds");
+});
+
+test("reconcilePull adds a Notion page with no matching local row (RFC 055)", () => {
+  const apps = [fakeApp({ key: "greenhouse:1", jobId: "1" })];
+  const pages = [
+    { notionPageId: "p1", key: "greenhouse:1", status: "Applied" }, // existing → update
+    {
+      notionPageId: "p2",
+      key: "lever:abc",
+      source: "lever",
+      jobId: "abc",
+      companyName: "Stripe",
+      title: "Senior PM",
+      url: "https://x/abc",
+      status: "Interview",
+    },
+  ];
+  const { updates, adds } = reconcilePull(apps, pages, DEFAULT_PROPERTY_MAP, NOW);
+  assert.equal(updates.length, 1);
+  assert.equal(adds.length, 1);
+  const row = adds[0];
+  assert.equal(row.key, "lever:abc");
+  assert.equal(row.notion_page_id, "p2");
+  assert.equal(row.status, "Interview");
+  assert.equal(row.companyName, "Stripe");
+  assert.equal(row.title, "Senior PM");
+  assert.equal(row.source, "lever");
+  assert.equal(row.jobId, "abc");
+  assert.equal(row.url, "https://x/abc");
+  assert.deepEqual(row.locations, []);
+  assert.equal(row.createdAt, NOW);
+  assert.equal(row.updatedAt, NOW);
+  // Empties for fields Notion doesn't supply.
+  assert.equal(row.resume_ver, "");
+  assert.equal(row.cl_key, "");
+  assert.equal(row.salary_min, "");
+  assert.equal(row.fit_score, "");
+  assert.equal(row.skip_reason, "");
+});
+
+test("reconcilePull defaults source to 'notion' when the page has none", () => {
+  const apps = [];
+  const pages = [{ notionPageId: "p9", key: "manual-entry", status: "Applied" }];
+  const { adds } = reconcilePull(apps, pages, DEFAULT_PROPERTY_MAP, NOW);
+  assert.equal(adds.length, 1);
+  assert.equal(adds[0].source, "notion");
+  assert.equal(adds[0].key, "manual-entry");
+});
+
+test("reconcilePull is idempotent: a previously-added row is not re-added", () => {
+  const page = {
+    notionPageId: "p2",
+    key: "lever:abc",
+    source: "lever",
+    jobId: "abc",
+    companyName: "Stripe",
+    title: "Senior PM",
+    status: "Interview",
+  };
+  // First pass: row does not exist locally → add.
+  const firstApps = [fakeApp({ key: "greenhouse:1", jobId: "1" })];
+  const first = reconcilePull(firstApps, [page], DEFAULT_PROPERTY_MAP, NOW);
+  assert.equal(first.adds.length, 1);
+
+  // Simulate the saved state: the added row is now part of the local TSV.
+  const secondApps = firstApps.concat([first.adds[0]]);
+  const second = reconcilePull(secondApps, [page], DEFAULT_PROPERTY_MAP, NOW);
+  assert.equal(second.adds.length, 0, "no duplicate add on rerun");
+  // Status already matches → no spurious update either.
+  assert.equal(second.updates.length, 0);
 });
 
 // ---------- hub callout update ----------
