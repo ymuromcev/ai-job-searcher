@@ -141,6 +141,70 @@ function buildFailureComment(profileId, err, now) {
   );
 }
 
+// ---------- Success heartbeat (Phase 3 / RFC 055 Change B) ----------
+//
+// Best-effort: post a plain (NO @-mention) Notion comment to the per-profile
+// cron_ops_page_id on every successful --auto --apply run, including zero-email
+// days. This gives Notion a visible heartbeat so a SILENTLY broken cron (no
+// heartbeat) is distinguishable from a quiet inbox (heartbeat with all zeros).
+// No @-mention because a daily success ping should not push-notify anyone.
+// Post failure is swallowed — a heartbeat must never change the run's exit code.
+
+function buildSuccessComment(profileId, c, now) {
+  const ts = now.toISOString();
+  return (
+    `🟢 [${ts}] check ${profileId} — ` +
+    `emails: ${c.emails}, matched: ${c.matched}, ` +
+    `→ Rejected: ${c.rejected}, → Interview: ${c.interview}, → Closed: ${c.closed}, ` +
+    `info: ${c.info}, inbox: ${c.inbox}, notion errors: ${c.notionErrors}`
+  );
+}
+
+async function notifySuccess({ profile, profileId, summaryCounts, now, env, deps, stderr }) {
+  const opsPageId = profile && profile.notion && profile.notion.cron_ops_page_id;
+  if (!opsPageId) {
+    stderr("  no cron_ops_page_id in profile.json — Notion heartbeat skipped");
+    return;
+  }
+
+  const secrets = deps.loadSecrets(profileId, env);
+  const token = secrets && secrets.NOTION_TOKEN;
+  if (!token) {
+    stderr(`  no ${secretEnvName(profileId, "NOTION_TOKEN")} in env — Notion heartbeat skipped`);
+    return;
+  }
+
+  try {
+    const client = deps.makeClient(token);
+    const text = buildSuccessComment(profileId, summaryCounts, now);
+    // null userId → plain comment, no @-mention / push (notion_sync.addPageComment).
+    await deps.addPageComment(client, opsPageId, text, null);
+  } catch (notifyErr) {
+    // Swallow — a heartbeat-post failure must never affect the run.
+    stderr(`  success heartbeat post failed: ${notifyErr.message}`);
+  }
+}
+
+// Derive per-status heartbeat counts from the run's actions + tallies.
+function buildSuccessCounts({ emails, matched, actions, inbox, notionErrors }) {
+  let rejected = 0;
+  let interview = 0;
+  let closed = 0;
+  let info = 0;
+  for (const a of actions || []) {
+    if (a.kind === "comment_only") {
+      info += 1;
+    } else if (a.newStatus === "Rejected") {
+      rejected += 1;
+    } else if (a.newStatus === "Interview") {
+      interview += 1;
+    } else if (a.newStatus === "Closed") {
+      closed += 1;
+    }
+  }
+  return { emails, matched, rejected, interview, closed, info, inbox, notionErrors };
+}
+
 async function notifyFailure({ profile, profileId, paths, err, now, env, deps, stderr }) {
   // Always write to disk first — that's the durable signal.
   try {
@@ -939,6 +1003,23 @@ async function runAutoBody(ctx, deps, profile, paths) {
     if (flags.apply) {
       // Bump last_check even with zero new emails — cursor advances.
       deps.saveProcessed(paths.processedPath, saved, [], now);
+      // Heartbeat MUST post on zero-email days too — a missing heartbeat is
+      // the signal that the cron didn't run at all.
+      await notifySuccess({
+        profile,
+        profileId,
+        summaryCounts: buildSuccessCounts({
+          emails: 0,
+          matched: 0,
+          actions: [],
+          inbox: 0,
+          notionErrors: 0,
+        }),
+        now,
+        env,
+        deps,
+        stderr,
+      });
     }
     return 0;
   }
@@ -969,6 +1050,22 @@ async function runAutoBody(ctx, deps, profile, paths) {
     stderr,
   });
   if (!result.ok) return 1;
+
+  await notifySuccess({
+    profile,
+    profileId,
+    summaryCounts: buildSuccessCounts({
+      emails: newEmails.length,
+      matched: logRows.filter((r) => r.match !== "NONE").length,
+      actions,
+      inbox: state.newInboxRows.length,
+      notionErrors: result.notionErrors,
+    }),
+    now,
+    env,
+    deps,
+    stderr,
+  });
 
   stdout(
     `applied: ${actions.length - result.notionErrors} Notion ops, ${state.newInboxRows.length} Inbox rows, ${rejections.length} rejections${
@@ -1005,3 +1102,5 @@ module.exports.buildPipelineState = buildPipelineState;
 module.exports.ACTIVE_STATUSES = ACTIVE_STATUSES;
 module.exports.SKIP_STATUSES = SKIP_STATUSES;
 module.exports.DEFAULT_PROPERTY_MAP = DEFAULT_PROPERTY_MAP;
+module.exports.buildSuccessComment = buildSuccessComment;
+module.exports.buildSuccessCounts = buildSuccessCounts;
