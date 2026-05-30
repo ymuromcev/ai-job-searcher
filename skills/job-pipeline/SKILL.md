@@ -351,10 +351,9 @@ If a Strong row genuinely cannot proceed (e.g. `master_profile.md` is missing an
 
 **Escalation decision** (after loop exit):
 
-- `final_coverage < 85 && last_delta < 1` → `tailorEscalated = true`, `tailorEscalationReason = "no_growth_below_threshold"`.
-- `final_coverage < 85 && last_delta >= 1` (still climbing, hit the cap — requires `iterations == 6`) → `tailorEscalated = true`, `tailorEscalationReason = "iteration_cap_below_threshold"`.
-- `final_coverage >= 85 && uncertain_facts.length > 0` → `tailorEscalated = true`, `tailorEscalationReason = "uncertain_about_fact"`.
-- Otherwise → `tailorEscalated = false`, `tailorEscalationReason = null` (auto-ship).
+- `final_coverage >= 85` → **always auto-ship**: `tailorEscalated = false`, `tailorEscalationReason = null`. Carry forward `uncertain_facts[]` in `tailorEscalationDetail.uncertain_facts` as a heads-up for the operator, but the row pushes to Notion. Threshold met means the resume mirror is good enough; remaining uncertain_facts are honest disclosures the operator can review in Notion's Cover Letter / Notes fields, not blockers (2026-05-26 — was previously gating ship, which over-escalated cosmetic gaps like "AWS is a plus, not in master profile").
+- `final_coverage < 85 && last_delta < 1` (after iter≥2) → `tailorEscalated = true`, `tailorEscalationReason = "no_growth_below_threshold"`.
+- `final_coverage < 85 && last_delta >= 1 && iterations == 6` → `tailorEscalated = true`, `tailorEscalationReason = "iteration_cap_below_threshold"`.
 
 **Per-row fields to attach** (carried into the results.json entry written in Step 10):
 - `tailoredResume` — the final `resume_data` object from the last subagent run. Schema matches `engine/modules/resume/resume_docx.js` input.
