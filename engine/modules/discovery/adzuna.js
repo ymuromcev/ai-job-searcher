@@ -19,6 +19,11 @@
 //                               absent/empty; otherwise the hardcoded fallback
 //                               ["Product Manager", "Senior Product Manager"].
 //   location         string    default: "United States"
+//   distance         number    optional. Radius in km around `location`.
+//                               Only sent to Adzuna when > 0. Lets a single
+//                               center city (e.g. "Sacramento, CA") cover a
+//                               whole metro instead of one municipality —
+//                               Adzuna's `where` accepts only one location.
 //   results_per_keyword number default: 50
 //   max_age_days     number    default: 30
 //
@@ -173,9 +178,10 @@ async function fetchKeyword(
   location,
   maxDays,
   resultsPerPage,
+  distance,
   logger
 ) {
-  const qs = new URLSearchParams({
+  const params = {
     app_id: appId,
     app_key: appKey,
     what: keyword,
@@ -186,7 +192,13 @@ async function fetchKeyword(
     max_days_old: String(maxDays),
     results_per_page: String(resultsPerPage),
     "content-type": "application/json",
-  }).toString();
+  };
+  // Radius search: only add `distance` (km) when set, so the default
+  // behaviour (exact `where` match) is unchanged for profiles that omit it.
+  if (Number.isFinite(distance) && distance > 0) {
+    params.distance = String(distance);
+  }
+  const qs = new URLSearchParams(params).toString();
   const url = `${BASE}?${qs}`;
 
   let body;
@@ -249,6 +261,8 @@ async function discover(targets, ctx = {}) {
   const maxAgeDays = Number.isFinite(Number(kwConfig.max_age_days))
     ? Number(kwConfig.max_age_days)
     : DEFAULT_MAX_AGE_DAYS;
+  // Optional radius (km) around `location`. 0 / absent / invalid => omitted.
+  const distance = Number.isFinite(Number(kwConfig.distance)) ? Number(kwConfig.distance) : 0;
 
   // Run keywords serially to be polite to the API (free tier rate limits).
   const allJobs = [];
@@ -262,6 +276,7 @@ async function discover(targets, ctx = {}) {
       location,
       maxAgeDays,
       resultsPerKeyword,
+      distance,
       logger
     );
     for (const job of jobs) {

@@ -124,6 +124,79 @@ test("adzuna: uses default keywords and params when no discovery config", async 
   assert.ok(calls[0].includes("results_per_page=50"));
 });
 
+test("adzuna: omits distance param by default (exact where match)", async () => {
+  const calls = [];
+  const fetchFn = async (url) => {
+    calls.push(url);
+    return makeRes({ results: [] });
+  };
+
+  await discover([], {
+    fetchFn,
+    secrets: SECRETS,
+    discovery: { keyword_search: { keywords: ["Product Manager"] } },
+    logger: { warn: () => {} },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.ok(!calls[0].includes("distance="));
+});
+
+test("adzuna: sends distance (km) when configured for radius search", async () => {
+  const calls = [];
+  const fetchFn = async (url) => {
+    calls.push(url);
+    return makeRes({ results: [] });
+  };
+
+  await discover([], {
+    fetchFn,
+    secrets: SECRETS,
+    discovery: {
+      keyword_search: {
+        keywords: ["medical receptionist"],
+        location: "Sacramento, CA",
+        distance: 60,
+      },
+    },
+    logger: { warn: () => {} },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].includes("where=Sacramento%2C+CA"));
+  assert.ok(calls[0].includes("distance=60"));
+});
+
+test("adzuna: ignores zero / invalid distance (treated as omitted)", async () => {
+  const calls = [];
+  const fetchFn = async (url) => {
+    calls.push(url);
+    return makeRes({ results: [] });
+  };
+
+  await discover([], {
+    fetchFn,
+    secrets: SECRETS,
+    discovery: {
+      keyword_search: { keywords: ["Product Manager"], distance: 0 },
+    },
+    logger: { warn: () => {} },
+  });
+
+  await discover([], {
+    fetchFn,
+    secrets: SECRETS,
+    discovery: {
+      keyword_search: { keywords: ["Product Manager"], distance: "not-a-number" },
+    },
+    logger: { warn: () => {} },
+  });
+
+  assert.equal(calls.length, 2);
+  assert.ok(!calls[0].includes("distance="));
+  assert.ok(!calls[1].includes("distance="));
+});
+
 test("adzuna: handles HTTP error gracefully and continues other keywords", async () => {
   const warnings = [];
   let call = 0;
