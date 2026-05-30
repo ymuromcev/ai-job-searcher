@@ -868,6 +868,124 @@ test("check --auto: makeGmailClient receives loaded credentials", async () => {
   assert.equal(calls.makeGmailClient[0].appPassword, "abcd efgh ijkl mnop");
 });
 
+// ---------- RFC 056: --reprocess-since ----------
+
+test("check --auto --reprocess-since: re-includes already-processed mail (bypasses dedup) → recovers rejection", async () => {
+  const { deps, calls } = makeAutoDeps({
+    // m1 is already in processed — a normal run skips it (see the dedup test).
+    loadProcessed: () => ({
+      processed: [{ id: "m1", date: "2026-04-15T09:00:00Z", company: "unknown", type: "OTHER" }],
+      last_check: "2026-04-29T09:00:00Z",
+    }),
+    fetchGmailEmails: async () => [
+      {
+        messageId: "m1",
+        from: "no-reply@affirm.com",
+        subject: "An update on your application with Affirm",
+        body: "Unfortunately, we will not be proceeding.",
+        date: "2026-04-20T10:00:00Z",
+      },
+    ],
+  });
+  const { ctx } = makeCtx({
+    auto: true,
+    apply: true,
+    reprocessSince: "2026-04-01T00:00:00Z",
+  });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 0);
+  // dedup bypassed → the historical rejection now matches the active job.
+  assert.equal(calls.updatePageStatus.length, 1);
+  assert.equal(calls.updatePageStatus[0].status, "Rejected");
+});
+
+test("check --auto --reprocess-since: drops comment_only (no duplicate info-request comment)", async () => {
+  const infoEmail = {
+    messageId: "m1",
+    from: "no-reply@affirm.com",
+    subject: "Affirm assessment",
+    body: "please complete the following coding challenge.",
+    date: "2026-04-20T10:00:00Z",
+  };
+  // Normal run: comment_only IS posted.
+  {
+    const { deps, calls } = makeAutoDeps({ fetchGmailEmails: async () => [infoEmail] });
+    const { ctx } = makeCtx({ auto: true, apply: true });
+    await makeCheckCommand(deps)(ctx);
+    assert.equal(calls.addPageComment.length, 1, "normal run comments");
+    assert.equal(calls.updatePageStatus.length, 0);
+  }
+  // Reprocess run: comment_only dropped → no duplicate comment.
+  {
+    const { deps, calls } = makeAutoDeps({
+      loadProcessed: () => ({
+        processed: [{ id: "m1", date: "2026-04-15T09:00:00Z", company: "Affirm", type: "OTHER" }],
+        last_check: "2026-04-29T09:00:00Z",
+      }),
+      fetchGmailEmails: async () => [infoEmail],
+    });
+    const { ctx } = makeCtx({
+      auto: true,
+      apply: true,
+      reprocessSince: "2026-04-01T00:00:00Z",
+    });
+    await makeCheckCommand(deps)(ctx);
+    assert.equal(calls.addPageComment.length, 0, "reprocess drops comment_only");
+    assert.equal(calls.updatePageStatus.length, 0);
+  }
+});
+
+test("check --auto --reprocess-since: already-terminal job is absent from active set → not re-acted", async () => {
+  const { deps, calls } = makeAutoDeps({
+    loadApplications: () => ({
+      apps: [
+        fakeApp({
+          key: "k1",
+          companyName: "Affirm",
+          title: "PM",
+          notion_page_id: "p1",
+          status: "Rejected", // terminal → excluded from activeJobsMap
+        }),
+      ],
+    }),
+    loadProcessed: () => ({
+      processed: [{ id: "m1", date: "2026-04-15T09:00:00Z", company: "Affirm", type: "REJECTION" }],
+      last_check: "2026-04-29T09:00:00Z",
+    }),
+    fetchGmailEmails: async () => [
+      {
+        messageId: "m1",
+        from: "no-reply@affirm.com",
+        subject: "An update on your application with Affirm",
+        body: "Unfortunately, we will not be proceeding.",
+        date: "2026-04-20T10:00:00Z",
+      },
+    ],
+  });
+  const { ctx } = makeCtx({
+    auto: true,
+    apply: true,
+    reprocessSince: "2026-04-01T00:00:00Z",
+  });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(calls.updatePageStatus.length, 0, "no duplicate Rejected on a terminal job");
+  assert.equal(calls.addPageComment.length, 0);
+});
+
+test("check --auto --reprocess-since: sets cursor to the reprocess ISO", async () => {
+  let lastEpochArgs = null;
+  const { deps } = makeAutoDeps({
+    computeCursorEpoch: (args) => {
+      lastEpochArgs = args;
+      return 1700000000;
+    },
+  });
+  const { ctx } = makeCtx({ auto: true, reprocessSince: "2026-04-01T00:00:00Z" });
+  await makeCheckCommand(deps)(ctx);
+  assert.equal(lastEpochArgs.sinceIso, "2026-04-01T00:00:00Z");
+});
+
 test("check --apply: Notion error on one action — others still processed", async () => {
   let callIdx = 0;
   const { deps, calls } = makeDeps({

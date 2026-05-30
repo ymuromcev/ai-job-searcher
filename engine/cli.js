@@ -39,6 +39,7 @@ const PARSE_OPTIONS = {
     need: { type: "string" },
     prepare: { type: "boolean", default: false },
     since: { type: "string" },
+    "reprocess-since": { type: "string" },
     "no-sync": { type: "boolean", default: false },
     "no-callout": { type: "boolean", default: false },
     auto: { type: "boolean", default: false },
@@ -128,6 +129,14 @@ check flags:
                          Generate an app-password at
                          myaccount.google.com/apppasswords (requires 2FA).
   --since <ISO>          Override cursor (clamped to 30 days max).
+  --reprocess-since <ISO>
+                         One-time recovery (RFC 056): set cursor to <ISO> AND
+                         bypass the processed_messages.json dedup for that
+                         window, re-matching fetched mail against the current
+                         active set. Idempotent for status changes (already-
+                         terminal jobs are absent from the active set);
+                         comment_only actions are dropped to avoid duplicate
+                         comments. Use with --auto; dry-run unless --apply.
 
 reclassify flags:
   --apply                Mutate processed_messages.json. Default: dry-run.
@@ -252,6 +261,7 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
       need: parsed.values.need ? parseInt(parsed.values.need, 10) : null,
       prepare: Boolean(parsed.values.prepare),
       since: parsed.values.since || "",
+      reprocessSince: parsed.values["reprocess-since"] || "",
       noSync: Boolean(parsed.values["no-sync"]),
       noCallout: Boolean(parsed.values["no-callout"]),
       auto: Boolean(parsed.values.auto),
