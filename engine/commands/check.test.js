@@ -10,6 +10,8 @@ const {
   processPipeline,
   processEmailsLoop,
   buildPipelineState,
+  buildSuccessComment,
+  buildSuccessCounts,
 } = require("./check.js");
 
 function captureOut() {
@@ -1016,6 +1018,150 @@ test("check --auto: addPageComment throws → swallowed, log still written, retu
   // Original error visible in stderr; notion-post failure doesn't mask it.
   assert.match(out.errs.join("\n"), /primary failure/);
   assert.match(out.errs.join("\n"), /failure notification post failed/);
+});
+
+// ---------- Change B: success heartbeat (RFC 055) ----------
+
+const opsProfile = () => ({
+  id: "jared",
+  paths: {
+    root: "/tmp/profiles/jared",
+    applicationsTsv: "/tmp/profiles/jared/applications.tsv",
+  },
+  filterRules: {},
+  notion: { user_id: "user-123", cron_ops_page_id: "ops-page-uuid" },
+});
+
+test("buildSuccessComment: one-line format with per-status counts", () => {
+  const text = buildSuccessComment(
+    "jared",
+    buildSuccessCounts({
+      emails: 12,
+      matched: 4,
+      actions: [
+        { newStatus: "Rejected" },
+        { newStatus: "Rejected" },
+        { newStatus: "Interview" },
+        { kind: "comment_only" },
+      ],
+      inbox: 0,
+      notionErrors: 0,
+    }),
+    new Date("2026-05-29T08:00:12Z")
+  );
+  assert.equal(
+    text,
+    "🟢 [2026-05-29T08:00:12.000Z] check jared — emails: 12, matched: 4, " +
+      "→ Rejected: 2, → Interview: 1, → Closed: 0, info: 1, inbox: 0, notion errors: 0"
+  );
+});
+
+test("check --auto: zero-email --apply → heartbeat posted, NO @mention", async () => {
+  const { deps, calls } = makeAutoDeps({ loadProfile: opsProfile });
+  const { ctx } = makeCtx({ auto: true, apply: true });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 0);
+  // Zero emails → no per-action comments; the only comment is the heartbeat.
+  assert.equal(calls.addPageComment.length, 1);
+  const c = calls.addPageComment[0];
+  assert.equal(c.pageId, "ops-page-uuid");
+  assert.match(c.text, /🟢/);
+  assert.match(c.text, /emails: 0/);
+  assert.match(c.text, /notion errors: 0/);
+  // No @-mention on a heartbeat.
+  assert.ok(c.mention === null || c.mention === undefined);
+});
+
+test("check --auto: post-apply success → heartbeat posted exactly once with real counts, NO @mention", async () => {
+  const { deps, calls } = makeAutoDeps({
+    loadProfile: opsProfile,
+    fetchGmailEmails: async () => [
+      {
+        messageId: "m1",
+        from: "no-reply@affirm.com",
+        subject: "An update on your application with Affirm",
+        body: "Unfortunately, we will not be proceeding.",
+        date: "2026-04-30T10:00:00Z",
+      },
+    ],
+  });
+  const { ctx } = makeCtx({ auto: true, apply: true });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 0);
+  // Two comments: per-action rejection comment (mention=user-123) + heartbeat (no mention).
+  const heartbeats = calls.addPageComment.filter((c) => c.pageId === "ops-page-uuid");
+  assert.equal(heartbeats.length, 1);
+  assert.match(heartbeats[0].text, /🟢/);
+  assert.match(heartbeats[0].text, /emails: 1/);
+  assert.match(heartbeats[0].text, /→ Rejected: 1/);
+  assert.ok(heartbeats[0].mention === null || heartbeats[0].mention === undefined);
+});
+
+test("check --auto: heartbeat skipped quietly when cron_ops_page_id absent", async () => {
+  // makeAutoDeps default profile has user_id but NO cron_ops_page_id.
+  const { deps, calls } = makeAutoDeps();
+  const { ctx, out } = makeCtx({ auto: true, apply: true });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(calls.addPageComment.length, 0);
+  assert.match(out.errs.join("\n"), /Notion heartbeat skipped/);
+});
+
+test("check --auto: heartbeat skipped quietly when NOTION_TOKEN absent", async () => {
+  const { deps, calls } = makeAutoDeps({
+    loadProfile: opsProfile,
+    loadSecrets: () => ({}),
+  });
+  const { ctx, out } = makeCtx({ auto: true, apply: true });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(calls.addPageComment.length, 0);
+  assert.match(out.errs.join("\n"), /Notion heartbeat skipped/);
+});
+
+test("check --auto: heartbeat post throws → swallowed, run still returns 0", async () => {
+  const { deps, calls } = makeAutoDeps({
+    loadProfile: opsProfile,
+    addPageComment: async () => {
+      throw new Error("notion outage");
+    },
+  });
+  const { ctx, out } = makeCtx({ auto: true, apply: true });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.match(out.errs.join("\n"), /success heartbeat post failed/);
+  // No failure-log written — this is a success path, not a failure path.
+  assert.equal(calls.appendFailureLog.length, 0);
+});
+
+test("check --auto --dry-run: no heartbeat posted", async () => {
+  const { deps, calls } = makeAutoDeps({
+    loadProfile: opsProfile,
+    fetchGmailEmails: async () => [
+      { messageId: "m1", from: "no-reply@affirm.com", subject: "bad news", body: "not moving forward" },
+    ],
+  });
+  const { ctx } = makeCtx({ auto: true }); // dry-run (apply defaults false)
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(calls.addPageComment.length, 0);
+});
+
+test("check --auto: failure path does NOT post a success heartbeat", async () => {
+  const { deps, calls } = makeAutoDeps({
+    loadProfile: opsProfile,
+    fetchGmailEmails: async () => {
+      throw new Error("invalid_grant");
+    },
+  });
+  const { ctx } = makeCtx({ auto: true, apply: true });
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 1);
+  // Exactly one comment — the failure @mention — and it is NOT a heartbeat.
+  assert.equal(calls.addPageComment.length, 1);
+  assert.match(calls.addPageComment[0].text, /🔴/);
+  assert.doesNotMatch(calls.addPageComment[0].text, /🟢/);
+  assert.equal(calls.appendFailureLog.length, 1);
 });
 
 test("check --auto: appendFailureLog receives error with stack info", async () => {
