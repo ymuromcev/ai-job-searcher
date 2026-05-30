@@ -1,7 +1,21 @@
 ---
 title: "Incident log"
 status: live
-last_updated: 2026-05-18
+last_updated: 2026-05-30
+---
+
+## 2026-05-30 — acknowledgment autoresponder classified as interview invite, flipped a card to Interview (RFC 057 / BL-157)
+
+**Severity**: LOW (no data loss; one lilia card wrongly shown in Interview; reverted manually). Surfaced while verifying the RFC 056 recovery run.
+
+**Cause**: A Sharecare/Workday application-acknowledgment (`sharecare@myworkday.com`, subject "Application Received for Data Entry Specialist…") whose body only describes the future hiring process — "we have received your application … we are reviewing applications and **expect to schedule interviews** in the next couple of weeks" — matched the INTERVIEW_INVITE pattern `/schedule (?:…)?(interview|phone screen)/i` on the substring "schedule interviews". Two reinforcing factors in `engine/core/classifier.js`: (1) the pattern had no trailing `\b` (matched plural "interviews") and no guard for forward-looking prefixes; (2) `ACKNOWLEDGMENT` is last in `ORDER`, so the strong receipt signal ("we have received your application") could not override the weak forward-looking interview match. Workday sent the mail 3× → the recovery heartbeat read `→ Interview: 3` for what was a single job. Same class as the 2026-05-02 Indeed-digest and 2026-05-12 Tyson&Mendes incidents (forward-looking process text inside ACK bodies).
+
+**What changed**: `engine/core/classifier.js` — the schedule pattern extracted to `SCHEDULE_INTERVIEW` with a trailing `\b` (rejects plural "interviews") and a negative lookbehind for forward-looking prefixes ("expect/plan/intend to schedule"). Added autoresponder subject forms to ACKNOWLEDGMENT (`/application (received|confirmation)/i`). Added a narrowly-scoped ACK-precedence guard in `classify()`: demote to ACKNOWLEDGMENT only when the winning match is `SCHEDULE_INTERVIEW` specifically (direct-invite patterns are immune) AND a strong receipt signal is present AND the scheduling is gated by a selection condition ("if selected", "should you be chosen"). Singular directed invites ("schedule your interview", "your interview is on…") are untouched. 5 new regression fixtures (3 real Sharecare bodies + guard + no-regression). 1975/1975 tests pass.
+
+**Prevention**: Two-round adversarial code review caught two over-demotion regressions before merge (guard firing on whole-text presence regardless of winning pattern; courtesy-closer "should you have questions" tripping the selection cue) — both fixed with fixtures pinned. The lilia card (Clinic Administrative Assistant @ Fresenius) was reverted Interview → To Apply with an audit comment.
+
+**Follow-up**: BL-158 — the same email matched the *wrong* job (Data Entry @ Sharecare → Clinic Admin @ Fresenius); matcher cross-binding, separate from classification.
+
 ---
 
 ## 2026-05-18 — `location_blocklist` checked only `locations[0]`, missed multi-loc and state-coded US elements (BL-24)
