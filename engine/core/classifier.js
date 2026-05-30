@@ -8,6 +8,21 @@
 // First match wins — this avoids ambiguous double-classification (e.g. a
 // rejection letter that mentions "we received your application").
 
+// The single INTERVIEW_INVITE pattern that can also match an acknowledgment's
+// description of its *future* hiring process ("...schedule an interview...").
+// Named so the ACK-precedence guard in classify() can scope itself to ONLY
+// this pattern — the direct-invite patterns ("your interview is on…", "invite
+// you to…", Calendly, round-N, phone screen) are guard-immune and must never
+// be demoted. Tightened 2026-05-30 (RFC 057 / BL-157): trailing \b rejects
+// plural "interviews"; negative lookbehind rejects forward-looking prefixes
+// ("expect/plan/intend to schedule"). Root case: a Sharecare/Workday ACK on
+// lilia — "we have received your application … expect to schedule interviews
+// in the next couple of weeks" — matched the old pattern and flipped the card
+// to Interview (sent 3×, hence a phantom "Interview: 3"). Singular directed
+// forms ("schedule your interview", bare "schedule interview") still match.
+const SCHEDULE_INTERVIEW =
+  /(?<!(?:expect|plan|planning|hope|hoping|going|aiming|aim|wish|intend|intending) to )schedule (?:(?:your|the|our|my|a|an)\s+)?(interview|phone screen)\b/i;
+
 const PATTERNS = {
   REJECTION: [
     // Bare /unfortunately/i removed 2026-05-12 (BL-26 revision). Duolingo ACK
@@ -104,7 +119,9 @@ const PATTERNS = {
     //   - /(your|let me know your) availability (for|to) (call|chat|conversation)/
     // Real trigger: Deel ACK 14-apr (Jared dry-run, 2026-05-12), which
     // also cross-bound to Next Insurance via matcher.
-    /schedule (?:(?:your|the|our|my|a|an)\s+)?(interview|phone screen)/i,
+    // RFC 057 / BL-157 — see SCHEDULE_INTERVIEW definition above. Extracted to
+    // a named const so the ACK-precedence guard can scope to this pattern only.
+    SCHEDULE_INTERVIEW,
     /(would|we'd) like to (schedule|set up|interview)/i,
     /invite you (to|for) (an? )?(interview|phone screen|conversation|chat)/i,
     /your interview (is|with|on)/i,
@@ -179,10 +196,41 @@ const PATTERNS = {
     /thanks for applying/i,
     /thank you for your (application|interest)/i,
     /application confirmed/i,
+    // 2026-05-30 (RFC 057 / BL-157) — autoresponder subject lines. Sharecare
+    // (Workday) sends "Application Received for <role>" with a body that only
+    // describes the future hiring process. The subject alone is an
+    // unambiguous acknowledgment signal.
+    /application (received|confirmation)/i,
     /we have received/i,
     /we.ve received/i,
   ],
 };
+
+// ACK-precedence guard inputs (RFC 057 / BL-157). first-match-wins returns
+// INTERVIEW_INVITE before ACKNOWLEDGMENT, so an acknowledgment that says it
+// will schedule an interview *conditionally on selection* ("we have received
+// your application … if you are selected we will schedule an interview")
+// would still mutate the card. The guard (in classify) demotes to
+// ACKNOWLEDGMENT only when ALL of: (a) the winning match came from
+// SCHEDULE_INTERVIEW specifically — direct-invite patterns are immune; (b) a
+// strong application-receipt signal is present; (c) the scheduling is gated
+// by a selection condition. A committal invite ("we will schedule an
+// interview next week", "your interview is on Thursday") has no selection
+// condition and is left as INTERVIEW_INVITE.
+const STRONG_ACK = [
+  /received your application/i,
+  /your application (?:has been|was) received/i,
+  /application (?:received|confirmation)/i,
+];
+const ACK_CONDITIONAL = [
+  /\bif (?:you(?:'re| are)? )?(?:selected|chosen|shortlisted|a (?:good |strong )?(?:fit|match)|advance|move forward|proceed)/i,
+  /\bif selected\b/i,
+  // Selection-scoped only. A bare /should (you|your application)/ matched the
+  // routine courtesy closers real invites carry ("should you have any
+  // questions", "should you need to reschedule") and demoted them — review
+  // Finding 4. Require an advance/selection verb after "should you".
+  /\bshould you (?:be )?(?:selected|chosen|shortlisted|advance|proceed|move forward)\b/i,
+];
 
 // POSITION_CLOSED goes BEFORE REJECTION (2026-05-12). When both signals are
 // present ("unfortunately…the position is now closed"), the closure is the
@@ -201,6 +249,19 @@ function classify({ subject, body } = {}) {
     for (const pattern of PATTERNS[type]) {
       const match = text.match(pattern);
       if (match) {
+        // ACK-precedence guard (RFC 057 / BL-157): a conditional-on-selection
+        // "schedule an interview" inside an application-acknowledgment is the
+        // ACK's description of its own future process, not an action signal.
+        // Scoped to SCHEDULE_INTERVIEW only — direct-invite patterns (your
+        // interview is on…, invite you to…, Calendly, round-N) are immune.
+        if (
+          type === "INTERVIEW_INVITE" &&
+          pattern === SCHEDULE_INTERVIEW &&
+          STRONG_ACK.some((p) => p.test(text)) &&
+          ACK_CONDITIONAL.some((p) => p.test(text))
+        ) {
+          return { type: "ACKNOWLEDGMENT", evidence: match[0] };
+        }
         return { type, evidence: match[0] };
       }
     }

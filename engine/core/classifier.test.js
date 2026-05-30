@@ -790,6 +790,115 @@ test("classify: article-bound 'your/the take-home assignment' → INFO_REQUEST (
   }
 });
 
+// Regression 2026-05-30 (RFC 057 / BL-157) — Sharecare (Workday) application
+// acknowledgment on lilia (sharecare@myworkday.com, fetched read-only over
+// IMAP). Subject "Application Received for <role>"; body only describes the
+// future hiring process: "we have received your application … expect to
+// schedule interviews in the next couple of weeks". The old
+// /schedule …(interview|phone screen)/ pattern matched "schedule interviews"
+// and flipped the card to Interview. Workday sent the same mail 3× → a
+// phantom "Interview: 3" in the heartbeat for a single job. After fix:
+// trailing \b rejects the plural, forward-looking lookbehind + ACK guard
+// catch the rest. Must be ACKNOWLEDGMENT.
+test("classify: Sharecare 'Application Received … expect to schedule interviews' → ACKNOWLEDGMENT (RFC 057)", () => {
+  const subject = "Application Received for Data Entry Specialist - Medical Records (Remote)";
+  const body =
+    "Dear Lilia, This letter is to let you know that we have received your " +
+    "application. We appreciate your interest in our company and the position " +
+    "for which you applied. We are reviewing applications and expect to " +
+    "schedule interviews in the next couple of weeks. If you are selected for " +
+    "an interview, you can expect an email or phone call from us in the near " +
+    "future. Thank you again for your interest in Sharecare. Regards, " +
+    "Sharecare Talent Acquisition Team";
+  const r = classify({ subject, body });
+  assert.equal(
+    r.type,
+    "ACKNOWLEDGMENT",
+    `expected ACKNOWLEDGMENT, got ${r.type} (evidence: "${r.evidence}")`
+  );
+});
+
+// Guard control — the singular future form ("we will schedule an interview
+// if you're selected") passes the trailing \b (singular) but is still an ACK
+// describing its process. STRONG_ACK + FORWARD_LOOKING_INVITE both present →
+// demote to ACKNOWLEDGMENT.
+test("classify: ACK 'we will schedule an interview if selected' → ACKNOWLEDGMENT (RFC 057 guard)", () => {
+  const r = classify({
+    subject: "Application Received",
+    body:
+      "Thank you — we have received your application. If you are selected, we " +
+      "will schedule an interview with you in the coming weeks.",
+  });
+  assert.equal(
+    r.type,
+    "ACKNOWLEDGMENT",
+    `expected ACKNOWLEDGMENT, got ${r.type} (evidence: "${r.evidence}")`
+  );
+});
+
+// Negative control — forward-looking "expect to schedule interviews" /
+// "plan to schedule interviews" in plain process text (no ACK signal) must
+// NOT classify as INTERVIEW_INVITE.
+test("classify: forward-looking 'expect/plan to schedule interviews' → not INTERVIEW_INVITE (RFC 057)", () => {
+  const fixtures = [
+    "We expect to schedule interviews in the next couple of weeks.",
+    "The team plans to schedule interviews once the role is approved.",
+    "Hiring managers will schedule interviews with shortlisted candidates.",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Process overview", body });
+    assert.notEqual(
+      r.type,
+      "INTERVIEW_INVITE",
+      `should NOT be INTERVIEW_INVITE: "${body}" (got ${r.type}, evidence: "${r.evidence}")`
+    );
+  }
+});
+
+// No-regression — genuine invites still match even when an application-receipt
+// pleasantry is present, because the FORWARD_LOOKING cue is absent (direct
+// invite, not a future-process description). Guards must not over-demote.
+test("classify: receipt + direct invite ('your interview is on…') → INTERVIEW_INVITE (RFC 057 no over-demote)", () => {
+  const fixtures = [
+    "We have received your application. Your interview is on Thursday at 2pm PT.",
+    "Thanks for applying! Please schedule your interview using the link below.",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Next steps", body });
+    assert.equal(
+      r.type,
+      "INTERVIEW_INVITE",
+      `expected INTERVIEW_INVITE for: "${body}", got ${r.type} (evidence: "${r.evidence}")`
+    );
+  }
+});
+
+// Guard-scope no-regression (RFC 057, review Finding 2) — the ACK guard must
+// NOT demote a genuine invite just because a receipt phrase and a scheduling
+// phrase co-occur. It demotes ONLY when the SCHEDULE_INTERVIEW pattern won AND
+// the scheduling is gated by a selection condition. These two stay invites:
+//   1. committal "we will schedule an interview" with no "if selected" gate;
+//   2. a direct-invite pattern ("your interview is on…") wins — the stray
+//      "we will schedule a follow-up" sentence must not trigger the guard.
+test("classify: committal invite + receipt, no selection-condition → INTERVIEW_INVITE (RFC 057 guard scope)", () => {
+  const fixtures = [
+    "Thanks, we received your application earlier. Following your strong screen, we will schedule an interview next week.",
+    "We have received your application. Your interview is on Thursday at 2pm. We will schedule a follow-up after.",
+    // review Finding 4 — courtesy closers ("should you have questions",
+    // "should you need to reschedule") must not trip the selection-condition.
+    "We received your application and would like to schedule your interview. Should you have any questions, reply here.",
+    "We have received your application. Please schedule your interview using the link. Should you need to reschedule, use the same link.",
+  ];
+  for (const body of fixtures) {
+    const r = classify({ subject: "Next steps", body });
+    assert.equal(
+      r.type,
+      "INTERVIEW_INVITE",
+      `expected INTERVIEW_INVITE for: "${body}", got ${r.type} (evidence: "${r.evidence}")`
+    );
+  }
+});
+
 // Negative control — generic "closed" without position context must NOT
 // match (e.g. "our office is closed for the holiday").
 test("classify: bare 'closed' without position/role context → not POSITION_CLOSED", () => {
