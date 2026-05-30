@@ -40,7 +40,7 @@ The dispatcher also runs deterministic pre-command hooks (BL-151 / RFC 054). Tod
 
 The `--profile <id>` regex is applied by `engine/core/profile_loader.js` `validateId`. Path traversal is blocked: `profiles/<id>/` must resolve strictly inside the configured profiles dir.
 
-Per-command flags: `--phase <pre|commit|search|push>`, `--results-file <path>`, `--batch <n>`, `--prepare`, `--since <iso>`, `--no-sync`, `--no-callout`, `--auto`, `--company <name>`, `--role <title>`, `--question <text>`. Each is documented under the command that consumes it.
+Per-command flags: `--phase <pre|commit|search|push>`, `--results-file <path>`, `--batch <n>`, `--prepare`, `--since <iso>`, `--reprocess-since <iso>`, `--no-sync`, `--no-callout`, `--auto`, `--company <name>`, `--role <title>`, `--question <text>`. Each is documented under the command that consumes it.
 
 ## Commands
 
@@ -210,7 +210,7 @@ Common errors:
 
 ### check
 
-Synopsis: `node engine/cli.js check --profile <id> [--prepare | --apply | --auto] [--since <iso>] [--dry-run] [--verbose]`
+Synopsis: `node engine/cli.js check --profile <id> [--prepare | --apply | --auto] [--since <iso>] [--reprocess-since <iso>] [--dry-run] [--verbose]`
 
 Two-phase Gmail response polling. Phase 1 (`--prepare`) builds Gmail batch queries and writes `check_context.json` for a Claude MCP session to fetch emails into `raw_emails.json`. Phase 3 (default invocation, with `--apply` to commit) reads `raw_emails.json`, classifies each message (rejection / interview invite / info request / recruiter outreach / LinkedIn alert), matches it to active TSV rows, and plans status transitions and Notion page comments. `--auto` runs the full loop in one process via the OAuth Gmail client.
 
@@ -225,6 +225,7 @@ Flags:
 | `--apply` | boolean | false | Phase 3 commit. Without `--apply`, phase 3 runs in dry-run mode (plan only). |
 | `--auto` | boolean | false | Single-process autonomous flow using IMAP + app-password (RFC 021). Requires `<ID>_GMAIL_USER` and `<ID>_GMAIL_APP_PASSWORD`. Generate the app-password at <https://myaccount.google.com/apppasswords> (requires 2FA). |
 | `--since <iso>` | string | saved cursor | Override cursor. Clamped to a 30-day max window. |
+| `--reprocess-since <iso>` | string | — | One-time recovery (RFC 056). Sets the cursor to `<iso>` **and** bypasses the `processed_messages.json` dedup for that window, re-matching fetched mail against the current active set. Status transitions are idempotent (terminal jobs are absent from the active set); `comment_only` actions are dropped to avoid duplicate comments. Use with `--auto`; dry-run unless `--apply`. |
 | `--dry-run` | boolean | true for phase 3 default | Phase 1 honors it (skip context-file write). Phase 3 default is dry-run unless `--apply` is set. |
 | `--verbose` | boolean | false | In `--auto`, prints per-batch Gmail-id counts to stderr. |
 

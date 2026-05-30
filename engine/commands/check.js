@@ -952,7 +952,10 @@ async function runAutoBody(ctx, deps, profile, paths) {
   // runApply: no stale context snapshot).
   const saved = deps.loadProcessed(paths.processedPath);
   const now = deps.now();
-  const sinceIso = flags.since || null;
+  // --reprocess-since (RFC 056) doubles as a cursor override: set the window
+  // start, then bypass the processed-id dedup below for that window.
+  const reprocessSince = flags.reprocessSince || null;
+  const sinceIso = reprocessSince || flags.since || null;
   const epoch = deps.computeCursorEpoch({
     lastCheck: saved.last_check,
     sinceIso,
@@ -977,7 +980,12 @@ async function runAutoBody(ctx, deps, profile, paths) {
   });
 
   const processedSet = new Set((saved.processed || []).map((e) => e.id));
-  const newEmails = rawEmails.filter((e) => e && e.messageId && !processedSet.has(e.messageId));
+  // RFC 056: --reprocess-since re-includes already-processed mail in the
+  // window so the expanded active set gets a chance to match historical
+  // rejections that were fetched-but-unmatched while the set was stale.
+  const newEmails = reprocessSince
+    ? rawEmails.filter((e) => e && e.messageId)
+    : rawEmails.filter((e) => e && e.messageId && !processedSet.has(e.messageId));
 
   const tsvCache = [...apps];
   const nowIso = now.toISOString();
@@ -1024,7 +1032,17 @@ async function runAutoBody(ctx, deps, profile, paths) {
     return 0;
   }
 
-  const { logRows, actions, rejections } = processEmailsLoop(newEmails, state, procCtx);
+  const loopResult = processEmailsLoop(newEmails, state, procCtx);
+  const { logRows, rejections } = loopResult;
+  let actions = loopResult.actions;
+  // RFC 056: under --reprocess-since, drop comment_only actions. Status
+  // changes are idempotent (terminal jobs are absent from the active set),
+  // but comment_only (e.g. INFO_REQUEST) has no such guard and would
+  // duplicate comments for mail already processed. Recovery targets the
+  // durable status transitions, not stale info-request pings.
+  if (reprocessSince) {
+    actions = actions.filter((a) => a.kind !== "comment_only");
+  }
 
   emitDryRunJson(stdout, deps, { newEmails, logRows, actions, state, rejections });
 

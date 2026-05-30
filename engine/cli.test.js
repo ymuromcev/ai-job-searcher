@@ -119,6 +119,23 @@ test("runCli dispatches to registered handler with normalized ctx", async () => 
   assert.equal(ctx.env.PAT_NOTION_TOKEN, "y");
 });
 
+test("runCli parses --reprocess-since into ctx.flags.reprocessSince (RFC 056)", async () => {
+  const s = makeStreams();
+  const check = spyCommand(() => 0);
+  const code = await runCli({
+    argv: ["check", "--profile", "jared", "--auto", "--reprocess-since", "2026-04-01T00:00:00Z"],
+    env: { JARED_NOTION_TOKEN: "x" },
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { check },
+  });
+  assert.equal(code, 0);
+  assert.equal(check.calls.length, 1);
+  assert.equal(check.calls[0].flags.reprocessSince, "2026-04-01T00:00:00Z");
+  // Default empty when absent.
+  assert.equal(check.calls[0].flags.since, "");
+});
+
 test("runCli passes through handler exit code and traps thrown errors", async () => {
   const s = makeStreams();
   const exitCode = await runCli({
