@@ -1138,7 +1138,12 @@ test("check --auto --dry-run: no heartbeat posted", async () => {
   const { deps, calls } = makeAutoDeps({
     loadProfile: opsProfile,
     fetchGmailEmails: async () => [
-      { messageId: "m1", from: "no-reply@affirm.com", subject: "bad news", body: "not moving forward" },
+      {
+        messageId: "m1",
+        from: "no-reply@affirm.com",
+        subject: "bad news",
+        body: "not moving forward",
+      },
     ],
   });
   const { ctx } = makeCtx({ auto: true }); // dry-run (apply defaults false)
