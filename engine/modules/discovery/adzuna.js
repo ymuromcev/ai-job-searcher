@@ -180,7 +180,10 @@ async function fetchKeyword(
     app_key: appKey,
     what: keyword,
     where: location,
-    max_days: String(maxDays),
+    // Adzuna's age-filter param is `max_days_old`. Sending `max_days` makes
+    // the API gateway reject the whole request with an HTML 400 page (not a
+    // JSON error), which previously zeroed out every keyword on live scans.
+    max_days_old: String(maxDays),
     results_per_page: String(resultsPerPage),
     "content-type": "application/json",
   }).toString();

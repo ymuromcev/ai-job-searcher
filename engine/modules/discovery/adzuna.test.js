@@ -117,7 +117,10 @@ test("adzuna: uses default keywords and params when no discovery config", async 
   assert.ok(calls[0].includes("what=Product+Manager"));
   assert.ok(calls[1].includes("what=Senior+Product+Manager"));
   assert.ok(calls[0].includes("where=United+States"));
-  assert.ok(calls[0].includes("max_days=30"));
+  // Adzuna's age-filter param is `max_days_old` (not `max_days`) — sending the
+  // wrong name makes the gateway 400 the request. Guard against regressing it.
+  assert.ok(calls[0].includes("max_days_old=30"));
+  assert.ok(!calls[0].includes("max_days=30"));
   assert.ok(calls[0].includes("results_per_page=50"));
 });
 
