@@ -1,7 +1,21 @@
 ---
 title: "Incident log"
 status: live
-last_updated: 2026-05-30
+last_updated: 2026-06-01
+---
+
+## 2026-06-01 — cron silently dropped responses: reconcile added rows with empty companyName (RFC 058 / BL-168)
+
+**Severity**: HIGH (silent data loss — no error, green heartbeat). 215 active fly rows were unmatchable; 16 real rejections (incl. a dLocal "Pix Squad" reject that prompted the report) were never reflected in Notion over ~2 days. Recovered via reprocess.
+
+**Cause**: BL-154's additive `reconcilePull` ([engine/commands/sync.js](engine/commands/sync.js)) appended a row for each Notion page with no local match, setting `companyName: page.companyName || ""`. But jared/lilia store company in Notion as a **`relation`** (`property_map.companyRelation`), which `parseNotionPage` returns as page-ids, not a name — so `page.companyName` was always undefined and every reconcile-added row landed with an empty `companyName`. `buildActiveJobsMap` ([check.js](engine/commands/check.js)) drops empty-company rows (`const co = app.companyName; if (!co) continue;`), so those applications were excluded from the email matcher's active set. The cron still *fetched* their response emails (ATS-sender batch) but matched them to nothing → no status change, no comment, and the 🟢 success heartbeat (BL-155) still posted (it reflects matched/actioned counts, not reconcile completeness), so a broken run looked healthy. On the Mac the same rows carried `companyName` from `scan`, so the bug was invisible locally — only the fly add-path was affected. Confirmed live: 215 empty-company active rows vs 117 populated.
+
+**What changed**: `engine/core/company_resolver.js` — added `makeCompanyNameResolver` (Companies-DB page-id → title "Name"; cached; bounded concurrency; `null` on missing/untitled/unreadable). `engine/commands/sync.js` — `reconcilePull` stays pure but takes an optional `companyNameById` map; it now populates added rows **and** backfills existing rows whose `companyName` is empty (never overwriting a populated name → the 215 stale rows self-heal on the next reconcile, no migration script). The `sync` command resolves only the ids it needs (would-be adds + empty-company existing rows), skips text-company profiles, and treats resolver failure as non-fatal. 8 new tests; 1978 green. Redeployed fly (v29); a `--reprocess-since 2026-05-22` run backfilled 388 rows and applied 18 Notion ops (16 rejections recovered, dLocal Pix Squad → Rejected).
+
+**Prevention / how caught**: caught only by live fly inspection (SSH into `/data` TSV) after the operator noticed a known rejection never landed — the green heartbeat hid it. Root gap: a best-effort reconcile that silently no-ops (or lands inert rows) while the run still reports success. Tracked follow-up: surface reconcile outcome in the heartbeat (rows added/backfilled, resolve failures) and log "ATS email fetched but unmatched" so a future silent miss is visible rather than green.
+
+**Follow-up**: BL-177 — heartbeat/observability for silent reconcile + unmatched-ATS misses.
+
 ---
 
 ## 2026-05-30 — acknowledgment autoresponder classified as interview invite, flipped a card to Interview (RFC 057 / BL-157)
