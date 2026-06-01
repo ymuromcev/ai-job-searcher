@@ -535,3 +535,126 @@ test("sync dry-run does NOT archive (mutations gated on --apply)", async () => {
   assert.equal(archiveFs.calls.rename.length, 0);
   assert.doesNotMatch(out.all(), /\[sync\] archived/);
 });
+
+// ---------------------------------------------------------------------------
+// RFC 058 / BL-168 — reconcile resolves the Company relation to a name.
+// ---------------------------------------------------------------------------
+
+const { matchKeyForPage } = require("./sync.js");
+const { makeCompanyNameResolver } = require("../core/company_resolver.js");
+
+test("reconcilePull add-path fills companyName from the relation map (RFC 058)", () => {
+  const apps = [];
+  const pages = [
+    {
+      notionPageId: "p9",
+      key: "lever:pix",
+      source: "lever",
+      jobId: "pix",
+      companyRelation: ["co-1"], // relation id, NO companyName text
+      title: "Senior PM - Pix Squad",
+      status: "Applied",
+    },
+  ];
+  const { adds } = reconcilePull(apps, pages, DEFAULT_PROPERTY_MAP, NOW, { "co-1": "dLocal" });
+  assert.equal(adds.length, 1);
+  assert.equal(adds[0].companyName, "dLocal");
+});
+
+test("reconcilePull add-path leaves companyName empty when relation unresolved", () => {
+  const pages = [
+    { notionPageId: "p9", key: "lever:pix", source: "lever", jobId: "pix", companyRelation: ["co-x"], status: "Applied" },
+  ];
+  const { adds } = reconcilePull([], pages, DEFAULT_PROPERTY_MAP, NOW, {}); // no map entry
+  assert.equal(adds[0].companyName, "");
+});
+
+test("reconcilePull backfills an existing row's empty companyName (RFC 058)", () => {
+  const apps = [fakeApp({ key: "lever:pix", source: "lever", jobId: "pix", companyName: "", status: "Applied" })];
+  const pages = [
+    { notionPageId: "p9", key: "lever:pix", source: "lever", jobId: "pix", companyRelation: ["co-1"], status: "Applied" },
+  ];
+  const { updates } = reconcilePull(apps, pages, DEFAULT_PROPERTY_MAP, NOW, { "co-1": "dLocal" });
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].after.companyName, "dLocal");
+});
+
+test("reconcilePull never overwrites a populated companyName", () => {
+  const apps = [fakeApp({ key: "lever:pix", source: "lever", jobId: "pix", companyName: "dLocal Inc", status: "Applied" })];
+  const pages = [
+    { notionPageId: "p9", key: "lever:pix", source: "lever", jobId: "pix", companyRelation: ["co-1"], status: "Applied" },
+  ];
+  // Same status + page id → no change; companyName must stay as the local value.
+  const withPage = pages.map((p) => ({ ...p, notionPageId: "", status: "Applied" }));
+  const { updates } = reconcilePull(apps, withPage, DEFAULT_PROPERTY_MAP, NOW, { "co-1": "OtherName" });
+  assert.equal(updates.length, 0);
+});
+
+test("matchKeyForPage prefers key, falls back to composite", () => {
+  assert.equal(matchKeyForPage({ key: "lever:a" }, DEFAULT_PROPERTY_MAP), "lever:a");
+  assert.equal(matchKeyForPage({ source: "Lever", jobId: "a" }, DEFAULT_PROPERTY_MAP), "lever:a");
+});
+
+test("makeCompanyNameResolver reads the title and caches per id", async () => {
+  let retrieves = 0;
+  const client = {
+    pages: {
+      retrieve: async ({ page_id }) => {
+        retrieves += 1;
+        const names = { "co-1": "dLocal", "co-2": "Stripe" };
+        return { properties: { Name: { title: [{ plain_text: names[page_id] || "" }] } } };
+      },
+    },
+  };
+  const r = makeCompanyNameResolver({ client });
+  const map = await r.resolveIds(["co-1", "co-2", "co-1"]);
+  assert.deepEqual(map, { "co-1": "dLocal", "co-2": "Stripe" });
+  assert.equal(retrieves, 2, "deduped: one retrieve per unique id");
+});
+
+test("makeCompanyNameResolver returns null for untitled and unreadable pages", async () => {
+  const client = {
+    pages: {
+      retrieve: async ({ page_id }) => {
+        if (page_id === "boom") throw new Error("not found");
+        return { properties: { Name: { title: [] } } }; // untitled
+      },
+    },
+  };
+  const r = makeCompanyNameResolver({ client, log: () => {} });
+  const map = await r.resolveIds(["empty", "boom"]);
+  assert.equal(map.empty, null);
+  assert.equal(map.boom, null);
+});
+
+test("sync --apply resolves relation ids and persists the resolved company (RFC 058)", async () => {
+  const saved = [];
+  const resolverCalls = [];
+  const { deps } = makeDeps({
+    loadApplications: () => ({ apps: [fakeApp({ jobId: "1" })] }),
+    saveApplications: (file, apps) => saved.push({ file, apps }),
+    fetchJobsFromDatabase: async () => [
+      {
+        notionPageId: "p2",
+        key: "lever:pix",
+        source: "lever",
+        jobId: "pix",
+        companyRelation: ["co-1"], // relation only, no companyName text
+        title: "Senior PM - Pix Squad",
+        status: "Applied",
+      },
+    ],
+    makeCompanyNameResolver: () => ({
+      resolveIds: async (ids) => {
+        resolverCalls.push(ids);
+        return { "co-1": "dLocal" };
+      },
+    }),
+  });
+  const { ctx } = makeCtx({ flags: { dryRun: false, apply: true, verbose: false } });
+  const code = await makeSyncCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.deepEqual(resolverCalls, [["co-1"]], "resolver called with the needed id");
+  const addedRow = saved[0].apps.find((a) => a.key === "lever:pix");
+  assert.equal(addedRow.companyName, "dLocal");
+});
