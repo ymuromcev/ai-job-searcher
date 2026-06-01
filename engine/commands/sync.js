@@ -24,6 +24,7 @@ const applications = require("../core/applications_tsv.js");
 const notion = require("../core/notion_sync.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 const archiveSweep = require("../core/archive_used_artifacts.js");
+const { makeCompanyNameResolver } = require("../core/company_resolver.js");
 
 // Canonical map lives in notion_sync.js — all Notion-touching commands
 // share it. Re-export here as a const so the rest of this file stays
@@ -38,6 +39,9 @@ const DEFAULT_DEPS = {
   makeClient: notion.makeClient,
   fetchJobsFromDatabase: notion.fetchJobsFromDatabase,
   updateCalloutBlock: notion.updateCalloutBlock,
+  // RFC 058: reverse company resolver (relation page-id → name). Injected so
+  // tests can fake Notion. Defaults to the real Companies-DB reader.
+  makeCompanyNameResolver,
   now: () => new Date().toISOString(),
   // BL-151 / RFC 054: archive-sweep facade. Defaults to the real `fs`
   // module; tests inject in-memory fakes.
@@ -48,38 +52,52 @@ const DEFAULT_DEPS = {
   },
 };
 
+// Page → matchKey: `key` field if present in the Notion property map,
+// otherwise composite (source, jobId). Shared by reconcilePull and the
+// sync command's company-id collection so the two never drift.
+function matchKeyForPage(page, propertyMap) {
+  const keyField = propertyMap.key && propertyMap.key.field;
+  const sourceField = propertyMap.source && propertyMap.source.field;
+  const jobIdField = propertyMap.jobId && propertyMap.jobId.field;
+  const k = keyField ? page.key : null;
+  const composite =
+    sourceField && jobIdField && page.source && page.jobId
+      ? `${String(page.source).toLowerCase()}:${page.jobId}`
+      : null;
+  return k || composite;
+}
+
+// Resolve a page's company name. Profiles that store company as a Notion
+// `relation` expose it as `page.companyRelation = [companyPageId]` with NO
+// `page.companyName`; the caller resolves those ids to names up front and
+// passes them in `companyNameById`. Text-company profiles fall back to the
+// plain `page.companyName`. Returns "" when neither is available (RFC 058).
+function companyNameForPage(page, companyNameById) {
+  const relIds = Array.isArray(page.companyRelation) ? page.companyRelation : [];
+  const resolved = relIds.length ? companyNameById[String(relIds[0])] : null;
+  return resolved || page.companyName || "";
+}
+
 // Reconcile Notion → local TSV. Pure: no I/O, no Date.now(). `now` (ISO
 // string) is passed in so added rows get deterministic createdAt/updatedAt.
+// `companyNameById` (RFC 058 / BL-168) maps Companies-DB page ids → names so
+// relation-company profiles get a populated `companyName` instead of "".
 //
 // Returns { updates, adds }:
 //   updates — { before, after } pairs for existing local rows whose
-//             notion_page_id / status drifted from Notion (Notion wins).
+//             notion_page_id / status / (empty) companyName drifted from
+//             Notion (Notion wins; a populated local companyName is never
+//             overwritten).
 //   adds    — full TSV row objects for Notion pages with NO matching local
 //             row. This makes the pull additive: the fly.io cron's stale
 //             TSV picks up apps created on the operator's Mac (RFC 055).
 //
 // Idempotent: on a rerun the previously-added rows now exist locally, so
 // they match in the update pass and never re-appear in `adds`.
-function reconcilePull(apps, notionPages, propertyMap, now) {
-  // Notion is source of truth for status (and notion_page_id, naturally).
-  // We match by `key` field if present in the Notion property map; otherwise
-  // by composite (source, jobId).
-  const keyField = propertyMap.key && propertyMap.key.field;
-  const sourceField = propertyMap.source && propertyMap.source.field;
-  const jobIdField = propertyMap.jobId && propertyMap.jobId.field;
-
-  const matchKeyFor = (page) => {
-    const k = keyField ? page.key : null;
-    const composite =
-      sourceField && jobIdField && page.source && page.jobId
-        ? `${String(page.source).toLowerCase()}:${page.jobId}`
-        : null;
-    return k || composite;
-  };
-
+function reconcilePull(apps, notionPages, propertyMap, now, companyNameById = {}) {
   const byKey = new Map();
   for (const page of notionPages) {
-    const matchKey = matchKeyFor(page);
+    const matchKey = matchKeyForPage(page, propertyMap);
     if (matchKey) byKey.set(matchKey, page);
   }
 
@@ -99,6 +117,15 @@ function reconcilePull(apps, notionPages, propertyMap, now) {
       next.status = page.status;
       changed = true;
     }
+    // Backfill an empty companyName from Notion (self-heals the rows BL-154
+    // added blank). Never overwrite a name the local row already has.
+    if (!app.companyName) {
+      const resolvedName = companyNameForPage(page, companyNameById);
+      if (resolvedName) {
+        next.companyName = resolvedName;
+        changed = true;
+      }
+    }
     if (changed) updates.push({ before: app, after: next });
   }
 
@@ -112,7 +139,7 @@ function reconcilePull(apps, notionPages, propertyMap, now) {
       key: matchKey,
       source,
       jobId: page.jobId || "",
-      companyName: page.companyName || "",
+      companyName: companyNameForPage(page, companyNameById),
       title: page.title || "",
       url: page.url || "",
       locations: Array.isArray(page.locations) ? page.locations.map(String) : [],
@@ -178,7 +205,37 @@ function makeSyncCommand(overrides = {}) {
     let pullErrors = 0;
     try {
       const pages = await deps.fetchJobsFromDatabase(getClient(), databaseId, propertyMap);
-      ({ updates, adds } = reconcilePull(apps, pages, propertyMap, deps.now()));
+      // RFC 058: profiles that store company as a Notion `relation` expose it
+      // as page ids, not names. Resolve the ids we actually need — pages that
+      // will be added (no local row) or whose local row has an empty
+      // companyName — so reconcile populates the column instead of leaving it
+      // blank (which would silently drop the row from check's active set).
+      // Non-fatal: a resolver failure leaves names empty, same as before.
+      let companyNameById = {};
+      const hasRelation = propertyMap.companyRelation && propertyMap.companyRelation.field;
+      if (hasRelation) {
+        const localByKey = new Map(apps.map((a) => [a.key, a]));
+        const neededIds = new Set();
+        for (const page of pages) {
+          const relIds = Array.isArray(page.companyRelation) ? page.companyRelation : [];
+          if (!relIds.length) continue;
+          const mk = matchKeyForPage(page, propertyMap);
+          const local = mk ? localByKey.get(mk) : null;
+          if (!local || !local.companyName) neededIds.add(String(relIds[0]));
+        }
+        if (neededIds.size) {
+          try {
+            const resolver = deps.makeCompanyNameResolver({
+              client: getClient(),
+              log: (m) => ctx.stderr(`  ${m}`),
+            });
+            companyNameById = await resolver.resolveIds(Array.from(neededIds));
+          } catch (err) {
+            ctx.stderr(`  warn: company-name resolve failed: ${err.message}`);
+          }
+        }
+      }
+      ({ updates, adds } = reconcilePull(apps, pages, propertyMap, deps.now(), companyNameById));
       stdout(
         `pull plan: ${updates.length} local row(s) would change from Notion state, ` +
           `${adds.length} new row(s) would be added`
@@ -302,4 +359,5 @@ function makeSyncCommand(overrides = {}) {
 module.exports = makeSyncCommand();
 module.exports.makeSyncCommand = makeSyncCommand;
 module.exports.reconcilePull = reconcilePull;
+module.exports.matchKeyForPage = matchKeyForPage;
 module.exports.DEFAULT_PROPERTY_MAP = DEFAULT_PROPERTY_MAP;

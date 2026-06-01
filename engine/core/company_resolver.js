@@ -117,4 +117,66 @@ function makeCompanyResolver({
   return { resolve, resolveMany, _cache: cache };
 }
 
-module.exports = { makeCompanyResolver };
+// Reverse resolver (page-id → company name). The forward resolver above maps
+// a name to a Companies-DB page id when *creating* job pages. `sync`'s
+// reconcile needs the opposite: a Notion job page exposes its company only as
+// a `relation` (an array of Companies-DB page ids), and we need the human name
+// to populate `applications.tsv`'s `companyName` column. Without this, every
+// reconcile-added row lands with an empty company and is silently dropped from
+// the email matcher's active set (RFC 058 / BL-168).
+//
+// Reads the title property (`Name` by default) of each Companies-DB page.
+// In-run cache by page id; a missing / untitled / unreadable page resolves to
+// `null` (caller leaves companyName empty rather than guessing).
+function makeCompanyNameResolver({ client, titleField = "Name", log = () => {} }) {
+  if (!client) throw new Error("client is required");
+  const cache = new Map();
+
+  function extractTitle(page) {
+    const prop = page && page.properties && page.properties[titleField];
+    const rt = prop && Array.isArray(prop.title) ? prop.title : null;
+    if (!rt) return null;
+    const text = rt
+      .map((t) => (t && (t.plain_text || (t.text && t.text.content))) || "")
+      .join("")
+      .trim();
+    return text || null;
+  }
+
+  async function resolveId(pageId) {
+    if (!pageId) return null;
+    const id = String(pageId);
+    if (cache.has(id)) return cache.get(id);
+    let name = null;
+    try {
+      const page = await client.pages.retrieve({ page_id: id });
+      name = extractTitle(page);
+    } catch (err) {
+      log(`company name resolve failed for ${id}: ${err.message}`);
+      name = null;
+    }
+    cache.set(id, name);
+    return name;
+  }
+
+  // Returns a map { pageId -> name|null }. Bounded concurrency; deduped.
+  async function resolveIds(ids, { concurrency = 4 } = {}) {
+    const unique = Array.from(new Set((ids || []).filter(Boolean).map(String)));
+    const out = {};
+    let idx = 0;
+    async function worker() {
+      while (idx < unique.length) {
+        const i = idx++;
+        out[unique[i]] = await resolveId(unique[i]);
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, unique.length) || 0 }, () => worker())
+    );
+    return out;
+  }
+
+  return { resolveId, resolveIds, _cache: cache };
+}
+
+module.exports = { makeCompanyResolver, makeCompanyNameResolver };
