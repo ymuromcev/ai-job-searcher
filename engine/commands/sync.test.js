@@ -563,16 +563,38 @@ test("reconcilePull add-path fills companyName from the relation map (RFC 058)",
 
 test("reconcilePull add-path leaves companyName empty when relation unresolved", () => {
   const pages = [
-    { notionPageId: "p9", key: "lever:pix", source: "lever", jobId: "pix", companyRelation: ["co-x"], status: "Applied" },
+    {
+      notionPageId: "p9",
+      key: "lever:pix",
+      source: "lever",
+      jobId: "pix",
+      companyRelation: ["co-x"],
+      status: "Applied",
+    },
   ];
   const { adds } = reconcilePull([], pages, DEFAULT_PROPERTY_MAP, NOW, {}); // no map entry
   assert.equal(adds[0].companyName, "");
 });
 
 test("reconcilePull backfills an existing row's empty companyName (RFC 058)", () => {
-  const apps = [fakeApp({ key: "lever:pix", source: "lever", jobId: "pix", companyName: "", status: "Applied" })];
+  const apps = [
+    fakeApp({
+      key: "lever:pix",
+      source: "lever",
+      jobId: "pix",
+      companyName: "",
+      status: "Applied",
+    }),
+  ];
   const pages = [
-    { notionPageId: "p9", key: "lever:pix", source: "lever", jobId: "pix", companyRelation: ["co-1"], status: "Applied" },
+    {
+      notionPageId: "p9",
+      key: "lever:pix",
+      source: "lever",
+      jobId: "pix",
+      companyRelation: ["co-1"],
+      status: "Applied",
+    },
   ];
   const { updates } = reconcilePull(apps, pages, DEFAULT_PROPERTY_MAP, NOW, { "co-1": "dLocal" });
   assert.equal(updates.length, 1);
@@ -580,13 +602,30 @@ test("reconcilePull backfills an existing row's empty companyName (RFC 058)", ()
 });
 
 test("reconcilePull never overwrites a populated companyName", () => {
-  const apps = [fakeApp({ key: "lever:pix", source: "lever", jobId: "pix", companyName: "dLocal Inc", status: "Applied" })];
+  const apps = [
+    fakeApp({
+      key: "lever:pix",
+      source: "lever",
+      jobId: "pix",
+      companyName: "dLocal Inc",
+      status: "Applied",
+    }),
+  ];
   const pages = [
-    { notionPageId: "p9", key: "lever:pix", source: "lever", jobId: "pix", companyRelation: ["co-1"], status: "Applied" },
+    {
+      notionPageId: "p9",
+      key: "lever:pix",
+      source: "lever",
+      jobId: "pix",
+      companyRelation: ["co-1"],
+      status: "Applied",
+    },
   ];
   // Same status + page id → no change; companyName must stay as the local value.
   const withPage = pages.map((p) => ({ ...p, notionPageId: "", status: "Applied" }));
-  const { updates } = reconcilePull(apps, withPage, DEFAULT_PROPERTY_MAP, NOW, { "co-1": "OtherName" });
+  const { updates } = reconcilePull(apps, withPage, DEFAULT_PROPERTY_MAP, NOW, {
+    "co-1": "OtherName",
+  });
   assert.equal(updates.length, 0);
 });
 
