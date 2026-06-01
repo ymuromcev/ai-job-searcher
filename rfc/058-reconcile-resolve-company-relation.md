@@ -1,6 +1,6 @@
 # RFC 058 — Reconcile must resolve the Company relation to a name
 
-- Status: **proposed**
+- Status: **accepted** (shipped 2026-06-01, fly v29; 16 missed rejections recovered)
 - Date: 2026-06-01
 - Refs: BL-168, RFC 055 (cron TSV freshness — the incomplete fix), BL-154
   (additive reconcile), RFC 014 (status split)
