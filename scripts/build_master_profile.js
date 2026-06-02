@@ -468,6 +468,20 @@ function renderMaster(rv, profileId, opts = {}) {
     out += "\n";
   }
 
+  // Awards
+  if (Array.isArray(rv.awards) && rv.awards.length) {
+    out += "## Awards\n\n";
+    for (const a of rv.awards) {
+      const vis = a.archetypes ? `variant-specific` : `always`;
+      out += `- Visibility: \`${vis}\`\n`;
+      if (vis === "variant-specific") out += `  - Variants: [${a.archetypes.join(", ")}]\n`;
+      out += `  - ${a.name || ""}\n`;
+      if (a.displayDate) out += `  - Date: ${a.displayDate}\n`;
+      if (a.context) out += `  - Context: ${a.context}\n`;
+    }
+    out += "\n";
+  }
+
   // Skills Inventory
   out += "## Skills Inventory\n\n";
   out +=

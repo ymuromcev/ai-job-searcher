@@ -352,6 +352,37 @@ test("renderMaster uses rv.languages when provided", () => {
   assert.ok(md.includes("- Russian — Native"));
 });
 
+test("renderMaster renders Awards section from rv.awards", () => {
+  const rv = {
+    ...fixtureRv,
+    awards: [
+      {
+        name: "FinTech Awards Russia 2024",
+        displayDate: "2024",
+        context: "Application redesign — 2-field flow.",
+        archetypes: null,
+      },
+      {
+        name: "Alfa Award 2022",
+        displayDate: "2022",
+        context: "MFI revenue.",
+        archetypes: ["ArchA"],
+      },
+    ],
+  };
+  const md = renderMaster(rv, "testprofile", { generatedAt: "2026-05-24", sourceHash: "x" });
+  assert.ok(md.includes("## Awards"));
+  assert.ok(md.includes("FinTech Awards Russia 2024"));
+  assert.ok(md.includes("Context: Application redesign — 2-field flow."));
+  // archetypes: null → always; archetypes: [...] → variant-specific with Variants line
+  assert.ok(md.includes("Variants: [ArchA]"));
+});
+
+test("renderMaster omits Awards section when rv.awards is absent", () => {
+  const md = renderMaster(fixtureRv, "testprofile", { generatedAt: "2026-05-24", sourceHash: "x" });
+  assert.ok(!md.includes("## Awards"));
+});
+
 test("renderMaster renders length_constrained_priority on roles", () => {
   const rv = {
     ...fixtureRv,
