@@ -427,10 +427,17 @@ surface consistent with the "no per-person CRM" decision (BL-166/169):
 **Notion vacancy DB — what was actually created:**
 
 - **`LinkedIn Search`** (`url`) — the engine-written people-search URL.
-- **`Outreach`** (`status`, 3 options: `Not started` / `In progress` /
-  `Done`) — the operator-owned outreach state. Built as a Notion **status**
-  property, not the 7-state `select` the design sketched; the 3-state
-  lifecycle is enough for v1.
+- **`Outreach`** (`status`, 4 options: `To do` / `In flight` / `Replied` /
+  `Dead`) — the operator-owned outreach state. Built as a Notion **status**
+  property, not the 7-state `select` the design sketched. The 4-state set
+  was chosen on the principle "each status = a distinct next action / whose
+  court": `To do` (queue, my move) → `In flight` (any active outreach) →
+  `Replied` (success exit) / `Dead` (closed exit). The TSV default
+  `hm_outreach_status` is **`To do`** (Notion's first option), so a fresh
+  `scan` row never diverges from the value Notion auto-assigns and `sync`
+  shows no spurious diff. (Status options are not editable via the Notion
+  API — the operator renames them in the UI; the engine reads whatever
+  string Notion returns, so no code change is needed to re-label them.)
 - **`People`** (`rollup` over the existing `Company` relation,
   `show_unique`) — "who I know at this company", read-only.
 - `Company` was already a relation to `companies_db` (RFC 058), so the

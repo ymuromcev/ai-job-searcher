@@ -1972,7 +1972,7 @@ test("prepare --phase commit (RFC 059): Strong + Medium + Weak all get company_p
   assert.equal(savedByKey["gh:2"].company_people_search_url, "https://fake.search/Stripe");
   assert.equal(savedByKey["gh:3"].company_people_search_url, "https://fake.search/Plaid");
   // Commit must NOT set/modify hm_outreach_status — phase 1 (the TSV loader)
-  // owns its `to_search` default. These apps are constructed directly (not
+  // owns its `To do` default. These apps are constructed directly (not
   // loaded from a TSV), so the field is whatever makeApp produced; the point
   // is the commit path left it untouched.
   assert.equal("hm_outreach_status" in savedByKey["gh:1"], false);
