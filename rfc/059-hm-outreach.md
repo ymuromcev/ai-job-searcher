@@ -2,6 +2,12 @@
 
 - Status: **Proposed** (open question resolved 2026-06-03 → Option 1)
 - Date: 2026-06-03
+- **Scope amended 2026-06-03:** the `company_people_search_url` is
+  populated for **all fit tiers** (Strong/Medium/Weak) on commit, per
+  operator decision — superseding the original "Medium+/Strong only"
+  gate. The property_map-presence guard is unchanged: Notion still only
+  receives the field when the profile maps `companyPeopleSearchUrl`. See
+  §C and "Out of scope".
 - Refs: BL-169 (authoritative model; supersedes/merges BL-166), BL-62
   (outbound discovery; note/DM templates live in its Notion project),
   RFC 014 (status split), RFC 022 (per-row Notion push in commit),
@@ -11,8 +17,9 @@
 ## Summary
 
 Add one **job-centric outreach motion** on top of the existing ATS
-pipeline. For every Medium+/Strong vacancy the engine emits a LinkedIn
-**company people-search URL** (`company_people_search_url`). The operator
+pipeline. For **every committed vacancy** (all fit tiers — scope amended
+2026-06-03, see §C) the engine emits a LinkedIn **company people-search
+URL** (`company_people_search_url`). The operator
 opens it; LinkedIn itself surfaces "N of your connections work here" and
 the operator decides **warm** (their own contact) vs **cold** (a hiring
 manager / recruiter). Outreach state is tracked **on the vacancy card**
@@ -137,30 +144,38 @@ company throw, encoding of spaces/`&`/unicode).
 
 ### C. `prepare --phase commit` integration (`engine/commands/prepare.js`)
 
-Populate `company_people_search_url` for **Medium+/Strong rows only**
-during the commit phase, write it to the TSV row, and push it into the
-Notion page via the property map.
+> **Scope amended 2026-06-03 (operator decision):** the search URL is
+> populated for **all fit tiers** (Strong / Medium / Weak), superseding
+> the original Medium+/Strong gate. Rationale: the people-search URL is a
+> cheap, harmless link — a human clicks it, nothing is sent or scraped.
+> The operator decides per-row whether to actually act on it; excluding
+> Weak rows throws away that cheap optionality for no benefit. The only
+> gate on whether Notion sees the field is **property_map presence** (see
+> below), not fit tier.
 
-**Design.** In `buildJobFieldsForNotion(...)`
-(`engine/commands/prepare.js`, ~L1629 — the pure field assembler that
-already maps `companyName`/`title`/`fitScore`/etc.), add a gated field:
+Populate `company_people_search_url` for **all committed rows
+(Strong/Medium/Weak) — no fit-tier gate** during the commit phase, write
+it to the TSV row, and push it into the Notion page via the property map.
+
+**Design.** The commit-phase per-row loop (`engine/commands/prepare.js`,
+where each promoted row gets `app.status = "To Apply"`) computes the URL
+for **every** committed row and writes it onto the in-memory `app` (and
+thus the TSV column `company_people_search_url` from workstream A):
 
 ```js
-if (r.fitScore === "Medium" || r.fitScore === "Strong") {
-  fields.companyPeopleSearchUrl = buildCompanyPeopleSearchUrl({
-    company: app.companyName,
-    roleTitle: app.title,
-    location: (app.locations && app.locations[0]) || undefined,
-  });
-}
+app.company_people_search_url = deps.buildCompanyPeopleSearchUrl({
+  company: app.companyName,
+  roleTitle: app.title,
+  location: (app.locations && app.locations[0]) || undefined,
+});
 ```
 
-Weak rows are excluded (matches RFC 049 / the existing weak-fallback —
-Weak still reaches Notion but gets no outreach URL). The helper is wired
-through `deps` (like `formatSalaryDisplay`) so it stays injectable for
-tests. The same value is written to the TSV row alongside the existing
-commit write-back (`company_people_search_url` column from workstream A);
-`hm_outreach_status` is left at its `to_search` default on commit.
+`buildJobFieldsForNotion(...)` (the pure field assembler, ~L1629) then
+surfaces that value into the Notion payload as
+`fields.companyPeopleSearchUrl` — for every tier, with no
+`if (fitScore === ...)` gate. The helper is wired through `deps` (like
+`formatSalaryDisplay`) so it stays injectable for tests.
+`hm_outreach_status` is left at its phase-1 `to_search` default on commit.
 
 **Property-map dependency.** The push only emits the property when the
 profile's `property_map` defines `companyPeopleSearchUrl` (workstream D).
@@ -169,9 +184,10 @@ field — consistent with how `buildProperties` already drops unmapped
 fields.
 
 **Files touched:** `engine/commands/prepare.js`,
-`engine/commands/prepare.test.js` (assert Medium/Strong get a URL in both
-the TSV row and the Notion field payload; Weak gets none; helper injected
-as a fake).
+`engine/commands/prepare.test.js` (assert Strong, Medium, AND Weak each
+get a URL in both the TSV row and the Notion field payload; helper
+injected as a fake; the Notion property is omitted when `property_map`
+lacks `companyPeopleSearchUrl`).
 
 ### D. Notion schema change (operator-executed; design only here)
 
@@ -321,17 +337,19 @@ vacancy DB.
 - **B (helper):** company-only, company+role, company+role+location,
   missing-company throws, encoding of spaces/`&`/unicode; no network
   import.
-- **C (prepare commit):** Medium and Strong rows get a populated URL in
-  both the TSV row and the Notion field payload; Weak gets none; helper
-  injected as a fake; property omitted when `property_map` lacks the key.
+- **C (prepare commit):** Strong, Medium, AND Weak rows each get a
+  populated URL in both the TSV row and the Notion field payload (no
+  fit-tier gate); helper injected as a fake; property omitted when
+  `property_map` lacks the key.
 - **E (sync):** update-path pulls the five operator fields when Notion
   differs (Notion wins); add-path seeds them; engine-written
   `company_people_search_url` is not overwritten by an empty Notion value;
   `reconcilePull` stays pure; no push path introduced.
 - All network mocked. No real LinkedIn/Notion calls in unit tests.
-- **Smoke:** local `prepare --phase commit` on a Medium+/Strong batch
-  populates the URL + Notion field; `sync --apply` round-trips a manually
-  set `hm_outreach_status` from Notion back into the TSV.
+- **Smoke:** local `prepare --phase commit` on a mixed-tier batch
+  (Strong/Medium/Weak) populates the URL + Notion field on every row;
+  `sync --apply` round-trips a manually set `hm_outreach_status` from
+  Notion back into the TSV.
 
 ## Risks
 
@@ -391,16 +409,22 @@ schema — leave to the BL-62 experiment.
 - A full sales CRM / per-person junction DB (see Open questions — deferred).
 - Re-enabling a Notion push path. `prepare` commit stays the only creator
   of Notion pages.
-- Outreach on Weak-fit vacancies. Medium+/Strong only.
+- Note: the search URL itself is populated for **all fit tiers**
+  (Strong/Medium/Weak — scope amended 2026-06-03). What stays
+  operator-prioritized is the **actual outreach effort** (which rows are
+  worth a connection note / DM this week), not whether the URL exists. The
+  engine emits the link everywhere; the operator chooses where to spend
+  invites (see the to-do-queue view in workstream D and the weekly cap in
+  Risks).
 
 ## Rollout (phased)
 
 1. **Schema + helper (A, B).** TSV v6 + auto-migration + the pure
    `linkedin_search_url` helper, both fully tested. No behaviour change yet
    (no field is populated until C).
-2. **prepare integration (C).** Medium+/Strong rows get
-   `company_people_search_url` in TSV and (once property_map has the key)
-   in Notion.
+2. **prepare integration (C).** All committed rows (Strong/Medium/Weak —
+   no fit-tier gate) get `company_people_search_url` in TSV and (once
+   property_map has the key) in Notion.
 3. **Notion schema + property_map + sync (D, E).** Operator runs the
    personal-Notion edits; `property_map` gains the six keys; `sync`
    round-trips the operator-owned outreach fields. After this the vacancy
