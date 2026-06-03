@@ -101,7 +101,7 @@ test("save + load round-trips v3 fields (salary_min, salary_max, cl_path) + v5 l
   built[0].locations = ["San Francisco, CA"];
   apps.save(file, built);
   const back = apps.load(file);
-  assert.equal(back.schemaVersion, 5);
+  assert.equal(back.schemaVersion, 6);
   assert.equal(back.apps[0].salary_min, "140000");
   assert.equal(back.apps[0].salary_max, "190000");
   assert.equal(back.apps[0].cl_path, "Affirm_analyst_20260420");
@@ -120,7 +120,7 @@ test("save + load round-trips v4 fit fields (fit_score, fit_rationale, fit_evalu
   built[0].skip_reason = "weak_fit";
   apps.save(file, built);
   const back = apps.load(file);
-  assert.equal(back.schemaVersion, 5);
+  assert.equal(back.schemaVersion, 6);
   assert.equal(back.apps[0].fit_score, "Weak");
   assert.equal(back.apps[0].fit_rationale, "Energy domain — outside PM core");
   assert.equal(back.apps[0].fit_evaluated_at, "2026-05-05T14:17:47Z");
@@ -136,7 +136,7 @@ test("v5: save + load round-trips multi-element locations array", () => {
   built[0].locations = ["Remote (UK)", "United States", "New York, NY"];
   apps.save(file, built);
   const back = apps.load(file);
-  assert.equal(back.schemaVersion, 5);
+  assert.equal(back.schemaVersion, 6);
   assert.deepEqual(back.apps[0].locations, ["Remote (UK)", "United States", "New York, NY"]);
 });
 
@@ -192,10 +192,10 @@ test("load auto-upgrades v1 files (12 cols) with empty v2+v3+v4+v5 fields", () =
   assert.equal(back.apps[0].status, "To Apply");
   assert.equal(back.apps[0].notion_page_id, "abc");
 
-  // Re-saving promotes the file to v5.
+  // Re-saving promotes the file to v6.
   apps.save(file, back.apps);
   const after = apps.load(file);
-  assert.equal(after.schemaVersion, 5);
+  assert.equal(after.schemaVersion, 6);
 });
 
 test("load auto-upgrades v2 files (15 cols) with empty location and fit fields", () => {
@@ -229,10 +229,10 @@ test("load auto-upgrades v2 files (15 cols) with empty location and fit fields",
   assert.equal(back.apps[0].fit_score, "");
   assert.equal(back.apps[0].skip_reason, "");
 
-  // Re-saving promotes to v5.
+  // Re-saving promotes to v6.
   apps.save(file, back.apps);
   const after = apps.load(file);
-  assert.equal(after.schemaVersion, 5);
+  assert.equal(after.schemaVersion, 6);
 });
 
 test("load auto-upgrades v3 files (16 cols) — `location` wraps to [location]", () => {
@@ -267,10 +267,10 @@ test("load auto-upgrades v3 files (16 cols) — `location` wraps to [location]",
   assert.equal(back.apps[0].fit_evaluated_at, "");
   assert.equal(back.apps[0].skip_reason, "");
 
-  // Re-saving promotes to v5.
+  // Re-saving promotes to v6.
   apps.save(file, back.apps);
   const after = apps.load(file);
-  assert.equal(after.schemaVersion, 5);
+  assert.equal(after.schemaVersion, 6);
 });
 
 // RFC 038: v4 (single-string `location`) wraps to [location] on read.
@@ -307,10 +307,10 @@ test("load auto-upgrades v4 files (20 cols) — `location` wraps to [location]",
   assert.deepEqual(back.apps[0].locations, ["San Francisco, CA"]);
   assert.equal(back.apps[0].fit_score, "Strong");
 
-  // Re-saving promotes to v5.
+  // Re-saving promotes to v6.
   apps.save(file, back.apps);
   const after = apps.load(file);
-  assert.equal(after.schemaVersion, 5);
+  assert.equal(after.schemaVersion, 6);
   assert.deepEqual(after.apps[0].locations, ["San Francisco, CA"]);
 });
 
@@ -494,6 +494,168 @@ test("appendNew dedups when adapter returns the same id with and without prefix"
   const r = apps.appendNew(existing, incoming, { now: "2026-04-20T00:00:00Z" });
   assert.equal(r.fresh.length, 0, "prefixed jobId must collapse onto the canonical key");
   assert.equal(r.apps.length, 1);
+});
+
+// --- RFC 059 / BL-169: v6 outreach columns --------------------------------
+
+test("appendNew seeds the six v6 outreach defaults (hm_outreach_status='to_search')", () => {
+  const r = apps.appendNew([], [fixtureJob()], { now: "2026-06-03T00:00:00Z" });
+  const a = r.apps[0];
+  assert.equal(a.company_people_search_url, "");
+  assert.equal(a.outreach_type, "");
+  assert.equal(a.contact_name, "");
+  assert.equal(a.contact_linkedin, "");
+  assert.equal(a.hm_outreach_status, "to_search");
+  assert.equal(a.hm_outreach_date, "");
+});
+
+test("v6: save + load round-trips the six outreach fields", () => {
+  const file = tmp();
+  const { apps: built } = apps.appendNew([], [fixtureJob()], { now: "2026-06-03T00:00:00Z" });
+  built[0].company_people_search_url =
+    "https://www.linkedin.com/search/results/people/?keywords=Affirm";
+  built[0].outreach_type = "warm";
+  built[0].contact_name = "Jane Doe";
+  built[0].contact_linkedin = "https://www.linkedin.com/in/janedoe";
+  built[0].hm_outreach_status = "dm_sent";
+  built[0].hm_outreach_date = "2026-06-03";
+  apps.save(file, built);
+  const back = apps.load(file);
+  assert.equal(back.schemaVersion, 6);
+  assert.equal(
+    back.apps[0].company_people_search_url,
+    "https://www.linkedin.com/search/results/people/?keywords=Affirm"
+  );
+  assert.equal(back.apps[0].outreach_type, "warm");
+  assert.equal(back.apps[0].contact_name, "Jane Doe");
+  assert.equal(back.apps[0].contact_linkedin, "https://www.linkedin.com/in/janedoe");
+  assert.equal(back.apps[0].hm_outreach_status, "dm_sent");
+  assert.equal(back.apps[0].hm_outreach_date, "2026-06-03");
+});
+
+test("v6: header parses and detects as schemaVersion 6", () => {
+  const file = tmp();
+  const v6Header = apps.HEADER_V6.join("\t");
+  const v6Row = [
+    "greenhouse:1",
+    "greenhouse",
+    "1",
+    "Affirm",
+    "PM",
+    "https://x/1",
+    '["San Francisco, CA"]',
+    "To Apply",
+    "abc",
+    "Risk_Fraud",
+    "cl_key1",
+    "140000",
+    "190000",
+    "Affirm_analyst_20260420",
+    "2026-01-01",
+    "2026-01-02",
+    "Strong",
+    "Great fit",
+    "2026-05-05T00:00:00Z",
+    "",
+    "https://www.linkedin.com/search/results/people/?keywords=Affirm",
+    "cold",
+    "Jane Doe",
+    "https://www.linkedin.com/in/janedoe",
+    "connected",
+    "2026-06-02",
+  ].join("\t");
+  fs.writeFileSync(file, `${v6Header}\n${v6Row}\n`);
+
+  const back = apps.load(file);
+  assert.equal(back.schemaVersion, 6);
+  assert.equal(back.apps.length, 1);
+  assert.deepEqual(back.apps[0].locations, ["San Francisco, CA"]);
+  assert.equal(back.apps[0].fit_score, "Strong");
+  assert.equal(back.apps[0].outreach_type, "cold");
+  assert.equal(back.apps[0].contact_name, "Jane Doe");
+  assert.equal(back.apps[0].hm_outreach_status, "connected");
+  assert.equal(back.apps[0].hm_outreach_date, "2026-06-02");
+});
+
+// Auto-upgrade: a v5 file (20 cols) loads with the six v6 defaults, and the
+// next save() rewrites it as v6.
+test("load auto-upgrades v5 files (20 cols) with the six v6 outreach defaults", () => {
+  const file = tmp();
+  const v5Header = apps.HEADER_V5.join("\t");
+  const v5Row = [
+    "greenhouse:1",
+    "greenhouse",
+    "1",
+    "Affirm",
+    "PM",
+    "https://x/1",
+    '["San Francisco, CA"]',
+    "To Apply",
+    "abc",
+    "Risk_Fraud",
+    "cl_key1",
+    "140000",
+    "190000",
+    "Affirm_analyst_20260420",
+    "2026-01-01",
+    "2026-01-02",
+    "Strong",
+    "Great fit",
+    "2026-05-05T00:00:00Z",
+    "",
+  ].join("\t");
+  fs.writeFileSync(file, `${v5Header}\n${v5Row}\n`);
+
+  const back = apps.load(file);
+  assert.equal(back.schemaVersion, 5);
+  assert.equal(back.apps.length, 1);
+  // v5 fields intact
+  assert.deepEqual(back.apps[0].locations, ["San Francisco, CA"]);
+  assert.equal(back.apps[0].fit_score, "Strong");
+  // v6 defaults seeded
+  assert.equal(back.apps[0].company_people_search_url, "");
+  assert.equal(back.apps[0].outreach_type, "");
+  assert.equal(back.apps[0].contact_name, "");
+  assert.equal(back.apps[0].contact_linkedin, "");
+  assert.equal(back.apps[0].hm_outreach_status, "to_search");
+  assert.equal(back.apps[0].hm_outreach_date, "");
+
+  // Re-saving promotes the file to v6.
+  apps.save(file, back.apps);
+  const after = apps.load(file);
+  assert.equal(after.schemaVersion, 6);
+  assert.equal(after.apps[0].hm_outreach_status, "to_search");
+  assert.deepEqual(after.apps[0].locations, ["San Francisco, CA"]);
+});
+
+// Older upgrade paths (v1) must also seed the v6 outreach defaults.
+test("load auto-upgrades v1 files with the v6 outreach defaults too", () => {
+  const file = tmp();
+  const v1Header = apps.HEADER_V1.join("\t");
+  const v1Row = [
+    "greenhouse:1",
+    "greenhouse",
+    "1",
+    "Affirm",
+    "PM",
+    "https://x/1",
+    "To Apply",
+    "abc",
+    "Risk_Fraud",
+    "cl_key1",
+    "2026-01-01",
+    "2026-01-02",
+  ].join("\t");
+  fs.writeFileSync(file, `${v1Header}\n${v1Row}\n`);
+
+  const back = apps.load(file);
+  assert.equal(back.schemaVersion, 1);
+  assert.equal(back.apps[0].hm_outreach_status, "to_search");
+  assert.equal(back.apps[0].company_people_search_url, "");
+
+  apps.save(file, back.apps);
+  const after = apps.load(file);
+  assert.equal(after.schemaVersion, 6);
 });
 
 // RFC 038: decodeLocations defensive fallback — a hand-edited v5 cell that

@@ -74,9 +74,10 @@ test("migrateOne: v4 → v5, drops backup, locations wrapped to single-element a
   assert.equal(res.backupPath, `${file}.pre-v5-${todayStamp(now)}`);
   assert.ok(fs.existsSync(res.backupPath), "backup file must exist");
 
-  // File on disk now reads as v5.
+  // File on disk now reads as the current schema (v6 — save() always writes
+  // the latest header; the v4→v5 location-wrap is still applied en route).
   const back = apps.load(file);
-  assert.equal(back.schemaVersion, 5);
+  assert.equal(back.schemaVersion, 6);
   assert.deepEqual(back.apps[0].locations, ["San Francisco, CA"]);
   assert.deepEqual(back.apps[1].locations, []);
   assert.equal(back.apps[0].fit_score, "Strong");
