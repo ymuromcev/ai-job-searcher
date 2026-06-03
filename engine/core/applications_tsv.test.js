@@ -498,14 +498,14 @@ test("appendNew dedups when adapter returns the same id with and without prefix"
 
 // --- RFC 059 / BL-169: v6 outreach columns --------------------------------
 
-test("appendNew seeds the six v6 outreach defaults (hm_outreach_status='to_search')", () => {
+test("appendNew seeds the six v6 outreach defaults (hm_outreach_status='To do')", () => {
   const r = apps.appendNew([], [fixtureJob()], { now: "2026-06-03T00:00:00Z" });
   const a = r.apps[0];
   assert.equal(a.company_people_search_url, "");
   assert.equal(a.outreach_type, "");
   assert.equal(a.contact_name, "");
   assert.equal(a.contact_linkedin, "");
-  assert.equal(a.hm_outreach_status, "to_search");
+  assert.equal(a.hm_outreach_status, "To do");
   assert.equal(a.hm_outreach_date, "");
 });
 
@@ -617,14 +617,14 @@ test("load auto-upgrades v5 files (20 cols) with the six v6 outreach defaults", 
   assert.equal(back.apps[0].outreach_type, "");
   assert.equal(back.apps[0].contact_name, "");
   assert.equal(back.apps[0].contact_linkedin, "");
-  assert.equal(back.apps[0].hm_outreach_status, "to_search");
+  assert.equal(back.apps[0].hm_outreach_status, "To do");
   assert.equal(back.apps[0].hm_outreach_date, "");
 
   // Re-saving promotes the file to v6.
   apps.save(file, back.apps);
   const after = apps.load(file);
   assert.equal(after.schemaVersion, 6);
-  assert.equal(after.apps[0].hm_outreach_status, "to_search");
+  assert.equal(after.apps[0].hm_outreach_status, "To do");
   assert.deepEqual(after.apps[0].locations, ["San Francisco, CA"]);
 });
 
@@ -650,7 +650,7 @@ test("load auto-upgrades v1 files with the v6 outreach defaults too", () => {
 
   const back = apps.load(file);
   assert.equal(back.schemaVersion, 1);
-  assert.equal(back.apps[0].hm_outreach_status, "to_search");
+  assert.equal(back.apps[0].hm_outreach_status, "To do");
   assert.equal(back.apps[0].company_people_search_url, "");
 
   apps.save(file, back.apps);

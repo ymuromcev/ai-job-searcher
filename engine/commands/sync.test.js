@@ -298,7 +298,7 @@ test("reconcilePull pulls Outreach status from Notion (RFC 059, Notion wins)", (
       key: "greenhouse:1",
       status: "Applied",
       notion_page_id: "p1",
-      hm_outreach_status: "to_search",
+      hm_outreach_status: "To do",
     }),
   ];
   const pages = [
@@ -341,7 +341,7 @@ test("reconcilePull add-path seeds outreach columns, taking Notion's status when
   assert.equal(byKey["lever:abc"].hm_outreach_status, "Done", "Notion value wins on add");
   assert.equal(
     byKey["lever:def"].hm_outreach_status,
-    "to_search",
+    "To do",
     "default placeholder when Notion unset"
   );
   assert.equal(byKey["lever:abc"].company_people_search_url, "", "URL left empty on pulled add");

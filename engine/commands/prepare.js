@@ -2057,7 +2057,7 @@ async function runCommit(ctx, deps) {
     // per-row whether to act, so there is no fit-tier gate. The only gate
     // on whether Notion sees it is property_map presence, handled by
     // buildProperties dropping unmapped fields. `hm_outreach_status` is
-    // left at its phase-1 `to_search` default here.
+    // left at its phase-1 `To do` default here.
     app.company_people_search_url = deps.buildCompanyPeopleSearchUrl({
       company: app.companyName,
       roleTitle: app.title,

@@ -129,7 +129,7 @@ function reconcilePull(apps, notionPages, propertyMap, now, companyNameById = {}
     }
     // RFC 059 (BL-169): pull the operator-owned Outreach status (Notion wins).
     // The `page.hmOutreachStatus` truthiness guard means an empty/unset Notion
-    // value never clobbers the local one — the engine-seeded "to_search"
+    // value never clobbers the local one — the engine-seeded "To do"
     // placeholder survives until the operator actually sets Outreach in Notion.
     // `company_people_search_url` is engine-written (one-way, set at prepare
     // commit) so it is deliberately NOT pulled back here.
@@ -175,7 +175,7 @@ function reconcilePull(apps, notionPages, propertyMap, now, companyNameById = {}
       outreach_type: "",
       contact_name: "",
       contact_linkedin: "",
-      hm_outreach_status: page.hmOutreachStatus || "to_search",
+      hm_outreach_status: page.hmOutreachStatus || "To do",
       hm_outreach_date: "",
     });
   }

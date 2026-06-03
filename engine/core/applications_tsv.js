@@ -20,10 +20,11 @@
 //   `outreach_type`             — "warm" | "cold" | "" (operator → Notion → sync).
 //   `contact_name`              — free text (operator → Notion → sync).
 //   `contact_linkedin`          — URL (operator → Notion → sync).
-//   `hm_outreach_status`        — "to_search" | "searching" | "pending_connection"
-//                                 | "connected" | "dm_sent" | "replied" | "dead".
-//                                 Defaults to "to_search" so existing rows land in
-//                                 a valid lifecycle state (operator → Notion → sync).
+//   `hm_outreach_status`        — as-built Notion `Outreach` status, 4-state:
+//                                 "To do" | "In flight" | "Replied" | "Dead".
+//                                 Defaults to "To do" (Notion's first option) so a
+//                                 fresh row matches the value Notion auto-assigns and
+//                                 `sync` shows no spurious diff (operator → Notion → sync).
 //   `hm_outreach_date`          — ISO date (operator → Notion → sync).
 //
 // v5 (added 2026-05-18 for BL-93 / RFC 038 — persist the full multi-element
@@ -76,7 +77,7 @@
 //
 // Backward compat (auto-upgrade-on-save):
 //   v5 (20 cols, 2026-05-18 — RFC 038 locations[]) → reader seeds the six v6
-//     outreach defaults (empty + hm_outreach_status="to_search").
+//     outreach defaults (empty + hm_outreach_status="To do").
 //   v4 (20 cols, 2026-05-05 — BL-9 fit columns, single-string `location`) →
 //     reader wraps non-empty `location` to `[location]`, empty to `[]`, and
 //     seeds the v6 outreach defaults.
@@ -166,15 +167,18 @@ const HEADER = HEADER_V6;
 
 // RFC 059: default values for the six v6 outreach fields. Older rowToApp*
 // paths seed these so an old file loads cleanly; the next save() rewrites it
-// as v6. `hm_outreach_status` defaults to "to_search" (a valid lifecycle
-// state); the rest default empty.
+// as v6. `hm_outreach_status` defaults to "To do" — the first option of the
+// as-built Notion `Outreach` status (4-state: To do / In flight / Replied /
+// Dead). Matching Notion's first option means a fresh `scan` row never drifts
+// from the value Notion auto-assigns, so `sync` shows no spurious diff. The
+// other five default empty.
 function outreachDefaults() {
   return {
     company_people_search_url: "",
     outreach_type: "",
     contact_name: "",
     contact_linkedin: "",
-    hm_outreach_status: "to_search",
+    hm_outreach_status: "To do",
     hm_outreach_date: "",
   };
 }
