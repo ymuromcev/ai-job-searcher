@@ -1,9 +1,8 @@
 // Per-profile pipeline file: profiles/<id>/applications.tsv.
 //
-// Schema (header required), v5 (added 2026-05-18 for BL-93 / RFC 038 — persist
-// the full multi-element locations[] array from discovery instead of collapsing
-// to locations[0]). The on-disk column is renamed `location` → `locations` and
-// carries a JSON-encoded array of strings:
+// Schema (header required), v6 (added 2026-06-03 for BL-169 / RFC 059 — append
+// six hiring-manager / warm-contact outreach columns). The v6 columns extend v5
+// with the outreach motion tracked on the vacancy card:
 //   key <TAB> source <TAB> jobId <TAB> companyName <TAB> title <TAB> url
 //             <TAB> locations <TAB> status <TAB> notion_page_id
 //             <TAB> resume_ver <TAB> cl_key
@@ -11,6 +10,26 @@
 //             <TAB> createdAt <TAB> updatedAt
 //             <TAB> fit_score <TAB> fit_rationale <TAB> fit_evaluated_at
 //             <TAB> skip_reason
+//             <TAB> company_people_search_url <TAB> outreach_type
+//             <TAB> contact_name <TAB> contact_linkedin
+//             <TAB> hm_outreach_status <TAB> hm_outreach_date
+//
+// v6 outreach columns (RFC 059):
+//   `company_people_search_url` — LinkedIn people-search URL, engine-authored by
+//                                 `prepare --phase commit` for Medium+/Strong rows.
+//   `outreach_type`             — "warm" | "cold" | "" (operator → Notion → sync).
+//   `contact_name`              — free text (operator → Notion → sync).
+//   `contact_linkedin`          — URL (operator → Notion → sync).
+//   `hm_outreach_status`        — "to_search" | "searching" | "pending_connection"
+//                                 | "connected" | "dm_sent" | "replied" | "dead".
+//                                 Defaults to "to_search" so existing rows land in
+//                                 a valid lifecycle state (operator → Notion → sync).
+//   `hm_outreach_date`          — ISO date (operator → Notion → sync).
+//
+// v5 (added 2026-05-18 for BL-93 / RFC 038 — persist the full multi-element
+// locations[] array from discovery instead of collapsing to locations[0]). The
+// on-disk column is renamed `location` → `locations` and carries a JSON-encoded
+// array of strings.
 //
 // `key` = "<source>:<jobId>" — primary, used for dedup against the master pool.
 // New entries default to status="Inbox" (post-RFC 014, 2026-05-04). "Inbox" =
@@ -56,13 +75,18 @@
 // from v3/v4 is gone — every caller now reads the array).
 //
 // Backward compat (auto-upgrade-on-save):
+//   v5 (20 cols, 2026-05-18 — RFC 038 locations[]) → reader seeds the six v6
+//     outreach defaults (empty + hm_outreach_status="to_search").
 //   v4 (20 cols, 2026-05-05 — BL-9 fit columns, single-string `location`) →
-//     reader wraps non-empty `location` to `[location]`, empty to `[]`.
-//   v3 (16 cols, 2026-05-03 — G-5 added location) → same wrap; empty fit cols.
+//     reader wraps non-empty `location` to `[location]`, empty to `[]`, and
+//     seeds the v6 outreach defaults.
+//   v3 (16 cols, 2026-05-03 — G-5 added location) → same wrap; empty fit cols;
+//     v6 outreach defaults.
 //   v2 (15 cols, 2026-04 — Stage 13 added salary_min/max/cl_path) → empty
-//     locations array + empty fit cols.
-//   v1 (12 cols, original) → empty locations + empty v2+v3+v4 fields.
-// save() always writes v5.
+//     locations array + empty fit cols + v6 outreach defaults.
+//   v1 (12 cols, original) → empty locations + empty v2+v3+v4 fields + v6
+//     outreach defaults.
+// save() always writes v6.
 
 const fs = require("fs");
 const path = require("path");
@@ -83,6 +107,35 @@ function stripAtsPrefixes(id) {
     prev = m[2];
   }
 }
+
+const HEADER_V6 = [
+  "key",
+  "source",
+  "jobId",
+  "companyName",
+  "title",
+  "url",
+  "locations",
+  "status",
+  "notion_page_id",
+  "resume_ver",
+  "cl_key",
+  "salary_min",
+  "salary_max",
+  "cl_path",
+  "createdAt",
+  "updatedAt",
+  "fit_score",
+  "fit_rationale",
+  "fit_evaluated_at",
+  "skip_reason",
+  "company_people_search_url",
+  "outreach_type",
+  "contact_name",
+  "contact_linkedin",
+  "hm_outreach_status",
+  "hm_outreach_date",
+];
 
 const HEADER_V5 = [
   "key",
@@ -109,7 +162,22 @@ const HEADER_V5 = [
 
 // Current schema header. Aliased so legacy callers reading `HEADER` keep
 // working; readers expect this constant to track the latest version.
-const HEADER = HEADER_V5;
+const HEADER = HEADER_V6;
+
+// RFC 059: default values for the six v6 outreach fields. Older rowToApp*
+// paths seed these so an old file loads cleanly; the next save() rewrites it
+// as v6. `hm_outreach_status` defaults to "to_search" (a valid lifecycle
+// state); the rest default empty.
+function outreachDefaults() {
+  return {
+    company_people_search_url: "",
+    outreach_type: "",
+    contact_name: "",
+    contact_linkedin: "",
+    hm_outreach_status: "to_search",
+    hm_outreach_date: "",
+  };
+}
 
 const HEADER_V4 = [
   "key",
@@ -254,7 +322,77 @@ function rowFor(app) {
     escapeField(app.fit_rationale || ""),
     escapeField(app.fit_evaluated_at || ""),
     escapeField(app.skip_reason || ""),
+    escapeField(app.company_people_search_url || ""),
+    escapeField(app.outreach_type || ""),
+    escapeField(app.contact_name || ""),
+    escapeField(app.contact_linkedin || ""),
+    escapeField(app.hm_outreach_status || ""),
+    escapeField(app.hm_outreach_date || ""),
   ].join("\t");
+}
+
+function rowToAppV6(parts, lineNo) {
+  if (parts.length < HEADER_V6.length) {
+    throw new Error(
+      `applications.tsv line ${lineNo}: expected ${HEADER_V6.length} cols, got ${parts.length}`
+    );
+  }
+  const [
+    key,
+    source,
+    jobId,
+    companyName,
+    title,
+    url,
+    locationsCell,
+    status,
+    notion_page_id,
+    resume_ver,
+    cl_key,
+    salary_min,
+    salary_max,
+    cl_path,
+    createdAt,
+    updatedAt,
+    fit_score,
+    fit_rationale,
+    fit_evaluated_at,
+    skip_reason,
+    company_people_search_url,
+    outreach_type,
+    contact_name,
+    contact_linkedin,
+    hm_outreach_status,
+    hm_outreach_date,
+  ] = parts;
+  return {
+    key,
+    source,
+    jobId,
+    companyName,
+    title,
+    url,
+    locations: decodeLocations(locationsCell),
+    status,
+    notion_page_id: notion_page_id || "",
+    resume_ver: resume_ver || "",
+    cl_key: cl_key || "",
+    salary_min: salary_min || "",
+    salary_max: salary_max || "",
+    cl_path: cl_path || "",
+    createdAt,
+    updatedAt,
+    fit_score: fit_score || "",
+    fit_rationale: fit_rationale || "",
+    fit_evaluated_at: fit_evaluated_at || "",
+    skip_reason: skip_reason || "",
+    company_people_search_url: company_people_search_url || "",
+    outreach_type: outreach_type || "",
+    contact_name: contact_name || "",
+    contact_linkedin: contact_linkedin || "",
+    hm_outreach_status: hm_outreach_status || "",
+    hm_outreach_date: hm_outreach_date || "",
+  };
 }
 
 function rowToAppV5(parts, lineNo) {
@@ -306,6 +444,7 @@ function rowToAppV5(parts, lineNo) {
     fit_rationale: fit_rationale || "",
     fit_evaluated_at: fit_evaluated_at || "",
     skip_reason: skip_reason || "",
+    ...outreachDefaults(),
   };
 }
 
@@ -358,6 +497,7 @@ function rowToAppV4(parts, lineNo) {
     fit_rationale: fit_rationale || "",
     fit_evaluated_at: fit_evaluated_at || "",
     skip_reason: skip_reason || "",
+    ...outreachDefaults(),
   };
 }
 
@@ -406,6 +546,7 @@ function rowToAppV3(parts, lineNo) {
     fit_rationale: "",
     fit_evaluated_at: "",
     skip_reason: "",
+    ...outreachDefaults(),
   };
 }
 
@@ -453,6 +594,7 @@ function rowToAppV2(parts, lineNo) {
     fit_rationale: "",
     fit_evaluated_at: "",
     skip_reason: "",
+    ...outreachDefaults(),
   };
 }
 
@@ -497,6 +639,7 @@ function rowToAppV1(parts, lineNo) {
     fit_rationale: "",
     fit_evaluated_at: "",
     skip_reason: "",
+    ...outreachDefaults(),
   };
 }
 
@@ -511,35 +654,37 @@ function load(filePath) {
   if (!lines.length) return { apps: [], path: filePath };
   const headerCols = lines[0].split("\t");
 
-  const isV5 = matchHeader(headerCols, HEADER_V5);
-  const isV4 = !isV5 && matchHeader(headerCols, HEADER_V4);
-  const isV3 = !isV5 && !isV4 && matchHeader(headerCols, HEADER_V3);
-  const isV2 = !isV5 && !isV4 && !isV3 && matchHeader(headerCols, HEADER_V2);
-  const isV1 = !isV5 && !isV4 && !isV3 && !isV2 && matchHeader(headerCols, HEADER_V1);
+  const isV6 = matchHeader(headerCols, HEADER_V6);
+  const isV5 = !isV6 && matchHeader(headerCols, HEADER_V5);
+  const isV4 = !isV6 && !isV5 && matchHeader(headerCols, HEADER_V4);
+  const isV3 = !isV6 && !isV5 && !isV4 && matchHeader(headerCols, HEADER_V3);
+  const isV2 = !isV6 && !isV5 && !isV4 && !isV3 && matchHeader(headerCols, HEADER_V2);
+  const isV1 = !isV6 && !isV5 && !isV4 && !isV3 && !isV2 && matchHeader(headerCols, HEADER_V1);
 
-  if (!isV5 && !isV4 && !isV3 && !isV2 && !isV1) {
+  if (!isV6 && !isV5 && !isV4 && !isV3 && !isV2 && !isV1) {
     throw new Error(
-      `applications.tsv header mismatch: expected v5 [${HEADER_V5.join(", ")}], v4 [${HEADER_V4.join(", ")}], v3 [${HEADER_V3.join(", ")}], v2 [${HEADER_V2.join(", ")}] or v1 [${HEADER_V1.join(", ")}], got [${headerCols.join(", ")}]`
+      `applications.tsv header mismatch: expected v6 [${HEADER_V6.join(", ")}], v5 [${HEADER_V5.join(", ")}], v4 [${HEADER_V4.join(", ")}], v3 [${HEADER_V3.join(", ")}], v2 [${HEADER_V2.join(", ")}] or v1 [${HEADER_V1.join(", ")}], got [${headerCols.join(", ")}]`
     );
   }
 
   const apps = [];
   for (let i = 1; i < lines.length; i += 1) {
     const parts = lines[i].split("\t");
-    if (isV5) apps.push(rowToAppV5(parts, i + 1));
+    if (isV6) apps.push(rowToAppV6(parts, i + 1));
+    else if (isV5) apps.push(rowToAppV5(parts, i + 1));
     else if (isV4) apps.push(rowToAppV4(parts, i + 1));
     else if (isV3) apps.push(rowToAppV3(parts, i + 1));
     else if (isV2) apps.push(rowToAppV2(parts, i + 1));
     else apps.push(rowToAppV1(parts, i + 1));
   }
-  const schemaVersion = isV5 ? 5 : isV4 ? 4 : isV3 ? 3 : isV2 ? 2 : 1;
+  const schemaVersion = isV6 ? 6 : isV5 ? 5 : isV4 ? 4 : isV3 ? 3 : isV2 ? 2 : 1;
   return { apps, path: filePath, schemaVersion };
 }
 
 function save(filePath, apps) {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
-  const lines = [HEADER_V5.join("\t")];
+  const lines = [HEADER_V6.join("\t")];
   for (const a of apps) lines.push(rowFor(a));
   const tmp = `${filePath}.tmp.${process.pid}.${Date.now()}`;
   fs.writeFileSync(tmp, lines.join("\n") + "\n");
@@ -600,6 +745,7 @@ function appendNew(
       fit_rationale: "",
       fit_evaluated_at: "",
       skip_reason: "",
+      ...outreachDefaults(),
     });
   }
   return { apps: existing.concat(fresh), fresh, fuzzyDuplicates };
@@ -618,4 +764,5 @@ module.exports = {
   HEADER_V3,
   HEADER_V4,
   HEADER_V5,
+  HEADER_V6,
 };

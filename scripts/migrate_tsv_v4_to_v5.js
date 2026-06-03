@@ -55,7 +55,11 @@ function migrateOne(tsvPath, { apply, now = new Date(), fsImpl = fs } = {}) {
   }
   const result = apps.load(tsvPath);
   const { apps: rows, schemaVersion } = result;
-  if (schemaVersion === 5) {
+  // This one-shot migration only needs to wrap `location` → `locations[]`,
+  // which is satisfied at v5 and any later schema (v6+ supersedes v5 and
+  // already carries the array). Treat anything already at v5 or newer as a
+  // no-op so the script stays idempotent after later schema bumps.
+  if (schemaVersion >= 5) {
     return { path: tsvPath, status: "already_v5", rows: rows.length };
   }
   if (!apply) {
