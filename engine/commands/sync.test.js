@@ -292,6 +292,65 @@ test("reconcilePull adds a Notion page with no matching local row (RFC 055)", ()
   assert.equal(row.skip_reason, "");
 });
 
+test("reconcilePull pulls Outreach status from Notion (RFC 059, Notion wins)", () => {
+  const apps = [
+    fakeApp({
+      key: "greenhouse:1",
+      status: "Applied",
+      notion_page_id: "p1",
+      hm_outreach_status: "to_search",
+    }),
+  ];
+  const pages = [
+    { notionPageId: "p1", key: "greenhouse:1", status: "Applied", hmOutreachStatus: "In progress" },
+  ];
+  const { updates } = reconcilePull(apps, pages, DEFAULT_PROPERTY_MAP, NOW);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].after.hm_outreach_status, "In progress");
+});
+
+test("reconcilePull never clobbers a local outreach status with an empty Notion value (RFC 059)", () => {
+  const apps = [
+    fakeApp({
+      key: "greenhouse:1",
+      status: "Applied",
+      notion_page_id: "p1",
+      hm_outreach_status: "Done",
+    }),
+  ];
+  // Notion page has no hmOutreachStatus (operator hasn't set Outreach yet).
+  const pages = [{ notionPageId: "p1", key: "greenhouse:1", status: "Applied" }];
+  const { updates } = reconcilePull(apps, pages, DEFAULT_PROPERTY_MAP, NOW);
+  assert.equal(updates.length, 0, "no drift → no update; local 'Done' survives");
+});
+
+test("reconcilePull add-path seeds outreach columns, taking Notion's status when present (RFC 059)", () => {
+  const pages = [
+    {
+      notionPageId: "p2",
+      key: "lever:abc",
+      source: "lever",
+      jobId: "abc",
+      status: "Interview",
+      hmOutreachStatus: "Done",
+    },
+    { notionPageId: "p3", key: "lever:def", source: "lever", jobId: "def", status: "To Apply" },
+  ];
+  const { adds } = reconcilePull([], pages, DEFAULT_PROPERTY_MAP, NOW);
+  const byKey = Object.fromEntries(adds.map((a) => [a.key, a]));
+  assert.equal(byKey["lever:abc"].hm_outreach_status, "Done", "Notion value wins on add");
+  assert.equal(
+    byKey["lever:def"].hm_outreach_status,
+    "to_search",
+    "default placeholder when Notion unset"
+  );
+  assert.equal(byKey["lever:abc"].company_people_search_url, "", "URL left empty on pulled add");
+  assert.equal(byKey["lever:abc"].outreach_type, "");
+  assert.equal(byKey["lever:abc"].contact_name, "");
+  assert.equal(byKey["lever:abc"].contact_linkedin, "");
+  assert.equal(byKey["lever:abc"].hm_outreach_date, "");
+});
+
 test("reconcilePull defaults source to 'notion' when the page has none", () => {
   const apps = [];
   const pages = [{ notionPageId: "p9", key: "manual-entry", status: "Applied" }];

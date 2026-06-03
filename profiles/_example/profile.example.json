@@ -44,7 +44,9 @@
       "jobId":       { "field": "JobID",   "type": "rich_text" },
       "url":         { "field": "URL",     "type": "url" },
       "status":      { "field": "Status",  "type": "status" },
-      "key":         { "field": "Key",     "type": "rich_text" }
+      "key":         { "field": "Key",     "type": "rich_text" },
+      "companyPeopleSearchUrl": { "field": "LinkedIn Search", "type": "url" },
+      "hmOutreachStatus":       { "field": "Outreach",        "type": "status" }
     }
   }
 }

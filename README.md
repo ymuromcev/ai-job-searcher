@@ -79,8 +79,12 @@ lives in `profiles/<id>/`.
 - **Prepare** — Two-phase (pre / commit) with a human review gate.
   Assigns resume archetype, drafts cover letter with per-profile
   voice, computes a salary band from Tier × Level × cost-of-living.
-- **Sync** — Push / pull against Notion. Defaults to dry-run;
-  `--apply` writes. Uses Notion SDK v5 (`dataSources.query`).
+  On commit, also emits a per-vacancy LinkedIn people-search URL for
+  hiring-manager / warm-contact outreach (RFC 059).
+- **Sync** — Pull against Notion (pull-only since 2026-05-04). Defaults
+  to dry-run; `--apply` writes. Uses Notion SDK v5 (`dataSources.query`).
+  Round-trips the operator-owned `Outreach` status back into the local
+  ledger (RFC 059).
 - **Check** — Reads Gmail replies via Claude MCP, classifies
   (rejection / interview invite / info request / recruiter
   outreach), updates Notion status and adds comments.
