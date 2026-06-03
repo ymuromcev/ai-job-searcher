@@ -200,6 +200,7 @@ test("runCli reports missing handler with a clear error", async () => {
 test("KNOWN_COMMANDS lists exactly the supported commands", () => {
   assert.deepEqual([...KNOWN_COMMANDS].sort(), [
     "answer",
+    "backfill-outreach-url",
     "check",
     "indeed-prep",
     "prepare",

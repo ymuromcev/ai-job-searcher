@@ -23,6 +23,7 @@ const KNOWN_COMMANDS = [
   "answer",
   "reclassify",
   "retro-tailor",
+  "backfill-outreach-url",
 ];
 
 const PARSE_OPTIONS = {
@@ -87,6 +88,14 @@ Commands:
              --apply --results-file <path>, generates tailored DOCX/PDF and
              updates the existing Notion page's Resume Version. Cover letter
              is NOT regenerated. See RFC 047 / BL-133.
+  backfill-outreach-url
+             One-shot backfill of the LinkedIn people-search URL for existing
+             "To Apply" / "Applied" rows that predate the RFC-059 outreach
+             feature (empty company_people_search_url). Dry-run by default
+             (prints "would enrich N, skip M (no company), already set K");
+             --apply computes the URL, writes it to TSV, and pushes it to the
+             Notion "LinkedIn Search" field via a targeted page update.
+             Idempotent — a second run is a no-op. See RFC 059 / BL-186.
 
 Flags:
   --profile <id>       Profile id (required for all commands). Lowercase, alphanum + - _.
@@ -210,6 +219,7 @@ function defaultCommands() {
     answer: require("./commands/answer.js"),
     reclassify: require("./commands/reclassify.js"),
     "retro-tailor": require("./commands/retro_tailor.js"),
+    "backfill-outreach-url": require("./commands/backfill_outreach_url.js"),
   };
 }
 
