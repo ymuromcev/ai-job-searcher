@@ -1,6 +1,7 @@
 # RFC 059 — Hiring-manager & warm-contact outreach (job-centric, LinkedIn)
 
-- Status: **Proposed** (open question resolved 2026-06-03 → Option 1)
+- Status: **Implemented** (phases 1–3 shipped 2026-06-03; phase 4 =
+  content, tracked in BL-62). Open question resolved → Option 1.
 - Date: 2026-06-03
 - **Scope amended 2026-06-03:** the `company_people_search_url` is
   populated for **all fit tiers** (Strong/Medium/Weak) on commit, per
@@ -416,6 +417,49 @@ schema — leave to the BL-62 experiment.
   engine emits the link everywhere; the operator chooses where to spend
   invites (see the to-do-queue view in workstream D and the weekly cap in
   Risks).
+
+## As-built (2026-06-03)
+
+Phases 1–3 shipped. The Notion-side schema (workstream D) was deliberately
+built **leaner** than the design above — the operator chose a minimal
+surface consistent with the "no per-person CRM" decision (BL-166/169):
+
+**Notion vacancy DB — what was actually created:**
+
+- **`LinkedIn Search`** (`url`) — the engine-written people-search URL.
+- **`Outreach`** (`status`, 3 options: `Not started` / `In progress` /
+  `Done`) — the operator-owned outreach state. Built as a Notion **status**
+  property, not the 7-state `select` the design sketched; the 3-state
+  lifecycle is enough for v1.
+- **`People`** (`rollup` over the existing `Company` relation,
+  `show_unique`) — "who I know at this company", read-only.
+- `Company` was already a relation to `companies_db` (RFC 058), so the
+  `people_db`.«Компания» relation bridge was already in place.
+
+**Deferred (not created):** `outreach_type`, `contact_name`,
+`contact_linkedin`, `hm_outreach_date`. Per-contact detail lives in the
+LinkedIn UI + the `People` rollup, not in Notion columns. The TSV still
+carries these as v6 columns (empty placeholders) so the schema is stable
+if they are added later.
+
+**property_map (Jared's profile) — 2 keys added, not 6:**
+
+| key | Notion field | type | writer |
+|---|---|---|---|
+| `companyPeopleSearchUrl` | `LinkedIn Search` | `url` | engine (`prepare` commit) |
+| `hmOutreachStatus` | `Outreach` | `status` | operator → `sync` pull |
+
+**`sync` round-trip (workstream E, as-built):** `reconcilePull` pulls the
+single operator-owned field `hm_outreach_status` from Notion's `Outreach`
+status (Notion wins; an empty/unset Notion value never clobbers the local
+placeholder). `company_people_search_url` is engine-authored at `prepare`
+commit and is **not** pulled back. The add-path seeds all six v6 outreach
+columns, taking Notion's `Outreach` value when present. Pull-only model
+preserved; no push path added.
+
+**Not done (intentionally, content not code):** the Notion "to-do queue"
+view (workstream D.5) and the note/DM templates (workstream F) — both live
+in the BL-62 Notion project and are authored by hand, tracked there.
 
 ## Rollout (phased)
 

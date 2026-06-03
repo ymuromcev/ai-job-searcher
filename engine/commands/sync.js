@@ -85,9 +85,10 @@ function companyNameForPage(page, companyNameById) {
 //
 // Returns { updates, adds }:
 //   updates — { before, after } pairs for existing local rows whose
-//             notion_page_id / status / (empty) companyName drifted from
-//             Notion (Notion wins; a populated local companyName is never
-//             overwritten).
+//             notion_page_id / status / (empty) companyName / outreach status
+//             drifted from Notion (Notion wins; a populated local companyName
+//             is never overwritten; an empty Notion outreach value never
+//             clobbers the local placeholder).
 //   adds    — full TSV row objects for Notion pages with NO matching local
 //             row. This makes the pull additive: the fly.io cron's stale
 //             TSV picks up apps created on the operator's Mac (RFC 055).
@@ -126,6 +127,16 @@ function reconcilePull(apps, notionPages, propertyMap, now, companyNameById = {}
         changed = true;
       }
     }
+    // RFC 059 (BL-169): pull the operator-owned Outreach status (Notion wins).
+    // The `page.hmOutreachStatus` truthiness guard means an empty/unset Notion
+    // value never clobbers the local one — the engine-seeded "to_search"
+    // placeholder survives until the operator actually sets Outreach in Notion.
+    // `company_people_search_url` is engine-written (one-way, set at prepare
+    // commit) so it is deliberately NOT pulled back here.
+    if (page.hmOutreachStatus && app.hm_outreach_status !== page.hmOutreachStatus) {
+      next.hm_outreach_status = page.hmOutreachStatus;
+      changed = true;
+    }
     if (changed) updates.push({ before: app, after: next });
   }
 
@@ -156,6 +167,16 @@ function reconcilePull(apps, notionPages, propertyMap, now, companyNameById = {}
       fit_rationale: "",
       fit_evaluated_at: "",
       skip_reason: "",
+      // RFC 059 (BL-169): outreach columns. company_people_search_url is left
+      // empty for pulled rows (it is computed by prepare commit, not on pull);
+      // hm_outreach_status takes Notion's value when present, else the
+      // engine-default placeholder.
+      company_people_search_url: "",
+      outreach_type: "",
+      contact_name: "",
+      contact_linkedin: "",
+      hm_outreach_status: page.hmOutreachStatus || "to_search",
+      hm_outreach_date: "",
     });
   }
 
