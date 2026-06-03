@@ -74,6 +74,7 @@ const { planDedup } = require("../core/tsv_dedup.js");
 const notionSync = require("../core/notion_sync.js");
 const { makeCompanyResolver } = require("../core/company_resolver.js");
 const notionJobPage = require("../core/notion_job_page.js");
+const { buildCompanyPeopleSearchUrl } = require("../core/linkedin_search_url.js");
 const {
   ENGINE_SKIP_REASONS,
   ALREADY_EVALUATED_REASONS,
@@ -828,6 +829,11 @@ function makeDefaultDeps() {
     makeCompanyResolver,
     pushJobPage: notionJobPage.pushJobPage,
     formatSalaryDisplay: notionJobPage.formatSalaryDisplay,
+    // RFC 059 (BL-169) workstream C: prefab LinkedIn people-search URL,
+    // populated for every committed row (all fit tiers). Injectable so the
+    // commit-phase tests can swap in a fake without depending on the real
+    // helper's keyword string.
+    buildCompanyPeopleSearchUrl,
     now: () => new Date().toISOString(),
   };
 }
@@ -1669,6 +1675,16 @@ function buildJobFieldsForNotion({ app, r, prepareCtxEntry, now, formatSalaryDis
   if (r.requirements) fields.requirements = r.requirements;
   else if (ctx.requirements) fields.requirements = ctx.requirements;
 
+  // RFC 059 (BL-169) workstream C — surface the prefab LinkedIn
+  // people-search URL the commit loop already wrote onto the TSV row, for
+  // EVERY tier (no fit gate). buildProperties only emits it when the
+  // profile's property_map maps `companyPeopleSearchUrl` (type url);
+  // profiles without that key (e.g. _example until phase 3) silently drop
+  // it, like any other unmapped field.
+  if (app.company_people_search_url) {
+    fields.companyPeopleSearchUrl = app.company_people_search_url;
+  }
+
   return fields;
 }
 
@@ -2034,6 +2050,19 @@ async function runCommit(ctx, deps) {
       continue;
     }
     app.status = "To Apply";
+    // RFC 059 (BL-169) workstream C — populate the prefab LinkedIn
+    // people-search URL for EVERY committed row, regardless of fit tier
+    // (Strong / Medium / Weak). Scope amended 2026-06-03 (operator
+    // decision): the URL is a cheap, harmless link; the operator decides
+    // per-row whether to act, so there is no fit-tier gate. The only gate
+    // on whether Notion sees it is property_map presence, handled by
+    // buildProperties dropping unmapped fields. `hm_outreach_status` is
+    // left at its phase-1 `to_search` default here.
+    app.company_people_search_url = deps.buildCompanyPeopleSearchUrl({
+      company: app.companyName,
+      roleTitle: app.title,
+      location: (app.locations && app.locations[0]) || undefined,
+    });
     if (r.clKey) app.cl_key = r.clKey;
     if (r.resumeVer) app.resume_ver = r.resumeVer;
     if (r.notionPageId) app.notion_page_id = r.notionPageId;

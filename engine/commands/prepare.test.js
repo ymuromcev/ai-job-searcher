@@ -1868,6 +1868,257 @@ test("prepare --phase commit (RFC 034): Strong + Medium + Weak all reach Notion 
   assert.equal(ctx._errLines.filter((l) => /legacy "decision" field/.test(l)).length, 0);
 });
 
+// --- RFC 059 (BL-169) workstream C: company_people_search_url -----------------
+
+// Phase-2 contract: EVERY committed row (Strong / Medium / Weak — no fit-tier
+// gate) gets a populated `company_people_search_url` in the TSV row AND in the
+// Notion field payload assembled by buildJobFieldsForNotion. The helper is
+// injected so we can assert it was called per-row with the right inputs without
+// coupling to the real keyword string. Whether Notion actually receives the
+// property is gated ONLY by property_map presence (buildProperties drops
+// unmapped fields) — exercised in the two property_map tests below.
+test("prepare --phase commit (RFC 059): Strong + Medium + Weak all get company_people_search_url in TSV and Notion payload", async () => {
+  const apps = [
+    makeApp({
+      key: "gh:1",
+      status: "Inbox",
+      companyName: "Affirm",
+      title: "Senior PM",
+      locations: ["San Francisco, CA"],
+    }),
+    makeApp({
+      key: "gh:2",
+      status: "Inbox",
+      companyName: "Stripe",
+      title: "Product Manager",
+      locations: ["New York, NY"],
+    }),
+    makeApp({
+      key: "gh:3",
+      status: "Inbox",
+      companyName: "Plaid",
+      title: "Group PM",
+      locations: [],
+    }),
+  ];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        fitScore: "Strong",
+        fitRationale: "core",
+        clKey: "Affirm_PM",
+        resumeVer: "v1",
+        clParagraphs: ["P1", "P2", "P3", "P4"],
+      },
+      {
+        key: "gh:2",
+        fitScore: "Medium",
+        fitRationale: "adjacent",
+        clKey: "Stripe_PM",
+        resumeVer: "v1",
+        clParagraphs: ["P1", "P2", "P3", "P4"],
+      },
+      {
+        key: "gh:3",
+        fitScore: "Weak",
+        fitRationale: "outside core",
+      },
+    ],
+  };
+  // Fake helper: records calls, returns a deterministic, easily-asserted URL.
+  const helperCalls = [];
+  const fakeBuildUrl = (args) => {
+    helperCalls.push(args);
+    return `https://fake.search/${encodeURIComponent(args.company)}`;
+  };
+  const rec = makeClRecorder();
+  const rig = makeNotionRig();
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    buildCompanyPeopleSearchUrl: fakeBuildUrl,
+    ...rec.deps,
+    ...rig.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+
+  // Helper invoked once per committed row, every tier, with company/role/loc.
+  assert.equal(helperCalls.length, 3, "helper called for all three tiers");
+  const callByCompany = Object.fromEntries(helperCalls.map((c) => [c.company, c]));
+  assert.deepEqual(callByCompany["Affirm"], {
+    company: "Affirm",
+    roleTitle: "Senior PM",
+    location: "San Francisco, CA",
+  });
+  assert.deepEqual(callByCompany["Stripe"], {
+    company: "Stripe",
+    roleTitle: "Product Manager",
+    location: "New York, NY",
+  });
+  // Empty locations[] → location is undefined (company-only helper input).
+  assert.deepEqual(callByCompany["Plaid"], {
+    company: "Plaid",
+    roleTitle: "Group PM",
+    location: undefined,
+  });
+
+  // (a) TSV row carries the URL for every tier.
+  const saved = deps._getSaved();
+  const savedByKey = Object.fromEntries(saved.map((a) => [a.key, a]));
+  assert.equal(savedByKey["gh:1"].company_people_search_url, "https://fake.search/Affirm");
+  assert.equal(savedByKey["gh:2"].company_people_search_url, "https://fake.search/Stripe");
+  assert.equal(savedByKey["gh:3"].company_people_search_url, "https://fake.search/Plaid");
+  // Commit must NOT set/modify hm_outreach_status — phase 1 (the TSV loader)
+  // owns its `to_search` default. These apps are constructed directly (not
+  // loaded from a TSV), so the field is whatever makeApp produced; the point
+  // is the commit path left it untouched.
+  assert.equal("hm_outreach_status" in savedByKey["gh:1"], false);
+  assert.equal("hm_outreach_status" in savedByKey["gh:3"], false);
+
+  // (b) Notion field payload carries companyPeopleSearchUrl for every tier.
+  assert.equal(rig.pushCalls.length, 3, "all three rows pushed");
+  const pushedByCompany = Object.fromEntries(
+    rig.pushCalls.map((c) => [c.jobFields.companyName, c.jobFields])
+  );
+  assert.equal(pushedByCompany["Affirm"].companyPeopleSearchUrl, "https://fake.search/Affirm");
+  assert.equal(pushedByCompany["Stripe"].companyPeopleSearchUrl, "https://fake.search/Stripe");
+  assert.equal(pushedByCompany["Plaid"].companyPeopleSearchUrl, "https://fake.search/Plaid");
+});
+
+// The Notion property is emitted ONLY when the profile's property_map maps
+// `companyPeopleSearchUrl`. With the key present, buildProperties surfaces it.
+test("prepare --phase commit (RFC 059): Notion property emitted when property_map maps companyPeopleSearchUrl", async () => {
+  const { buildProperties, DEFAULT_PROPERTY_MAP } = require("../core/notion_sync.js");
+  const apps = [
+    makeApp({
+      key: "gh:1",
+      status: "Inbox",
+      companyName: "Affirm",
+      title: "Senior PM",
+      locations: ["San Francisco, CA"],
+    }),
+  ];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        fitScore: "Strong",
+        fitRationale: "core",
+        clKey: "Affirm_PM",
+        resumeVer: "v1",
+        clParagraphs: ["P1", "P2", "P3", "P4"],
+      },
+    ],
+  };
+  // Profile whose property_map DOES map the new key (phase-3 shape).
+  const profileWithMap = {
+    id: "testuser",
+    filterRules: {},
+    company_tiers: {},
+    identity: {
+      name: "JARED MOORE",
+      phone: "+1 (916) 261-261-9",
+      email: "ymuromcev@gmail.com",
+      location: "Sacramento, CA",
+      linkedin: "linkedin.com/in/ymuromcev",
+    },
+    notion: {
+      jobs_pipeline_db_id: "test-jobs-db",
+      companies_db_id: "test-companies-db",
+      property_map: {
+        ...DEFAULT_PROPERTY_MAP,
+        companyPeopleSearchUrl: { field: "People Search URL", type: "url" },
+      },
+    },
+    paths: {
+      root: "/fake/profiles/testuser",
+      applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+      jdCacheDir: "/fake/profiles/testuser/jd_cache",
+    },
+  };
+  const rec = makeClRecorder();
+  const rig = makeNotionRig();
+  const deps = makeCommitDeps(apps, {
+    profile: profileWithMap,
+    readFile: () => JSON.stringify(results),
+    buildCompanyPeopleSearchUrl: () => "https://fake.search/Affirm",
+    ...rec.deps,
+    ...rig.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+
+  assert.equal(rig.pushCalls.length, 1);
+  const { jobFields, propertyMap } = rig.pushCalls[0];
+  // The payload carries the field, and the mapped property_map surfaces it as
+  // a Notion `url` property under the mapped field name.
+  const props = buildProperties(jobFields, propertyMap);
+  assert.deepEqual(props["People Search URL"], {
+    url: "https://fake.search/Affirm",
+  });
+});
+
+// Profiles whose property_map lacks the key (e.g. _example until phase 3)
+// silently drop the field — buildProperties iterates property_map keys, so an
+// unmapped field never reaches Notion even though it sits on the payload.
+test("prepare --phase commit (RFC 059): Notion property omitted when property_map lacks companyPeopleSearchUrl", async () => {
+  const { buildProperties } = require("../core/notion_sync.js");
+  const apps = [
+    makeApp({
+      key: "gh:1",
+      status: "Inbox",
+      companyName: "Affirm",
+      title: "Senior PM",
+      locations: ["San Francisco, CA"],
+    }),
+  ];
+  const results = {
+    profileId: "testuser",
+    results: [
+      {
+        key: "gh:1",
+        fitScore: "Strong",
+        fitRationale: "core",
+        clKey: "Affirm_PM",
+        resumeVer: "v1",
+        clParagraphs: ["P1", "P2", "P3", "P4"],
+      },
+    ],
+  };
+  const rec = makeClRecorder();
+  const rig = makeNotionRig();
+  // Default makeCommitDeps profile has NO property_map → runCommit falls back
+  // to DEFAULT_PROPERTY_MAP, which does not map companyPeopleSearchUrl.
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify(results),
+    buildCompanyPeopleSearchUrl: () => "https://fake.search/Affirm",
+    ...rec.deps,
+    ...rig.deps,
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  await cmd(ctx);
+
+  assert.equal(rig.pushCalls.length, 1);
+  const { jobFields, propertyMap } = rig.pushCalls[0];
+  // The field IS on the in-memory payload (engine still authors it for the
+  // TSV)...
+  assert.equal(jobFields.companyPeopleSearchUrl, "https://fake.search/Affirm");
+  // ...but no mapped property carries it, and no stray Notion property
+  // matches the would-be field name.
+  assert.equal(propertyMap.companyPeopleSearchUrl, undefined);
+  const props = buildProperties(jobFields, propertyMap);
+  assert.equal(props["People Search URL"], undefined);
+  // The TSV row still persists the URL regardless of property_map.
+  const saved = deps._getSaved();
+  assert.equal(saved[0].company_people_search_url, "https://fake.search/Affirm");
+});
+
 // RFC 034: Notion failure on a Weak row reverts TSV to Inbox (existing
 // RFC 022 contract still holds — the row gets a second chance next run via
 // `filterAlreadyEvaluated` checks — but since fit_score=Weak persists, it
