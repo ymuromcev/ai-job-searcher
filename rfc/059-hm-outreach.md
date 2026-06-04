@@ -541,3 +541,106 @@ do not all appear freshly touched.
 **Out of scope (unchanged from BL-186).** Outreach status logic, the
 auto-Dead timer, per-person contact fields, and any status other than
 `To Apply` / `Applied`.
+
+## Amendment — BL-169 auto-Dead (2026-06-03)
+
+**Problem.** The outreach worklist is the set of vacancies whose
+`Outreach` status is `In flight` (an active connection request / DM). A
+thread that never gets a reply stays `In flight` forever and clutters
+the weekly worklist. The operator wants a stale `In flight` thread
+(>= 7 days, no reply) to fall out of the live list automatically.
+
+**Образ (operator-approved).** The operator keeps flipping
+`Outreach → In flight` in Notion exactly as before — no extra step. The
+engine then:
+
+1. **Stamps a date anchor on transition.** When `sync`'s `reconcilePull`
+   pulls an `Outreach` value of `In flight` and the row's
+   `hm_outreach_date` is empty, it stamps "today". When the status moves
+   back out of `In flight` to `To do`, it **clears** the anchor (so a
+   re-entry re-stamps a fresh timer). Terminal `Replied` / `Dead` leave
+   the date as-is. The anchor lives in the existing v6 TSV column
+   `hm_outreach_date` — **no new Notion field is required**.
+2. **Lazily sweeps on every CLI invocation.** At the start of every
+   command (`scan` / `prepare` / `check` / `sync` / `validate` — wired
+   once in the shared `engine/cli.js` entry, so it fires regardless of
+   which command runs), the engine scans the TSV for rows that are
+   `In flight` with a non-empty anchor older than the 7-day threshold,
+   flips them to `Dead`, writes the TSV, and pushes `Dead` to Notion.
+
+**7-day threshold.** Fixed at 7 calendar days (one week), matching the
+operator's mental model ("if a week passed with no reply, it's dead").
+Configurable via a helper parameter (`thresholdDays`, default 7) but not
+exposed as a CLI flag — there is no use case for per-run tuning.
+
+**No cron / no scheduler.** Lazy evaluation on CLI invocation only
+(cron / Notion-native automation were explicitly rejected — the latter
+needs a paid Notion plan, the former adds infra). The funnel self-cleans
+exactly when the operator next works with the engine; staleness between
+sessions is fine because `Dead` is only meaningful when he next looks.
+The sweep is a pure scan first, so it is a cheap no-op when nothing is
+stale and safe to run on every command.
+
+**Notion `Dead` write — same class as `check`'s status write, NOT a new
+push path.** The sweep writes the `Outreach` status via the _targeted
+single-field_ `pages.update` helper `updatePageStatus` — the identical
+pattern `check` uses to write `Status`. The `Outreach` status is
+engine-writable in exactly this one direction (the engine already pulls
+it back in `reconcilePull`, where Notion wins and an empty Notion value
+never clobbers local). Writing `Dead` here and letting the next pull read
+it back keeps Notion the source of truth with no conflict. "Pull-only"
+(since 2026-05-04, `4f85ed2`) means `sync` never _creates_ pages or
+_mutates operator-owned state from a local manifest_; this sweep does
+neither — it creates no pages and writes only via the same
+engine-authored targeted-status path that already coexists with the
+pull-only `sync` (`check`'s `updatePageStatus`). No push phase, no
+`push_manifest.json`, no Inbox callout writer is reintroduced.
+
+**Testability / determinism.** The two decisions are pure helpers in
+`engine/core/auto_dead.js`, both taking the current date as an injected
+`YYYY-MM-DD` string — no `Date.now()` in pure code:
+
+- `selectStaleInFlight(apps, todayStr, thresholdDays = 7)` — returns the
+  rows where `status === "In flight"` AND `hm_outreach_date` is a
+  well-formed non-empty date AND `(today − anchor) >= thresholdDays`.
+- `decideOutreachDate(newStatus, currentDate, todayStr)` — returns
+  `{ action: "stamp" | "clear" | "keep", date }` for the transition
+  stamp.
+
+The CLI glue (`engine/core/auto_dead_sweep.js` → `todayLocalISO()`)
+computes "today" once and injects it; `reconcilePull` derives its
+"today" from the date portion of the injected `now` ISO timestamp. Both
+helpers are unit-tested with fixed dates (boundary at exactly 7 days, 6
+days = fresh, 8 days = stale, empty / malformed anchor = skip, `Replied`
+= never, already `Dead` = skip, transition stamp sets the date,
+transition to `To do` clears it, terminal status keeps it).
+
+**Edge rules / resilience.**
+
+- Empty (or malformed) `hm_outreach_date` → the row is **not**
+  auto-killed (no anchor = no timer).
+- `Replied` is never touched; `Dead` is never re-processed (idempotent).
+- No `NOTION_TOKEN` (or a `property_map` without a usable `status`
+  mapping) → the row is still marked `Dead` in the TSV (the canonical
+  ledger) with a single stderr warning; the Notion push is skipped.
+- Every Notion call is wrapped in try/catch; a per-row error is counted
+  and surfaced on stderr but never blocks the TSV write or the remaining
+  rows. The whole sweep is wrapped so it can never throw out of the CLI
+  entry — `scan` / `validate` must still run fully offline.
+
+**Stamp-precision note.** The anchor is stamped at sync time (the first
+`sync` after the operator flips `In flight`), not at the exact moment of
+the flip, and uses the UTC date portion of the sync timestamp. A ±1-day
+drift is acceptable for a 7-day timer (operator-confirmed).
+
+**Follow-up (optional, not built).** Surfacing the anchor as an
+"In flight since X" date in Notion would require adding an `hmOutreachDate`
+(date) key to the operator's `property_map` and a Notion date field. The
+anchor is TSV-internal today and the timer does not need it in Notion, so
+this is deferred. If added later it is a one-key property_map change plus
+extending the same `reconcilePull` stamp block to also write the date
+field.
+
+**Out of scope (this amendment).** Cron / scheduler, the 4-state status
+set (unchanged), per-person contact fields, any backfill, and exposing
+the threshold as a CLI flag.
