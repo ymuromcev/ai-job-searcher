@@ -351,6 +351,83 @@ test("reconcilePull add-path seeds outreach columns, taking Notion's status when
   assert.equal(byKey["lever:abc"].hm_outreach_date, "");
 });
 
+// ---------- RFC 059 amendment (BL-169 auto-Dead): stamp-on-transition ----------
+
+test("reconcilePull stamps hm_outreach_date today when Outreach enters In flight (empty anchor)", () => {
+  const apps = [
+    fakeApp({
+      key: "greenhouse:1",
+      status: "Applied",
+      notion_page_id: "p1",
+      hm_outreach_status: "To do",
+      hm_outreach_date: "",
+    }),
+  ];
+  const pages = [
+    { notionPageId: "p1", key: "greenhouse:1", status: "Applied", hmOutreachStatus: "In flight" },
+  ];
+  const { updates } = reconcilePull(apps, pages, DEFAULT_PROPERTY_MAP, NOW);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].after.hm_outreach_status, "In flight");
+  assert.equal(updates[0].after.hm_outreach_date, "2026-04-20", "stamped from NOW date portion");
+});
+
+test("reconcilePull does NOT re-stamp an existing anchor on a fresh sync while still In flight", () => {
+  const apps = [
+    fakeApp({
+      key: "greenhouse:1",
+      status: "Applied",
+      notion_page_id: "p1",
+      hm_outreach_status: "In flight",
+      hm_outreach_date: "2026-04-01",
+    }),
+  ];
+  // Notion still reports In flight; the local anchor must survive untouched.
+  const pages = [
+    { notionPageId: "p1", key: "greenhouse:1", status: "Applied", hmOutreachStatus: "In flight" },
+  ];
+  const { updates } = reconcilePull(apps, pages, DEFAULT_PROPERTY_MAP, NOW);
+  assert.equal(updates.length, 0, "no status drift, anchor kept → no update");
+});
+
+test("reconcilePull clears the anchor when Outreach moves back to To do", () => {
+  const apps = [
+    fakeApp({
+      key: "greenhouse:1",
+      status: "Applied",
+      notion_page_id: "p1",
+      hm_outreach_status: "In flight",
+      hm_outreach_date: "2026-04-01",
+    }),
+  ];
+  const pages = [
+    { notionPageId: "p1", key: "greenhouse:1", status: "Applied", hmOutreachStatus: "To do" },
+  ];
+  const { updates } = reconcilePull(apps, pages, DEFAULT_PROPERTY_MAP, NOW);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].after.hm_outreach_status, "To do");
+  assert.equal(updates[0].after.hm_outreach_date, "", "anchor cleared so a re-entry re-stamps");
+});
+
+test("reconcilePull leaves the anchor as-is on terminal Replied", () => {
+  const apps = [
+    fakeApp({
+      key: "greenhouse:1",
+      status: "Applied",
+      notion_page_id: "p1",
+      hm_outreach_status: "In flight",
+      hm_outreach_date: "2026-04-01",
+    }),
+  ];
+  const pages = [
+    { notionPageId: "p1", key: "greenhouse:1", status: "Applied", hmOutreachStatus: "Replied" },
+  ];
+  const { updates } = reconcilePull(apps, pages, DEFAULT_PROPERTY_MAP, NOW);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].after.hm_outreach_status, "Replied");
+  assert.equal(updates[0].after.hm_outreach_date, "2026-04-01", "terminal status keeps the date");
+});
+
 test("reconcilePull defaults source to 'notion' when the page has none", () => {
   const apps = [];
   const pages = [{ notionPageId: "p9", key: "manual-entry", status: "Applied" }];

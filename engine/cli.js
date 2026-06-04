@@ -337,7 +337,19 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
     },
   };
 
+  // Auto-Dead lazy sweep (BL-169 / RFC 059 amendment): runs at the START of
+  // EVERY command (scan / prepare / check / sync / validate / …). Rows that
+  // have been "In flight" for >= 7 days flip to "Dead" so the operator's
+  // worklist only shows live threads. Pure scan first → cheap no-op when
+  // nothing is stale. It never throws out of here (runAutoDeadSweep catches
+  // and logs), and a Notion outage / missing token never breaks the command —
+  // the sweep degrades to TSV-only. "today" is computed once and injected so
+  // the pure helpers stay deterministic. No cron, no scheduler — lazy on CLI
+  // invocation only.
+  const { runAutoDeadSweep, todayLocalISO } = require("./core/auto_dead_sweep.js");
+
   try {
+    await runAutoDeadSweep(ctx.profileId, ctx, { todayStr: todayLocalISO() });
     const preHook = PIPELINE_PRE_HOOKS[ctx.command];
     if (preHook) await preHook(ctx, handlers);
     const code = await handler(ctx);

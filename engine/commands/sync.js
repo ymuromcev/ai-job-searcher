@@ -25,6 +25,7 @@ const notion = require("../core/notion_sync.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 const archiveSweep = require("../core/archive_used_artifacts.js");
 const { makeCompanyNameResolver } = require("../core/company_resolver.js");
+const { decideOutreachDate } = require("../core/auto_dead.js");
 
 // Canonical map lives in notion_sync.js — all Notion-touching commands
 // share it. Re-export here as a const so the rest of this file stays
@@ -135,6 +136,24 @@ function reconcilePull(apps, notionPages, propertyMap, now, companyNameById = {}
     // commit) so it is deliberately NOT pulled back here.
     if (page.hmOutreachStatus && app.hm_outreach_status !== page.hmOutreachStatus) {
       next.hm_outreach_status = page.hmOutreachStatus;
+      changed = true;
+    }
+    // RFC 059 amendment (BL-169 auto-Dead): stamp/clear the `hm_outreach_date`
+    // anchor on outreach-status transitions so the lazy In-flight→Dead sweep
+    // has a 7-day timer. Entering "In flight" with no anchor stamps today;
+    // leaving In flight back to "To do" clears it (a re-entry re-stamps);
+    // terminal "Replied"/"Dead" leave the date as-is. The "today" string is
+    // derived from the injected `now` (date portion of the ISO timestamp) so
+    // the decision stays pure / deterministic.
+    const effectiveOutreach = page.hmOutreachStatus || next.hm_outreach_status;
+    const todayStr = typeof now === "string" ? now.slice(0, 10) : "";
+    const dateDecision = decideOutreachDate(
+      effectiveOutreach,
+      next.hm_outreach_date || "",
+      todayStr
+    );
+    if (dateDecision.action !== "keep" && next.hm_outreach_date !== dateDecision.date) {
+      next.hm_outreach_date = dateDecision.date;
       changed = true;
     }
     if (changed) updates.push({ before: app, after: next });
