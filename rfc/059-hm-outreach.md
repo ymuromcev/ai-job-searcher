@@ -482,3 +482,62 @@ in the BL-62 Notion project and are authored by hand, tracked there.
    card shows the URL, the rollup, and the editable status.
 4. **Templates (F).** Author the three notes + DM in the BL-62 Notion
    project and run the first weekly worklist against the to-do view.
+
+## Amendment — BL-186 backfill (2026-06-03)
+
+**Problem.** Phase 2 (§C) populates `company_people_search_url` only on
+`prepare --phase commit`, i.e. only for vacancies committed *after* the
+feature shipped. Every vacancy that reached `To Apply` / `Applied`
+*before* phase 2 has an empty `company_people_search_url` in TSV and an
+empty `LinkedIn Search` field in Notion. Those are exactly the rows the
+operator wants to run outreach on, and there are hundreds of them.
+
+**Solution.** A one-shot CLI command `backfill-outreach-url` (BL-186,
+tier M):
+
+- Selects rows whose `status ∈ {"To Apply", "Applied"}` **and**
+  `company_people_search_url` is empty **and** `companyName` is non-empty.
+  Empty-company rows are reported as *skipped* (no company to search on),
+  not processed. Rows already carrying a URL are *already set* and left
+  untouched — so a second run is a strict no-op (idempotent).
+- Default **dry-run**: prints `would enrich N, skip M (no company),
+  already set K` and writes nothing.
+- With `--apply`: computes the URL via the existing pure helper
+  `buildCompanyPeopleSearchUrl({company, roleTitle, location})` (reused,
+  not reimplemented — same code path that phase 2 uses on commit), writes
+  it to the TSV through `applications_tsv.js` (the single TSV writer), and
+  pushes it to the Notion `LinkedIn Search` field.
+
+**Notion write — same class as the commit-phase write, NOT a new push
+path.** The Notion update is a *targeted single-field* `pages.update`
+(`updateJobPage` with `{ companyPeopleSearchUrl }` only), structurally
+identical to `check`'s `updatePageStatus`. `company_people_search_url`
+is **engine-authored, one-way** data: the engine is the sole writer of
+this field, it is never read back from Notion (`sync`'s `reconcilePull`
+pulls `hm_outreach_status` only, never the URL — see workstream E). The
+backfill therefore writes exactly the same field, in the same direction,
+that phase 2 already writes on commit. It is the missing first write for
+old rows, not a second source of truth.
+
+**Pull-only invariant is preserved.** "Pull-only" (since 2026-05-04,
+commit `4f85ed2`) means `sync` never *creates or mutates operator-owned
+Notion state from local TSV*. This backfill does neither: it creates no
+pages (those are still created exclusively by `prepare --phase commit`),
+and it touches no operator-owned field (status, `Outreach` status,
+contact fields). It writes only the engine-owned `LinkedIn Search` URL —
+the same engine-authored class as the commit-phase write and the
+`check` status write, both of which already coexist with the pull-only
+`sync`. No push phase, no `push_manifest.json`, no Inbox callout writer
+is reintroduced.
+
+**Guards.** Missing `NOTION_TOKEN` or a `property_map` without the
+`companyPeopleSearchUrl` key → the URL is still written to TSV (the
+canonical ledger) and the Notion push is skipped with a warning. A
+per-row Notion error is counted and surfaced (non-zero exit) but never
+blocks the TSV write or the remaining rows. `updatedAt` is **not** bumped
+— this is a backfill of a derived field, not a state change, so old rows
+do not all appear freshly touched.
+
+**Out of scope (unchanged from BL-186).** Outreach status logic, the
+auto-Dead timer, per-person contact fields, and any status other than
+`To Apply` / `Applied`.

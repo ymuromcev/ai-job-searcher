@@ -115,6 +115,18 @@ Notion-backed answer bank, deduping on question hash and categorizing
 by topic. (RFC 009 documented this command under the working name
 `application-answers`; the dispatcher exposes it as `answer`.)
 
+**`backfill-outreach-url`**. One-shot backfill (BL-186 / RFC 059
+amendment) that fills the LinkedIn people-search URL for existing
+`To Apply` / `Applied` rows committed before the RFC-059 outreach
+feature populated it. Default dry-run prints `would enrich N, skip M
+(no company), already set K`; `--apply` computes the URL with the shared
+`buildCompanyPeopleSearchUrl` helper, writes it to TSV, and pushes it to
+the Notion `LinkedIn Search` field via a targeted single-field
+`pages.update` (the same engine-authored one-way write `check` uses for
+status). Idempotent — rows that already have a URL are skipped. Does not
+break pull-only: it creates no pages and touches no operator-owned field,
+only the engine-owned URL.
+
 ## 3. Discovery adapters
 
 All adapters live in `engine/modules/discovery/` and self-register via
