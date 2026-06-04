@@ -644,3 +644,96 @@ field.
 **Out of scope (this amendment).** Cron / scheduler, the 4-state status
 set (unchanged), per-person contact fields, any backfill, and exposing
 the threshold as a CLI flag.
+
+## Amendment — BL-187 auto-No-Response (2026-06-03)
+
+**Problem.** The auto-Dead amendment above self-cleans the *outreach*
+status (`Outreach: In flight → Dead`). The same problem exists one level
+up, on the vacancy's **main** status: a job the operator applied to and
+then heard nothing back on sits in `Applied` indefinitely and clutters
+the live worklist. The operator wants an `Applied` vacancy with no
+movement for two weeks to drop to `No Response` automatically — the exact
+mirror of auto-Dead, but for the main status and a 14-day window.
+
+**Образ (operator-approved).** The operator applies and works exactly as
+before — no extra step. The engine then:
+
+1. **Stamps a date anchor on transition.** When `sync`'s `reconcilePull`
+   pulls a main status of `Applied` and the row's `applied_date` is
+   empty, it stamps "today". An existing anchor is **never** overwritten
+   (re-stamping would silently reset the 14-day timer). Unlike auto-Dead
+   there is **no clear branch**: moving forward out of `Applied`
+   (`Interview` / `Offer` / `Rejected` / `No Response`) leaves the anchor
+   as-is — the sweep only ever inspects `Applied` rows, so a stale anchor
+   on a moved-on row is harmless, and keeping it avoids losing the stamp.
+2. **Lazily sweeps on every CLI invocation.** At the start of every
+   command (wired once in `engine/cli.js`, immediately after the
+   auto-Dead sweep — independent, deterministic order), the engine scans
+   the TSV for rows that are `Applied` with a non-empty anchor older than
+   the 14-day threshold, flips them to `No Response`, writes the TSV, and
+   pushes `No Response` to Notion.
+
+**New TSV anchor column — `applied_date` (schema v7).** The anchor lives
+in a **new** TSV column `applied_date` (`YYYY-MM-DD`), appended as schema
+v7 using the same auto-upgrade-on-save mechanism v6 used for the outreach
+columns: every older `rowToApp*` path seeds `applied_date: ""`, `save()`
+always writes the v7 header, and a pre-v7 file silently upgrades on the
+next write. The anchor is **TSV-internal**: it is **not** a Notion field
+and **not** in `property_map` (it differs from auto-Dead, which reused the
+already-existing `hm_outreach_date` column — there was no main-status
+anchor column to reuse, so one is added here). The 14-day timer does not
+need the anchor in Notion.
+
+**14-day threshold.** Fixed at 14 calendar days (two weeks), matching the
+operator's mental model ("applied, two weeks of silence → no response").
+Configurable via a helper parameter (`thresholdDays`, default 14) but not
+exposed as a CLI flag — there is no use case for per-run tuning. Constant
+`DEFAULT_THRESHOLD_DAYS = 14` in `engine/core/auto_no_response.js`.
+
+**Source status = `Applied` only.** `No Response` semantically means
+"applied and heard nothing". `To Apply` (not yet applied) and every other
+status are a different meaning and are never swept. `Interview` / `Offer`
+/ `Rejected` / `To Apply` / `Inbox` / `Archived` are never touched.
+
+**No cron / no scheduler.** Same lazy-on-CLI design as auto-Dead (cron /
+Notion-native automation explicitly rejected). Pure scan first → cheap
+no-op when nothing is stale, safe to run on every command.
+
+**Notion `No Response` write — same class as auto-Dead / `check`, NOT a
+new push path.** The sweep writes a single targeted `updatePageStatus`
+(`status` property only), engine-authored status data of the same class
+as `check`'s status write and auto-Dead's `Dead` write. It does **not**
+reintroduce the removed Stage-16 push path; `sync` stays pull-only.
+
+**Implementation = sibling modules (DRY only the date math).** Two new
+pure-helper / sweep siblings mirror auto-Dead 1:1:
+
+- `engine/core/auto_no_response.js` — `selectStaleApplied(apps, todayStr,
+  thresholdDays = 14)` and `decideAppliedDate(newStatus, currentDate,
+  todayStr)`. Both pure, date-injected. The date math (`daysBetween` /
+  `epochDay`) is **reused** from `auto_dead.js`, not duplicated.
+- `engine/core/auto_no_response_sweep.js` — `runAutoNoResponseSweep`,
+  the same DI deps / TSV-only-without-token / per-row try/catch /
+  never-throws-out contract as `auto_dead_sweep.js`.
+
+**Terminal-handling side effect (desired).** The `Applied → No Response`
+flip feeds the existing terminal-status handling
+(`archive_used_artifacts`) downstream — an expected, desired effect, not
+fought.
+
+**Edge rules / resilience.** Identical to auto-Dead: empty / malformed
+`applied_date` → no timer (skipped); `No Response` is never re-selected
+(idempotent); only `Applied` is touched; no `NOTION_TOKEN` → mark
+`No Response` in the TSV with a single stderr warn, skip the push; every
+Notion call wrapped per-row; the whole sweep wrapped so it can never
+throw out of the CLI entry (`scan` / `validate` must still run offline).
+
+**Stamp-precision note.** As with auto-Dead, the anchor is stamped at the
+first `sync` that observes `Applied` (using the UTC date portion of the
+sync timestamp), not at the exact submission moment. A ±1-day drift is
+acceptable for a 14-day timer.
+
+**Out of scope (this amendment).** Cron / scheduler, auto-transitions
+from any status other than `Applied`, a per-profile / CLI-flag threshold,
+any new Notion field, and any change to the auto-Dead or backfill logic
+(only the pure date helpers are reused).

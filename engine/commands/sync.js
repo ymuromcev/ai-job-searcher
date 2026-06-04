@@ -26,6 +26,7 @@ const { resolveProfilesDir } = require("../core/paths.js");
 const archiveSweep = require("../core/archive_used_artifacts.js");
 const { makeCompanyNameResolver } = require("../core/company_resolver.js");
 const { decideOutreachDate } = require("../core/auto_dead.js");
+const { decideAppliedDate } = require("../core/auto_no_response.js");
 
 // Canonical map lives in notion_sync.js — all Notion-touching commands
 // share it. Re-export here as a const so the rest of this file stays
@@ -119,6 +120,20 @@ function reconcilePull(apps, notionPages, propertyMap, now, companyNameById = {}
       next.status = page.status;
       changed = true;
     }
+    // RFC 059 amendment (BL-187 auto-No-Response): stamp the `applied_date`
+    // anchor when the resulting main status is "Applied" and the row has no
+    // anchor yet, so the lazy Applied → No Response sweep has a 14-day timer.
+    // An existing anchor is never overwritten; moving forward out of Applied
+    // (Interview / Offer / Rejected / No Response) leaves the anchor as-is —
+    // the sweep only inspects Applied rows. The "today" string is derived from
+    // the injected `now` (date portion of the ISO timestamp) so the decision
+    // stays pure / deterministic. TSV-internal anchor: NOT pushed to Notion.
+    const appliedToday = typeof now === "string" ? now.slice(0, 10) : "";
+    const appliedDecision = decideAppliedDate(next.status, next.applied_date || "", appliedToday);
+    if (appliedDecision.action !== "keep" && next.applied_date !== appliedDecision.date) {
+      next.applied_date = appliedDecision.date;
+      changed = true;
+    }
     // Backfill an empty companyName from Notion (self-heals the rows BL-154
     // added blank). Never overwrite a name the local row already has.
     if (!app.companyName) {
@@ -196,6 +211,12 @@ function reconcilePull(apps, notionPages, propertyMap, now, companyNameById = {}
       contact_linkedin: "",
       hm_outreach_status: page.hmOutreachStatus || "To do",
       hm_outreach_date: "",
+      // RFC 059 amendment (BL-187): stamp the `applied_date` anchor when the
+      // pulled page is already "Applied" (no prior local row → no anchor), so a
+      // freshly-pulled Applied row starts its 14-day No-Response timer here.
+      applied_date:
+        decideAppliedDate(page.status || "", "", typeof now === "string" ? now.slice(0, 10) : "")
+          .date || "",
     });
   }
 

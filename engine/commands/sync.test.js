@@ -241,7 +241,15 @@ const NOW = "2026-04-20T00:00:00Z";
 test("reconcilePull matches by key and reports status changes", () => {
   const apps = [
     fakeApp({ key: "greenhouse:1", jobId: "1", status: "To Apply", notion_page_id: "" }),
-    fakeApp({ key: "greenhouse:2", jobId: "2", status: "Applied", notion_page_id: "p2" }),
+    // Pre-anchored so the BL-187 applied_date stamp doesn't add a spurious
+    // update for this otherwise-unchanged Applied row.
+    fakeApp({
+      key: "greenhouse:2",
+      jobId: "2",
+      status: "Applied",
+      notion_page_id: "p2",
+      applied_date: "2026-04-01",
+    }),
   ];
   const pages = [
     { notionPageId: "p1", key: "greenhouse:1", status: "Applied" },
@@ -251,6 +259,8 @@ test("reconcilePull matches by key and reports status changes", () => {
   assert.equal(updates.length, 1);
   assert.equal(updates[0].after.notion_page_id, "p1");
   assert.equal(updates[0].after.status, "Applied");
+  // To Apply → Applied with no prior anchor stamps the applied_date (BL-187).
+  assert.equal(updates[0].after.applied_date, "2026-04-20");
   assert.equal(adds.length, 0, "all pages matched existing rows → no adds");
 });
 
@@ -316,6 +326,8 @@ test("reconcilePull never clobbers a local outreach status with an empty Notion 
       status: "Applied",
       notion_page_id: "p1",
       hm_outreach_status: "Done",
+      // Pre-anchored so the BL-187 applied_date stamp doesn't create an update.
+      applied_date: "2026-04-01",
     }),
   ];
   // Notion page has no hmOutreachStatus (operator hasn't set Outreach yet).
@@ -380,6 +392,8 @@ test("reconcilePull does NOT re-stamp an existing anchor on a fresh sync while s
       notion_page_id: "p1",
       hm_outreach_status: "In flight",
       hm_outreach_date: "2026-04-01",
+      // Pre-anchored so the BL-187 applied_date stamp doesn't create an update.
+      applied_date: "2026-04-01",
     }),
   ];
   // Notion still reports In flight; the local anchor must survive untouched.
@@ -426,6 +440,82 @@ test("reconcilePull leaves the anchor as-is on terminal Replied", () => {
   assert.equal(updates.length, 1);
   assert.equal(updates[0].after.hm_outreach_status, "Replied");
   assert.equal(updates[0].after.hm_outreach_date, "2026-04-01", "terminal status keeps the date");
+});
+
+// ---------- RFC 059 amendment (BL-187 auto-No-Response): applied_date stamp ----------
+
+test("reconcilePull stamps applied_date today when status enters Applied (empty anchor)", () => {
+  const apps = [
+    fakeApp({
+      key: "greenhouse:1",
+      status: "To Apply",
+      notion_page_id: "p1",
+      applied_date: "",
+    }),
+  ];
+  const pages = [{ notionPageId: "p1", key: "greenhouse:1", status: "Applied" }];
+  const { updates } = reconcilePull(apps, pages, DEFAULT_PROPERTY_MAP, NOW);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].after.status, "Applied");
+  assert.equal(updates[0].after.applied_date, "2026-04-20", "stamped from NOW date portion");
+});
+
+test("reconcilePull does NOT overwrite an existing applied_date anchor while still Applied", () => {
+  const apps = [
+    fakeApp({
+      key: "greenhouse:1",
+      status: "Applied",
+      notion_page_id: "p1",
+      applied_date: "2026-04-01",
+    }),
+  ];
+  // Notion still reports Applied; the existing anchor must survive untouched.
+  const pages = [{ notionPageId: "p1", key: "greenhouse:1", status: "Applied" }];
+  const { updates } = reconcilePull(apps, pages, DEFAULT_PROPERTY_MAP, NOW);
+  assert.equal(updates.length, 0, "no status drift, anchor kept → no update");
+});
+
+test("reconcilePull leaves applied_date as-is when status moves forward out of Applied", () => {
+  const apps = [
+    fakeApp({
+      key: "greenhouse:1",
+      status: "Applied",
+      notion_page_id: "p1",
+      applied_date: "2026-04-01",
+    }),
+  ];
+  const pages = [{ notionPageId: "p1", key: "greenhouse:1", status: "Interview" }];
+  const { updates } = reconcilePull(apps, pages, DEFAULT_PROPERTY_MAP, NOW);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].after.status, "Interview");
+  assert.equal(updates[0].after.applied_date, "2026-04-01", "anchor untouched on forward move");
+});
+
+test("reconcilePull does NOT stamp applied_date for a non-Applied status (e.g. Interview)", () => {
+  const apps = [
+    fakeApp({
+      key: "greenhouse:1",
+      status: "To Apply",
+      notion_page_id: "p1",
+      applied_date: "",
+    }),
+  ];
+  const pages = [{ notionPageId: "p1", key: "greenhouse:1", status: "Interview" }];
+  const { updates } = reconcilePull(apps, pages, DEFAULT_PROPERTY_MAP, NOW);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].after.status, "Interview");
+  assert.equal(updates[0].after.applied_date, "", "non-Applied status never stamps the anchor");
+});
+
+test("reconcilePull add-path stamps applied_date for a pulled Applied page, empty otherwise", () => {
+  const pages = [
+    { notionPageId: "p2", key: "lever:abc", source: "lever", jobId: "abc", status: "Applied" },
+    { notionPageId: "p3", key: "lever:def", source: "lever", jobId: "def", status: "Interview" },
+  ];
+  const { adds } = reconcilePull([], pages, DEFAULT_PROPERTY_MAP, NOW);
+  const byKey = Object.fromEntries(adds.map((a) => [a.key, a]));
+  assert.equal(byKey["lever:abc"].applied_date, "2026-04-20", "Applied add stamped today");
+  assert.equal(byKey["lever:def"].applied_date, "", "non-Applied add has no anchor");
 });
 
 test("reconcilePull defaults source to 'notion' when the page has none", () => {
@@ -745,6 +835,9 @@ test("reconcilePull never overwrites a populated companyName", () => {
       jobId: "pix",
       companyName: "dLocal Inc",
       status: "Applied",
+      // Pre-seed the applied_date anchor so the BL-187 stamp doesn't fire and
+      // create an unrelated update — this test isolates companyName handling.
+      applied_date: "2026-04-01",
     }),
   ];
   const pages = [
@@ -757,7 +850,7 @@ test("reconcilePull never overwrites a populated companyName", () => {
       status: "Applied",
     },
   ];
-  // Same status + page id → no change; companyName must stay as the local value.
+  // Same status + page id + anchored → no change; companyName must stay local.
   const withPage = pages.map((p) => ({ ...p, notionPageId: "", status: "Applied" }));
   const { updates } = reconcilePull(apps, withPage, DEFAULT_PROPERTY_MAP, NOW, {
     "co-1": "OtherName",
