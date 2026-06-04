@@ -1,8 +1,8 @@
 // Per-profile pipeline file: profiles/<id>/applications.tsv.
 //
-// Schema (header required), v6 (added 2026-06-03 for BL-169 / RFC 059 — append
-// six hiring-manager / warm-contact outreach columns). The v6 columns extend v5
-// with the outreach motion tracked on the vacancy card:
+// Schema (header required), v7 (added 2026-06-03 for BL-187 / RFC 059 amendment
+// — append the `applied_date` anchor column for the auto-No-Response sweep). The
+// v7 column extends v6 with the moment a vacancy entered `status="Applied"`:
 //   key <TAB> source <TAB> jobId <TAB> companyName <TAB> title <TAB> url
 //             <TAB> locations <TAB> status <TAB> notion_page_id
 //             <TAB> resume_ver <TAB> cl_key
@@ -13,6 +13,21 @@
 //             <TAB> company_people_search_url <TAB> outreach_type
 //             <TAB> contact_name <TAB> contact_linkedin
 //             <TAB> hm_outreach_status <TAB> hm_outreach_date
+//             <TAB> applied_date
+//
+// v7 column (RFC 059 amendment, BL-187):
+//   `applied_date` — ISO date (`YYYY-MM-DD`) the row entered `status="Applied"`.
+//                    TSV-internal anchor; NOT a Notion field, NOT in
+//                    property_map. Stamped by `sync`'s `reconcilePull` on the
+//                    To Apply → Applied transition (the moment Notion reports
+//                    "Applied" with no anchor yet). Drives the lazy
+//                    Applied → No Response sweep: a row that has carried this
+//                    anchor for >= 14 days flips to "No Response". Empty when
+//                    the row has never reached Applied. Defaults to "".
+//
+// v6 (added 2026-06-03 for BL-169 / RFC 059 — append six hiring-manager /
+// warm-contact outreach columns). The v6 columns extend v5 with the outreach
+// motion tracked on the vacancy card.
 //
 // v6 outreach columns (RFC 059):
 //   `company_people_search_url` — LinkedIn people-search URL, engine-authored by
@@ -76,18 +91,22 @@
 // from v3/v4 is gone — every caller now reads the array).
 //
 // Backward compat (auto-upgrade-on-save):
+//   v6 (26 cols, 2026-06-03 — RFC 059 outreach columns) → reader seeds the v7
+//     `applied_date` default (empty).
 //   v5 (20 cols, 2026-05-18 — RFC 038 locations[]) → reader seeds the six v6
-//     outreach defaults (empty + hm_outreach_status="To do").
+//     outreach defaults (empty + hm_outreach_status="To do") + the v7
+//     `applied_date` default (empty).
 //   v4 (20 cols, 2026-05-05 — BL-9 fit columns, single-string `location`) →
 //     reader wraps non-empty `location` to `[location]`, empty to `[]`, and
-//     seeds the v6 outreach defaults.
+//     seeds the v6 outreach defaults + the v7 `applied_date` default.
 //   v3 (16 cols, 2026-05-03 — G-5 added location) → same wrap; empty fit cols;
-//     v6 outreach defaults.
+//     v6 outreach defaults + v7 `applied_date` default.
 //   v2 (15 cols, 2026-04 — Stage 13 added salary_min/max/cl_path) → empty
-//     locations array + empty fit cols + v6 outreach defaults.
+//     locations array + empty fit cols + v6 outreach defaults + v7
+//     `applied_date` default.
 //   v1 (12 cols, original) → empty locations + empty v2+v3+v4 fields + v6
-//     outreach defaults.
-// save() always writes v6.
+//     outreach defaults + v7 `applied_date` default.
+// save() always writes v7.
 
 const fs = require("fs");
 const path = require("path");
@@ -108,6 +127,36 @@ function stripAtsPrefixes(id) {
     prev = m[2];
   }
 }
+
+const HEADER_V7 = [
+  "key",
+  "source",
+  "jobId",
+  "companyName",
+  "title",
+  "url",
+  "locations",
+  "status",
+  "notion_page_id",
+  "resume_ver",
+  "cl_key",
+  "salary_min",
+  "salary_max",
+  "cl_path",
+  "createdAt",
+  "updatedAt",
+  "fit_score",
+  "fit_rationale",
+  "fit_evaluated_at",
+  "skip_reason",
+  "company_people_search_url",
+  "outreach_type",
+  "contact_name",
+  "contact_linkedin",
+  "hm_outreach_status",
+  "hm_outreach_date",
+  "applied_date",
+];
 
 const HEADER_V6 = [
   "key",
@@ -163,7 +212,7 @@ const HEADER_V5 = [
 
 // Current schema header. Aliased so legacy callers reading `HEADER` keep
 // working; readers expect this constant to track the latest version.
-const HEADER = HEADER_V6;
+const HEADER = HEADER_V7;
 
 // RFC 059: default values for the six v6 outreach fields. Older rowToApp*
 // paths seed these so an old file loads cleanly; the next save() rewrites it
@@ -181,6 +230,13 @@ function outreachDefaults() {
     hm_outreach_status: "To do",
     hm_outreach_date: "",
   };
+}
+
+// RFC 059 amendment (BL-187): default value for the v7 `applied_date` anchor.
+// Older rowToApp* paths (v6 and below) seed this so an old file loads cleanly;
+// the next save() rewrites it as v7. Empty until the row enters Applied.
+function appliedDateDefaults() {
+  return { applied_date: "" };
 }
 
 const HEADER_V4 = [
@@ -332,7 +388,74 @@ function rowFor(app) {
     escapeField(app.contact_linkedin || ""),
     escapeField(app.hm_outreach_status || ""),
     escapeField(app.hm_outreach_date || ""),
+    escapeField(app.applied_date || ""),
   ].join("\t");
+}
+
+function rowToAppV7(parts, lineNo) {
+  if (parts.length < HEADER_V7.length) {
+    throw new Error(
+      `applications.tsv line ${lineNo}: expected ${HEADER_V7.length} cols, got ${parts.length}`
+    );
+  }
+  const [
+    key,
+    source,
+    jobId,
+    companyName,
+    title,
+    url,
+    locationsCell,
+    status,
+    notion_page_id,
+    resume_ver,
+    cl_key,
+    salary_min,
+    salary_max,
+    cl_path,
+    createdAt,
+    updatedAt,
+    fit_score,
+    fit_rationale,
+    fit_evaluated_at,
+    skip_reason,
+    company_people_search_url,
+    outreach_type,
+    contact_name,
+    contact_linkedin,
+    hm_outreach_status,
+    hm_outreach_date,
+    applied_date,
+  ] = parts;
+  return {
+    key,
+    source,
+    jobId,
+    companyName,
+    title,
+    url,
+    locations: decodeLocations(locationsCell),
+    status,
+    notion_page_id: notion_page_id || "",
+    resume_ver: resume_ver || "",
+    cl_key: cl_key || "",
+    salary_min: salary_min || "",
+    salary_max: salary_max || "",
+    cl_path: cl_path || "",
+    createdAt,
+    updatedAt,
+    fit_score: fit_score || "",
+    fit_rationale: fit_rationale || "",
+    fit_evaluated_at: fit_evaluated_at || "",
+    skip_reason: skip_reason || "",
+    company_people_search_url: company_people_search_url || "",
+    outreach_type: outreach_type || "",
+    contact_name: contact_name || "",
+    contact_linkedin: contact_linkedin || "",
+    hm_outreach_status: hm_outreach_status || "",
+    hm_outreach_date: hm_outreach_date || "",
+    applied_date: applied_date || "",
+  };
 }
 
 function rowToAppV6(parts, lineNo) {
@@ -396,6 +519,7 @@ function rowToAppV6(parts, lineNo) {
     contact_linkedin: contact_linkedin || "",
     hm_outreach_status: hm_outreach_status || "",
     hm_outreach_date: hm_outreach_date || "",
+    ...appliedDateDefaults(),
   };
 }
 
@@ -449,6 +573,7 @@ function rowToAppV5(parts, lineNo) {
     fit_evaluated_at: fit_evaluated_at || "",
     skip_reason: skip_reason || "",
     ...outreachDefaults(),
+    ...appliedDateDefaults(),
   };
 }
 
@@ -502,6 +627,7 @@ function rowToAppV4(parts, lineNo) {
     fit_evaluated_at: fit_evaluated_at || "",
     skip_reason: skip_reason || "",
     ...outreachDefaults(),
+    ...appliedDateDefaults(),
   };
 }
 
@@ -551,6 +677,7 @@ function rowToAppV3(parts, lineNo) {
     fit_evaluated_at: "",
     skip_reason: "",
     ...outreachDefaults(),
+    ...appliedDateDefaults(),
   };
 }
 
@@ -599,6 +726,7 @@ function rowToAppV2(parts, lineNo) {
     fit_evaluated_at: "",
     skip_reason: "",
     ...outreachDefaults(),
+    ...appliedDateDefaults(),
   };
 }
 
@@ -644,6 +772,7 @@ function rowToAppV1(parts, lineNo) {
     fit_evaluated_at: "",
     skip_reason: "",
     ...outreachDefaults(),
+    ...appliedDateDefaults(),
   };
 }
 
@@ -658,37 +787,40 @@ function load(filePath) {
   if (!lines.length) return { apps: [], path: filePath };
   const headerCols = lines[0].split("\t");
 
-  const isV6 = matchHeader(headerCols, HEADER_V6);
-  const isV5 = !isV6 && matchHeader(headerCols, HEADER_V5);
-  const isV4 = !isV6 && !isV5 && matchHeader(headerCols, HEADER_V4);
-  const isV3 = !isV6 && !isV5 && !isV4 && matchHeader(headerCols, HEADER_V3);
-  const isV2 = !isV6 && !isV5 && !isV4 && !isV3 && matchHeader(headerCols, HEADER_V2);
-  const isV1 = !isV6 && !isV5 && !isV4 && !isV3 && !isV2 && matchHeader(headerCols, HEADER_V1);
+  const isV7 = matchHeader(headerCols, HEADER_V7);
+  const isV6 = !isV7 && matchHeader(headerCols, HEADER_V6);
+  const isV5 = !isV7 && !isV6 && matchHeader(headerCols, HEADER_V5);
+  const isV4 = !isV7 && !isV6 && !isV5 && matchHeader(headerCols, HEADER_V4);
+  const isV3 = !isV7 && !isV6 && !isV5 && !isV4 && matchHeader(headerCols, HEADER_V3);
+  const isV2 = !isV7 && !isV6 && !isV5 && !isV4 && !isV3 && matchHeader(headerCols, HEADER_V2);
+  const isV1 =
+    !isV7 && !isV6 && !isV5 && !isV4 && !isV3 && !isV2 && matchHeader(headerCols, HEADER_V1);
 
-  if (!isV6 && !isV5 && !isV4 && !isV3 && !isV2 && !isV1) {
+  if (!isV7 && !isV6 && !isV5 && !isV4 && !isV3 && !isV2 && !isV1) {
     throw new Error(
-      `applications.tsv header mismatch: expected v6 [${HEADER_V6.join(", ")}], v5 [${HEADER_V5.join(", ")}], v4 [${HEADER_V4.join(", ")}], v3 [${HEADER_V3.join(", ")}], v2 [${HEADER_V2.join(", ")}] or v1 [${HEADER_V1.join(", ")}], got [${headerCols.join(", ")}]`
+      `applications.tsv header mismatch: expected v7 [${HEADER_V7.join(", ")}], v6 [${HEADER_V6.join(", ")}], v5 [${HEADER_V5.join(", ")}], v4 [${HEADER_V4.join(", ")}], v3 [${HEADER_V3.join(", ")}], v2 [${HEADER_V2.join(", ")}] or v1 [${HEADER_V1.join(", ")}], got [${headerCols.join(", ")}]`
     );
   }
 
   const apps = [];
   for (let i = 1; i < lines.length; i += 1) {
     const parts = lines[i].split("\t");
-    if (isV6) apps.push(rowToAppV6(parts, i + 1));
+    if (isV7) apps.push(rowToAppV7(parts, i + 1));
+    else if (isV6) apps.push(rowToAppV6(parts, i + 1));
     else if (isV5) apps.push(rowToAppV5(parts, i + 1));
     else if (isV4) apps.push(rowToAppV4(parts, i + 1));
     else if (isV3) apps.push(rowToAppV3(parts, i + 1));
     else if (isV2) apps.push(rowToAppV2(parts, i + 1));
     else apps.push(rowToAppV1(parts, i + 1));
   }
-  const schemaVersion = isV6 ? 6 : isV5 ? 5 : isV4 ? 4 : isV3 ? 3 : isV2 ? 2 : 1;
+  const schemaVersion = isV7 ? 7 : isV6 ? 6 : isV5 ? 5 : isV4 ? 4 : isV3 ? 3 : isV2 ? 2 : 1;
   return { apps, path: filePath, schemaVersion };
 }
 
 function save(filePath, apps) {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
-  const lines = [HEADER_V6.join("\t")];
+  const lines = [HEADER_V7.join("\t")];
   for (const a of apps) lines.push(rowFor(a));
   const tmp = `${filePath}.tmp.${process.pid}.${Date.now()}`;
   fs.writeFileSync(tmp, lines.join("\n") + "\n");
@@ -750,6 +882,7 @@ function appendNew(
       fit_evaluated_at: "",
       skip_reason: "",
       ...outreachDefaults(),
+      ...appliedDateDefaults(),
     });
   }
   return { apps: existing.concat(fresh), fresh, fuzzyDuplicates };
@@ -769,4 +902,5 @@ module.exports = {
   HEADER_V4,
   HEADER_V5,
   HEADER_V6,
+  HEADER_V7,
 };

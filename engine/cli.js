@@ -347,9 +347,17 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
   // the pure helpers stay deterministic. No cron, no scheduler — lazy on CLI
   // invocation only.
   const { runAutoDeadSweep, todayLocalISO } = require("./core/auto_dead_sweep.js");
+  // Auto-No-Response lazy sweep (BL-187 / RFC 059 amendment): same lazy
+  // machinery as auto-Dead, but for the vacancy's main status. Rows that have
+  // been "Applied" for >= 14 days (anchored by `applied_date`) flip to
+  // "No Response". Independent of auto-Dead; runs second for determinism. Same
+  // injected "today", same never-throws / TSV-only-without-token contract.
+  const { runAutoNoResponseSweep } = require("./core/auto_no_response_sweep.js");
 
   try {
-    await runAutoDeadSweep(ctx.profileId, ctx, { todayStr: todayLocalISO() });
+    const todayStr = todayLocalISO();
+    await runAutoDeadSweep(ctx.profileId, ctx, { todayStr });
+    await runAutoNoResponseSweep(ctx.profileId, ctx, { todayStr });
     const preHook = PIPELINE_PRE_HOOKS[ctx.command];
     if (preHook) await preHook(ctx, handlers);
     const code = await handler(ctx);
