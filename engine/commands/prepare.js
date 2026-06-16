@@ -51,6 +51,7 @@ const {
 } = require("../core/requirement_blockers.js");
 const { findTitleBlocklistHit } = require("../core/filter.js");
 const { evaluateJob } = require("../core/evaluate_job.js");
+const { ensureFresh: ensureFreshFitProfile } = require("../core/fit_profile.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 const { slugifyCompany } = require("../core/company_slug.js");
@@ -1079,7 +1080,29 @@ async function runPre(ctx, deps) {
   // L-2: surface profile-level memory so SKILL Step 1 / Humanizer Rules read
   // from prepare_context instead of disk. Missing files come back as null and
   // the SKILL falls back to resume_versions.json / cover_letter_template.md.
-  const memory = profile.memory || { writingStyle: null, resumeKeyPoints: null, feedback: [] };
+  const memory = profile.memory || {
+    writingStyle: null,
+    resumeKeyPoints: null,
+    fitProfile: null,
+    feedback: [],
+  };
+
+  // RFC 060 / BL-192: keep the fit digest (memory.fitProfile) in sync with the
+  // storybank on every prepare run, so the fit evaluator always scores against
+  // the candidate's current real achievements. Profiles without a storybank fall
+  // back to whatever fit_profile.md the loader read (often null) and the SKILL
+  // then falls back to resumeKeyPoints / role targets. Best-effort: a failure
+  // here must never block the batch.
+  try {
+    const fit = ensureFreshFitProfile(profile.paths.root, profileId, {
+      dryRun: !!flags.dryRun,
+      writeFile: deps.writeFile,
+    });
+    if (fit.content != null) memory.fitProfile = fit.content;
+    if (fit.regenerated) stdout(`fit_profile.md regenerated from storybank (${fit.reason})`);
+  } catch (err) {
+    stderr(`warn: fit digest regeneration skipped — ${err.message}`);
+  }
 
   // RFC 030: surface role_targets so SKILL Fit Score knows which tracks are
   // acceptable and how to treat each (primary / bridge). Strip regex patterns

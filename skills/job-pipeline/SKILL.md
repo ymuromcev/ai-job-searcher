@@ -232,10 +232,11 @@ After the CLI writes `prepare_context.json`, Claude then:
 
 Read `profiles/<id>/prepare_context.json` first. The `memory` block (populated by `profile_loader` from `profile.json.memory`) contains:
 - `memory.writingStyle` — content of `profiles/<id>/memory/user_writing_style.md`
-- `memory.resumeKeyPoints` — content of `profiles/<id>/memory/user_resume_key_points.md`
+- `memory.fitProfile` — content of `profiles/<id>/fit_profile.md`, the generated digest of the candidate's REAL achievements (RFC 060). **This is what Fit Score compares a vacancy against** (see Step 4 / Global Guard Rails → Fit Score).
+- `memory.resumeKeyPoints` — content of `profiles/<id>/memory/user_resume_key_points.md`. Legacy domain rubric; superseded by `fitProfile` for fit scoring — only a fallback when `fitProfile` is null.
 - `memory.feedback` — array of `{file, content}` for each `feedback_*.md` under the configured dir
 
-Use those strings directly. If `memory.writingStyle` or `memory.resumeKeyPoints` is `null`, the per-profile file is missing — fall back to `profiles/<id>/resume_versions.json` and `profiles/<id>/cover_letter_template.md` for tone hints. Do **not** re-read the memory files from disk — the engine already loaded them.
+Use those strings directly. If `memory.writingStyle` is `null`, the per-profile file is missing — fall back to `profiles/<id>/resume_versions.json` and `profiles/<id>/cover_letter_template.md` for tone hints. Do **not** re-read the memory files from disk — the engine already loaded them.
 
 **Step 2 — Read prepare_context.json**
 
@@ -830,22 +831,24 @@ Cap is enforced at **prepare time only** — scan always lets all jobs through. 
 
 **Role-track NEVER downgrades a Fit Score** (RFC 030). Acceptable role-tracks for this profile are in `prepare_context.roleTargets.tracks[]`. Every job in `batch[]` already passed the role-track gate at scan time — the title is, by construction, on a track the candidate accepts. Do **not** reduce a job's score because it's "not the primary track" (e.g. "Solutions Engineer instead of PM" / "TPM instead of PM" / "BizOps instead of PM"). The scan filter is the only authority on whether a track is acceptable; once a job is in `batch[]`, downgrading on track grounds is a bug.
 
-**Level NEVER downgrades a Fit Score** either. Evaluate by domain match to the candidate's profile:
+**Level NEVER downgrades a Fit Score** either. Evaluate by **overlap with the candidate's REAL achievements** in `prepare_context.memory.fitProfile` (the generated digest of the storybank, RFC 060) — not against a hand-curated domain list:
 
-- **Strong** — core domain match (see `profiles/<id>/memory/user_resume_key_points.md` for domain specifics) plus a relevant tech or product component
-- **Medium** — adjacent domain, or right domain with lesser location/format fit, or outside core domain but with a key component overlap (AI/ML, data platform, payments)
-- **Weak** — outside core domain with no overlapping component
+- **Strong** — a core JD requirement matches one of the candidate's achievements **with its metric/outcome**. One solid metric-backed match is enough; title/level/track do not change this. This is generic — an AI-product role overlapping the candidate's shipped AI achievements is Strong on the same footing as an e-commerce funnel role. Every achievement counts equally regardless of `seed`/`confirmed` review status.
+- **Medium** — partial or adjacent overlap: neighbouring area, or skill match without the metric, or right area with weaker location/format fit
+- **Weak** — no real overlap with any achievement
 - **Early-startup modifier** (pre-Series B, <50 people): downgrade one level (Strong→Medium, Medium→Weak)
+
+A vacancy that is "not this profile at all" was already removed by hard filters (certs / years / required hands-on skills / title / geo / company-cap) before scoring — do not re-litigate those here. Anti-inflation is the overlap rule itself: if you cannot point to a specific achievement the JD requirement maps onto, it is not Strong. If `fitProfile` is null, fall back to `user_resume_key_points.md` for a coarse domain read.
 
 **Bridge-track upgrade (asymmetric).** Some tracks are tagged `fit_treatment: "bridge"` (BL-37 stepping-stone roles: FDE / Solutions / Implementation / TPM / Product Ops / BizOps). Bridge tracks can **upgrade** a score, never downgrade it:
 
-- If the **domain** is Strong, the score is Strong regardless of track. Bridge is a no-op (the upgrade is already implicit).
-- If the **domain** is Medium *and* the company is in a profile-Strong domain (per `user_resume_key_points.md`), and the track has `fit_treatment: "bridge"`, **upgrade to Strong**. This is the bridge override per `roleTargets.fit_treatments.bridge` (and any `track.bridge_note`).
-- If the **domain** is Weak, do not upgrade; report as Weak.
+- If the achievement-overlap is Strong, the score is Strong regardless of track. Bridge is a no-op (the upgrade is already implicit).
+- If the overlap is Medium *and* the company works in an area where the candidate has a Strong achievement (per `fit_profile.md`), and the track has `fit_treatment: "bridge"`, **upgrade to Strong**. This is the bridge override per `roleTargets.fit_treatments.bridge` (and any `track.bridge_note`).
+- If the overlap is Weak, do not upgrade; report as Weak.
 
 Translated: bridge says "even though this is FDE not PM, if it's an AI-native company, count it as Strong". It NEVER says "this is FDE so downgrade".
 
-Profile-specific domain criteria: `profiles/<id>/memory/user_resume_key_points.md`.
+Candidate's real achievements (the fit basis): `prepare_context.memory.fitProfile` (generated from the storybank, see `profiles/<id>/fit_profile.md`).
 Acceptable role-tracks + treatments: `prepare_context.roleTargets` (sourced from `profiles/<id>/filter_rules.json → role_targets`).
 
 ### Salary Expectations (auto-fill at prepare time)

@@ -49,8 +49,11 @@ Steps in detail:
    fit scoring over all unprepared rows so the operator triages by score
    instead of recency.
 6. **Prepare**. Operator picks a row. `prepare --phase pre` runs the
-   live URL check (`url_check.js`), composes the fit prompt
-   (`fit_prompt.js`), pulls the JD through `jd_cache.js` if available,
+   live URL check (`url_check.js`), regenerates the fit digest
+   (`fit_profile.js`) from the storybank so the fit evaluator scores
+   each vacancy against the candidate's real achievements
+   ([RFC 060](../../rfc/060-master-profile-realign.md)), composes the
+   fit prompt (`fit_prompt.js`), pulls the JD through `jd_cache.js` if available,
    computes salary (`salary_calc.js`), enforces geo
    (`geo_enforcer.js`), and writes a `results.json` plan to
    `profiles/<id>/.prepare-state/`. Operator approves; `prepare --phase

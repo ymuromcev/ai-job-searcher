@@ -201,14 +201,20 @@ function checkPositiveGate(filterRules, profileId) {
 //   {
 //     writingStyle: string | null,
 //     resumeKeyPoints: string | null,
+//     fitProfile: string | null,
 //     feedback: [{ file: relPath, content: string }]
 //   }
 //
 // Missing files are tolerated — SKILL falls back to resume_versions.json /
 // cover_letter_template.md when the corresponding memory entry is null.
+//
+// `fitProfile` is the generated achievement digest (RFC 060 / BL-192) at the
+// fixed path `fit_profile.md`. Not config-gated: it is a build artifact, not a
+// hand-authored memory file. `prepare` regenerates it from the storybank before
+// scoring, so the value loaded here is a best-effort starting point.
 function loadMemory(root, memoryConfig) {
   const cfg = memoryConfig || {};
-  const out = { writingStyle: null, resumeKeyPoints: null, feedback: [] };
+  const out = { writingStyle: null, resumeKeyPoints: null, fitProfile: null, feedback: [] };
 
   if (cfg.writing_style_file) {
     const p = path.join(root, cfg.writing_style_file);
@@ -220,6 +226,9 @@ function loadMemory(root, memoryConfig) {
     const v = readFileIfExists(p);
     if (v !== undefined) out.resumeKeyPoints = v;
   }
+  // RFC 060 / BL-192: generated achievement digest at a fixed path (not config).
+  const fitProfile = readFileIfExists(path.join(root, "fit_profile.md"));
+  if (fitProfile !== undefined) out.fitProfile = fitProfile;
   if (cfg.feedback_dir) {
     const dir = path.join(root, cfg.feedback_dir);
     if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {

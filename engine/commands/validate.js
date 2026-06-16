@@ -22,6 +22,7 @@ const { checkPositiveGate } = require("../core/profile_loader.js");
 const jobsTsv = require("../core/jobs_tsv.js");
 const applications = require("../core/applications_tsv.js");
 const { matchBlocklists } = require("../core/filter.js");
+const { checkFreshness: checkFitProfileFreshness } = require("../core/fit_profile.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 const { planDedup } = require("../core/tsv_dedup.js");
@@ -397,6 +398,20 @@ function makeValidateCommand(overrides = {}) {
       ctx.stderr(`filter_rules: ${gateWarning}`);
     } else {
       stdout(`filter_rules: ok (positive title gate present)`);
+    }
+
+    // 1.7. RFC 060 / BL-192 — fit digest freshness. `fit_profile.md` is
+    // generated from the storybank; if a story changed (or was added) and the
+    // generator was not re-run, the fit evaluator would score against a stale
+    // achievement set. Profiles without a storybank skip this (not applicable).
+    const fitFresh = checkFitProfileFreshness(profile.paths.root, profile.id);
+    if (!fitFresh.applicable) {
+      // No storybank — fit_profile.md is optional; nothing to validate.
+    } else if (fitFresh.ok) {
+      stdout(`fit_profile: ok (digest in sync with storybank)`);
+    } else {
+      issues += fitFresh.issues.length;
+      for (const msg of fitFresh.issues) ctx.stderr(`fit_profile: ${msg}`);
     }
 
     // 2. company_cap.

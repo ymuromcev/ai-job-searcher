@@ -413,7 +413,12 @@ test("loadProfile: surfaces empty memory block when profile.memory absent", () =
   const dir = makeTempProfiles();
   writeProfile(dir, "p", { id: "p", identity: { name: "x", email: "x@x" }, modules: [] });
   const profile = loadProfile("p", { profilesDir: dir, ...SILENT_OPTS });
-  assert.deepEqual(profile.memory, { writingStyle: null, resumeKeyPoints: null, feedback: [] });
+  assert.deepEqual(profile.memory, {
+    writingStyle: null,
+    resumeKeyPoints: null,
+    fitProfile: null,
+    feedback: [],
+  });
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
