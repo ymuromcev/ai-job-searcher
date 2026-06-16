@@ -159,3 +159,30 @@ test("SKILL.md (RFC 034): weak-fallback mode is gone from the prepare loop prose
     "CLI command line must not list weak-fallback as a valid --mode (RFC 034)"
   );
 });
+
+// RFC 060 / BL-192 — fit scores against the generated achievement digest, not
+// the hand-curated domain rubric. Guard the prompt wiring against regression.
+test("SKILL.md Fit Score scores against the achievement digest (RFC 060)", () => {
+  const text = fs.readFileSync(SKILL_PATH, "utf8");
+  assert.match(text, /memory\.fitProfile/, "Fit Score must reference memory.fitProfile");
+  assert.match(text, /overlap with the candidate's REAL achievements/i);
+  // Generic — AI roles can reach Strong on the same footing as e-commerce.
+  assert.match(
+    text,
+    /AI-product role overlapping the candidate's shipped AI achievements is Strong/i
+  );
+  // seed/confirmed does not gate the score.
+  assert.match(text, /regardless of `seed`\/`confirmed`/);
+  // Anti-inflation is the overlap rule itself.
+  assert.match(text, /if you cannot point to a specific achievement.*it is not Strong/is);
+});
+
+test("SKILL.md no longer routes Fit Score through user_resume_key_points as the rubric", () => {
+  const text = fs.readFileSync(SKILL_PATH, "utf8");
+  // It may still appear as a documented fallback, but not as the primary basis.
+  assert.doesNotMatch(
+    text,
+    /core domain match \(see `profiles\/<id>\/memory\/user_resume_key_points\.md`/,
+    "old domain-rubric Strong rule must be gone"
+  );
+});

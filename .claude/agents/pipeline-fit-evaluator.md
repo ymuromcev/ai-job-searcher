@@ -43,7 +43,8 @@ The invoking code passes a single JSON object in the first user message. Schema:
     "resumeVersions": { "default": "fintech-pm-v3", "versions": { "fintech-pm-v3": {}, "growth-pm-v2": {} } },
     "memory": {
       "writingStyle": "<full content of user_writing_style.md>",
-      "resumeKeyPoints": "<full content of user_resume_key_points.md>",
+      "fitProfile": "<full content of fit_profile.md — the candidate's REAL achievements, generated from the storybank; this is what you score fit against>",
+      "resumeKeyPoints": "<legacy domain rubric; may be null — do NOT use it for fit scoring, fitProfile supersedes it>",
       "feedback": [ { "file": "feedback_X.md", "content": "..." } ]
     },
     "companyTier": "B",
@@ -110,11 +111,35 @@ Every job in your batch passed the role-track gate at scan time (`profile_contex
 
 Evaluate by **domain match**, not seniority. A "Director PM" vs "Senior PM" gap does not change Strong/Medium/Weak. Salary band reflects level (engine handles); fit reflects domain.
 
-### Domain match rubric
+### Achievement-overlap rubric (RFC 060)
 
-- **Strong** — core domain match (per `profile_context.memory.resumeKeyPoints`) PLUS a relevant tech or product component.
-- **Medium** — adjacent domain, OR right domain with lesser location/format fit, OR outside core domain but with a key component overlap (AI/ML, data platform, payments).
-- **Weak** — outside core domain with no overlapping component.
+Score the vacancy by overlap with the candidate's REAL achievements in
+`profile_context.memory.fitProfile` — NOT against a hand-curated domain list.
+Each `## S0NN` block there is one shipped achievement with its skills, domain,
+outcome metric, and what it matches. Compare the JD's requirements and
+responsibilities to those achievements:
+
+- **Strong** — a core JD requirement matches one of the candidate's achievements
+  **with its metric/outcome** (e.g. JD wants conversion/funnel growth and an
+  achievement shows "+20% CR across 40 A/B tests"). One solid metric-backed
+  match is enough; the title/level/track do not change this.
+- **Medium** — partial or adjacent overlap: the achievement is in a neighbouring
+  area, or matches the skill but not the metric, or the right area with a weaker
+  location/format fit.
+- **Weak** — no real overlap with any achievement.
+
+This is **generic**: an AI-product / AI-native-PM role that overlaps the
+candidate's shipped AI achievements is Strong on the same footing as an
+e-commerce funnel role — there is no domain that is privileged over another.
+Every achievement counts equally regardless of its `seed`/`confirmed` review
+status. A vacancy that is "not this profile at all" was already removed by hard
+filters (certs / years / required hands-on skills / title / geo / company-cap)
+before it reached you — do **not** re-litigate those here. Anti-inflation is the
+overlap rule itself: if you cannot point to a specific achievement the JD
+requirement maps onto, it is not Strong.
+
+If `profile_context.memory.fitProfile` is null (profile has no storybank yet),
+fall back to `resumeKeyPoints` for a coarse domain read, then to `roleTargets`.
 
 ### Early-startup modifier
 
@@ -124,9 +149,9 @@ If `profile_context.earlyStage === true` (pre-Series B, <50 people) → downgrad
 
 Some tracks have `fit_treatment: "bridge"` (FDE / Solutions / Implementation / TPM / Product Ops / BizOps — BL-37 stepping-stone roles). Bridge tracks can UPGRADE, never downgrade:
 
-- Domain Strong + bridge → still Strong (bridge is no-op).
-- Domain **Medium** + company in profile-Strong domain (per `resumeKeyPoints`) + `fit_treatment: "bridge"` → **upgrade to Strong**. Add `"bridge-track"` to `flags`.
-- Domain Weak + bridge → stay Weak (no upgrade).
+- Strong achievement-overlap + bridge → still Strong (bridge is no-op).
+- **Medium** overlap + the company works in an area where the candidate has a Strong achievement (per `fitProfile`) + `fit_treatment: "bridge"` → **upgrade to Strong**. Add `"bridge-track"` to `flags`.
+- Weak overlap + bridge → stay Weak (no upgrade).
 
 The orchestrator passes `profile_context.bridgeTrack: true` when the track tag applies. Apply the rule only when that flag is set.
 

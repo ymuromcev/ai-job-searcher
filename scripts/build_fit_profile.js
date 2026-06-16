@@ -8,20 +8,18 @@
 // interviews; this script keeps the fit basis in sync with it — add a story to
 // the bank, regenerate, and fit/master-profile see it without any manual sync.
 //
+// The build is also run automatically before every `prepare` (engine/commands/
+// prepare.js) and gated by `validate`; this CLI is the manual entry point. The
+// actual lifecycle logic lives in engine/core/fit_profile.js so there is one
+// definition of "fresh".
+//
 // Deterministic + idempotent: same storybank content → byte-identical output (no
 // timestamps; freshness is tracked by the content hash in the header).
-//
-// Reads:
-//   profiles/<id>/interview-coach-state/coaching_state.md
-//
-// Writes:
-//   profiles/<id>/fit_profile.md  (overwritten — generated file, never hand-edited)
 
 const fs = require("fs");
 const path = require("path");
 
-const { parseStorybank } = require("../engine/core/storybank");
-const { buildFitDigest } = require("../engine/core/fit_digest");
+const { coachingStatePath, fitProfilePath, buildContent } = require("../engine/core/fit_profile");
 
 // ---------- arg parsing ----------
 
@@ -34,15 +32,11 @@ function parseArgs(argv) {
   return args;
 }
 
-function coachingStatePath(root, profile) {
-  return path.join(root, "profiles", profile, "interview-coach-state", "coaching_state.md");
+function profileDir(root, profile) {
+  return path.join(root, "profiles", profile);
 }
 
-function fitProfilePath(root, profile) {
-  return path.join(root, "profiles", profile, "fit_profile.md");
-}
-
-function main(argv = process.argv.slice(2), opts = {}) {
+function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
   if (!args.profile) {
     console.error("Usage: node scripts/build_fit_profile.js --profile <id>");
@@ -50,17 +44,16 @@ function main(argv = process.argv.slice(2), opts = {}) {
   }
 
   const root = args.root || path.join(__dirname, "..");
-  const csPath = coachingStatePath(root, args.profile);
+  const dir = profileDir(root, args.profile);
+  const csPath = coachingStatePath(dir);
 
   if (!fs.existsSync(csPath)) {
     console.error(`coaching_state.md not found at ${csPath}`);
     return 1;
   }
 
-  const md = fs.readFileSync(csPath, "utf8");
-  const stories = parseStorybank(md);
-
-  if (stories.length === 0) {
+  const built = buildContent(dir, args.profile);
+  if (!built) {
     console.error(
       `No storybank stories found in ${csPath} — fit has no achievement basis. ` +
         "Add a `## Storybank` table before generating the fit profile."
@@ -68,14 +61,9 @@ function main(argv = process.argv.slice(2), opts = {}) {
     return 1;
   }
 
-  const digest = buildFitDigest(stories, {
-    profileId: args.profile,
-    source: "interview-coach-state/coaching_state.md (## Storybank)",
-  });
-
-  const outPath = fitProfilePath(root, args.profile);
-  fs.writeFileSync(outPath, digest, "utf8");
-  console.log(`Wrote ${outPath} (${digest.length} bytes, ${stories.length} stories)`);
+  const outPath = fitProfilePath(dir);
+  fs.writeFileSync(outPath, built.content, "utf8");
+  console.log(`Wrote ${outPath} (${built.content.length} bytes, ${built.stories.length} stories)`);
   return 0;
 }
 
@@ -83,4 +71,4 @@ if (require.main === module) {
   process.exit(main());
 }
 
-module.exports = { main, parseArgs, coachingStatePath, fitProfilePath };
+module.exports = { main, parseArgs };
