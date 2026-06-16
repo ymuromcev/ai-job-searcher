@@ -508,3 +508,46 @@ test("filterJobs geo: remote_ok=true allows Remote in metro mode", () => {
   const { passed } = filterJobs([job], { geo: lilia });
   assert.equal(passed.length, 1);
 });
+
+// BL-191 / RFC 060 — over-level leak patches. The three generic patterns
+// (`Head of `, `Group Product`, `Director `) close management-layer titles
+// that the narrow pre-BL-191 patterns let through, WITHOUT colliding with
+// strong bridge IC roles (Staff/Principal at AI labs, "Lead PM", Solutions
+// Architect). Synthetic rules mirror what jared/filter_rules.json now carries.
+const OVERLEVEL_BLOCKLIST = {
+  title_blocklist: [
+    { pattern: "Head of", reason: "Head of = management layer" },
+    { pattern: "Group Product", reason: "Group Product* = management layer" },
+    { pattern: "Director", reason: "Director = over-level" },
+  ],
+};
+
+test("filterJobs BL-191: generic over-level patterns catch the real leaks", () => {
+  const leaks = [
+    "Head of Marketing Operations",
+    "Head of Business Operations",
+    "Group Product Management Manager",
+    "Group Product Operations Manager, Strategy & Central Ops",
+    "Director TPM, InfraGov",
+    "Director / Sr. Director, Trust & Safety",
+  ];
+  for (const role of leaks) {
+    const { rejected } = filterJobs([{ ...BASE_JOB, role }], OVERLEVEL_BLOCKLIST);
+    assert.equal(rejected.length, 1, `expected "${role}" to be blocked`);
+    assert.equal(rejected[0].reason.kind, "title_blocklist");
+  }
+});
+
+test("filterJobs BL-191: over-level patterns do NOT catch bridge/Senior IC roles", () => {
+  const keep = [
+    "Staff Forward Deployed Engineer", // Staff = AI-lab convention, not grade
+    "Member of Technical Staff (Forward Deployed Engineer, Applied AI)",
+    "Principal Solutions Architect, AI & Identity",
+    "Lead Product Manager", // Lead PM ≈ Senior at most companies
+    "Senior Product Manager, Growth",
+  ];
+  for (const role of keep) {
+    const { passed } = filterJobs([{ ...BASE_JOB, role }], OVERLEVEL_BLOCKLIST);
+    assert.equal(passed.length, 1, `expected "${role}" to pass`);
+  }
+});
