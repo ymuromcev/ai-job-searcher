@@ -207,3 +207,76 @@ test("findHardBlockers: cert family + min_years are independent", () => {
   });
   assert.deepEqual(codes, ["years_required_max_exceeded:8", "cert_required:CMA"]);
 });
+
+// BL-191 / RFC 060 — honest-gap engineering blockers. Jared directs AI and
+// does not write code by hand; roles REQUIRING hands-on Python, ML model
+// engineering, or production coding are archived pre-SKILL. SQL is NOT a
+// blocker (he knows SQL and targets SQL-analytics roles). Pure engineering
+// TITLES are already cut by the requirelist, so these patterns target
+// engineering requirements hidden in PM/bridge JD bodies. Config mirrors
+// jared/filter_rules.json (synthetic here — no personal data).
+const HONEST_GAP = {
+  required_skills_excluded: [
+    { skill: "Python", patterns: ["\\bpython\\b"], min_years: 1 },
+    {
+      skill: "ML model engineering",
+      patterns: [
+        "\\b(?:pytorch|tensorflow|scikit-?learn|keras|mlops)\\b",
+        "\\b(?:train|training|build|building|develop|deploy)\\w*\\b.{0,30}\\b(?:ml|machine learning|deep learning|neural)\\b.{0,20}\\bmodels?\\b",
+        "\\bmodel\\s+(?:training|deployment|serving)\\b",
+      ],
+      min_years: 1,
+    },
+    {
+      skill: "Hands-on coding",
+      patterns: [
+        "\\b(?:write|writing|ship|shipping)\\b.{0,20}\\bproduction\\b.{0,12}\\bcode\\b",
+        "\\bproduction[- ]grade\\s+code\\b",
+        "\\bhands[- ]on\\b.{0,15}\\b(?:coding|programming|software development)\\b",
+      ],
+      min_years: 1,
+    },
+  ],
+};
+
+test("findHardBlockers BL-191: blocks required hands-on engineering", () => {
+  const cases = [
+    [["5+ years product management", "Proficiency in Python required"], "Python"],
+    [
+      ["Experience building machine learning models in PyTorch", "Must have 3+ years"],
+      "ML model engineering",
+    ],
+    [["You will write production code daily", "3+ years experience required"], "Hands-on coding"],
+    [["MLOps and model deployment required"], "ML model engineering"],
+  ];
+  for (const [requirements, skill] of cases) {
+    const codes = findHardBlockers({
+      structuredJD: { requirements },
+      profile: makeProfile(HONEST_GAP),
+    });
+    assert.ok(
+      codes.includes(`required_skill_excluded:${skill}`),
+      `expected ${skill} block for ${JSON.stringify(requirements)}, got ${JSON.stringify(codes)}`
+    );
+  }
+});
+
+test("findHardBlockers BL-191: does NOT block SQL, 'a plus', or collaboration", () => {
+  const passes = [
+    ["Strong SQL skills required", "5+ years analytics"], // SQL is a target, not a gap
+    ["5+ years PM required", "SQL and Python are a plus"], // 'a plus' suppresses
+    ["Comfortable reading code", "Python familiarity a plus"],
+    ["Partner with software engineers to ship production features", "5+ years PM"], // no "code"
+  ];
+  for (const requirements of passes) {
+    const codes = findHardBlockers({
+      structuredJD: { requirements },
+      profile: makeProfile(HONEST_GAP),
+    });
+    assert.deepEqual(
+      codes,
+      [],
+      `expected no block for ${JSON.stringify(requirements)}, got ${JSON.stringify(codes)}`
+    );
+  }
+});
