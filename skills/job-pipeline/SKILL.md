@@ -376,7 +376,7 @@ tailoring <row_key> (Strong): iter 1 → 58, iter 2 → 71, iter 3 → 72, iter 
 
 **Skip rows where `fit_score == 'Strong'`** — they were handled by Step 6.5's tailoring loop and already carry `tailoredResume`. This step applies only to Weak / Medium rows.
 
-Choose the best resume archetype from `profiles/<id>/resume_versions.json` for this specific role. Prefer the archetype whose domain keywords overlap most with the JD / job title.
+Choose the best resume archetype from `profiles/<id>/resume_versions.json` for this specific role. Prefer the archetype whose domain keywords overlap most with the JD / job title. Archetypes are cheap honest cluster-tailoring (the model lives in `docs/reference/archetypes.md`) — pick the cut that leans into this role's cluster; do not rewrite its positioning here.
 
 **Mandatory validation**: `resumeVer` MUST be a key that literally exists in `profile.resume_versions.versions`. Do NOT invent or paraphrase a key. If no archetype is a clear match, pick the closest existing key (or the profile's `default` if defined) and note the partial match in the rationale — never write a key that isn't in the file. The `prepare commit` phase will hard-fail on unknown keys, so catch the mismatch here.
 

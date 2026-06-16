@@ -181,6 +181,15 @@ become `tier_s` / `tier_a` / `tier_b` / `tier_c`. Empty tiers are fine.
 
 ## Block 3 — Resume archetypes (writes section E + verifies files)
 
+> **How to author each archetype — apply the model in
+> [`docs/reference/archetypes.md`](../../docs/reference/archetypes.md).** In short:
+> an archetype is cheap, honest tailoring for a LOW-fit cluster, **not** the
+> candidate's master identity. Lead the title/summary with what the cluster hires
+> for (a fintech cut leads fintech, an AI cut leads AI) — put a domain in the
+> headline only when the candidate has a **real** achievement behind it. Create a
+> cut only when there is a real hook; never invent proof; never inflate seniority;
+> mirror the cluster's own titles. Bullets reframe real outcomes, never fabricate.
+
 ```
 Q3.1  How many resume variants do you want to maintain?
       (Most candidates have 2-4 cuts targeted at different role types.)

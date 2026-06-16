@@ -2,6 +2,12 @@
 //
 // Output shape (consumed by engine/core/fit_prompt.js and prepare):
 //   { versions: { <key>: { title, summary, bullets?, tags? }, ... } }
+//
+// This is a MECHANICAL mapper — it does NOT decide archetype positioning. The
+// positioning model (cheap honest tailoring per LOW-fit cluster; lean into the
+// cluster; domain-as-headline only with real proof; never fabricate/inflate) lives
+// in docs/reference/archetypes.md and is applied by the author (onboard-profile
+// Block 3), not here.
 
 function buildResumeVersions(intake = {}) {
   const archetypes = Array.isArray(intake.resume_archetypes) ? intake.resume_archetypes : [];
