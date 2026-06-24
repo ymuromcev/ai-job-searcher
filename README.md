@@ -61,7 +61,9 @@ profiles/
   <id>/              personal profile (gitignored)
 data/                shared master pool (jobs.tsv, companies.tsv) — gitignored
 scripts/stage18/     onboarding wizard for new profiles
+scripts/relokant/    dedup helper for the relokant sourcing sweep
 skills/job-pipeline/ Claude skill that drives the flow
+skills/relokant-sweep/ Claude skill — CIS-rooted company sourcing sweep
 rfc/                 design docs (001-core split, 002-check, 004-onboarding)
 ```
 
@@ -101,6 +103,19 @@ lives in `profiles/<id>/`.
   templates / per-profile Notion databases by invoking the Stage 18
   engine under the hood. Scripted onboarding (without Claude) remains
   available as a technical reference in `scripts/stage18/`.
+- **Relokant sourcing sweep** — `/relokant-sweep` is a manual-launch
+  Claude skill that sources a hard-to-find channel: CIS-rooted companies
+  whose product+engineering team is still Russian-speaking, selling into
+  US/EU, mid-size, not globalized. One run does web research over a
+  rotating set of sources, classifies each company by a four-part
+  "sweet-zone" test + soft US-viability signal, dedups against two
+  per-profile ledgers (`ru_friendly_targets.tsv` already taken,
+  `ru_friendly_rejects.tsv` already rejected) so it never re-researches
+  the same company, appends new finds, and drafts founder outreach. The
+  dedup is enforced on code (`scripts/relokant/sweep_dedup.js`), not on
+  the model. Run it every 2–4 weeks; see
+  [skills/relokant-sweep/SKILL.md](skills/relokant-sweep/SKILL.md) and
+  [RFC 061](rfc/061-relokant-sourcing-process.md).
 
 ## What this tool does NOT do
 
