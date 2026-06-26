@@ -21,9 +21,12 @@ cheap stage (candidate review) before any outreach.
 1. New sweet-zone companies appended to `profiles/<id>/ru_friendly_targets.tsv`.
 2. Rejected companies appended to `profiles/<id>/ru_friendly_rejects.tsv`
    with a reason (memory of the sweep — next run won't re-research them).
-3. An outreach draft for each **new US-viable** target (contact +
+3. The new sweet-zone companies pushed into the per-profile **Notion
+   Companies DB**, two-way deduped (no duplicates of companies already there
+   from the job pipeline / `data/companies.tsv`).
+4. An outreach draft for each **new US-viable** target (contact +
    message). **Drafts only — the user sends them by hand.**
-4. A short run report + an updated source-rotation log.
+5. A short run report + an updated source-rotation log.
 
 ---
 
@@ -139,7 +142,29 @@ rejects. Only `FRESH` names proceed.
 
 Never write a `DUP` to either file. Never edit existing rows — append only.
 
-### 6. Outreach drafts (new US-viable only)
+### 6. Push the new companies into Notion
+
+After appending, sync the targets ledger into the per-profile Notion
+Companies DB — deterministically, on code, not by hand:
+
+```
+node engine/cli.js companies-upsert --profile <id>           # preview the plan
+node engine/cli.js companies-upsert --profile <id> --apply   # write to Notion
+```
+
+The command is two-way deduped: it matches each target by domain **and**
+name against existing Notion pages, `data/companies.tsv`, and both relokant
+ledgers, so a company the job pipeline already created is never duplicated.
+A page that already exists is back-filled on **empty fields only** (Website,
+Careers URL, Why Interested, Notes, Outbound Status) — nothing is
+overwritten and `Tier` is never touched. `--dry-run` (default) prints
+`N to create, M to fill, K skip`; run `--apply` once the preview looks right.
+
+Do **not** create Notion pages by hand or via the Notion MCP from this skill
+— page writes live in the engine (RFC 022). This step is the only sanctioned
+path. See RFC 062 / BL-202.
+
+### 7. Outreach drafts (new US-viable only)
 
 For each new target with US-viability HIGH or "exception", produce:
 
@@ -150,7 +175,7 @@ For each new target with US-viability HIGH or "exception", produce:
 
 **You draft; the user sends.** Do not auto-send anything.
 
-### 7. Update the rotation log + report
+### 8. Update the rotation log + report
 
 Append a dated entry to `profiles/<id>/.relokant-state/sources_log.md`:
 which sources you swept, how many candidates seen, how many new targets /
@@ -175,6 +200,9 @@ part of RFC 061.
 - **Append only.** Never rewrite or delete existing TSV rows.
 - **Dedup on code.** Always run names through `sweep_dedup.js` before
   appending — do not rely on remembering what's already there.
+- **Notion writes go through the engine.** Push companies to Notion only via
+  `companies-upsert` (step 6) — never create pages by hand or via the Notion
+  MCP from this skill (RFC 022).
 - **Drafts only for outreach.** The user sends messages by hand.
 - **No engine changes.** If a sweep needs the scan engine / a new
   discovery adapter, stop and open an RFC — that's out of scope here.

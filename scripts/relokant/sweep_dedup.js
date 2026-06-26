@@ -19,48 +19,10 @@
 const fs = require("fs");
 const path = require("path");
 
-// Legal-entity suffixes stripped before comparison so "Virto Commerce, Inc."
-// matches "Virto Commerce". Order-independent; applied as a trailing-token set.
-const LEGAL_SUFFIXES = new Set([
-  "inc",
-  "llc",
-  "ltd",
-  "limited",
-  "gmbh",
-  "corp",
-  "co",
-  "company",
-  "plc",
-  "ag",
-  "sa",
-  "bv",
-  "oy",
-  "ab",
-]);
-
-// Normalize a company name to a comparison key:
-//   - strip diacritics (José -> jose)
-//   - lowercase
-//   - drop punctuation (keep alnum + spaces)
-//   - collapse whitespace
-//   - drop trailing legal-entity suffix tokens
-function normalizeName(raw) {
-  if (typeof raw !== "string") return "";
-  let s = raw.normalize("NFKD").replace(/[̀-ͯ]/g, ""); // strip Latin diacritics
-  s = s.toLowerCase();
-  // Drop punctuation but KEEP Unicode letters/digits — many CIS company
-  // names are Cyrillic; stripping to ASCII would normalize "Яндекс" to ""
-  // and the helper would then mislabel a genuinely new company as a dup.
-  s = s.replace(/[^\p{L}\p{N}\s]/gu, " "); // punctuation -> space
-  s = s.replace(/\s+/g, " ").trim();
-  if (!s) return "";
-  let tokens = s.split(" ");
-  // Peel trailing legal suffixes (e.g. "... inc", "... co ltd").
-  while (tokens.length > 1 && LEGAL_SUFFIXES.has(tokens[tokens.length - 1])) {
-    tokens.pop();
-  }
-  return tokens.join(" ");
-}
+// normalizeName + LEGAL_SUFFIXES moved to engine/core/company_keys.js so the
+// relokant sweep and the Notion upsert (RFC 062) share ONE implementation.
+// Re-exported below to keep this module's public API unchanged.
+const { normalizeName, LEGAL_SUFFIXES } = require("../../engine/core/company_keys.js");
 
 // Partition candidate names into fresh (unknown) and dupes (already known).
 // `knownNames` is a Set of *normalized* names. Preserves the original casing

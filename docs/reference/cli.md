@@ -25,6 +25,7 @@ Commands:
 | `indeed-prep` | Print Indeed scan playbook for a browser MCP. Phase 1 of the Indeed ingest flow. |
 | `reclassify` | Re-run the email classifier across historical `OTHER` entries in `processed_messages.json` (30-day window). Dry-run by default. |
 | `retro-tailor` | Re-tailor Strong rows already in `To Apply` whose resume predates the RFC-044 tailoring loop. Recon by default; `--apply --results-file` commits. |
+| `companies-upsert` | Push relokant-sweep sweet-zone targets into the Notion Companies DB, two-way deduped (domain + name vs Notion / `data/companies.tsv` / relokant ledgers). Back-fills empty fields only; never writes `Tier`. Dry-run by default; `--apply` commits. (RFC 062) |
 
 The dispatcher also runs deterministic pre-command hooks (BL-151 / RFC 054). Today both `scan` and `prepare` auto-trigger `sync --apply` before their main work runs, so downstream filters / cap counters / fit-eval read fresh Notion state. The sync command itself also archives engine-tailored CV/CL files for rows whose status moved past `To Apply` (Applied / Interview / Offer / Rejected / Closed / No Response). The pre-hook is suppressed by `--no-sync`; `scan --dry-run` also suppresses it for parity with the prior dry-run-never-mutates behaviour.
 

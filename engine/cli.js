@@ -24,6 +24,7 @@ const KNOWN_COMMANDS = [
   "reclassify",
   "retro-tailor",
   "backfill-outreach-url",
+  "companies-upsert",
 ];
 
 const PARSE_OPTIONS = {
@@ -96,6 +97,14 @@ Commands:
              --apply computes the URL, writes it to TSV, and pushes it to the
              Notion "LinkedIn Search" field via a targeted page update.
              Idempotent — a second run is a no-op. See RFC 059 / BL-186.
+  companies-upsert
+             Push relokant-sweep sweet-zone targets (ru_friendly_targets.tsv)
+             into the per-profile Notion Companies DB, two-way deduped (by
+             domain + name against existing Notion pages, data/companies.tsv,
+             and the relokant ledgers). Existing pages are back-filled on empty
+             fields only; Tier is never written. Dry-run by default (prints
+             "N to create, M to fill, K skip"); --apply commits. See RFC 062 /
+             BL-202.
 
 Flags:
   --profile <id>       Profile id (required for all commands). Lowercase, alphanum + - _.
@@ -220,6 +229,7 @@ function defaultCommands() {
     reclassify: require("./commands/reclassify.js"),
     "retro-tailor": require("./commands/retro_tailor.js"),
     "backfill-outreach-url": require("./commands/backfill_outreach_url.js"),
+    "companies-upsert": require("./commands/companies_upsert.js"),
   };
 }
 
