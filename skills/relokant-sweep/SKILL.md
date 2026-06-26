@@ -1,6 +1,6 @@
 ---
 name: relokant-sweep
-description: "Repeatable sourcing sweep for the relokant sweet-zone channel — CIS-rooted companies whose product+engineering team is still Russian-speaking, selling into US/EU, mid-size, not globalized (gold standard Virto Commerce, anti-pattern Miro). One run: pull a fresh batch of candidates from not-yet-swept sources, classify by sweet-zone + US-viability, dedup against both ledgers on code, append new sweet-zone to ru_friendly_targets.tsv and rejects to ru_friendly_rejects.tsv, and draft outreach for each new US-viable target. Trigger on: /relokant-sweep, or when the user asks to source / sweep / find more relokant / CIS-rooted / ru-friendly companies for a profile."
+description: "Repeatable sourcing sweep for the relokant sweet-zone channel — CIS-rooted, US-headquartered companies whose product+engineering team is still Russian-speaking, selling into US/EU, mid-size, not globalized (gold standard Improvado / Virto Commerce, anti-pattern Miro). HQ must be in the US (team may sit in a CIS hub); non-US-HQ companies are a hard reject. One run: pull a fresh batch of candidates from not-yet-swept sources, classify by sweet-zone + US-viability, dedup against both ledgers on code, append new sweet-zone to ru_friendly_targets.tsv and rejects to ru_friendly_rejects.tsv, and draft outreach for each new US-viable target. Trigger on: /relokant-sweep, or when the user asks to source / sweep / find more relokant / CIS-rooted / ru-friendly companies for a profile."
 ---
 
 # relokant-sweep — CIS-rooted company sourcing sweep
@@ -29,20 +29,35 @@ cheap stage (candidate review) before any outreach.
 
 ## Classification — the sweet zone
 
-A company **passes** only if ALL four hold:
+A company **passes** only if ALL five hold:
 
 1. Founded in CIS / post-Soviet.
 2. Product + engineering team still predominantly Russian-speaking
    (hubs: Yerevan, Tbilisi, Belgrade, Limassol/Cyprus, Warsaw, Lisbon,
    Almaty, Tashkent).
 3. Sells into US/EU (western comp band, remote-friendly).
-4. Mid-size, NOT globalized (US-HQ + English-internal + "we hire anyone"
-   = drops out).
+4. **US corporate HQ** — incorporated / headquartered in the US
+   (Delaware C-corp + US office + US management). The product/eng team
+   may still sit in a CIS diaspora hub; that is fine and expected
+   (Improvado: San Diego HQ, product org was in Almaty). A company whose
+   HQ is NOT in the US is a hard reject, even if everything else fits.
+   **User decision 2026-06-25** — the candidate skips non-US-HQ companies
+   by hand, so the sweep must not surface them.
+5. Mid-size, NOT globalized — "globalized" means the **ru-signal is
+   dead**: English-internal, product org no longer Russian-speaking,
+   "we hire anyone". This is about the *team's language*, NOT the HQ
+   address. US-HQ + a Russian-speaking product/eng org is the IDEAL,
+   not a disqualifier.
 
-Two rejection modes (record in rejects with the reason):
+Three rejection modes (record in rejects with the reason):
 
+- **`hq_not_us`** — CIS-rooted, ru-team alive, but corporate HQ is
+  outside the US (Yerevan, Limassol/Cyprus, Ireland, etc.). Fibery,
+  Krisp, Playrix sit here under the 2026-06-25 rule. Reject even if the
+  US-viability wedge looks strong — no US HQ, no entry.
 - **`too_globalized`** — Miro, Wrike, Preply, People.ai, Ecwid/Lightspeed.
-  Already American, the ru-signal is dead.
+  Already American AND the ru-signal is dead (English-internal product
+  org). US-HQ alone does NOT make a company globalized — it's required.
 - **`wrong_market`** — Russian-speaking team but sells into CIS/LatAm/SEA,
   i.e. non-western comp band (inDrive, ID Finance, Skyeng, Refocus,
   YouTravel, Mate academy). UA-companies are excluded from targeting
@@ -119,8 +134,8 @@ rejects. Only `FRESH` names proceed.
   `ats`, `contact`, `open_roles_url`, `notes`. Tab-separated. Set
   `us_viability` to the level you judged.
 - **Rejects (FRESH)** → append a row to `ru_friendly_rejects.tsv`:
-  `name`, `reason` (`too_globalized` / `wrong_market` / `other`),
-  `note`, `date`. Tab-separated.
+  `name`, `reason` (`hq_not_us` / `too_globalized` / `wrong_market` /
+  `other`), `note`, `date`. Tab-separated.
 
 Never write a `DUP` to either file. Never edit existing rows — append only.
 
