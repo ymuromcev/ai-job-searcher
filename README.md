@@ -219,6 +219,7 @@ node engine/cli.js <command> --profile <id> [flags]
 | `answer` | Generate or reuse application answers and push back to Notion Q&A DB. |
 | `retro-tailor` | Re-tailor Strong rows currently in `To Apply` whose resume predates the RFC-044 tailoring loop. |
 | `backfill-outreach-url` | One-shot: fill the LinkedIn people-search URL for existing `To Apply` / `Applied` rows that predate the RFC-059 outreach feature. Dry-run by default; `--apply` writes TSV + Notion. Idempotent. |
+| `companies-upsert` | Push relokant-sweep sweet-zone targets into the Notion Companies DB, two-way deduped (domain + name vs Notion / `data/companies.tsv` / relokant ledgers). Back-fills empty fields only; never writes `Tier`. Dry-run by default; `--apply` writes. (RFC 062) |
 
 `node engine/cli.js --help` prints the same list with full flag docs.
 

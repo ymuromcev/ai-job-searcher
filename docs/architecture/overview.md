@@ -55,6 +55,8 @@ Three invariants follow:
 | `jobs_tsv.js` | Shared `data/jobs.tsv` reader/writer. | `commands/scan.js`, dedup |
 | `companies.js` | `data/companies.tsv` reader/writer. | `commands/scan.js`, `company_resolver.js` |
 | `company_resolver.js` | Lookup-or-create company in the per-profile Notion Companies DB; in-memory cache. | `commands/sync.js` (push) |
+| `company_keys.js` | Shared company-identity keys for dedup: `normalizeName` (Cyrillic-safe, legal-suffix peeling) + `normalizeDomain`. | `companies_upsert.js`, `scripts/relokant/sweep_dedup.js` |
+| `companies_upsert.js` | Pure create/fill/skip planner for pushing relokant-sweep targets into the Notion Companies DB (two-way dedup, fill-gaps, never writes `Tier`). [RFC 062](../../rfc/062-companies-notion-upsert.md). | `commands/companies_upsert.js` |
 | `notion_sync.js` | Hybrid Notion client wrapper. Direct API for fast ops (`updatePageStatus`, `addPageComment`, `createJobPage`), batch queue for bulk push. SDK v5 compliant — uses `dataSources.query` and skips empty values. | `commands/sync.js`, `commands/check.js`, `commands/prepare.js` |
 | `fit_prompt.js` | Assembles the per-profile fit-evaluation prompt. | `commands/prepare.js` |
 | `jd_cache.js` | JD fetch + cache for Greenhouse, Lever, Workday (JSON), iCIMS (HTML scrape), Taleo (HTML scrape, JSON-LD-preferred). Other sources surface `unsupported`. | `commands/prepare.js`, `jd_extract.js` |
@@ -126,6 +128,23 @@ the Notion `LinkedIn Search` field via a targeted single-field
 status). Idempotent — rows that already have a URL are skipped. Does not
 break pull-only: it creates no pages and touches no operator-owned field,
 only the engine-owned URL.
+
+**`companies-upsert`**. Pushes relokant-sweep sweet-zone targets
+(`profiles/<id>/ru_friendly_targets.tsv`) into the per-profile Notion
+Companies DB (BL-202 / RFC 062). Reuses the same Notion path the pipeline
+already uses for the Companies DB (`pages.create` with
+`parent: { database_id }`, data source via `resolveDataSourceId`), but
+adds two-way dedup and back-fill. Dedup is on code via `company_keys.js`
+(domain primary, name fallback) against three sources — existing Notion
+pages, `data/companies.tsv`, and the relokant ledgers — so a company the
+pipeline already created is never duplicated. The create/fill/skip
+decision is the pure planner in `core/companies_upsert.js`; the command is
+the side-effect shell. Existing pages are back-filled on empty mapped
+fields only (Website, Careers URL, Why Interested, Notes, Outbound Status);
+`Tier` is never written. Dry-run by default; `--apply` commits. Preserves
+the Notion-write invariant ([RFC 022](../../rfc/022-prepare-commit-atomic-notion.md)):
+the relokant-sweep skill never writes Notion directly, it invokes this
+command.
 
 ## 3. Discovery adapters
 

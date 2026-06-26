@@ -202,6 +202,7 @@ test("KNOWN_COMMANDS lists exactly the supported commands", () => {
     "answer",
     "backfill-outreach-url",
     "check",
+    "companies-upsert",
     "indeed-prep",
     "prepare",
     "reclassify",
