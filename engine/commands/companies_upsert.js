@@ -158,10 +158,12 @@ function makeCompaniesUpsertCommand(overrides = {}) {
       return 0;
     }
 
-    const ledgerNames = [
-      ...deps.readNamesColumn(targetsPath),
-      ...deps.readNamesColumn(rejectsPath),
-    ];
+    // Dedup ledger = REJECTS only. The targets ledger is the candidate source
+    // (`rows` above); including it here would make every candidate match itself
+    // and get skipped as "known-non-notion", so `creates` could never be > 0.
+    // Idempotency across runs comes from the Notion read below: a target pushed
+    // in a prior run already has a page and is caught there.
+    const ledgerNames = [...deps.readNamesColumn(rejectsPath)];
     const tsvNames = deps.readNamesColumn(companiesTsvPath);
 
     // Notion read: the authoritative existing-pages source. Without a token we

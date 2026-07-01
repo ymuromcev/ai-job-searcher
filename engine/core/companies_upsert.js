@@ -76,7 +76,9 @@ function candidateKeys(row) {
 //
 //   notionPages: [{ pageId, name, website, values: { <field>: <string> } }]
 //   tsvNames:    [ "Acme", ... ]   (data/companies.tsv — name column only)
-//   ledgerNames: [ "Acme", ... ]   (relokant targets + rejects)
+//   ledgerNames: [ "Acme", ... ]   (relokant REJECTS only — never the targets
+//                                    ledger, which is the candidate source and
+//                                    would self-match every row into a skip)
 function buildKnownIndex({ notionPages = [], tsvNames = [], ledgerNames = [] } = {}) {
   const byName = new Map();
   const byDomain = new Map();

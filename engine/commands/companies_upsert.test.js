@@ -94,6 +94,27 @@ test("--apply: creates a Notion page for the new company", async () => {
   assert.ok(!rec.creates[0].properties.Tier);
 });
 
+test("regression: target present in its own ledger still creates (no self-skip)", async () => {
+  // The command reads the targets ledger both as candidate rows AND (previously)
+  // as a dedup source. Simulate the real file: readNamesColumn returns the
+  // target's own name from ru_friendly_targets.tsv. Under the old self-
+  // referential dedup this produced 0 creates; the fix must still create it.
+  const rec = { creates: [], updates: [] };
+  const client = fakeClient(rec);
+  const cmd = makeCompaniesUpsertCommand(
+    baseDeps({
+      __client: client,
+      makeClient: () => client,
+      readNamesColumn: (p) => (String(p).includes("ru_friendly_targets") ? ["New Co"] : []),
+    })
+  );
+  const { ctx, out } = makeCtx({ flags: { apply: true } });
+  const code = await cmd(ctx);
+  assert.strictEqual(code, 0);
+  assert.strictEqual(rec.creates.length, 1);
+  assert.ok(out.some((l) => l.includes("1 to create")));
+});
+
 test("--apply: existing page with empty fields gets a fill, not a create", async () => {
   const rec = { creates: [], updates: [] };
   const client = fakeClient(rec);
