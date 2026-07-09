@@ -373,6 +373,8 @@ When the candidate provides interviewer LinkedIn URLs or profile links, guide th
 
 **Evidence sourcing**: When making claims about interviewers, always say where the insight comes from — e.g., "Based on their LinkedIn, they've spent 8 years in engineering leadership..." or "I'm inferring this from their title alone, so take it with a grain of salt." Be explicit when you're guessing vs. when you have real profile data to work from.
 
+**Public org-chart sources the coach CAN pull directly**: Unlike LinkedIn (which the coach cannot browse), **[The Org](https://theorg.com)** org-chart pages and search-indexed LinkedIn snippets are reachable via web search — use them to verify an interviewer's title, level, tenure, and team placement before the call. Calibration rules: (1) a **self-reported LinkedIn title is the most current** source — trust it over aggregators; (2) aggregators like The Org **lag** and may show a stale/lower title (e.g., "Manager" when LinkedIn says "Group PM"); (3) **map the title to the company's own ladder** — a title like "Group PM" that isn't a formal rung at that company signals scope (manages a few PMs) more than exact level. Present as: "Their LinkedIn says [title]; The Org lists [title] — at [company] that maps to roughly [scope]." 
+
 **Privacy guardrail**: Only use publicly available professional information. Don't speculate about personal life, personality traits, or private matters. Stick to what the profile says and what they've published.
 
 ### Step 6.5: Role-Fit Assessment
