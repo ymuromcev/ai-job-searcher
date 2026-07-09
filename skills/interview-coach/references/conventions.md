@@ -234,6 +234,177 @@ spoken quotes.
    `hype` routines, `debrief` notes, and any other narrative the
    candidate reads.
 
+## 1c. Bilingual konspekt — two-column table, Russian LEFT, English RIGHT
+
+**Rule (candidate-confirmed 2026-06-16).** When producing an interview
+**konspekt** (the prep document with the candidate's spoken lines — Q&A
+scripts, positioning, opening frames, the "what you say" material), render
+every spoken line as a **two-column Markdown table**. "Spoken line" is
+broad — it also covers **the questions the candidate asks the interviewer**
+and the **cheat-sheet / one-screen recap** section. If the candidate could
+read it off the screen to say it (or to recall what to say), it is
+two-column. Do not leave a section single-language because it "looks like a
+summary" — the cheat sheet gets RU left / EN right too:
+
+```
+| 🇷🇺 Говоришь так | 🇬🇧 English |
+|---|---|
+| <full Russian rendering of the line> | <full English rendering of the line> |
+```
+
+- **Left column = full Russian.** This is what the candidate reads to
+  *recall the thought* before/while speaking. It must be the complete
+  line, not a one-sentence gloss or a summary.
+- **Right column = full English.** This is the word-level fallback — the
+  candidate glances right only when a specific word escapes him. It must
+  also be the complete line, parallel to the Russian.
+- **Never** invert this (English primary, Russian as a short gloss
+  underneath). That is the exact failure the candidate flagged: he reads
+  Russian to load meaning fast and speaks English; an English-primary
+  layout with a one-line Russian gloss is useless to him.
+- **One table per spoken item — never stack.** Each distinct spoken line
+  (each Q&A answer, each question the candidate asks, each opening frame)
+  gets its **own** two-column table with its own header row. The table is
+  the visual paragraph separator — one table = one thing to say. **Never**
+  cram several questions/answers as multiple rows inside a single shared
+  table: that collapses the separation the candidate relies on to find and
+  deliver one item at a time. When a section has several items (e.g. "the
+  questions you ask"), give each item a short bold label line + its own
+  table, not one table with N rows. (candidate-flagged 2026-07-05)
+
+**Numbers (within the konspekt table):** Russian column uses symbols/
+digits per the storybank convention (`+10%`, `$500k/мес`, `60x`,
+`7.5M SKU`). English column: if this is an **English-spoken round** (the
+candidate delivers the English aloud), spell numbers out per rule 1's
+spoken-aloud logic (`ten-percent`, `half a million dollars a month`);
+otherwise digits are fine. Keep a dedicated "numbers, spoken aloud" block
+(spelled-out) for warm-up regardless.
+
+**Relationship to rule 1 (no conflict).** Rule 1 governs inline 🗣️ anchor
+lines — short English memory hooks, Russian "о чём говорить" bullets. This
+rule (1c) governs the *konspekt body*: the two-column table IS the
+"load-meaning-in-Russian, speak-in-English" mechanism rule 1 is built
+around — Russian on the left loads the thought, the full English on the
+right is reference, not a teleprompter to read verbatim. Under each table,
+still give the short `🗣️ Anchors:` line (rule 1) as the recall hooks.
+
+**Why.** A real konspekt (Celeste / Virto, 2026-06-16) was rebuilt with
+English as the primary block and Russian collapsed to a one-line gloss.
+The candidate could not use it: "мне проще посмотреть на русский текст,
+чтобы быстро вспомнить, что надо говорить, и говорить на английском. А в
+английскую колонку смотреть, если вдруг я забуду слово." The canonical
+reference is `2026-06-07_evgeniy-myskov-hiring-prep.md` — match its
+`| 🇷🇺 Говоришь так | 🇬🇧 English |` layout for every spoken line.
+
+**How to apply.** Before delivering any konspekt: confirm every spoken
+line is a two-column table with full text both sides, Russian left. If you
+catch yourself writing a long English block with a short Russian gloss
+below it — stop and flip it into the table. This is part of DoD for any
+konspekt-producing run.
+
+**Mechanical DoD check (run it, don't eyeball it).** The soft "confirm
+every line" failed repeatedly (candidate had to flag §7 questions-to-
+interviewer, concerns, etc. one section at a time across a single brief).
+The scope is *every* sub-block under a 🗣️ H2 — Q&A, questions the
+candidate asks the interviewer, concerns/objections, opening frames, the
+cheat sheet — not just the obvious answer scripts. Before delivering or
+after any edit to a konspekt, run this over the file and fix anything it
+prints:
+
+```bash
+python3 - "$BRIEF" << 'PY'
+import sys
+lines = open(sys.argv[1]).read().split("\n")
+spoken=False; h2=None; sub=None; buf=[]; bad=[]
+def flush():
+    if spoken and sub:
+        t="\n".join(buf)
+        if (("English" in t) or ("Anchors" in t) or ("`" in t)) and \
+           ("🇷🇺 Говоришь так" not in t) and ("🇷🇺 Спрашиваешь так" not in t):
+            bad.append(f"{h2} -> {sub}")
+for ln in lines:
+    if ln.startswith("## "): flush(); h2=ln.strip("# ").strip(); spoken="🗣️" in ln; sub=None; buf=[]
+    elif ln.startswith("### "): flush(); sub=ln.strip("# ").strip(); buf=[]
+    else: buf.append(ln)
+flush()
+print("⚠️ MISSING two-column table:\n  " + "\n  ".join(bad) if bad else "✅ all 🗣️ spoken sub-blocks are two-column")
+PY
+```
+
+A 🗣️ sub-block that contains an English line, an `Anchors:` line, or any
+backtick phrase but **no** `| 🇷🇺 Говоришь так |` / `| 🇷🇺 Спрашиваешь так |`
+table is a violation. Green output is a precondition for delivery.
+
+---
+
+## 1d. Lean konspekt — default sections, cut the scaffolding
+
+**Rule (candidate-directed 2026-07-02, Jared).** A `prep` konspekt is a
+working document the candidate opens *whole* on the call and reads top to
+bottom. It is not a teaching doc. Ship the lean set of sections below by
+default; do NOT pad it with scaffolding the candidate already owns.
+
+**Default section set (this order):**
+
+1. 📖 What is this call — one paragraph.
+2. 📖 Who is the interviewer / what they filter for.
+3. 📖 What we don't know about this round.
+4. 📖 Fit-read — why their surface maps to the candidate's craft.
+5. 🗣️ Likely questions — **Q1 is always "tell me about yourself"** and IS
+   the positioning / self-intro. There is **no separate positioning block** —
+   that duplicates Q1. Then the round's real questions.
+6. 🗣️ Questions the candidate asks — see "real recon" below.
+7. 📖 Traps — **non-obvious reminders only**.
+
+**Cut by default (do NOT emit these unless the candidate asks):**
+
+- **The legend/preamble** at the top (the "📖 = справка, 🗣️ = речь…" line and
+  the two-column explanation blockquote). The candidate knows the format.
+- **A standalone positioning / headline section** separate from Q1.
+- **`🗣️ Anchors:` lines** under blocks. The full English lives in the
+  right column of the two-column table; short anchor hooks are redundant
+  duplication. (Rule 1's *concept* — load meaning in RU, speak EN — is
+  carried entirely by the two-column table per rule 1c.)
+- **A "bridge phrases / мостовые фразы" block** ("let me give you a concrete
+  example", etc.). An experienced candidate already has these.
+- **A "cheat sheet / шпаргалка на один экран" block.** The candidate opens
+  the whole konspekt, not a one-screen digest.
+- **A "numbers aloud / цифры вслух" warm-up block.** The candidate rehearses
+  the whole konspekt aloud before the call; a separate number drill is noise.
+- **The DoD-check footer** ("DoD-чек (rule 1c): …"). That is internal
+  process, not candidate-facing content. Run the check (rule 1c) but do not
+  print its summary into the delivered file.
+
+**Traps section — non-obvious only.** Do NOT list basics the candidate
+cannot get wrong ("don't claim you're the founder", "don't lie about
+coding"). Keep only reminders that are easy to slip under live pressure
+(e.g. "don't frame 'what I want' as 'any US role'", "one case per question,
+don't sprawl").
+
+**Candidate's own questions = real recon, not one signaling question.** The
+questions-the-candidate-asks block must serve *the candidate's* genuine
+unknowns — who/what they're hiring for, why they reached out, what this
+leads to / what the process is after this call — not just one polished
+"smart" question for the interviewer's benefit. Half the call is the
+candidate's due diligence; the konspekt should arm that. Include a craft/
+substance question too, but lead with the transparency the candidate
+actually needs.
+
+**Deep-dive links.** For any answer the interviewer might probe further,
+add clickable links to the underlying storybank entries so the candidate
+can open the full STAR mid-call. Use Obsidian heading wikilinks with a
+short alias: `[[coaching_state#S002 — <exact heading>|S002]]`. Pull the
+exact heading text from `coaching_state.md` (grep the `#### S###` lines) so
+the anchor resolves.
+
+**Scope / generality.** This lean default is the standard. A specific
+candidate who is early-stage or explicitly wants scaffolding (bridge
+phrases, a number drill, a one-screen cheat sheet) can have those blocks
+re-added on request — but they are opt-in, not the default. Do not
+reintroduce them silently.
+
+---
+
 ## 2. No fabricated commercial profile
 
 **Rule.** Do not assign a commercial-profile label (B2B / B2C / enterprise /
@@ -472,6 +643,29 @@ where Rule 1 requires. Word swaps never override the ESL format.
 
 ---
 
+## 6. Capture new ground-truth profile facts as STAR immediately
+
+**Rule.** Whenever the candidate reveals a new ground-truth fact about their
+experience — a project, a metric, a failure, a decision, a result — that is
+**not yet in the storybank**, capture it as a STAR in
+`profiles/<id>/interview-coach-state/coaching_state.md` **in the same turn**,
+not as a "later" follow-up. This holds in any command (`prep`, `mock`,
+`analyze`, casual conversation) and even mid-prep: if a brief or a drafted
+answer surfaces a fact the storybank lacks, add the story before closing the
+turn — a table row in `## Storybank` + a bilingual `### Story Details` entry
+(RU + EN, woven STAR + Earned Secret per Rules 1 / 1b). Assign the next free
+`S###` id. If the fact is partial (missing Action/Result detail), still create
+the row and mark the gaps explicitly with ⚠️ "достроить" placeholders so the
+next `mock` fills them — never silently drop it. Briefs are downstream views;
+the storybank is the single source of truth, so the fact lands there first.
+
+**Why.** Ground-truth facts are the scarcest asset in interview prep. A fact
+mentioned once and not captured is lost, and re-deriving it wastes the
+candidate's time. Established for the `ai-job-searcher` project on 2026-06-07
+at the candidate's request; applies to every profile.
+
+---
+
 ## How these rules surface
 
 These rules are loaded at the top of every command's instruction set:
@@ -496,6 +690,8 @@ These rules are loaded at the top of every command's instruction set:
   column of any `Story Details` STAR table the candidate will speak.
 - `hype`: Rule 1 governs the anchor lines and the opening line. Rule 5
   calibrates their word choice.
+
+- **all commands** (Rule 6): when the candidate reveals a new ground-truth fact not yet in the storybank, capture it as a STAR in the same turn. Rules 1c / 1d shape konspekt output — two-column bilingual (RU left / EN right) and lean default sections.
 
 When in doubt, this file wins. The cost of breaking one of these rules
 is higher than the cost of being slightly slower or less polished.

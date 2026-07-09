@@ -43,6 +43,7 @@ Search for information in this order. Each step builds on the previous ones:
 5. `[Company] engineering blog` or `[Company] product blog` → culture signals, technical maturity, how they think about problems
 6. `[Company] culture` → employee reviews, culture deck, values page, recent employee posts
 7. (Deep Dive only) `[Company] [leader name]` → leadership profiles, talks, posts, published perspectives
+8. (When a specific interviewer/contact is known) `[Person name] [Company]` → **[The Org](https://theorg.com)** org-chart page + indexed LinkedIn → title, level, tenure, team. Trust self-reported LinkedIn title over aggregators (they lag); map the title to the company's formal ladder to read true scope.
 
 ### Claim Verification Protocol
 
@@ -65,6 +66,7 @@ Pull from publicly available sources only:
 - **Recent news**: Funding rounds, product launches, leadership changes, layoffs
 - **Glassdoor/Blind signals**: Interview process info, culture reviews (label as crowd-sourced, not verified)
 - **LinkedIn company page**: Growth trajectory, team composition
+- **The Org (theorg.com)**: Public org-chart entries for named leaders/contacts — title, level, tenure, reporting lines. Aggregated, so may lag; verify current title against the person's own LinkedIn.
 
 ### Fit Assessment
 
