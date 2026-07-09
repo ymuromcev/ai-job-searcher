@@ -30,7 +30,7 @@ When the doc below says "read `coaching_state.md`" → read `profiles/<id>/inter
 
 When instructions compete for attention, follow this priority order:
 
-1. **Conventions of behavior**: `references/conventions.md` defines three rules that constrain Claude's own behavior across every command — ESL formatting of spoken English, no fabricated commercial profiles, direct admission of mistakes. **Read this file before generating any prep brief, practice script, mock session, anchor file, hype output, or storybank update.** These rules override anything else in this skill if they conflict.
+1. **Conventions of behavior**: `references/conventions.md` defines the rules that constrain Claude's own behavior across every command — ESL formatting of spoken English, Russian narrative stays Russian, no fabricated commercial profiles, direct admission of mistakes, factual hygiene, and vocabulary calibration of spoken English against the candidate's Reword mastered set (Rule 5). **Read this file before generating any prep brief, practice script, mock session, anchor file, hype output, or storybank update.** These rules override anything else in this skill if they conflict.
 2. **Session state**: Load and update `coaching_state.md` if available. Everything else builds on continuity.
 3. **Triage before template**: Branch coaching based on what the data reveals. Never run the same assembly line for every candidate.
 4. **Evidence enforcement**: Don't make claims you can't back. Silence is better than confident-sounding guesses. This is especially critical for company-specific claims (culture, interview process, values) — see the Company Knowledge Sourcing rules in `references/commands/prep.md`.

@@ -394,6 +394,84 @@ mashed into one sentence (rule 4 violated).
 
 ---
 
+## 5. Vocabulary calibration — spoken English from the candidate's Reword mastered set
+
+**Rule.** Before emitting any English the candidate will **read aloud**
+(prep brief 🗣️ blocks, konspekt spoken answers, `practice` / `mock`
+lines, the EN column of a `Story Details` STAR table, `hype` anchors),
+calibrate the word choice against the candidate's **Reword mastered
+vocabulary**. Two tiers, never silent:
+
+- **A — auto-replace.** A word is *not* in the mastered set **and** it is
+  genuinely advanced / rare / idiomatic **and** a natural synonym that
+  **is** in the mastered set preserves the meaning → replace it and log
+  `old → new` with a one-word reason. (Pilot examples: `tolerate → accept`,
+  `make a dent → have impact`.)
+- **B — watch-list, text untouched.** Any *content* word left in the
+  answer that is not in the mastered set and was not auto-replaced → list
+  it under the answer. Do **not** change the answer. The candidate reads
+  the list and decides: knows it → ignore; shaky → drills it.
+
+Then hand the block-B words to the **`reword-vocab` skill** to build a
+drill deck (see "How to apply" step 4). Learned words re-enter `mastered`
+on the next export, so they stop surfacing — the loop closes.
+
+**Why.** 2026-07-08 pilot (Sam Tang / Capital One konspekt): the
+candidate reads his answers fluently, but a handful of advanced words
+occasionally surface that he'd rather swap or drill. "Absent from
+mastered" alone is **not** a flag — his baseline English is fluent and
+many common words (`flagship`, `breakthrough`) aren't in the deck yet are
+obviously known. Over-replacing dumbs his answers down, which is worse
+than leaving a known word. So replacement is **rare and light-touch**
+(the pilot swapped 2 words in a 35 KB konspekt); the watch-list is the
+default catch-all, and nothing not-in-mastered passes silently.
+
+**How to apply.**
+
+1. **Refresh the snapshot first (every time — data must be current).**
+   Read `profiles/<id>/interview-coach-state/vocab_config.json`. If it is
+   absent, this profile has no Reword source → **skip calibration
+   entirely, no note**. If present, run from the repo root:
+   `python3 skills/interview-coach/references/vocab_snapshot.py --backup <reword_backup_path> --out <snapshot_path>`
+   (both values from the config). The script re-reads the live 305 MB
+   backup and rewrites the small `<snapshot_path>` mastered list, so an
+   updated Reword export is picked up automatically. If the script exits
+   non-zero (backup missing — e.g. Drive not synced, cloud session),
+   **skip calibration and the deck**, and add one line to the output:
+   *"Reword backup unavailable — answers not vocab-calibrated this run."*
+2. **Load the mastered list** from `<snapshot_path>` (skip `#` meta
+   lines; each remaining line is one lowercased word/phrase). Note the
+   `# backup_exported:` date — if the output surfaces vocabulary
+   provenance, cite that date so the candidate knows how fresh it is.
+3. **Apply the two tiers (A / B above).** Match case-insensitively;
+   lemmatize loosely (a mastered `share` covers `sharing`, `shares`).
+   **Never touch, flag, or deck:** the candidate's own domain jargon
+   (funnel, conversion, monetization, retention, guardrail, proxy metric,
+   north-star, cohort, MCP, CPA, affiliate, aggregator, …), proper nouns,
+   numbers, or the mastered words themselves. **When unsure whether to
+   auto-replace → downgrade to the watch-list.** Never force-swap a word
+   that might be known, and never silently drop a not-mastered word.
+4. **Build the drill deck from block B.** When the watch-list is
+   non-empty, pass those words to the `reword-vocab` skill. It dedups them
+   against the *full* Reword backup (mastered **and** learning) and prior
+   CSVs in the canonical output dir, enriches (IPA + RU + examples), and
+   writes a dated deck `<YYYY-MM-DD>-<company-or-topic>-interview.csv`.
+   Report one line: *"N words → deck `<path>`, import to Reword."* Do this
+   **automatically** whenever block B is non-empty; skip only if the
+   candidate says "no deck" / "без дека" for that run. One deck per
+   konspekt, slug from the company/role.
+5. **Output shape.** Under the spoken answers, two compact blocks — 🔄
+   *Replaced* (A: what → what, why) and 👀 *Check* (B: in the answer, not
+   in Reword mastered) — plus the one-line deck report. Omit a block if
+   it's empty.
+
+**Interaction with Rule 1.** Calibration operates on *word choice* after
+Rule 1 has set the format. A mastered-set synonym must still obey Rule 1:
+in 🗣️ anchor phrases spell words out (no symbols); numbers as symbols
+where Rule 1 requires. Word swaps never override the ESL format.
+
+---
+
 ## How these rules surface
 
 These rules are loaded at the top of every command's instruction set:
@@ -401,9 +479,12 @@ These rules are loaded at the top of every command's instruction set:
 - `prep`: Rule 1 (🗣️ format — Russian summary + English anchor phrases)
   and Rule 2 (no fabrication) gate the output. Rule 1b (Russian narrative
   stays Russian) gates the prose. Rule 4 (factual hygiene) gates every
-  candidate-history fact narrated in the brief. Rule 3 governs how to
-  handle a fabrication or conflation caught mid-session.
+  candidate-history fact narrated in the brief. Rule 5 (vocabulary
+  calibration) gates the spoken-English word choice in every 🗣️ block.
+  Rule 3 governs how to handle a fabrication or conflation caught
+  mid-session.
 - `practice`, `mock`: Rule 1 gates every line the candidate will speak.
+  Rule 5 calibrates those spoken lines against the Reword mastered set.
   Rule 4 gates how candidate history is described in the setup text.
 - `analyze`, `debrief`, `feedback`: Rule 2 governs how to label cases
   pulled from the storybank. Rule 4 governs how to narrate candidate
@@ -411,8 +492,10 @@ These rules are loaded at the top of every command's instruction set:
   attribution turns out wrong.
 - `stories`: Rule 2 governs the `Commercial Profile` field — ask, don't
   guess. Rule 4 governs multi-direction cases — surface both directions
-  in `Story Details`, do not collapse.
-- `hype`: Rule 1 governs the anchor lines and the opening line.
+  in `Story Details`, do not collapse. Rule 5 calibrates the English
+  column of any `Story Details` STAR table the candidate will speak.
+- `hype`: Rule 1 governs the anchor lines and the opening line. Rule 5
+  calibrates their word choice.
 
 When in doubt, this file wins. The cost of breaking one of these rules
 is higher than the cost of being slightly slower or less polished.
