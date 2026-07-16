@@ -129,6 +129,18 @@ status). Idempotent — rows that already have a URL are skipped. Does not
 break pull-only: it creates no pages and touches no operator-owned field,
 only the engine-owned URL.
 
+**`add`**. Manual job entry (RFC 063) for vacancies that arrive outside the
+ATS scan: referrals, newsletters, recruiter email, applying straight on a
+company site. Writes the Notion page and the TSV row in one run. It is **not**
+a second Notion writer — page creation goes through `core/notion_job_page.js`
+→ `pushJobPage`, the same helper `prepare --phase commit` uses, making the
+invariant "all job-page creation goes through `pushJobPage`; `prepare` and
+`add` are its only callers". Manual rows skip `Inbox` (that status means
+"discovered, not yet evaluated by `prepare`", which a hand-entered row never
+is) and carry an operator-asserted `--status`. Ordering is Notion first then
+TSV — the inverse of `prepare`'s batch behaviour — so a Notion failure writes
+nothing rather than leaving a row with an empty `notion_page_id`.
+
 **`companies-upsert`**. Pushes relokant-sweep sweet-zone targets
 (`profiles/<id>/ru_friendly_targets.tsv`) into the per-profile Notion
 Companies DB (BL-202 / RFC 062). Reuses the same Notion path the pipeline

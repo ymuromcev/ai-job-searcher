@@ -80,6 +80,70 @@ Common errors:
 - `warn: no adapter for source "<name>"` — entry in companies.tsv references an unregistered adapter.
 - `warn: auto-sync failed` — non-fatal; usually missing `<ID>_NOTION_TOKEN` in env.
 
+### add
+
+Synopsis: `node engine/cli.js add --profile <id> --company <name> --title <title> --status <status> [--apply] [flags]`
+
+Enters **one** job into the pipeline by hand — for vacancies that arrive outside the ATS scan: referrals, newsletters, recruiter email, applying straight on a company site. Creates the Notion page and the `applications.tsv` row in a single run, replacing the one-off scripts previously written per entry. See [RFC 063](../../rfc/063-manual-job-entry.md).
+
+Manual rows deliberately skip `Inbox`. That status means "discovered, not yet evaluated by `prepare`" ([RFC 014](../../rfc/014-status-split-new-vs-toapply.md)), which a hand-entered row never is — the operator supplies the status because they already know it. `--status Inbox` is rejected.
+
+Page creation goes through the same shared helper `prepare --phase commit` uses (`core/notion_job_page.pushJobPage`), so `add` is a second **caller**, not a second writer. The invariant is: all Notion job-page creation goes through `pushJobPage`; `prepare --phase commit` and `add` are its only callers.
+
+Ordering is Notion first, TSV second — the inverse of `prepare`'s batch behaviour ([RFC 022](../../rfc/022-prepare-commit-atomic-notion.md)). `add` handles one row interactively, so a Notion failure writes nothing rather than leaving a row with an empty `notion_page_id`, which is not a valid state. `pushJobPage`'s dedup-by-key guard makes a retry safe.
+
+Flags:
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--profile <id>` | string | — | Required. |
+| `--company <name>` | string | — | Required. Resolved against the Notion Companies DB; the page is created if absent. |
+| `--title <title>` | string | — | Required. Stored verbatim; normalized only for duplicate comparison. |
+| `--status <status>` | string | — | Required, no default. One of `To Apply`, `Applied`, `Interview`, `Offer`, `Rejected`, `No Response`, `Closed`, `Archived`. `Inbox` is rejected (TSV-only, RFC 014). |
+| `--salary <range>` | string | — | `MIN` or `MIN-MAX`, whole dollars (`140000-185000`). Rendered as `$140-185K ($165K mid)`. |
+| `--locations <list>` | string | — | Comma-separated (`Remote,United States`). |
+| `--url <url>` | string | — | Job posting URL. |
+| `--fit <score>` | string | — | One of `Strong`, `Medium`, `Weak`. Manual rows are not fit-evaluated; left empty when absent. |
+| `--notes <text>` | string | — | Free text; lands in `fit_rationale` and the Notion `Notes` field. |
+| `--applied-date <date>` | string | — | `YYYY-MM-DD`. |
+| `--resume-ver <name>` | string | — | Resume archetype used for the application. |
+| `--tier <S\|A\|B\|C>` | string | — | Writes `company_tiers["<company>"]` into `profile.json`. Never guessed when absent. |
+| `--force` | boolean | false | Add despite detected duplicates. |
+| `--apply` | boolean | false | Create the page and write the row. Without it, `add` is a dry-run. |
+
+Duplicate detection runs before any write, in two layers: exact key, and same company + same normalized title on any non-archived row (catches the same posting re-entered on a different day, where the date-suffixed keys differ). Archived rows are ignored — re-adding a long-archived job is legitimate.
+
+Outputs and side effects:
+
+- Creates one page in the Notion Jobs Pipeline DB; creates the Company page if it does not exist.
+- Appends one row to `profiles/<id>/applications.tsv` with `source: Manual` and key `manual:<company>_<title>_<YYYY-MM-DD>`.
+- Backs up the TSV to `applications.tsv.pre-add-<company>-<date>` before writing.
+- With `--tier`: writes `company_tiers` into `profiles/<id>/profile.json`.
+- Prints the Notion page URL.
+
+Example:
+
+```bash
+# dry-run first (default)
+node engine/cli.js add --profile <id> \
+  --company "LawnStarter" \
+  --title "Senior Product Manager, Pricing & Monetization" \
+  --status Interview \
+  --salary 140000-185000 \
+  --locations "Remote,United States"
+
+# then write
+node engine/cli.js add --profile <id> ... --apply
+```
+
+Common errors:
+
+- `--status is required (one of: ...)` — no default exists; the status must be asserted.
+- `status Inbox is TSV-only (RFC 014) ...` — use a real pipeline status.
+- `refusing: N existing row(s) look like this job` — duplicate guard; inspect the printed rows, pass `--force` only if genuinely distinct.
+- `error: Notion push failed — ...` — nothing was written; fix and re-run.
+- `missing <ID>_NOTION_TOKEN in env` — add it to `.env`.
+
 ### validate
 
 Synopsis: `node engine/cli.js validate --profile <id> [--dry-run] [--apply] [--dedup]`

@@ -134,8 +134,15 @@ section is just the things to keep in your head while editing code.
 - **`sync` is pull-only since 2026-05-04.** Notion → TSV reconcile
   only. The push phase, the Stage 16 `push_manifest.json` gate, and
   the Inbox callout updater were all removed in commit `4f85ed2`.
-  New Notion pages are created exclusively by `prepare`'s commit
-  phase. Do not re-add a push path without an RFC.
+  Do not re-add a push path to `sync` without an RFC.
+- **One writer for Notion job pages.** All job-page creation goes
+  through `engine/core/notion_job_page.js` → `pushJobPage` (dedup by
+  `key`, Company relation, `createJobPage`). It has exactly two
+  callers: `prepare --phase commit` (scan-discovered rows) and `add`
+  (manual entry — referrals, newsletters, recruiter email; RFC 063).
+  Nothing else in `engine/` may call `createJobPage` directly. A new
+  caller needs an RFC. (`scripts/push_prepare_results_to_notion.js` is
+  a known legacy one-off that predates the rule.)
 - **Pure helpers, isolated side effects.** `core/*` and most of
   `scripts/stage18/*` are pure functions over in-memory objects. The
   filesystem, network, and `process.exit` live in `commands/*` and
