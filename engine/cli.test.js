@@ -199,6 +199,7 @@ test("runCli reports missing handler with a clear error", async () => {
 
 test("KNOWN_COMMANDS lists exactly the supported commands", () => {
   assert.deepEqual([...KNOWN_COMMANDS].sort(), [
+    "add",
     "answer",
     "backfill-outreach-url",
     "check",
@@ -211,6 +212,104 @@ test("KNOWN_COMMANDS lists exactly the supported commands", () => {
     "sync",
     "validate",
   ]);
+});
+
+// Regression (RFC 063): ctx.flags is an explicit whitelist, so registering a
+// flag in PARSE_OPTIONS is not enough — it must also be threaded into ctx.
+// The first live run of `add` hit exactly this: every flag parsed fine and
+// arrived at the command as undefined. Command-level tests build ctx by hand
+// and cannot catch it; this asserts the real cli.js wiring.
+test("add: every registered flag reaches the command through ctx.flags", async () => {
+  const s = makeStreams();
+  const add = spyCommand();
+  const code = await runCli({
+    argv: [
+      "add",
+      "--profile",
+      "jared",
+      "--company",
+      "LawnStarter",
+      "--title",
+      "Senior Product Manager, Pricing & Monetization",
+      "--status",
+      "Interview",
+      "--salary",
+      "140000-185000",
+      "--locations",
+      "Remote,United States",
+      "--url",
+      "https://example.com/job",
+      "--tier",
+      "B",
+      "--fit",
+      "Strong",
+      "--notes",
+      "craft match",
+      "--applied-date",
+      "2026-07-01",
+      "--resume-ver",
+      "GrowthExperimentation",
+      "--force",
+      "--apply",
+    ],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { add },
+  });
+
+  assert.equal(code, 0);
+  assert.equal(add.calls.length, 1);
+  assert.deepEqual(
+    {
+      company: add.calls[0].flags.company,
+      title: add.calls[0].flags.title,
+      status: add.calls[0].flags.status,
+      salary: add.calls[0].flags.salary,
+      locations: add.calls[0].flags.locations,
+      url: add.calls[0].flags.url,
+      tier: add.calls[0].flags.tier,
+      fit: add.calls[0].flags.fit,
+      notes: add.calls[0].flags.notes,
+      appliedDate: add.calls[0].flags.appliedDate,
+      resumeVer: add.calls[0].flags.resumeVer,
+      force: add.calls[0].flags.force,
+      apply: add.calls[0].flags.apply,
+    },
+    {
+      company: "LawnStarter",
+      title: "Senior Product Manager, Pricing & Monetization",
+      status: "Interview",
+      salary: "140000-185000",
+      locations: "Remote,United States",
+      url: "https://example.com/job",
+      tier: "B",
+      fit: "Strong",
+      notes: "craft match",
+      appliedDate: "2026-07-01",
+      resumeVer: "GrowthExperimentation",
+      force: true,
+      apply: true,
+    }
+  );
+});
+
+test("add: omitted flags default to empty string / false, never undefined", async () => {
+  const s = makeStreams();
+  const add = spyCommand();
+  await runCli({
+    argv: ["add", "--profile", "jared", "--company", "X"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { add },
+  });
+
+  const f = add.calls[0].flags;
+  assert.equal(f.title, "");
+  assert.equal(f.status, "");
+  assert.equal(f.tier, "");
+  assert.equal(f.appliedDate, "");
+  assert.equal(f.force, false);
+  assert.equal(f.apply, false);
 });
 
 test("scan auto-triggers sync --apply BEFORE main work (pre-hook)", async () => {

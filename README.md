@@ -211,6 +211,7 @@ node engine/cli.js <command> --profile <id> [flags]
 | Command | Purpose |
 |---|---|
 | `scan` | Poll all configured ATS adapters; append new jobs to `data/jobs.tsv`. |
+| `add` | Enter one job by hand — for vacancies arriving outside the scan (referrals, newsletters, recruiter email). Creates the Notion page + TSV row in one run, deduped. Dry-run by default; `--apply` writes. (RFC 063) |
 | `validate` | Re-apply filter rules to the existing pool (catches retroactively-blocked jobs). |
 | `prepare` | Two-phase: pre (assign archetype + draft cover letter) → commit (write artifacts). |
 | `sync` | Push/pull against per-profile Notion DBs. Defaults to dry-run; `--apply` writes. |

@@ -15,6 +15,7 @@ const { parseArgs } = require("util");
 
 const KNOWN_COMMANDS = [
   "scan",
+  "add",
   "validate",
   "sync",
   "prepare",
@@ -51,6 +52,18 @@ const PARSE_OPTIONS = {
     dedup: { type: "boolean", default: false },
     notion: { type: "boolean", default: false },
     limit: { type: "string" },
+    // `add` (RFC 063). `company` is shared with `answer` above.
+    title: { type: "string" },
+    status: { type: "string" },
+    salary: { type: "string" },
+    locations: { type: "string" },
+    url: { type: "string" },
+    tier: { type: "string" },
+    fit: { type: "string" },
+    notes: { type: "string" },
+    "applied-date": { type: "string" },
+    "resume-ver": { type: "string" },
+    force: { type: "boolean", default: false },
   },
   allowPositionals: true,
   strict: true,
@@ -66,6 +79,10 @@ Commands:
   scan       Discover new jobs across configured ATS adapters, append them
              to the shared pool + per-profile applications. Auto-syncs with
              Notion BEFORE running (BL-151 / RFC 054). Pass --no-sync to skip.
+  add        Enter one job by hand — for vacancies that arrive outside the
+             ATS scan (referrals, newsletters, recruiter email, direct site
+             applications). Creates the Notion page and the TSV row in one
+             run. Default: dry-run. See RFC 063.
   validate   Pre-flight: URL liveness, company cap, TSV hygiene.
   sync       Reconcile per-profile applications with Notion + archive used
              tailored CV/CL artifacts for rows past To Apply (BL-151).
@@ -220,6 +237,7 @@ function defaultCommands() {
   // process. This keeps test startup fast when tests inject their own handlers.
   return {
     scan: require("./commands/scan.js"),
+    add: require("./commands/add.js"),
     validate: require("./commands/validate.js"),
     sync: require("./commands/sync.js"),
     prepare: require("./commands/prepare.js"),
@@ -291,6 +309,18 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
       dedup: Boolean(parsed.values.dedup),
       notion: Boolean(parsed.values.notion),
       limit: parsed.values.limit ? parseInt(parsed.values.limit, 10) : null,
+      // add (RFC 063) — `company` above is shared with answer.
+      title: parsed.values.title || "",
+      status: parsed.values.status || "",
+      salary: parsed.values.salary || "",
+      locations: parsed.values.locations || "",
+      url: parsed.values.url || "",
+      tier: parsed.values.tier || "",
+      fit: parsed.values.fit || "",
+      notes: parsed.values.notes || "",
+      appliedDate: parsed.values["applied-date"] || "",
+      resumeVer: parsed.values["resume-ver"] || "",
+      force: Boolean(parsed.values.force),
     },
     env,
     stdout: writeOut,
