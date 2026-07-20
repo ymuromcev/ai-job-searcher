@@ -271,6 +271,16 @@ summary" — the cheat sheet gets RU left / EN right too:
   deliver one item at a time. When a section has several items (e.g. "the
   questions you ask"), give each item a short bold label line + its own
   table, not one table with N rows. (candidate-flagged 2026-07-05)
+- **Split each answer into beats — one row per thought.** Inside an
+  item's own table, do **not** dump the whole answer as a single
+  wall-of-text row. Break it at the seams of the argument (setup →
+  action → number → lesson) so each row is one beat the candidate says,
+  typically 4–6 rows per answer. This does **not** contradict the bullet
+  above: that one forbids putting *different items* in one table; this
+  one governs granularity *within* one item. One table = one answer;
+  one row = one thought inside it. Rows must be a clean cut of the same
+  text — split at the seams, never reword or compress to fit.
+  (candidate-flagged 2026-07-20)
 
 **Numbers (within the konspekt table):** Russian column uses symbols/
 digits per the storybank convention (`+10%`, `$500k/мес`, `60x`,
@@ -295,6 +305,15 @@ The candidate could not use it: "мне проще посмотреть на р�
 английскую колонку смотреть, если вдруг я забуду слово." The canonical
 reference is `2026-06-07_evgeniy-myskov-hiring-prep.md` — match its
 `| 🇷🇺 Говоришь так | 🇬🇧 English |` layout for every spoken line.
+
+⚠️ **The canonical reference predates the beat-splitting bullet
+(2026-07-20) and renders each answer as one monolithic row.** Copy its
+*column layout*, not its row granularity. Following it verbatim is how
+the Mercor konspekt (2026-07-13) shipped as wall-of-text rows and had to
+be re-cut after the candidate flagged it: "ты не разбил мысли в ответах
+по ячейкам". A single cell holding a whole answer is unusable while
+speaking — he loses his place mid-sentence and cannot see the answer's
+skeleton.
 
 **How to apply.** Before delivering any konspekt: confirm every spoken
 line is a two-column table with full text both sides, Russian left. If you
@@ -334,6 +353,32 @@ PY
 A 🗣️ sub-block that contains an English line, an `Anchors:` line, or any
 backtick phrase but **no** `| 🇷🇺 Говоришь так |` / `| 🇷🇺 Спрашиваешь так |`
 table is a violation. Green output is a precondition for delivery.
+
+**Beat-granularity check (same DoD run).** Catches the wall-of-text row
+the bullet above forbids. A single-row table for a multi-sentence answer,
+or any cell over ~320 chars, means the answer was not cut into beats:
+
+```bash
+python3 - "$BRIEF" << 'PY'
+import sys, re
+lines = open(sys.argv[1], encoding="utf-8").read().split("\n")
+sec=None; rows={}; fat=[]
+for i, ln in enumerate(lines, 1):
+    if ln.startswith("## "): sec = ln.strip("# ").strip()
+    if ln.startswith("|") and "Говоришь так" not in ln and "Спрашиваешь так" not in ln \
+       and not re.match(r"^\|[\s:-]*\|[\s:-]*\|?$", ln):
+        cells = ln.split("|")[1:-1]
+        rows.setdefault(sec, 0)
+        rows[sec] += 1
+        for c in cells:
+            if len(c.strip()) > 320: fat.append(f"line {i} ({sec}): {len(c.strip())} chars")
+thin = [s for s, n in rows.items() if s and "🗣️" in s and n < 2]
+print("⚠️ single-row answer (not cut into beats):\n  " + "\n  ".join(thin) if thin
+      else "✅ every 🗣️ table has multiple beat rows")
+print("⚠️ oversized cell (split it):\n  " + "\n  ".join(fat) if fat
+      else "✅ no wall-of-text cells")
+PY
+```
 
 ---
 
