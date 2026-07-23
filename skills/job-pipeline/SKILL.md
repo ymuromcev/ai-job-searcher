@@ -1,6 +1,6 @@
 ---
 name: job-pipeline
-description: "Multi-profile job-search pipeline — scan ATS adapters, validate the pipeline, prepare Inbox jobs (fit scoring, CL gen, Notion push), sync with Notion, check Gmail for responses, and answer application Q&A questions with reuse from a Notion-backed answer bank. Trigger on: /job-pipeline, /job-pipeline scan, /job-pipeline validate, /job-pipeline sync, /job-pipeline prepare, /job-pipeline check, /job-pipeline answer, or when user asks to scan/validate/sync/prepare/check/answer jobs for a specific profile (see the `profiles/` directory for the current list)."
+description: "Multi-profile job-search pipeline — scan ATS adapters, validate the pipeline, prepare Inbox jobs (fit scoring, CL gen, Notion push), sync with Notion, check Gmail for responses, answer application Q&A questions with reuse from a Notion-backed answer bank, and analyze a responded vacancy + its company for a Go/Pass/Conditional decision. Trigger on: /job-pipeline, /job-pipeline scan, /job-pipeline validate, /job-pipeline sync, /job-pipeline prepare, /job-pipeline check, /job-pipeline answer, /job-pipeline analyze, or when user asks to scan/validate/sync/prepare/check/answer/analyze jobs for a specific profile (see the `profiles/` directory for the current list)."
 ---
 
 # job-pipeline — Multi-profile Job Search Pipeline
@@ -16,6 +16,7 @@ Single engine, per-profile data. All commands take `--profile <id>`. Currently s
 - **`/job-pipeline check`** — Two-phase Gmail response check: `--prepare` builds Gmail search batches for Claude MCP, `--apply` consumes Claude-written emails and updates Notion + TSV + logs.
 - **`/job-pipeline indeed-prep`** — Phase 1 of Indeed ingest. Prints scan URLs + JS extraction snippet + filter context for the Claude browser MCP session. Phase 2 (browser fetch) is manual via Chrome MCP. Phase 3 = standard `scan` (the indeed adapter ingests the file Claude wrote).
 - **`/job-pipeline answer`** — Generate or reuse application answers (Why join? / Influences? / Motivation? etc.). Three-phase: search Notion Q&A DB by dedup key → reuse if exact match else generate via Humanizer Rules → push answer back to Notion + write local `.md` backup. Per-profile DB at `profile.notion.application_qa_db_id`.
+- **`/job-pipeline analyze`** — **Post-response decision gate.** For a vacancy where the company has already replied (the candidate's external auto-apply bot applied cold; the conversation has started). Chat-only advisory: fetch the JD + web-research the company, score fit against the candidate's real frames (craft / comp / location / English-load / achievement overlap) and the company as a place to work, then return a **Go / Pass / Conditional** verdict with what to confirm on the call. Writes nothing — no Notion, no TSV, no files.
 
 If no mode is specified, show this help and ask which to run.
 
@@ -808,6 +809,76 @@ Summarize:
 - **`invalid category`** — the draft includes a category not in the canonical 8. Fix to one of: Behavioral, Technical, Culture Fit, Logistics, Salary, Other, Experience, Motivation. The categorize() helper picks a default automatically.
 - **Notion 400 on create** — usually a missing required property or a Category option that doesn't exist in the DB. Categories must already be in the DB schema; do not invent new ones.
 - **Search returns nothing for a clearly recurring question** — the question text drift may exceed the 120-char dedup window. Look at `partials` for near-matches.
+
+---
+
+### analyze
+
+**Post-response decision gate.** Chat-only, Claude-executed, **no CLI phase, no writes**. This mode exists because the candidate's cold applications now go out through an **external auto-apply bot** — by the time a vacancy reaches this skill, the company has already *replied* and a conversation is live. The question is no longer "should we apply?" (the bot already did) but **"is this worth the candidate's time, tokens, and interview energy to pursue?"**
+
+This is the mirror image of `prepare`: `prepare` scores Inbox jobs *before* an application to gate outbound; `analyze` scores a *responded* job *after* first contact to gate how much the candidate invests next. It reuses the same fit basis but adds a **company desirability** read that `prepare` does not do.
+
+**Use when:** the user pastes a vacancy the company has responded to (a job URL, a JD text block, or a recruiter's reply email) and asks to "analyze / разбери / стоит ли идти / go or pass". Also on explicit `/job-pipeline analyze`.
+
+**Do NOT** create Notion pages, touch `applications.tsv`, write files, or run `prepare`/`tailor`/`interview-coach`. This mode ends at a recommendation. On a `Go` verdict, *offer* the next step (interview-coach brief for the role, tailored CV) but execute only if the user says yes.
+
+#### Step 1 — Assemble the vacancy
+
+From whatever the user pasted, resolve three things: **company**, **role title**, **JD text**.
+
+- **URL only** → fetch the page (WebFetch, or firecrawl_scrape if the ATS is JS-heavy) and extract the JD.
+- **Recruiter email only** → extract company + role + any comp/format hints from the message. If the JD itself is not in the email, ask the user for the JD link or fetch it if a URL is present. Do not invent requirements the email/JD does not state.
+- **JD text pasted** → use it directly.
+
+If company or role is still ambiguous after this, ask the user once. Never guess the company name from a slug.
+
+#### Step 2 — Load the fit basis (read-only)
+
+Read from disk under `profiles/<id>/` (there is no `prepare_context.json` in this mode):
+
+1. `fit_profile.md` — the generated achievement digest (RFC 060). This is the fit basis. If missing, fall back to `memory/user_resume_key_points.md`.
+2. `memory/feedback_*.md` — the framing guard-rails (craft-targeting, comp anchors, English-load, US-target, "never co-founder", positioning-from-docs). These are **hard constraints on the verdict**, not style notes.
+3. `filter_rules.json → role_targets` — acceptable tracks + `fit_treatment: "bridge"` treatments.
+
+All positioning claims about the candidate come from these files. Do not improvise a "sweet spot" narrative (see `feedback_positioning_from_jared_docs.md`).
+
+#### Step 3 — Part 1: Fit with the candidate
+
+Score each lens. Be blunt; this is a decision aid, not a pitch.
+
+- **Craft** — is the work conversion / growth / experimentation / the candidate's real craft, or off it? Industry (fintech, health, etc.) is **WHERE, not WHAT** — never downgrade on industry alone (`feedback_fintech_is_where_not_what.md`). State which achievement in `fit_profile.md` the core JD requirement maps onto.
+- **Achievement overlap** — apply the same Strong / Medium / Weak overlap rule as the [Fit Score](#fit-score-domain-fit-only) guard rail (achievement-with-metric = Strong; adjacent = Medium; none = Weak). Level and track never downgrade; bridge tracks can upgrade. Report the level as *context for the verdict*, not as a gate.
+- **Comp** — always **net-to-net** against the candidate's anchors (`user_comp_anchors.md`): W2 break-even and the market target. A US role *below* the market target can still be a real raise — do the net math, don't reject on the sticker number. A non-US / wrong-market role below the floor is a hard walk (`feedback_below_floor_comp_hard_walk.md`). If comp is undisclosed, mark it as the unknown to resolve, do not assume.
+- **Location / work auth** — US role or not. The candidate has full US work authorization (green card), so US roles carry no visa friction; the US market is the target (`user_location_workauth.md`, `feedback_us_target_sell_true_self_not_stretch.md`).
+- **English load** — internal-facing (fine) vs customer-facing / heavy synchronous external calls (real stress, stop-factor). Flag honestly where the role sits (`user_english_calibration.md`, `feedback_english_load_preload_answers.md`). This lens can sink an otherwise-strong fit.
+
+#### Step 4 — Part 2: The company as a place to work
+
+Web-research the company (firecrawl_search / web search + the company's own site, recent news). Report only what you can source; mark anything you cannot confirm as **unknown**, never fill gaps with plausible-sounding invention.
+
+- **Stage & money** — funding stage, last raise + date, headcount band, and any public runway/profitability signal. Flag "could be gone in 2 quarters" risk explicitly.
+- **Recent trajectory** — layoffs, hiring freezes, growth or contraction, leadership churn, is the product shipping and alive.
+- **Employer reputation** — Glassdoor-type signals (rating, recurring complaints), remote/RTO policy, and any red flags (mass-hiring churn, pay-to-play, legal trouble, scam markers).
+
+Cite each material claim with its source so the user can trust or discount it.
+
+#### Step 5 — Part 3: Verdict
+
+One of three, with the reasoning compressed to what actually drove it:
+
+- **Pass** — a hard blocker fires: craft has no real overlap; comp below floor on a non-US / wrong-market role; a customer-facing English-heavy role that would collapse under live load; or a disqualifying company signal (imminent insolvency, mass layoffs, scam markers). Give a clean decline — do **not** propose "practice interviews" to salvage a wrong-market role (`feedback_below_floor_comp_hard_walk.md`, `feedback_reps_only_count_in_english.md`).
+- **Go** — craft overlaps a real achievement (Strong/Medium), comp clears the floor or is a genuine US net raise, English load is manageable (internal-facing), and the company is stable enough to be worth the time. Close with one line on what "invest" concretely means here, and *offer* (don't auto-run) the next step.
+- **Conditional** — promising but one or two load-bearing unknowns (comp undisclosed, remote policy unclear, English exposure ambiguous, funding stale). List **exactly** what to confirm on the call to flip it to Go or Pass.
+
+Always end with **"What to confirm on the call"** — 2–3 concrete questions for the candidate to ask, derived from the unknowns and the flip-factors above.
+
+#### Anti-patterns (analyze-specific)
+
+- **Do not write anything.** No Notion page, no TSV row, no local file. Chat output only.
+- **Do not auto-run downstream skills.** Offer interview-coach / tailor on a `Go`; run them only on explicit yes.
+- **Do not improvise positioning or fabricate company facts.** Candidate claims come from `fit_profile.md` / feedback files; company claims come from cited web sources or are marked unknown.
+- **Do not soften a Pass into a sparring session.** A wrong-market / below-floor / English-collapse role gets a clean walk; the candidate's US search wins that time.
+- **Do not call the candidate a "co-founder" or invent a commercial-model label** (`feedback_never_say_cofounder.md`, `feedback_no_fabricated_commercial_profile.md`).
 
 ---
 

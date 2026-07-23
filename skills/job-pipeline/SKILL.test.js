@@ -25,6 +25,24 @@ test("SKILL.md documents all five CLI commands", () => {
   }
 });
 
+test("SKILL.md documents the analyze mode (post-response decision gate)", () => {
+  const text = fs.readFileSync(SKILL_PATH, "utf8");
+  // Command listed + a mode section header.
+  assert.match(text, /\/job-pipeline analyze/, "missing /analyze command doc");
+  assert.match(text, /^### analyze$/m, "missing ### analyze section");
+  // Verdict rubric is the contract of this mode.
+  assert.match(text, /Go\s*\/\s*Pass\s*\/\s*Conditional/i, "must document the 3-way verdict");
+  // Chat-only, no writes — the load-bearing scope guarantee.
+  assert.match(
+    text,
+    /no CLI phase, no writes/i,
+    "analyze must be documented as chat-only / non-writing"
+  );
+  // Two analysis halves: fit with the candidate + the company as a workplace.
+  assert.match(text, /Part 1: Fit with the candidate/i);
+  assert.match(text, /Part 2: The company as a place to work/i);
+});
+
 test("SKILL.md warns that sync defaults to dry-run", () => {
   const text = fs.readFileSync(SKILL_PATH, "utf8");
   assert.match(text, /Default = dry-run/i);
