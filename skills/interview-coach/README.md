@@ -22,7 +22,7 @@ Say `kickoff`, share your resume, and you're being coached in under 2 minutes.
 
 **Role-fit assessment** — Structured evaluation of candidate-role fit across five dimensions (requirement coverage, seniority alignment, domain relevance, competency overlap, trajectory coherence). Distinguishes strong fits from investable stretches and long shots, so candidates focus their energy on roles where they're competitive. Over time, rejection patterns reveal targeting insights that no amount of practice can fix.
 
-**Enhanced company intelligence** — Three research depth levels (Quick Scan, Standard, Deep Dive) with a structured search protocol and claim verification. Every company-specific claim maps to a source tier (verified, general knowledge, or unknown). Prep briefs include targeted web research before applying company knowledge, with source attribution for every finding.
+**Enhanced company intelligence** — Three research depth levels (Quick Scan, Standard, Deep Dive) with a structured search protocol and claim verification. Every company-specific claim maps to a source tier (verified, general knowledge, or unknown). And every `prep` brief now **always opens with a mandatory 8-step company + role research screen** — JD from the primary source + anti-requirements, business model, people, fit map, risks and landmines, verified-vs-unverified reputation, culture vocabulary, and US comp mechanics. The screen runs at full depth even for a 15-minute call and forms the reference front-matter the speaking material is built on.
 
 **Interview lifecycle** — Company research, role-specific prep briefs with interviewer intelligence, same-day post-interview debrief, outcome tracking that correlates practice scores with real results, and post-offer negotiation coaching with exact scripts.
 
@@ -118,7 +118,7 @@ For both options, the coach will ask for your resume, target role, and timeline 
 |---|---|---|
 | `research [company]` | Company research + structured fit assessment (3 depth levels) | Company snapshot, culture signals, fit assessment, claim-verified findings |
 | `decode` | JD analysis + batch triage (3 depth levels, 6 lenses) | Confidence-labeled decoding, competency extraction, fit assessment, recruiter verification questions, batch comparison, teaching layer |
-| `prep [company]` | Build role-specific prep brief (format-aware, culture-aware, role-fit assessment) | Format guidance, culture read, role-fit assessment, interviewer intelligence, competencies, predicted Qs, story mapping |
+| `prep [company]` | Build role-specific prep brief — always opens with the mandatory 8-step company + role research screen | 8-step research front-matter (business model, primary-source JD + anti-requirements, people, fit map, risks/landmines, verified/unverified reputation, culture vocab, comp), then predicted Qs, story mapping, concerns, your questions, day-of cheat sheet |
 | `concerns` | Anticipate interviewer concerns | Concern-counter-evidence map |
 | `questions` | Generate interviewer questions | 5 tailored, non-generic questions |
 | `present` | Presentation round coaching (3 depth levels) | Narrative arc selection, content structuring, timing calibration, opening/closing optimization, Q&A preparation, constraint versions |
