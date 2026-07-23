@@ -288,19 +288,71 @@ Don't quietly skip these topics — name the boundary so the candidate knows whe
 
 Companies have interviewing cultures that transcend individual JDs. When a known company is specified, apply culture-specific coaching — **but only from verified sources**.
 
-#### Structured Research Step
+#### The 8-step research screen (mandatory — this is the 📖 front-matter)
 
-Before applying company knowledge sourcing tiers, run a targeted search to ground the prep brief in current data:
-1. Search for the company's current careers page and extract their stated values/principles.
-2. Search for recent news (last 6 months) — funding, layoffs, product launches change interview culture.
-3. If the candidate provided interviewer LinkedIn URLs, research each one using the Interviewer Intelligence protocol below.
-4. Cross-reference findings with what the candidate has already told you.
+`prep` **always** opens with a systematic 8-step company + role research
+screen. These 8 steps *are* the 📖 sections of the konspekt (see Output
+Schema → 📖 A–H); there is no separate research file. **All 8 steps always
+run at full depth**, even for a 15-minute coffee chat — the research is what
+tells the candidate whether the call is worth taking at all. Only the 🗣️
+speech sections downstream scale to the round's length and format. (This
+diverges deliberately from the tiered Research Depth Levels in `research.md`:
+`research` is triage, `prep` is commitment.)
 
-Present findings with source attribution: "From their careers page: [finding]" not "This company values [finding]." Follow the Claim Verification Protocol from `references/commands/research.md` — every claim maps to Tier 1, 2, or 3.
+Each step has an input, an output into the konspekt, and a sourcing rule.
+Every claim maps to a Company Knowledge Sourcing tier (below) — a fact is
+either **verified** (cite the source) or **unverified** (label it, and for
+numbers say "don't state").
+
+1. **Pull JD from the primary source.** In: JD URL / ATS id / candidate's
+   pasted copy. Out: canonical JD text in 📖 B. Rule: primary source only —
+   if the page is JS-rendered, hit the ATS API (e.g. Workable
+   `apply.workable.com/api/v2/accounts/<slug>/jobs/<shortcode>`); reconcile
+   against the candidate's copy; **canon = the candidate's copy**; list any
+   divergences (salary band especially) explicitly.
+2. **Requirements + anti-requirements.** In: canonical JD. Out: a requirement
+   list *and* an explicit disqualifier list in 📖 B. Rule: extract
+   disqualifiers, not only requirements — this both removes phantom gaps
+   (something explicitly *not* required, e.g. "Python/ML not needed") and
+   flags any candidate story that trips a disqualifier as a **landmine**
+   (feeds ⚠️ E and story selection in 🗣️ 6).
+3. **Business model.** In: company site, filings, press. Out: product /
+   customer / **how they make money** / why this role is the lever for their
+   economics, in 📖 A. Rule: "how they earn", not "what they do"; add a
+   one-line "how to read it" (e.g. capital-efficient → margin, not
+   growth-at-any-cost) and 1–2 honest "why this genuinely interests you" hooks.
+4. **Reputation recheck.** In: Trustpilot / BBB / Glassdoor / forums. Out: a
+   **verified** table + an **unverified** list marked "don't state", in 📖 F.
+   Rule: keep competitors' claims out of the sources; confirm every negative
+   is about *this* company, not dragged from an adjacent file.
+5. **People.** In: LinkedIn / TheOrg / interviews / press. Out: recruiter +
+   hiring-manager dossier in 📖 C, freshness-checked, with a resonance hook.
+   Rule: press releases go stale — verify the current seat (self-reported
+   LinkedIn title > aggregators); mark hypotheses as hypotheses.
+6. **Fit map.** In: requirements (step 2) + storybank. Out: a requirement →
+   specific-story table in 📖 D with **landmines marked explicitly**. Rule:
+   every claim points to a real storybank story.
+7. **Culture layer.** In: careers video / values / JD language. Out: their
+   exact lexicon + a tie-in to a candidate story, in 📖 G. Rule: mirror the
+   tone, **never quote verbatim**.
+8. **Comp / benefits.** In: JD comp + market. Out: a US-comp mechanics read +
+   a what-to-ask list in 📖 H. Rule: net-to-net; equity-liquidity realism for
+   a private company; flag what the posting omits. Hooks into the `salary`
+   command.
+
+Cross-cutting: sensitive topics (a scandal, a lawsuit) go into ⚠️ E held in
+reserve — surface **only if the interviewer raises it**, note the risk
+symmetry, never lead with it.
+
+If the candidate provided interviewer LinkedIn URLs, run step 5 via the
+Interviewer Intelligence protocol below. Present every finding with source
+attribution: "From their careers page: [finding]", not "This company values
+[finding]." Follow the Claim Verification Protocol from
+`references/commands/research.md`.
 
 #### Company Knowledge Sourcing (Critical)
 
-This is a high-stakes area. Telling a candidate "Stripe values X in interviews" when you're guessing can actively hurt them. Every company-specific claim must be sourced to one of three tiers:
+This is a high-stakes area. Telling a candidate "Stripe values X in interviews" when you're guessing can actively hurt them. This tiering is the **per-claim gate for every one of the 8 research steps above** — no fact reaches the konspekt untagged. Every company-specific claim must be sourced to one of three tiers:
 
 **Tier 1 — Verified (cite the source):**
 Claims based on information you can actually retrieve and point to during this session:
@@ -451,49 +503,66 @@ The recurring failure (caught 2026-05-14 on Ross Burton prep) is to skip Step 7.
 
 ### Output Schema
 
-The prep brief uses a **fixed 10-section narrative structure** with visual markers separating reference material from speaking material. The order is strict — do not reorder sections.
+The prep brief has two parts in a **fixed, strict order — do not reorder**:
+
+1. **📖 A–H research front-matter** — the 8-step company + role screen (see
+   "The 8-step research screen" above). This is the systematic research base,
+   always present, always full-depth.
+2. **Sections 5–10 (🗣️ speech, with 📖 §9 plan inside)** — positioning, Q&A,
+   concerns, questions, plan, cheat sheet. These read from the front-matter and
+   scale to the round.
+
+Visual markers separate reference material from speaking material.
 
 **Section markers (use as prefixes in section headers):**
 
 - **📖 = read once, reference material.** Context the candidate skims before the call to load mental state. Not memorized.
+- **⚠️ = risk / do-not-trip.** Landmines, structural gaps, and sensitive topics the candidate holds in reserve. Read carefully, act defensively.
 - **🗣️ = learn and speak.** Material the candidate actually delivers in the interview. Russian summary of *what to say* + English anchor phrases (1-5 words each) that are short enough to recall under pressure. No long English scripts to read aloud — those break under ESL pressure. See `references/conventions.md` rule 1.
 
 **Header line (always include at the top of the brief):**
 
-> `📖 = справка, читай один раз. 🗣️ = речь, опорный конспект (смысл по-русски + anchor phrases на английском). После любой 🗣️ фразы — пауза, дай интервьюеру среагировать.`
+> `📖 = справка, читай один раз. ⚠️ = риск, не наступи. 🗣️ = речь, опорный конспект (смысл по-русски + anchor phrases на английском). После любой 🗣️ фразы — пауза, дай интервьюеру среагировать.`
 
 (Translate to the candidate's narrative language if not Russian. The header is the orientation device — without it, the markers don't land.)
 
-**The 10 sections in order:**
+**The structure — 📖 A–H research front-matter, then sections 5–10 (🗣️ speech + 📖 §9 plan), strict order:**
 
 ```markdown
 # Prep — [Company] [Round/Stage] — [Interviewer] — [Date]
 
-📖 = справка, читай один раз. 🗣️ = речь, опорный конспект (смысл по-русски + anchor phrases на английском). После любой 🗣️ фразы — пауза, дай интервьюеру среагировать.
+📖 = справка, читай один раз. ⚠️ = риск, не наступи. 🗣️ = речь, опорный конспект (смысл по-русски + anchor phrases на английском). После любой 🗣️ фразы — пауза, дай интервьюеру среагировать.
+
+Файл лежит по абсолютному пути — указать здесь, в шапке.
 
 ---
 
-## 📖 1. Что это за звонок
+## 📖 A. Компания за 60 секунд
 
-Связный параграф (3-5 предложений) — что за раунд, кто на той стороне (имя + роль), где компания в воронке у кандидата, длительность, формат, дата/время. Файл лежит по абсолютному пути — указать в конце параграфа.
+Связный параграф (research step 3 — business model): продукт / клиент / **как они зарабатывают** (не «что делают»), почему именно эта роль — рычаг для их экономики. Одна строка «как это читать» (напр. capital-efficient → маржа, не рост любой ценой) + 1-2 честных хука «почему тебе это реально интересно» — без натяжки.
 
-Не таблица, не bullets — параграф, чтобы кандидат «вошёл в курс» одним чтением.
+Каждый факт — verified (сайт / JD / filings, с источником) или помечен как догадка. Стартовый контекст раунда (что за звонок, где компания в воронке кандидата, длительность, формат, дата/время) — одной фразой в начале параграфа.
 
-## 📖 2. Кто такой [Interviewer Name] и что он на самом деле ищет
+## 📖 B. Роль из первоисточника
 
-Связный параграф про интервьюера — функциональная линза, фон, специализация, что он скорее всего фильтрует. Заканчивается одной чёткой фразой: «Поэтому твоя задача за N минут — Y». То, что раньше было «Critical Reframe», теперь живёт здесь как замыкающая мысль параграфа, не отдельной секцией.
+**JD из первоисточника (step 1).** Канонический текст вакансии — primary source, не пересказ. Если страница JS-рендерится — тянем ATS API (напр. Workable `apply.workable.com/api/v2/accounts/<slug>/jobs/<shortcode>`). Сверить с копией кандидата; **canon = копия кандидата**; расхождения (особенно вилка зарплаты) выписать явно.
 
-Если есть отдельный инсайд от рекрутёра / Paula / кого-то ещё, кто видел этого интервьюера — sub-секция `### Инсайд от [имя]` с прямой цитатой (без редактуры). Цитата стоит больше, чем пересказ.
+**Requirements + anti-requirements (step 2).** Два списка:
 
-Если интервьюера несколько (panel) — отдельный параграф на каждого.
+- **Требования** — что реально нужно.
+- **Anti-requirements / дисквалификаторы** — что вычёркивает кандидата, ИЛИ что явно **НЕ** требуется (снимает фантомный гэп, напр. «Python/ML не нужен»).
 
-## 📖 3. Что мы не знаем про этот раунд
+Дисквалификатор, совпавший с историей кандидата, помечает её как **landmine** — уходит в ⚠️ E и влияет на выбор истории в 🗣️ 6.
 
-Короткий честный список (3-5 буллетов) — реальные unknowns, влияющие на готовность: формат не подтверждён, длительность не подтверждена, конкретный фокус интервьюера, качество историй из storybank, etc. Это **мета-калибровка**, потому стоит в начале, не в конце.
+## 📖 C. Кто такой [Interviewer Name] и что он на самом деле ищет
 
-Не «что я могу узнать» — а «что осталось неизвестным после всей разведки».
+Связный параграф про интервьюера (research step 5) — функциональная линза, фон, специализация, что он скорее всего фильтрует. Заканчивается одной чёткой фразой: «Поэтому твоя задача за N минут — Y». То, что раньше было «Critical Reframe», живёт здесь как замыкающая мысль параграфа.
 
-## 📖 4. Что они оценят и где у тебя гэпы
+**Freshness-check:** пресс-релизы устаревают — подтвердить текущую позицию (self-reported LinkedIn title > агрегаторы вроде The Org); гипотезу помечать как гипотезу. Найти **resonance hook** — естественную общую почву, не натянутую.
+
+Если есть инсайд от рекрутёра / кого-то, кто видел этого интервьюера — sub-секция `### Инсайд от [имя]` с прямой цитатой (без редактуры). Цитата стоит больше пересказа. Panel → отдельный параграф на каждого.
+
+## 📖 D. Карта соответствия (fit map)
 
 Role-Fit Assessment как **bullets / параграф, не таблица**. Прохожу по 5 измерениям:
 
@@ -503,12 +572,37 @@ Role-Fit Assessment как **bullets / параграф, не таблица**. 
 - **Competency Overlap** — карта JD-компетенций на storybank, где сильное, где гэп.
 - **Trajectory Coherence** — логичен ли этот шаг как next career move.
 
-Под каждым — конкретика, не «Strong / Moderate / Weak» вакуумно. После — две короткие подсекции:
+Под каждым — конкретика, не «Strong / Moderate / Weak» вакуумно.
 
-- **Frameable gaps** — что бридж-нарративом покрывается (готовим counter-line в §7).
-- **Structural gaps** — что нарративом не покрыть (называем честно, готовимся к probing).
+Затем таблица **requirement → конкретная история storybank** (research step 6). Каждое требование из §B → реальный S###. **Landmines помечены явно** — истории, с которых НЕ начинать (из anti-requirements §B).
 
 Verdict (Strong Fit / Investable Stretch / Long-Shot Stretch / Weak Fit) — в одну строку в конце.
+
+## ⚠️ E. Риски и landmines
+
+- **Landmines** — истории / темы, которые триггерят дисквалификатор из §B. Не вести с них.
+- **Frameable gaps** — что бридж-нарративом покрывается (counter-line готовим в 🗣️ 7).
+- **Structural gaps** — что нарративом не покрыть; называем честно, готовимся к probing.
+- **Что НЕ гэп** — фантомные требования, снятые в §B. Не извиняться за то, чего не просят.
+- **Чего мы не знаем** — короткий честный список реальных unknowns, влияющих на готовность (формат / длительность / фокус интервьюера не подтверждены, качество историй storybank). Мета-калибровка, не «что могу узнать».
+- **Sensitive topics** — щекотливое (скандал, иск, публичный факап): держать в резерве, поднимать **только если интервьюер сам заговорил**, отметить симметрию риска, никогда не вести с этого.
+
+## 📖 F. Репутация: verified vs unverified
+
+Две группы, разделять жёстко:
+
+- **Verified** (Trustpilot / BBB / Glassdoor — с источником): факты, которые можно называть на звонке.
+- **Unverified** (форумы, заявления конкурентов, маркетинговые цифры): помечены **«не называть»**.
+
+Конкурентов отфильтровать из источников; убедиться, что каждый негатив — про **эту** компанию, а не притянут из соседнего файла.
+
+## 📖 G. Словарь культуры
+
+Их точный лексикон (careers video / values page / язык JD) → зеркалить тон **без дословного цитирования**. Каждый маркер культуры привязать к конкретной истории кандидата (research step 7).
+
+## 📖 H. Комп и бенефиты
+
+US-comp механика под кандидата (research step 8): base net-of-tax, equity в частной компании (реализм ликвидности), PTO, 401k, healthcare. Что **отсутствует** в постинге → в список «спросить на звонке». Считать net-to-net. Хук в команду `salary`.
 
 ## 🗣️ 5. Твоё позиционирование
 
@@ -571,7 +665,7 @@ Headline — это ответ на вопрос «расскажи о себе�
 
 ## 🗣️ 7. Концерны и контры
 
-Топ-3 концерна интервьюера (из §4 Role-Fit или из истории компании). Каждый — блок:
+Топ-3 концерна интервьюера (из 📖 D fit-map / ⚠️ E рисков или из истории компании). Каждый — блок:
 
 ```
 ### Концерн N: [Одна фраза, что его насторожит]
@@ -670,6 +764,6 @@ Adaptive footer — этот пункт встроен сюда как **лог�
 [конец брифа]
 ```
 
-**Section ordering — НЕ переставлять.** Порядок секций (📖 §1-3 → 🗣️ §5-8 с прослойкой 📖 §4 → 📖 §9 → 🗣️ §10) выверен эмпирически: сначала ввод в контекст, потом материал для разговора, потом мета-план, потом cheat sheet как навигация. Любая перестановка ломает «нарратив» брифа.
+**Section ordering — НЕ переставлять.** Порядок (📖 A–H research front-matter → 🗣️ §5–8 → 📖 §9 → 🗣️ §10) выверен эмпирически: сначала систематический ресёрч (8-шаговый screen как справочная база), потом материал для разговора, потом мета-план, потом cheat sheet как навигация. 8-шаговый ресёрч всегда идёт первым и на полной глубине (RFC 064) — именно он говорит кандидату, стоит ли вообще выделять время на звонок. Любая перестановка ломает «нарратив» брифа.
 
-**Когда что-то не применимо:** если у тебя нет данных про §2 (recruiter не дал ничего про интервьюера) — оставь параграф коротким и честно скажи «У нас минимум интел — что знаем: X. Чего не знаем: Y». §3 (unknowns) дублирует это явно. Не выдумывай.
+**Когда что-то не применимо:** если у тебя нет данных про 📖 C (recruiter не дал ничего про интервьюера) — оставь параграф коротким и честно скажи «У нас минимум интел — что знаем: X. Чего не знаем: Y». ⚠️ E (блок «Чего мы не знаем») дублирует это явно. Не выдумывай.

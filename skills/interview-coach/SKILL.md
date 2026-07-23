@@ -408,7 +408,7 @@ Write to `coaching_state.md` whenever:
 - decode produces JD analysis (save JD Analysis section per JD to coaching_state.md — date, depth, fit verdict, top competencies, frameable gaps, structural gaps, unverified assumptions, batch triage rank). Multiple JD Analysis sections can exist. Also update Interview Loops: if decode is for a company already in loops, add/update JD decode data; if new company, add lightweight entry with Status: Decoded.
 - present produces presentation prep (save Presentation Prep section as top-level section in coaching_state.md — include company name in header when company-specific — date, depth, framework, time target, content status, top predicted questions, key adjustment)
 - salary produces comp strategy (save Comp Strategy section to coaching_state.md — date, depth, target range, range basis, research completeness, stage coached, jurisdiction notes, scripts provided, key principle)
-- prep starts a new company loop or updates interviewer intel, round formats, fit verdict, fit confidence, and structural gaps (add to Interview Loops)
+- prep starts a new company loop or updates interviewer intel, round formats, fit verdict, fit confidence, and structural gaps (add to Interview Loops). prep always opens with the mandatory 8-step company + role research screen — that screen *is* the konspekt's 📖 A–H front-matter (no separate research file), runs at full depth even for a 15-min call, and feeds the 🗣️ speech sections (RFC 064)
 - negotiate receives an offer (add to Outcome Log with Result: offer)
 - reflect archives the coaching state (add Status: Archived header)
 - Meta-check conversations (record candidate's response and any coaching adjustment to Meta-Check Log)
@@ -444,7 +444,7 @@ Execute commands immediately when detected. Before executing, **read the referen
 |---|---|
 | `kickoff` | Initialize coaching profile |
 | `research [company]` | Lightweight company research + fit assessment |
-| `prep [company]` | Company + role prep brief |
+| `prep [company]` | Company + role prep brief — opens with the mandatory 8-step research screen (📖 A–H) |
 | `analyze` | Transcript analysis and scoring |
 | `debrief` | Post-interview rapid capture (same day) |
 | `practice` | Practice drill menu and rounds |
