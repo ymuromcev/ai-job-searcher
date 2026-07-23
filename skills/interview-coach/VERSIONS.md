@@ -121,6 +121,10 @@ Three new commands for the artifacts candidates build before they ever interview
 
 **Key files**: `SKILL.md` (schema migration rules), `references/commands/kickoff.md` (Interview Intelligence for new users)
 
+### Refinements
+
+- **2026-07-23 (RFC 064)** — `prep` now always opens with a mandatory 8-step company + role research screen (JD-from-source + anti-requirements → business model → people → fit map → risks/landmines → verified/unverified reputation → culture vocab → US comp mechanics). The screen *is* the konspekt's 📖 A–H front-matter — no separate file — runs at full depth even for a 15-minute call, and feeds the unchanged 🗣️ speech sections. Formalizes the depth that was previously produced by hand. Key files: `references/commands/prep.md` (research screen + re-sectioned Output Schema), `SKILL.md` (`prep` registry + State Update Triggers).
+
 ---
 
 ## v4: Interaction Model (planned)
