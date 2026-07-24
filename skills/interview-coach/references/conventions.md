@@ -796,6 +796,42 @@ The four that most often surprise a role-tuned konspekt (and did at LawnStarter)
 
 ---
 
+## 8. Recognize the interview format before predicting questions
+
+**Rule (calibrated 2026-07-24 on the LawnStarter / Kate Acuzar screen, where the konspekt predicted from the JD and missed the entire behavioral / reference half of a structured screen).** Before building a `prep` konspekt, **classify the interview format** and predict the question flow **from that format's canonical template**, not only from the job description. The JD gives you the *role-specific* questions; the format gives you the *structural* ones — and structured screens spend most of their time on the structural set.
+
+Formats and their tells:
+
+- **Recruiter / HR behavioral screen** — motivation → strengths → a strength-in-action example → weakness/gap → proudest accomplishment (STAR) → one core-competency probe → salary → logistics. Predict this whole spine for any first-round recruiter call.
+- **Topgrading / reference screen** — the tell is *"on a scale of 1–10, how would they rate you"* and *"who did you report to / why did you leave"* walked across the **last ~3 roles** in order. If you see any one of these, predict the full 3×3 block (report-to / rate 1–10 / why-leave per role).
+- **Hiring-manager chronological walkthrough** — "walk me through your career start to now"; per-role deep dives on decisions and trade-offs.
+- **Competency / panel** — scenario and "tell me about a time…" per competency.
+- **Founder round** — vision, zero-to-one, why-you-specifically, culture-add.
+
+**How to apply.** At the top of a prep, state the inferred format (and the stage — recruiter vs HM vs panel) with a confidence note, then predict that template's spine first and layer the JD-specific questions on top. When the stage is known from the invite ("recruiter screen", "VP chronological"), use that stage's template directly. A konspekt that predicts only JD-flavored questions for a structured screen misses ~half the real questions (LawnStarter: recall ~44%).
+
+---
+
+## 9. Consolidate positioning questions — one theme, not five sections
+
+**Rule (calibrated 2026-07-24 on the LawnStarter screen, where five separate predicted sections — tell-me-about-yourself, recent roles, environments, why-company, why-fit — all covered one theme and consumed ~40% of the konspekt, while the recruiter asked one open motivation question and spent the rest on behavioral questions the konspekt under-covered).** "Tell me about yourself", "your recent roles", "what environments have you worked in", "why this company", "why are you a fit" are **one theme** — identity + motivation + fit — answered from the **same** material. Collapse them into **at most two** konspekt sections (one "about you + what you're looking for", one "why this company / role"). Do not spend five near-duplicate sections on positioning.
+
+Reallocate the freed prediction budget to the **behavioral + reference mechanics** (strengths, weakness/gap, proudest-accomplishment STAR, the 3×3 block) — that is where structured screens actually spend their time, and where the misses happen.
+
+**Also — demote low-yield sections to a one-liner.** Work-authorization / logistics gets a single ready line, not a full section, **unless** the role has real visa friction. (Evidence: green-card / work-auth prep went unused on both the Virto and LawnStarter screens — a US-based, US-authorized candidate is rarely asked this in a screen.)
+
+---
+
+## 10. Log a prediction scorecard after every real interview
+
+**Rule (candidate-directed 2026-07-24, Jared — "обновлять скилл на реальных интервью").** After every real-interview debrief, record a **prediction scorecard** in `coaching_state.md` under `## Interview Intelligence → ### Prediction Scorecard`: which predicted questions were asked, which real questions were **not** predicted, and the two rates — **recall** (of the questions actually asked, how many the konspekt predicted) and **precision** (of the questions predicted, how many were actually asked). List the misses (asked-but-unpredicted) and the dead-preps (predicted-but-unasked).
+
+This closes the feedback loop the whole skill depends on: recurring **miss** categories get promoted into the Rule 7 baseline; recurring **dead-preps** get demoted (Rule 9); persistent format surprises sharpen Rule 8. The scorecard is the evidence that keeps prediction honest instead of drifting on vibes.
+
+**How to apply.** In any `analyze` / `debrief` / `feedback` run on a real interview, produce the scorecard as part of the debrief and write it to the Prediction Scorecard table before closing the turn. First data point: LawnStarter / Kate Acuzar 2026-07-24 — recall ~44%, precision ~50%; misses = strengths, gap, proudest-STAR, 3×3 mechanics; dead-preps = environments, why-fit-as-its-own-Q, work-auth.
+
+---
+
 ## How these rules surface
 
 These rules are loaded at the top of every command's instruction set:
@@ -827,6 +863,9 @@ These rules are loaded at the top of every command's instruction set:
 - **all commands** (Rule 1e): every markdown file the skill writes uses one physical line per paragraph — never hard-wrap prose, blockquotes, or list items. The human reads these in Obsidian; manual mid-paragraph newlines render as garbage.
 - **`prep` / `hype`** (Rule 1f): mapping a story to a question is not writing the answer — every konspekt answer and 🗣️ anchor lifts a concrete `Result` / `Earned Secret` fact from the mapped story's `Story Details` block; a story-named answer with no real metric is a defect and gets rewritten from source before the candidate sees it.
 - **`prep` (recruiter / HR / talent screen)** (Rule 7): the konspekt must cover the standard screen baseline — tell-me-about-yourself, motivation, why-company, strengths, gap/weakness, proudest + how-decided, the core-competency decision, AI, the 3×3 report-to / rate 1–10 / why-leave block, salary, logistics, your-questions — **in addition to** role-specific questions. The four that most often surprise a role-tuned draft are strengths, gap, proudest, and the 3×3 block; a screen konspekt missing any baseline item is incomplete.
+- **`prep`** (Rule 8): classify the interview format first and predict from its template (recruiter behavioral / Topgrading reference / HM chronological / competency panel / founder), then layer JD-specific questions on top — the 3×3 "rate 1–10 / why-leave last-3-roles" is a Topgrading tell.
+- **`prep`** (Rule 9): positioning questions (tell-me-about-yourself / recent-roles / environments / why-company / why-fit) collapse to ≤2 sections; reallocate the freed budget to behavioral + reference mechanics; work-auth is a one-liner unless the role has visa friction.
+- **`analyze` / `debrief` / `feedback`** (Rule 10): every real-interview debrief writes a prediction scorecard (recall / precision + misses + dead-preps) to `coaching_state.md → Interview Intelligence → Prediction Scorecard`, feeding Rules 7–9.
 
 When in doubt, this file wins. The cost of breaking one of these rules
 is higher than the cost of being slightly slower or less polished.
