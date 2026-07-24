@@ -771,6 +771,31 @@ at the candidate's request; applies to every profile.
 
 ---
 
+## 7. Recruiter-screen baseline question set — always predicted, never role-only
+
+**Rule (candidate-directed 2026-07-24, Jared — after the LawnStarter / Kate Acuzar screen asked four standard recruiter questions the konspekt had not predicted, and he tangled on them live under English load).** A `prep` konspekt for any recruiter / HR / talent screen **must** include prepared answers for the standard screen-mechanics questions **in addition to** the role-specific ones. Role-specific questions (pricing, AI, the domain) layer *on top of* this baseline, never *instead of* it.
+
+Baseline set every recruiter-screen konspekt predicts — each as its own predicted-question section (Rule 1d), each answer sourced from a real story (Rule 1f):
+
+- **Tell me about yourself** / walk me through your background.
+- **Where are you in your career + what are you looking for next** (motivation).
+- **Why this company / why this role.**
+- **Your strengths / "superpowers" you'd bring** — often phrased "besides [the obvious one], what else?"
+- **Your gap / weakness / what you want to get better at.** Pre-write one real, non-fatal development area plus what you are doing about it. Improvised, this question tangles every time.
+- **Proudest accomplishment + what was hard about it + how you made the key decisions** — the multi-part phrasing is the default; prepare all three parts, not just the accomplishment.
+- **A [core-competency] decision you owned** — reasoning, trade-offs, alternatives not taken, outcome (role-specific, e.g. pricing).
+- **How you use AI in your day-to-day work.**
+- **The 3×3 reference block** — for each of the last ~3 roles: *who did you report to*, *how would they rate you 1–10*, *why did you leave*. Pre-write a per-role line for all three. The short / low-rated / bad-fit role especially needs a clean pre-built framing — do **not** leave the candidate to volunteer a low number and a negative role-fit story live.
+- **Salary expectations.**
+- **Logistics** — work authorization, location / timezone, remote, availability / start date.
+- **Your questions for us.**
+
+The four that most often surprise a role-tuned konspekt (and did at LawnStarter): **strengths, gap/weakness, proudest-accomplishment-and-how-decided, and the 3×3 report-to / rate / why-leave block.** If any baseline item is missing from a recruiter-screen konspekt, that konspekt is incomplete — add it before emitting.
+
+**Why.** A konspekt built around the *role's* hard questions (pricing, AI) can pass the recruiter's role-fit probes and still get the candidate tangled on the generic mechanics every screen contains — which is exactly what happened on 2026-07-24: pricing / AI / salary landed (they were predicted), while strengths / gap / proudest / 3×3 were unpredicted and drew visible flailing under live English load. For this candidate the improv cost is real (spoken English under load is the bottleneck, not interview mechanics), so a pre-built anchor is the difference between a clean answer and a stall. The baseline questions are cheap to predict — they recur in every screen — so there is no reason to ever miss them.
+
+---
+
 ## How these rules surface
 
 These rules are loaded at the top of every command's instruction set:
@@ -801,6 +826,7 @@ These rules are loaded at the top of every command's instruction set:
 - **all commands** (Rule 6): when the candidate reveals a new ground-truth fact not yet in the storybank, capture it as a STAR in the same turn. Rules 1c / 1d shape konspekt output — two-column bilingual (RU left / EN right) and lean default sections.
 - **all commands** (Rule 1e): every markdown file the skill writes uses one physical line per paragraph — never hard-wrap prose, blockquotes, or list items. The human reads these in Obsidian; manual mid-paragraph newlines render as garbage.
 - **`prep` / `hype`** (Rule 1f): mapping a story to a question is not writing the answer — every konspekt answer and 🗣️ anchor lifts a concrete `Result` / `Earned Secret` fact from the mapped story's `Story Details` block; a story-named answer with no real metric is a defect and gets rewritten from source before the candidate sees it.
+- **`prep` (recruiter / HR / talent screen)** (Rule 7): the konspekt must cover the standard screen baseline — tell-me-about-yourself, motivation, why-company, strengths, gap/weakness, proudest + how-decided, the core-competency decision, AI, the 3×3 report-to / rate 1–10 / why-leave block, salary, logistics, your-questions — **in addition to** role-specific questions. The four that most often surprise a role-tuned draft are strengths, gap, proudest, and the 3×3 block; a screen konspekt missing any baseline item is incomplete.
 
 When in doubt, this file wins. The cost of breaking one of these rules
 is higher than the cost of being slightly slower or less polished.
