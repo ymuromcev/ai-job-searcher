@@ -450,6 +450,66 @@ reintroduce them silently.
 
 ---
 
+## 1e. Never hard-wrap prose — one paragraph = one physical line
+
+**Rule (candidate-directed 2026-07-23, Jared — stated before, re-flagged with
+frustration).** Every file this skill writes is opened and edited in
+**Obsidian**. Hard-wrapped prose (inserting a newline every ~72–80 chars
+inside a paragraph) renders and edits as garbage there. **Do NOT hard-wrap.**
+
+- A paragraph is **one physical line**. Let the editor soft-wrap. Never break
+  a sentence across lines with a manual `\n`.
+- Same inside **blockquotes**: a `> …` callout is one `>` line per paragraph,
+  not one `>` line per 72 chars.
+- Same inside **list items**: a bullet and its continuation are one line.
+- Real newlines are only for real structure: between paragraphs (blank line),
+  headers, list items, table rows, code fences, horizontal rules.
+- This is not a konspekt-only rule. It applies to **every** file the skill
+  emits — prep dossiers, company-research notes, debriefs, storybank prose,
+  every section including the 📖 справка blocks, not just the 🗣️ tables.
+
+**Why it keeps regressing.** When drafting long-form markdown the model
+tends to visually wrap at terminal width. That instinct is wrong for a
+file the human reads in an editor. Write the paragraph as one unbroken line
+regardless of how long it looks in the tool output.
+
+---
+
+## 1f. Konspekt answers are sourced from story details, not paraphrased
+
+**Rule (candidate-directed 2026-07-23, Jared — after a full konspekt draft
+came back "вода без реальных достижений" and cost him a long correction
+pass).** Mapping a story to a question is **not** the same as writing the
+answer. The story-mapping engine tells you *which* `S###` to use; this rule
+governs how the answer **text** gets built from it.
+
+- For **every** konspekt answer (and every 🗣️ anchor / hype line), after the
+  Q→`S###` mapping, **open the mapped story's `Story Details` block in
+  `coaching_state.md` and lift its concrete quantified `Result` (and, where
+  it sharpens the point, its `Earned Secret`) into the answer verbatim by the
+  numbers.** Do not answer from memory or paraphrase the story into a generic
+  claim ("grew the marketplace", "led the team"). Pull the real figures that
+  are sitting in the block ($25k→$1M over 3 years, onboarding 3mo→1, +$500k/mo,
+  weeks→hours, ~$1M/mo LTV, +20% CR from 40+ A/B, etc.).
+- **A konspekt answer that names a story but carries no concrete fact from
+  that story's `Result` line is a defect, not a finished answer.** It reads as
+  padding to the candidate and burns his prep time.
+- If a mapped story's `Result` has **no number to pull**, that is a signal the
+  mapping is wrong (pick a story that does) or the story is under-built (run
+  `stories` to enrich it) — it is **not** a license to write generic prose.
+- **Hard gate before showing the konspekt to the candidate:** self-check that
+  **every** predicted-question answer cites at least one specific fact lifted
+  from a real `Story Details` block. If any answer fails, rewrite it from the
+  source **before** emitting — do not hand the candidate a draft to fix.
+
+**Why it regressed the first time.** The skill matched the right stories
+(that part worked) but nothing forced the answer body to be sourced from the
+matched story's actual metrics, so the draft came out as correct-story /
+generic-content. The bridge from "mapped `S###`" to "concrete answer text"
+was missing. This rule is that bridge.
+
+---
+
 ## 2. No fabricated commercial profile
 
 **Rule.** Do not assign a commercial-profile label (B2B / B2C / enterprise /
@@ -721,7 +781,9 @@ These rules are loaded at the top of every command's instruction set:
   candidate-history fact narrated in the brief. Rule 5 (vocabulary
   calibration) gates the spoken-English word choice in every 🗣️ block.
   Rule 3 governs how to handle a fabrication or conflation caught
-  mid-session.
+  mid-session. Rule 1f gates answer **substance** — every predicted-Q
+  answer must lift a concrete `Result` / `Earned Secret` fact from the
+  mapped story's `Story Details` block, not paraphrase it generically.
 - `practice`, `mock`: Rule 1 gates every line the candidate will speak.
   Rule 5 calibrates those spoken lines against the Reword mastered set.
   Rule 4 gates how candidate history is described in the setup text.
@@ -737,6 +799,8 @@ These rules are loaded at the top of every command's instruction set:
   calibrates their word choice.
 
 - **all commands** (Rule 6): when the candidate reveals a new ground-truth fact not yet in the storybank, capture it as a STAR in the same turn. Rules 1c / 1d shape konspekt output — two-column bilingual (RU left / EN right) and lean default sections.
+- **all commands** (Rule 1e): every markdown file the skill writes uses one physical line per paragraph — never hard-wrap prose, blockquotes, or list items. The human reads these in Obsidian; manual mid-paragraph newlines render as garbage.
+- **`prep` / `hype`** (Rule 1f): mapping a story to a question is not writing the answer — every konspekt answer and 🗣️ anchor lifts a concrete `Result` / `Earned Secret` fact from the mapped story's `Story Details` block; a story-named answer with no real metric is a defect and gets rewritten from source before the candidate sees it.
 
 When in doubt, this file wins. The cost of breaking one of these rules
 is higher than the cost of being slightly slower or less polished.
