@@ -90,3 +90,7 @@ docs/resume/
 # Build artifacts
 dist/
 build/
+
+# Obsidian editor state — local only (decided 2026-07-23)
+.obsidian/
+**/.obsidian/

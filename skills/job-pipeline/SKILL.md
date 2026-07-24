@@ -815,6 +815,17 @@ Summarize:
 
 These rules apply whenever Claude generates content or makes pipeline decisions. They reference per-profile config — do not hardcode profile-specific values here.
 
+### Recruiter-sourced role — act ONLY through the recruiter
+
+When a role reaches us via a **recruiter inbound** (LinkedIn DM, email — not our own scan / auto-apply pipeline), the recruiter's advocacy (pushing the candidate through to the client) is the only edge that role carries. So:
+
+- Engage / tailor a resume for a recruiter-sourced role **only if BOTH**: (1) the vacancy is genuinely interesting, AND (2) we stay in the recruiter's process.
+- If we **decline or burn the recruiter** (they misrepresented the role, withheld the company, inflated requirements, or otherwise aren't worth going through) → **do NOT then apply to that same role directly cold.** Kill the recruiter → kill the role.
+- **Why:** a cold direct application to a recruiter-sourced role loses the recruiter's push, rarely converts, and just burns the candidate's time + tokens. Cold applications are already covered by the candidate's separate auto-apply pipeline — don't duplicate that by hand here.
+- This does not touch the candidate's own cold outbound / auto-apply channel, which stays as-is.
+
+(Reference case: Taxwell / recruiter "Amjad" called a public full-time Workday role a confidential contract, inflated 5–7yrs → 7+, withheld the company; we declined → we also do not apply directly.)
+
 ### Level Filter
 
 Single source of truth: `profiles/<id>/filter_rules.json` → `title_blocklist.patterns` and `location_blocklist.patterns`. Applied as **case-insensitive substring matches** against the full title string. Never hardcode level checks inline — add/remove patterns in `filter_rules.json` only.
