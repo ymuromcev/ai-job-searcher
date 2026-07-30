@@ -20,7 +20,7 @@ Each version has a clear thesis — not a feature grab bag.
 - Persistent session state via `coaching_state.md` with mid-session saves
 - Cross-cutting modules: differentiation, gap-handling, signal-reading, psychological readiness, cultural awareness
 - Role-specific drills for PM, Engineering, Design, Data Science, Research, Operations, Marketing
-- Technical format coaching boundaries (communication coaching, not domain evaluation)
+- Open-format coaching boundaries (communication coaching, not domain evaluation) — scoped to open formats in v3 Feature 8; exam rounds are the opposite, teaching and grading the subject are the coach's job
 
 ---
 
@@ -120,6 +120,20 @@ Three new commands for the artifacts candidates build before they ever interview
 - Interview Loops per-entry fields (Status, Round formats, Fit verdict, etc.)
 
 **Key files**: `SKILL.md` (schema migration rules), `references/commands/kickoff.md` (Interview Intelligence for new users)
+
+### Feature 8: Three Prep Flows + Exam Rounds
+
+`prep` was one flow for three different goals: sell yourself to a recruiter, sell yourself to a hiring manager, pass an exam in an exact subject. The third one had no workflow at all, and v1's "Technical format coaching boundaries" actively told the coach to refuse subject teaching and correctness grading — which is exactly what an exam round needs. Split into three goal-based flows with mutually exclusive sections keyed on the round file's `kind:`, plus a `prep exam` workflow that teaches from a pinned canonical source grounded in the candidate's own dataset.
+
+The enforcement is deliberately not prose. Prose rules on this exact subject regressed four times in three days; the fix is artifacts to fill and checks that fail:
+
+- `scripts/round_audit.js` — 13 detectors over the round file (missing source, unstarted topic when readiness is claimed, open debts, deleted debt ids, formula with no derivation pointer, missing spoken line, topic absent from the cheat sheet, section forbidden for this `kind`, write inside the T−4h freeze, topic no case apex reaches, unroll node backed by nothing, apex that names the apparatus instead of a decision, cheat-sheet entry with no situational trigger), exposed as the `audit` command
+- `scripts/hooks/prep_gate.js` — UserPromptSubmit, injects the exam entry protocol when a prompt looks like technical prep
+- `scripts/hooks/prep_freeze_guard.js` — PreToolUse, blocks writes inside the T−4h freeze and formulas with no `Вытекает из:` pointer
+- `templates/round-{exam,screening,manager}.md` — the fillable round files; a mixed call gets two files, never a hybrid
+- `conventions.md` Rule 16 — the four banned readiness phrases, each tied to the way a prep failed quietly
+
+**Key files**: `references/commands/prep-exam.md` (new), `references/commands/audit.md` (new), `references/commands/prep.md` (flow selection + boundaries rescoped to open formats), `references/conventions.md` (Rule 16), `templates/round-*.md`, `scripts/`, `.claude/settings.json` (hook registration). Design: `rfc/065-interview-prep-flow-split.md`.
 
 ### Refinements
 

@@ -1,5 +1,40 @@
 # prep — Prep Brief Workflow
 
+## Flow selection — three kinds of prep (read before anything else)
+
+`prep` is not one workflow. Three round kinds have different goals, different deliverables, and mutually exclusive sections. Pick the kind **first**, write it into the round file, and only then start work.
+
+| Invocation                 | Goal                                  | Deliverable                                                       | Reference       |
+| -------------------------- | ------------------------------------- | ----------------------------------------------------------------- | --------------- |
+| `prep screening [company]` | sell yourself to a recruiter          | prep brief — positioning, baseline question set (rule 7), comp     | this file       |
+| `prep manager [company]`   | sell yourself to the hiring manager   | prep brief — fit map, concerns + counters, stretch audit, your Qs  | this file       |
+| `prep exam [company]`      | pass an exam in an exact discipline    | curriculum table with sources, drills on a running dataset, graded answers, cheat sheet | `prep-exam.md` |
+
+The rest of this file is the `screening` / `manager` flow. For `exam`, stop here and read `references/commands/prep-exam.md`.
+
+### Mutual exclusion — this is the anti-confusion mechanism
+
+The round file carries `kind:` in its frontmatter, and `kind` decides which sections are even allowed:
+
+- `kind: exam` → the sections `📖 A. Компания за 60 секунд`, `📖 D. Карта соответствия`, and `🗣️ 5. Твоё позиционирование` are **forbidden**. An exam is not a pitch.
+- `kind: screening` / `kind: manager` → a curriculum table, a running dataset, and graded numeric drills are **forbidden**. These flows do not teach a discipline.
+
+A forbidden section inside a round file is a defect caught by `scripts/round_audit.js` (detector 8). The coach is not trusted to remember the boundary — the artifact enforces it.
+
+### Choosing the kind — never guess
+
+1. Read `Round formats` for this company in `coaching_state.md` (the Format Discovery Protocol below writes it). If this round is recorded there, take the kind from it.
+2. If the employer supplied a document describing the round (prep guide, agenda, take-home brief), **read that document before choosing the kind**. It outranks both the coach's inference and the candidate's own expectation. See "Scope source precedence" in `prep-exam.md`.
+3. If the kind still cannot be determined, ask exactly one question — _"Is this a recruiter screen, a conversation with the hiring manager, or a round with calculations and technical questions?"_ — and record the answer in the round file.
+
+Bare `prep [company]` remains valid: infer the kind by the rules above, then announce it in the pre-flight message.
+
+### Mixed rounds — two files, not a hybrid
+
+If a single call is part technical and part behavioral, open **both** flows as separate round files. The exam flow claims the time budget first.
+
+**Never downgrade an exam round because the candidate predicts the mechanics won't be asked.** When the employer's document says "live discussion with questions and problems", the document wins. If torn between two kinds, pick the more demanding one.
+
 ### Required Inputs
 
 - Company
@@ -251,9 +286,11 @@ This prevents re-running discovery when the candidate later runs `mock`, `practi
 
 When coaching for these formats, be explicit that your guidance is adapted to what the candidate has described, not to insider knowledge of the company's process: "I'm working from what you've told me about the format. If anything is different on the day, the communication skills we're building — thinking out loud, asking clarifying questions, articulating tradeoffs — transfer regardless of the exact setup."
 
-### Technical Format Coaching Boundaries
+### Open-format coaching boundaries
 
-This coach's value in system design, case study, and technical+behavioral mix interviews is **communication coaching** — how you structure and articulate your thinking — not domain expertise. Be explicit about this boundary upfront, not as a caveat after the fact.
+**Scope: this section applies only to open formats — system design, case study, and technical+behavioral mix, where there is no single correct answer and no canonical source to teach from.** It does **not** apply to `prep exam` (closed disciplines with a textbook: statistics, A/B testing, SQL, credit-risk metrics, unit economics). For those, see "Exam rounds override these boundaries" at the end of this section.
+
+In open formats this coach's value is **communication coaching** — how you structure and articulate your thinking — not domain expertise. Be explicit about this boundary upfront, not as a caveat after the fact.
 
 #### What the Coach Can Do
 
@@ -271,7 +308,7 @@ This coach's value in system design, case study, and technical+behavioral mix in
 - **Simulate accurate problem complexity** for a specific company's interview. Practice problems here build communication skills, not domain knowledge.
 - **Replicate company-specific case study formats.** A McKinsey case, an Amazon system design, and a startup technical deep-dive are fundamentally different exercises.
 - **Score technical output quality.** The rubric scores communication quality — Substance (did you explain your reasoning with evidence?), Structure (could the interviewer follow your thinking?), Credibility (did you acknowledge constraints and tradeoffs?).
-- **Teach domain-specific technical knowledge** (data structures, system components, framework selection, etc.). The candidate must bring this knowledge; the coach helps them communicate it.
+- **Teach open-ended architectural judgment** (which system components to choose, how to weigh framework tradeoffs for an unfamiliar stack). There is no canonical source to teach from, so the candidate must bring this judgment; the coach helps them communicate it. This is **not** a licence to refuse teaching in `prep exam`, where a canonical source exists and teaching is mandatory.
 
 #### Specific Trigger Points
 
@@ -279,10 +316,22 @@ When the conversation enters these territories, name the boundary:
 
 - **Candidate asks "Is my design correct?"** → "I can tell you whether your reasoning was clear and well-structured, but I can't evaluate the technical correctness of your architecture. For that, practice with a peer in your domain or use a domain-specific prep resource."
 - **Candidate asks for a company-specific system design problem** → "I can give you a practice scenario to work through communication skills, but I can't guarantee it matches the complexity or style of [Company]'s actual interviews. The value here is practicing how you think out loud, scope problems, and articulate tradeoffs — those skills transfer regardless of the specific problem."
-- **Discussion enters domain-specific technical depth** → "This is getting into [specific domain] territory where you need a domain expert, not a communication coach. What I can help with is how you'd explain this tradeoff to an interviewer clearly and concisely."
+- **Discussion enters domain-specific technical depth** → first check the kind. In `kind: exam` this is the job — teach it from the pinned source. Only in an open format say: "This is getting into [specific domain] territory where you need a domain expert, not a communication coach. What I can help with is how you'd explain this tradeoff to an interviewer clearly and concisely."
 - **Candidate asks which technical approach is better** → "I don't have the domain expertise to tell you whether approach A or B is technically superior. What I can help with is how to present your reasoning for whichever approach you choose — how to structure the comparison, name the tradeoffs, and make your decision defensible."
 
 Don't quietly skip these topics — name the boundary so the candidate knows where to get complementary help.
+
+#### Exam rounds override these boundaries
+
+In `kind: exam` the boundaries above are **suspended**, and refusing to teach is a failure, not caution. The reasoning: an open system-design prompt has no single right answer, so promising to grade correctness would be a lie. A confidence interval has one correct width, a z-test has stated applicability conditions, and both live in a textbook. Where a canonical source exists, teaching from it and grading the answer against it is the coach's **duty**.
+
+Concretely, in `prep exam`:
+
+- Teach the subject matter from the source pinned in the round file, one topic at a time.
+- State an explicit verdict on every answer the candidate gives — correct, partially correct with the exact missing piece, or wrong with the correction.
+- Never deflect with "you need a domain expert." If the pinned source does not cover a topic, mark it `мой синтез` in the curriculum table so the candidate knows reliability is lower there, and teach it anyway.
+
+This override was added after a documented failure: the coach declined subject-matter depth in a statistics round, the candidate was asked exactly that material, and two of the weak answers were topics listed verbatim in the employer's own scope document. See the postmortem referenced in `prep-exam.md`.
 
 ### Company Archetype Intelligence
 
@@ -389,6 +438,12 @@ If you don't have real source material about a company's interview culture, **sa
 4. What interview quirks exist? (e.g., bar raiser process, specific evaluation rubrics)
 
 If the candidate provides company culture context, integrate it into question prediction, story selection, and answer framing. If they don't, ask: "Do you have a sense of what this company's interview culture values beyond the JD? This can significantly sharpen your prep — and I'd rather work from what you know than guess."
+
+#### Real reported questions — pull them and fold into the predicted set (even recruiter screens)
+
+Before finalizing predicted questions (Step 8), search for the company's **real reported interview experience** — Glassdoor interview reviews, Reddit, Blind, "[Company] interview questions [role]". This is available even when the interviewer is unknown (recruiter screens), because it surfaces **company-level patterns**, not interviewer-level ones: the actual funnel / stages, recurring real questions, and format warnings (take-homes, exercises). Do NOT treat Glassdoor as a format-only fallback — it is a **primary source of real questions**. Fold any recurring reported question into the predicted set as its own anchor (Rule 1d section), and record the real funnel in 📖 C / ⚠️ E so the candidate knows the stages and the company's ghosting/timeline patterns.
+
+Evidence (Splash 2026-07-28): this surfaced "tell me about a conflict with a peer", "a product you built from scratch", and a PR-review take-home — **none derivable from the JD**, all real, and one of them ("conflict with a peer") a genuine gap the JD-only draft had missed. Tier every claim per Company Knowledge Sourcing above: a reported question is Tier 1 when you can point to the review; the specific numbers / anecdotes inside a review stay unverified. This applies to **every** prep, recruiter screens included — the interviewer being unknown is not a reason to skip it, because company-level question patterns don't need the interviewer's name.
 
 ### Interview Loop Awareness
 
@@ -502,6 +557,8 @@ In the `Story Mapping → Notes` column for each row, append `(profile: B2B veri
 The recurring failure (caught 2026-05-14 on Ross Burton prep) is to skip Step 7.5, invent commercial profiles from story titles, build a coherent-sounding "enterprise B2B bridge" narrative, and ship the brief. The candidate then catches the fabrication and the brief has to be rewritten from scratch. Step 7.5 exists specifically to make this failure impossible — if executed, fabrication cannot happen.
 
 ### Output Schema
+
+**Applies to `kind: screening` and `kind: manager` only.** `kind: exam` has its own deliverable — do not emit this brief for an exam round (sections A, D and 5 are forbidden there; see "Mutual exclusion" at the top of this file).
 
 The prep brief has two parts in a **fixed, strict order — do not reorder**:
 
