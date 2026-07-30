@@ -117,5 +117,26 @@ Based on the emotional check in step 1, adapt:
 Update `coaching_state.md` per the State Update Triggers in SKILL.md:
 - Storybank updates: Last Used dates, increment Use Count for each story used, performance notes
 - Interview Loop updates: round completed, stories used, signals noted
-- Outcome Log: add entry with Result: pending
+- **Outcome block: write an `## Outcome` block (see below) with `Result: pending`.** The block is the loop artifact and the single canonical record of the pending outcome (RFC 066) — do not also add a pending row to the Outcome Log table; that table gets a row only when the gate resolves (via `feedback`). The block stays until the gate resolves, then it is closed with a channel, a conditions verdict and a reconciliation.
 - Interview Intelligence updates: recalled questions to Question Bank (marked "recall-only"), recruiter/interviewer feedback to Recruiter/Interviewer Feedback table, Company Patterns if new observations emerged
+
+### Outcome Block (RFC 066 — the debrief loop artifact)
+
+Every real round gets one `## Outcome` block. It opens at debrief with `Result: pending` and is closed when the gate resolves. `debrief_audit.js` enforces the closing fields, so write the block in this exact shape:
+
+```markdown
+## Outcome: [Company] — [Round]
+- Predicted: [what you predicted at debrief — e.g., "advance to VP"]
+- Result: pending | advanced | rejected | offer | ghosted
+- Gate: [which gate resolves it — e.g., "recruiter screen", "VP paper review"]
+- Channel: LIVE | PAPER
+- Conditions: normal | [adverse conditions — e.g., "severe sleep-deprivation; cold English; va-bank"]
+- Baseline: counted | quarantined
+- Reconciliation: [filled only once resolved — predicted vs actual; if a miss, the calibration lesson]
+```
+
+Loop rules the audit checks (all silent while `Result: pending`):
+
+- **Channel is mandatory once resolved.** `LIVE` = what the interviewer heard on the call. `PAPER` = what reached the next gate without the call — recruiter notes, resume, self-ratings said aloud that landed in notes. A rejection at a gate that never heard you is a PAPER loss; do not prescribe live-delivery fixes for it. A single failure can be LIVE-origin with a PAPER path (live stumbling → "communication concern" in notes → seen by a VP who never heard the call) — tag the channel that actually decided.
+- **Reconcile the prediction.** When the result lands, compare it to `Predicted`. An endorsement to the *next* gate is a filter, not a pass: score it `pending` until that gate resolves, never bank it as an advance. A miss is a calibration lesson written into Cross-Dimension Root Causes, not a shrug.
+- **Quarantine adverse conditions.** A loss under real adverse conditions (no sleep, cold English, va-bank) is condition-driven, not proof of skill regression — set `Baseline: quarantined` so it does not drag the skill trend. But weigh the reschedule honestly: the escape hatch is not free (delay cost, and whether the replacement slot is actually better). If it was a defensible va-bank, quarantine the run; do not also excuse it as skill.

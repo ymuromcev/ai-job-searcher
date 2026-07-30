@@ -135,6 +135,22 @@ The enforcement is deliberately not prose. Prose rules on this exact subject reg
 
 **Key files**: `references/commands/prep-exam.md` (new), `references/commands/audit.md` (new), `references/commands/prep.md` (flow selection + boundaries rescoped to open formats), `references/conventions.md` (Rule 16), `templates/round-*.md`, `scripts/`, `.claude/settings.json` (hook registration). Design: `rfc/065-interview-prep-flow-split.md`.
 
+### Feature 9: Interview Debrief Loop
+
+Feature 8 hardened the *forward* side (prep). This is the *backward* side (debrief), triggered by a real miss: a recruiter screen logged as "endorsed to VP → advance" was actually a rejection at a VP paper-review gate the candidate never reached. Three holes, each mechanized rather than left to prose:
+
+- **Outcome calibration.** A prediction is reconciled against the result. An endorsement to the *next* gate is a filter, not a pass — scored `pending` until that gate resolves, never banked as an advance. A miss becomes a calibration lesson in Cross-Dimension Root Causes, not a shrug.
+- **LIVE / PAPER channel.** Every resolved outcome is attributed to the channel that decided it — what the interviewer heard live, or what reached the next gate on paper (notes, resume, self-ratings said aloud). A paper-review loss no longer draws live-delivery fixes.
+- **Condition quarantine.** A loss under adverse conditions (no sleep, cold English, va-bank) is marked `Baseline: quarantined` so it does not drag the skill trend as a false regression.
+
+Enforcement is artifacts and falling checks, mirroring Feature 8:
+
+- `scripts/debrief_audit.js` — 4 detectors over `coaching_state.md` (`outcome-without-channel`, `outcome-unreconciled`, `condition-not-quarantined`, `root-cause-missing-status`), exposed as `audit` on the debrief side; all silent while `Result: pending`
+- `scripts/hooks/debrief_reminder.js` — UserPromptSubmit, surfaces active root causes + unreconciled outcomes before the next interview so a recurring mistake is carried forward, not re-made
+- the `## Outcome` block — the fillable loop artifact opened at debrief and closed when the gate resolves
+
+**Key files**: `scripts/debrief_audit.js` (+ test), `scripts/hooks/debrief_reminder.js` (+ test), `references/commands/debrief.md` ("Outcome Block"), `references/commands/analyze.md` (Step 12b), `references/commands/audit.md` (debrief-loop section), `.claude/settings.json` (hook registration). Design: `rfc/066-interview-debrief-loop.md`.
+
 ### Refinements
 
 - **2026-07-23 (RFC 064)** — `prep` now always opens with a mandatory 8-step company + role research screen (JD-from-source + anti-requirements → business model → people → fit map → risks/landmines → verified/unverified reputation → culture vocab → US comp mechanics). The screen *is* the konspekt's 📖 A–H front-matter — no separate file — runs at full depth even for a 15-minute call, and feeds the unchanged 🗣️ speech sections. Formalizes the depth that was previously produced by hand. Key files: `references/commands/prep.md` (research screen + re-sectioned Output Schema), `SKILL.md` (`prep` registry + State Update Triggers).

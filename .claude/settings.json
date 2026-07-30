@@ -7,6 +7,11 @@
             "type": "command",
             "command": "node \"$CLAUDE_PROJECT_DIR/skills/interview-coach/scripts/hooks/prep_gate.js\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/skills/interview-coach/scripts/hooks/debrief_reminder.js\"",
+            "timeout": 5
           }
         ]
       }

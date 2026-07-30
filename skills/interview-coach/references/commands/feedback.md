@@ -47,7 +47,8 @@ Classify the candidate's input into one of five types. If ambiguous, ask: "Is th
 4. If advanced, ask: "Do you know what's next? Format, timeline, interviewer?"
 
 **State updates**:
-- Update Outcome Log (Date, Company, Role, Round, Result, Notes)
+- Close the matching `## Outcome` block (RFC 066 — the canonical outcome record): set Result, and — since the gate has resolved — fill Channel (LIVE/PAPER), the Conditions verdict, Baseline (counted/quarantined), and Reconciliation (predicted vs actual; the calibration lesson if it missed). Run `debrief_audit.js` after to confirm the loop is closed. If no block exists yet (outcome reported without a debrief), write one.
+- Append the resolved row to the Outcome Log table (Date, Company, Role, Round, Result, Notes) as the historical ledger `progress`/`concerns` read. Pending lives only in the block; the table gets a row when it resolves.
 - Update Interview Loops → relevant company entry (Status, Rounds completed)
 - Update Interview Intelligence → Question Bank Outcome column for all questions from this company/round
 - If advanced with next-round details, update Interview Loops → Next round

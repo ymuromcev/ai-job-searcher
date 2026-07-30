@@ -59,6 +59,31 @@ If findings exist, fix what is fixable without asking (write the missing `Выт
 
 When the report is clean, say so and hand the readiness verdict to the candidate: the coach shows the table, the candidate decides whether they are ready.
 
+## The debrief loop audit (RFC 066)
+
+The same idea on the other side of the interview: a mechanical check that the debrief loop is closed, not the coach's impression that it was. Run it after writing or closing an `## Outcome` block, and at session start when an interview is coming up.
+
+```bash
+node skills/interview-coach/scripts/debrief_audit.js profiles/<id>/interview-coach-state/coaching_state.md
+```
+
+A profiles directory also works — it audits every profile's `coaching_state.md`:
+
+```bash
+node skills/interview-coach/scripts/debrief_audit.js profiles/
+```
+
+Exit code 0 means clean, 1 means findings. Every check is silent while `Result: pending` — an open outcome owes nothing until its gate resolves.
+
+| #   | Code                        | Fires when                                                                     |
+| --- | --------------------------- | ------------------------------------------------------------------------------ |
+| 1   | `outcome-without-channel`   | a resolved `## Outcome` block has no `LIVE`/`PAPER` channel                     |
+| 2   | `outcome-unreconciled`      | a resolved outcome has an empty `Reconciliation` (prediction never checked)     |
+| 3   | `condition-not-quarantined` | a loss under adverse `Conditions` is not `Baseline: quarantined`               |
+| 4   | `root-cause-missing-status` | a Cross-Dimension Root Cause row has no `active`/`improving`/`watching`/`closed`/`resolved` status |
+
+The block shape these detectors read is defined in `debrief.md` → "Outcome Block". Fix what is fixable without asking (tag the channel from the transcript, quarantine an obvious no-sleep run, set a missing status) and re-run; ask the candidate only where the answer is theirs (which channel actually decided, whether a run was genuinely condition-driven).
+
 ## Limits
 
 - The audit reads files. It cannot tell whether a topic marked `отработан вслух` was genuinely answered out loud — that invariant is the coach's, and its failure mode is documented in `prep-exam.md` § "Core invariant".
