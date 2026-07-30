@@ -8,12 +8,18 @@ const audit = require("./round_audit.js");
 const CALL_AT = "2026-08-05T14:00:00-07:00";
 const CALL_MS = Date.parse(CALL_AT);
 
+const DEFAULT_CASES = `### K1 · малый — Тест на активации дал +2.1%, катим?
+
+- Как понял, что прирост не шум? → интервал прироста не накрывает ноль \`[тема 1]\`
+`;
+
 function round({
   kind = "exam",
   status = "prep",
   curriculum,
   debts = "",
   datetime = CALL_AT,
+  cases = DEFAULT_CASES,
 } = {}) {
   const rows =
     curriculum === undefined
@@ -30,6 +36,10 @@ status: ${status}
 ---
 
 # Plata — раунд
+
+## Кейсы
+
+${cases}
 
 ## Программа
 
@@ -49,6 +59,7 @@ const CLEAN_SHEET = `# Шпаргалка
 
 ## 1.1 Доверительный интервал · CI
 
+- Триггер: эксперимент закончился, надо сказать — эффект это или шум.
 - Определение: диапазон, накрывающий истинное значение с заданной вероятностью.
 - Для меня: сколько ещё трафика нужно, чтобы поверить в прирост.
 - Формула: h = z·√(p(1−p)/n) Вытекает из: SE доли и нормального приближения.
@@ -172,6 +183,16 @@ test("detector 7 — a curriculum topic with no cheat-sheet entry", () => {
   assert.match(found[0].message, /критерии/);
 });
 
+test("detector 7 — a «служебное» row needs no cheat-sheet entry of its own", () => {
+  const text = round({
+    curriculum: [
+      "| 1 | «интервалы» | Wasserman 6.3 | CR | отработан вслух |",
+      "| 2 | «нотация суммирования» — служебное, внутри темы 1 | Wasserman 1.2 | CR | объяснён |",
+    ].join("\n"),
+  });
+  assert.deepEqual(audit.detectTopicNotInCheatsheet(text, CLEAN_SHEET), []);
+});
+
 test("detector 8 — a selling section inside an exam round", () => {
   const text = round().replace(
     "# Plata — раунд",
@@ -206,6 +227,126 @@ test("detector 9 — a write inside the freeze window", () => {
 test("detector 9 — missing datetime fails open", () => {
   const text = round({ datetime: "" });
   assert.deepEqual(audit.detectWriteAfterFreeze(text, CALL_MS), []);
+});
+
+test("parseCases reads the apex, the level and the unroll nodes", () => {
+  const cases = audit.parseCases(round());
+  assert.equal(cases.length, 1);
+  assert.equal(cases[0].id, "K1");
+  assert.equal(cases[0].level, "малый");
+  assert.match(cases[0].apex, /катим\?$/);
+  assert.equal(cases[0].nodes.length, 1);
+  assert.equal(cases[0].nodes[0].isAnswer, true);
+  assert.deepEqual(cases[0].nodes[0].topics, ["1"]);
+});
+
+test("detector 10 — a curriculum topic no case reaches", () => {
+  const text = round({
+    curriculum: [
+      "| 1 | «интервалы» | Wasserman 6.3 | CR | отработан вслух |",
+      "| 2 | «мощность и MDE» | Kohavi 17 | CR | не начат |",
+    ].join("\n"),
+  });
+  const found = audit.detectTopicNotInAnyCase(text);
+  assert.equal(found.length, 1);
+  assert.equal(found[0].code, "topic-not-in-any-case");
+  assert.match(found[0].message, /мощность и MDE/);
+  assert.match(found[0].message, /Выкинуть нельзя/);
+});
+
+test("detector 10 — a «служебное» row needs no case of its own", () => {
+  const text = round({
+    curriculum: [
+      "| 1 | «интервалы» | Wasserman 6.3 | CR | отработан вслух |",
+      "| 2 | «нотация суммирования» — служебное, внутри темы 1 | Wasserman 1.2 | CR | объяснён |",
+    ].join("\n"),
+  });
+  assert.deepEqual(audit.detectTopicNotInAnyCase(text), []);
+});
+
+test("detector 10 — a topic covered only at the big apex counts as covered", () => {
+  const text = round({
+    curriculum: [
+      "| 1 | «интервалы» | Wasserman 6.3 | CR | отработан вслух |",
+      "| 2 | «многократные сравнения» | Kohavi 17 | CR | отработан вслух |",
+    ].join("\n"),
+    cases: [
+      DEFAULT_CASES,
+      "### K2 · большой — Трафика на три теста, инициатив семь: что берём и как меряем",
+      "",
+      "- Почему нельзя взять все семь? → растёт шанс ложного «сработало» `[тема 2]`",
+      "- Что уже закрыто ниже: `[K1]`",
+    ].join("\n"),
+  });
+  assert.deepEqual(audit.detectTopicNotInAnyCase(text), []);
+});
+
+test("detector 10 — no case section is a finding only once readiness is claimed", () => {
+  assert.deepEqual(audit.detectTopicNotInAnyCase(round({ cases: "" })), []);
+
+  const ready = audit.detectTopicNotInAnyCase(round({ cases: "", status: "ready" }));
+  assert.equal(ready.length, 1);
+  assert.equal(ready[0].code, "no-cases");
+});
+
+test("detector 11 — an unroll node backed by nothing", () => {
+  const text = round({
+    cases: [
+      "### K1 · малый — Тест на активации дал +2.1%, катим?",
+      "",
+      "- Как понял, что не шум? → интервал не накрывает ноль `[тема 1]`",
+      "- А байесовский фактор что скажет? → он был бы выше порога",
+    ].join("\n"),
+  });
+  const found = audit.detectCaseNodeWithoutSource(text);
+  assert.equal(found.length, 1);
+  assert.equal(found[0].code, "case-node-without-source");
+  assert.match(found[0].message, /байесовский/);
+});
+
+test("detector 11 — «мой синтез» and a bare question are both accepted", () => {
+  const text = round({
+    cases: [
+      "### K1 · малый — Тест на активации дал +2.1%, катим?",
+      "",
+      "- Как понял, что не шум? → интервал не накрывает ноль `[тема 1]`",
+      "- Что скажем стейкхолдеру? → рамка «эффект есть, размер уточним» — мой синтез",
+      "- Хватило ли объёма?",
+    ].join("\n"),
+  });
+  assert.deepEqual(audit.detectCaseNodeWithoutSource(text), []);
+});
+
+test("detector 12 — an apex that names the apparatus is a step, not a case", () => {
+  const text = round({
+    cases: [
+      "### K1 · малый — Посчитать стандартную ошибку для метрики активации",
+      "",
+      "- Как считается? → SE = √(p(1−p)/n) `[тема 1]`",
+    ].join("\n"),
+  });
+  const found = audit.detectApexNamesMachinery(text);
+  assert.equal(found.length, 1);
+  assert.equal(found[0].code, "apex-names-machinery");
+  assert.match(found[0].message, /цена ошибки/);
+});
+
+test("detector 12 — a decision apex passes even when its nodes are all machinery", () => {
+  assert.deepEqual(audit.detectApexNamesMachinery(round()), []);
+});
+
+test("detector 13 — a definition with no situational trigger", () => {
+  const sheet = `## 1.1 Интервал · CI
+
+- Определение: диапазон.
+- Формула: h = z·√(p(1−p)/n) Вытекает из: SE доли.
+- 🗣️ Если спросят: «Сужается как корень из n.»
+`;
+  const found = audit.detectTriggerMissing(sheet);
+  assert.equal(found.length, 1);
+  assert.equal(found[0].code, "trigger-missing");
+  assert.match(found[0].message, /Триггер/);
+  assert.deepEqual(audit.detectTriggerMissing(CLEAN_SHEET), []);
 });
 
 test("formatReport states the readiness rule when findings exist", () => {

@@ -19,7 +19,7 @@ The round file carries `kind:` in its frontmatter, and `kind` decides which sect
 - `kind: exam` → the sections `📖 A. Компания за 60 секунд`, `📖 D. Карта соответствия`, and `🗣️ 5. Твоё позиционирование` are **forbidden**. An exam is not a pitch.
 - `kind: screening` / `kind: manager` → a curriculum table, a running dataset, and graded numeric drills are **forbidden**. These flows do not teach a discipline.
 
-A forbidden section inside a round file is a defect caught by `scripts/round_audit.py` (detector 8). The coach is not trusted to remember the boundary — the artifact enforces it.
+A forbidden section inside a round file is a defect caught by `scripts/round_audit.js` (detector 8). The coach is not trusted to remember the boundary — the artifact enforces it.
 
 ### Choosing the kind — never guess
 

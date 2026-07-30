@@ -42,12 +42,18 @@ Exit code 0 means clean, 1 means findings. The cheat sheet is auto-paired by nam
 | 7   | `topic-not-in-cheatsheet`   | a curriculum row number has no matching `## N.M` cheat-sheet section          |
 | 8   | `forbidden-section`         | a section not allowed for this `kind` is present                              |
 | 9   | `write-after-freeze`        | the round file was modified inside the T−4h window                            |
+| 10  | `topic-not-in-any-case` / `no-cases` | a curriculum row no case apex reaches — or, at `status: ready`, no `## Кейсы` section at all |
+| 11  | `case-node-without-source`  | an unroll node states an answer with no `[тема N]`, no `[K<n>]` and no `мой синтез` |
+| 12  | `apex-names-machinery`      | a case apex names the apparatus instead of a decision — a step posing as a case |
+| 13  | `trigger-missing`           | a cheat-sheet entry has a definition but no `Триггер:` situation line          |
 
 `мой синтез` in the source cell satisfies detector 1 on purpose — it is an honest declaration of lower reliability, not a gap.
 
+Detector 10 counts coverage **across all case levels at once**. A topic whose applied meaning exists only at the big apex (multiple comparisons, peeking) is covered by being referenced there; do not invent a fake small case to satisfy a per-level count. Its two allowed fixes are extending a case or marking the row `служебное` — never dropping the row. A `служебное` row is exempt from detectors 7 and 10 both: a topic with no standalone applied meaning is taught inside its parent's descent and has no standalone cheat-sheet entry either.
+
 ## Reporting
 
-Show the report as-is, then say plainly what it means for readiness. Do not soften it, do not summarize nine findings as "почти всё готово".
+Show the report as-is, then say plainly what it means for readiness. Do not soften it, do not summarize thirteen findings as "почти всё готово".
 
 If findings exist, fix what is fixable without asking (write the missing `Вытекает из:`, add the missing spoken line, reopen a deleted debt) and re-run. Ask only about things that need the candidate — a topic that still has to be drilled out loud cannot be fixed by the coach alone.
 
@@ -56,4 +62,5 @@ When the report is clean, say so and hand the readiness verdict to the candidate
 ## Limits
 
 - The audit reads files. It cannot tell whether a topic marked `отработан вслух` was genuinely answered out loud — that invariant is the coach's, and its failure mode is documented in `prep-exam.md` § "Core invariant".
-- Rounds of kind `screening` and `manager` have no curriculum table, so detectors 1, 2 and 7 are naturally silent for them; detectors 3, 4, 8 and 9 still apply.
+- Rounds of kind `screening` and `manager` have no curriculum table, so detectors 1, 2, 7, 10–13 are naturally silent for them; detectors 3, 4, 8 and 9 still apply.
+- Detector 13 runs at audit time, not at write time. The `Формула:` rule is checkable on a single line in isolation, so the write guard enforces it; a missing `Триггер:` is only visible against the whole entry, and blocking a partial edit that is about to add the next line would be a false positive.

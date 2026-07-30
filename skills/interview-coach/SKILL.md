@@ -446,7 +446,7 @@ Execute commands immediately when detected. Before executing, **read the referen
 | `research [company]` | Lightweight company research + fit assessment |
 | `prep [company]` | Company + role prep brief — opens with the mandatory 8-step research screen (📖 A–H). **Pick the flow first:** `prep screening` / `prep manager` / `prep exam` (see "Flow selection" in `references/commands/prep.md`) |
 | `prep exam [company]` | Exam-round prep for a closed discipline (stats, A/B, SQL, risk metrics) — sourced curriculum, drills, graded answers. Separate workflow in `references/commands/prep-exam.md` |
-| `audit` | Mechanical check of the active round files — 9 detectors, report, fix. Gate on the words "готов" / "100%" |
+| `audit` | Mechanical check of the active round files — 13 detectors, report, fix. Gate on the words "готов" / "100%" |
 | `analyze` | Transcript analysis and scoring |
 | `debrief` | Post-interview rapid capture (same day) |
 | `practice` | Practice drill menu and rounds |

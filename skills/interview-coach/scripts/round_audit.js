@@ -25,6 +25,25 @@ const FORBIDDEN_MARKERS = {
 const DONE_STATUS = "отработан вслух";
 const EMPTY_CELLS = ["", "—", "-", "–", "н/д", "tbd"];
 
+const CASE_SECTION = "## Кейсы";
+
+// A case apex is a decision someone owns. If the apex names the machinery
+// instead, it is a *step* masquerading as a case ("посчитать стандартную
+// ошибку" is not a case; "эксперимент закончился, что говорим команде" is).
+// Deliberately narrow: only terms that are unambiguously apparatus.
+const MACHINERY_MARKERS = [
+  "p-value",
+  "p‑value",
+  "стандартную ошибку",
+  "стандартной ошибки",
+  "дисперси",
+  "доверительн",
+  "нормальност",
+  "t-критери",
+  "z-критери",
+  "хи-квадрат",
+];
+
 function isEmptyCell(cell) {
   return EMPTY_CELLS.includes(
     String(cell || "")
@@ -123,6 +142,79 @@ function parseDebts(roundText) {
       closed: cells[4] || "",
     }))
     .filter((row) => row.id !== "" || row.debt !== "");
+}
+
+/** Text between an H2 heading and the next H2. `###` stays inside. */
+function extractSection(text, heading) {
+  const lines = String(text || "").split("\n");
+  const start = lines.findIndex((l) => l.trim() === heading);
+  if (start === -1) return "";
+  const out = [];
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^##\s/.test(lines[i])) break;
+    out.push(lines[i]);
+  }
+  return out.join("\n");
+}
+
+/** Topic references inside a node: `[тема 4]`, `[тема 2, 5]`. */
+function topicRefs(text) {
+  const out = [];
+  const re = /\[\s*тем[аы]\s+([\d,\s]+)\]/gi;
+  let m;
+  while ((m = re.exec(String(text || "")))) {
+    for (const part of m[1].split(",")) {
+      const n = part.trim();
+      if (n) out.push(n);
+    }
+  }
+  return out;
+}
+
+/** Case references inside a node: `[K1]` — a node already closed lower down. */
+function caseRefs(text) {
+  const out = [];
+  const re = /\[\s*(K\d+)\s*\]/gi;
+  let m;
+  while ((m = re.exec(String(text || "")))) out.push(m[1].toUpperCase());
+  return out;
+}
+
+/**
+ * Parse the `## Кейсы` section: one `### <id> · <уровень> — <вершина>` per
+ * pyramid, then the unroll as nested bullets. A bullet counts as a teaching
+ * node only when it states an answer (`→`); a bare question is scaffolding.
+ */
+function parseCases(roundText) {
+  const section = extractSection(roundText, CASE_SECTION);
+  if (!section.trim()) return [];
+  const cases = [];
+  let current = null;
+  for (const raw of section.split("\n")) {
+    const head = /^###\s+(\S+)\s*·\s*([^—–-]+?)\s*[—–-]\s*(.*)$/.exec(raw.trim());
+    if (head) {
+      current = {
+        id: head[1].trim(),
+        level: head[2].trim().toLowerCase(),
+        apex: head[3].trim(),
+        nodes: [],
+      };
+      cases.push(current);
+      continue;
+    }
+    const bullet = /^(\s*)[-*]\s+(.*)$/.exec(raw);
+    if (!bullet || !current) continue;
+    const text = bullet[2].trim();
+    current.nodes.push({
+      depth: Math.floor(bullet[1].length / 2),
+      text,
+      isAnswer: text.includes("→"),
+      topics: topicRefs(text),
+      cases: caseRefs(text),
+      synthesis: /мой синтез/i.test(text),
+    });
+  }
+  return cases;
 }
 
 /** Cheat-sheet sections split on `## ` headings. */
@@ -231,7 +323,13 @@ function detectSpokenLineMissing(cheatsheetText) {
     );
 }
 
-/** 7. A curriculum topic with no cheat-sheet entry (tied by leading number). */
+/**
+ * 7. A curriculum topic with no cheat-sheet entry (tied by leading number).
+ *
+ * A `служебное` row is exempt, same as in detector 10: a topic with no
+ * standalone applied meaning gets taught inside its parent's descent and has
+ * no standalone sheet entry either. Demanding one would just produce a fake.
+ */
 function detectTopicNotInCheatsheet(roundText, cheatsheetText) {
   const covered = new Set(
     parseCheatsheetSections(cheatsheetText)
@@ -239,7 +337,13 @@ function detectTopicNotInCheatsheet(roundText, cheatsheetText) {
       .filter(Boolean)
   );
   return parseCurriculum(roundText)
-    .filter((row) => row.topic !== "" && row.num !== "" && !covered.has(String(row.num).trim()))
+    .filter(
+      (row) =>
+        row.topic !== "" &&
+        row.num !== "" &&
+        !/служебн/i.test(row.topic) &&
+        !covered.has(String(row.num).trim())
+    )
     .map((row) =>
       finding(
         "topic-not-in-cheatsheet",
@@ -276,6 +380,98 @@ function detectWriteAfterFreeze(roundText, mtimeMs) {
   ];
 }
 
+/**
+ * 10. A curriculum topic that no case reaches.
+ *
+ * This is the check that keeps a case-driven *order* from silently becoming a
+ * case-driven *scope*. Coverage is counted across every level at once — a
+ * topic whose applied meaning only exists at the big apex (multiple
+ * comparisons, peeking) is covered by being referenced there, and must not be
+ * given a fake small case to satisfy a per-level count.
+ *
+ * Two allowed fixes, both visible in the file: extend a case with another
+ * decision, or mark the row `служебное` (taught inside another topic's
+ * descent). Dropping the row is never one of them.
+ */
+function detectTopicNotInAnyCase(roundText) {
+  const cases = parseCases(roundText);
+  const rows = parseCurriculum(roundText).filter((row) => row.topic !== "" && row.num !== "");
+  if (rows.length === 0) return [];
+  if (cases.length === 0) {
+    // Mid-prep the curriculum legitimately exists before the cases do; only a
+    // readiness claim makes their absence a finding.
+    const fm = parseFrontmatter(roundText);
+    if (String(fm.status || "").trim() !== "ready") return [];
+    return [
+      finding(
+        "no-cases",
+        `status: ready, но секции «${CASE_SECTION}» нет. Программа без кейсов — это обучение снизу вверх, ровно то, что не применяется под нагрузкой.`
+      ),
+    ];
+  }
+  const covered = new Set();
+  for (const c of cases) for (const n of c.nodes) for (const t of n.topics) covered.add(t);
+  return rows
+    .filter((row) => !/служебн/i.test(row.topic) && !covered.has(String(row.num).trim()))
+    .map((row) =>
+      finding(
+        "topic-not-in-any-case",
+        `строка ${row.num} «${row.topic}» не появилась ни в одном кейсе. Либо расширь кейс ещё одним решением, либо помечай тему «служебное» с указанием родителя. Выкинуть нельзя.`
+      )
+    );
+}
+
+/** 11. A node that teaches something no curriculum row backs. */
+function detectCaseNodeWithoutSource(roundText) {
+  const out = [];
+  for (const c of parseCases(roundText)) {
+    for (const n of c.nodes) {
+      if (!n.isAnswer) continue;
+      if (n.topics.length || n.cases.length || n.synthesis) continue;
+      out.push(
+        finding(
+          "case-node-without-source",
+          `кейс ${c.id}: узел «${n.text}» без ссылки на тему и без пометки «мой синтез» — примитив приплетён не из источника.`
+        )
+      );
+    }
+  }
+  return out;
+}
+
+/** 12. An apex that names the apparatus is a step, not a case. */
+function detectApexNamesMachinery(roundText) {
+  return parseCases(roundText)
+    .filter((c) => {
+      const apex = c.apex.toLowerCase();
+      return MACHINERY_MARKERS.some((marker) => apex.includes(marker));
+    })
+    .map((c) =>
+      finding(
+        "apex-names-machinery",
+        `кейс ${c.id}: вершина «${c.apex}» называет инструмент, а не решение. Кейс заканчивается решением, у которого есть владелец и цена ошибки, и формулируется без упоминания статистики.`
+      )
+    );
+}
+
+/**
+ * 13. A cheat-sheet entry with a definition but no situational trigger.
+ *
+ * The sheet has to be indexable the way the interview queries it — by
+ * situation. A definition with no trigger is the "knowledge from the other
+ * side" this flow exists to prevent, committed to paper.
+ */
+function detectTriggerMissing(cheatsheetText) {
+  return parseCheatsheetSections(cheatsheetText)
+    .filter((s) => /Определение:/.test(s.body) && !/Триггер:/.test(s.body))
+    .map((s) =>
+      finding(
+        "trigger-missing",
+        `шпаргалка «${s.heading}» — нет строки «Триггер:» (ситуация, в которой за этим тянешься). Определение без ситуации не находится под нагрузкой.`
+      )
+    );
+}
+
 /** Run every detector. `cheatsheetText` and `mtimeMs` are optional. */
 function auditRound({ roundText, cheatsheetText = "", mtimeMs = 0 }) {
   return [
@@ -288,6 +484,10 @@ function auditRound({ roundText, cheatsheetText = "", mtimeMs = 0 }) {
     ...detectTopicNotInCheatsheet(roundText, cheatsheetText),
     ...detectForbiddenSection(roundText),
     ...detectWriteAfterFreeze(roundText, mtimeMs),
+    ...detectTopicNotInAnyCase(roundText),
+    ...detectCaseNodeWithoutSource(roundText),
+    ...detectApexNamesMachinery(roundText),
+    ...detectTriggerMissing(cheatsheetText),
   ];
 }
 
@@ -305,11 +505,16 @@ function formatReport(findings, label = "раунд") {
 
 module.exports = {
   FREEZE_HOURS,
+  CASE_SECTION,
   parseFrontmatter,
   parseTableAfter,
   parseCurriculum,
   parseDebts,
   parseCheatsheetSections,
+  extractSection,
+  topicRefs,
+  caseRefs,
+  parseCases,
   detectMissingSource,
   detectUnstartedWhenReady,
   detectOpenDebts,
@@ -319,6 +524,10 @@ module.exports = {
   detectTopicNotInCheatsheet,
   detectForbiddenSection,
   detectWriteAfterFreeze,
+  detectTopicNotInAnyCase,
+  detectCaseNodeWithoutSource,
+  detectApexNamesMachinery,
+  detectTriggerMissing,
   auditRound,
   formatReport,
 };

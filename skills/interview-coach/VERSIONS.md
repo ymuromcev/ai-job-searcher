@@ -127,7 +127,7 @@ Three new commands for the artifacts candidates build before they ever interview
 
 The enforcement is deliberately not prose. Prose rules on this exact subject regressed four times in three days; the fix is artifacts to fill and checks that fail:
 
-- `scripts/round_audit.js` — 9 detectors over the round file (missing source, unstarted topic when readiness is claimed, open debts, deleted debt ids, formula with no derivation pointer, missing spoken line, topic absent from the cheat sheet, section forbidden for this `kind`, write inside the T−4h freeze), exposed as the `audit` command
+- `scripts/round_audit.js` — 13 detectors over the round file (missing source, unstarted topic when readiness is claimed, open debts, deleted debt ids, formula with no derivation pointer, missing spoken line, topic absent from the cheat sheet, section forbidden for this `kind`, write inside the T−4h freeze, topic no case apex reaches, unroll node backed by nothing, apex that names the apparatus instead of a decision, cheat-sheet entry with no situational trigger), exposed as the `audit` command
 - `scripts/hooks/prep_gate.js` — UserPromptSubmit, injects the exam entry protocol when a prompt looks like technical prep
 - `scripts/hooks/prep_freeze_guard.js` — PreToolUse, blocks writes inside the T−4h freeze and formulas with no `Вытекает из:` pointer
 - `templates/round-{exam,screening,manager}.md` — the fillable round files; a mixed call gets two files, never a hybrid
