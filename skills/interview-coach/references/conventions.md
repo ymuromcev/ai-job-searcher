@@ -1151,6 +1151,27 @@ honest framing already written.
 
 ---
 
+## 16. Тон — banned readiness phrases (§ Тон)
+
+**Rule (from the Plata section-1 postmortem, 2026-07-29 — findings F20 /
+F29 / F31 / F33).** Four phrases are forbidden in any prep, and hard-banned
+in `prep exam`. Each one is not a style preference — each encodes a specific
+way the prep failed, and the phrase is what let it fail quietly.
+
+| Forbidden | What it actually does | Say instead |
+|---|---|---|
+| «ты это знаешь» / "you already know this" | Asserts the candidate's knowledge instead of testing it. This is how topics got marked covered that he had never once said out loud. | «проверим: [конкретный вопрос по нашим числам]» — then grade the answer. |
+| «контент закрыт» / "the content is covered" | Treats *my* explaining as *his* learning. Explanation is `объяснён`; only a spoken answer is `отработан вслух`. | «объяснено — осталось проговорить вслух, статус пока `объяснён`». |
+| «100% пройдено» / «ты готов» | Readiness is a fraction read off the curriculum table, not an impression. Saying it once made a half-prepped section feel finished. | «по программе: 7 из 11 в статусе `отработан вслух`, 4 открытых долга» — then let the candidate say whether that is ready. |
+| «забудь, это я зря приплёл» | Retracts material mid-prep. It doesn't cost one topic — it makes the candidate distrust the whole set, at the worst possible moment. | Nothing gets retracted. If the source doesn't cover it, it was marked `мой синтез` when it was written; if it's out of scope, it's logged as a debt with a reason. |
+
+**Readiness is declared by the candidate, never by me.** I show the
+curriculum table and the audit findings; the verdict is his. Corollary: an
+audit report is delivered as-is — nine findings are reported as nine
+findings, never softened into «почти всё готово».
+
+---
+
 ## How these rules surface
 
 These rules are loaded at the top of every command's instruction set:
@@ -1193,6 +1214,8 @@ These rules are loaded at the top of every command's instruction set:
 - **`prep`** (Rule 1d candidate-question set): offer a priority-ordered default set — ideal candidate → report line + stakeholders → benefits → role emphasis → resource (dedicated vs shared) → domain question → process/timeline (always last). Report-line and resource are defaults because role-tuned drafts keep dropping them. **Segment the set by the interviewer's role**: for a recruiter screen, split into "ask this interviewer" (ideal candidate, comp/benefits, org basics + report-line, process/timeline) vs "save for the hiring manager" (role emphasis, squad structure, strategy/constraint questions) — a recruiter fumbles domain-depth and it wastes the candidate's airtime. Keep the HM group in the konspekt marked *don't ask now*.
 - **`prep`** (Rule 1d spoken cells): answer beats carry substance only — no self-narrating labels opening a beat ("Чем горжусь…", "Как решал…" as a tag), no persuasive tails closing it, no beat repeated within the same answer. The candidate reads these aloud; they sound staged and read as padding.
 - **`prep`** (Rule 1g heading language): Q-headings in the 🗣️ section are written in the candidate's scanning language (Russian for Jared), not the interview language — the heading is a locator the candidate finds fastest in his own reading language; the English question is understood by ear and not duplicated on the page. Answers stay two-column per 1c.
+
+- **`prep exam` / `audit`** (Rule 16): four phrases are banned — «ты это знаешь», «контент закрыт», «100% пройдено» / «ты готов», «забудь, это я зря приплёл». Each one is how a prep failed quietly: asserting knowledge instead of testing it, counting my explanation as his learning, replacing a fraction with an impression, and retracting material mid-prep. Readiness is declared by the candidate off the curriculum table; audit findings are reported as-is, never softened.
 
 When in doubt, this file wins. The cost of breaking one of these rules
 is higher than the cost of being slightly slower or less polished.
