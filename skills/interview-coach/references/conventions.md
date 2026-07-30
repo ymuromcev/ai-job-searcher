@@ -420,6 +420,18 @@ default; do NOT pad it with scaffolding the candidate already owns.
   process, not candidate-facing content. Run the check (rule 1c) but do not
   print its summary into the delivered file.
 
+**Spoken cells carry substance only — no self-narrating labels or
+persuasive tails (candidate-directed 2026-07-28, Jared).** Inside a
+two-column answer, do NOT open a beat with a label that narrates the
+answer's function ("Чем горжусь…", "Что это рост, а не слова…", "Как
+решал…" as a standalone tag) and do NOT close it with a persuasive tail
+that restates the point for effect ("Я сам был этим покупателем", "AI не
+заменяет плейбук…", "но давай сперва поймём роль"). Do not repeat a beat
+already stated elsewhere in the same answer. The candidate reads these
+aloud; on the page they look like padding and when spoken they sound
+staged. Keep the substance, cut the scaffolding around it. (He stripped
+exactly these from the Splash konspekt by hand — don't reintroduce them.)
+
 **Traps section — non-obvious only.** Do NOT list basics the candidate
 cannot get wrong ("don't claim you're the founder", "don't lie about
 coding"). Keep only reminders that are easy to slip under live pressure
@@ -434,6 +446,40 @@ leads to / what the process is after this call — not just one polished
 candidate's due diligence; the konspekt should arm that. Include a craft/
 substance question too, but lead with the transparency the candidate
 actually needs.
+
+**Default candidate-question set — priority-ordered, two easy-to-forget
+defaults included (candidate-directed 2026-07-28, Jared).** Offer a
+standard set to ask, ordered by intel value, and let the candidate pick
+3–4: (1) **who they're hiring for / ideal candidate** — calibrates fit,
+lets the candidate close gaps live; (2) **report line + key stakeholders**
+— the org map (easy to forget, add by default); (3) **benefits not in the
+JD** — 401k match, bonus target, equity type; (4) **role emphasis** —
+which sub-domain carries the weight; (5) **resource: dedicated squad vs
+shared pool** — the real signal of ownership and impact (easy to forget,
+add by default); (6) **one domain / substance question** — depth signal;
+(7) **process + timeline** — the mandatory closer, **always last** so the
+candidate leaves with it in hand. Reorder per what the specific candidate
+most needs to learn, but the report-line and resource questions are
+defaults precisely because role-tuned drafts keep dropping them.
+
+**Segment the candidate-question set by the interviewer's role — never
+hand a recruiter domain-depth questions (candidate-directed 2026-07-28,
+Jared).** The set above is the *superset*. Which questions ship for a
+given round depends on who is in the room, because asking the wrong
+person wastes the candidate's limited airtime on "I'm not sure, the
+hiring manager would know." For a **recruiter screen**, split the block
+into two labelled groups: **"ask this interviewer"** — the recruiter can
+actually answer these: ideal-candidate / who they're hiring for, comp &
+benefits, basic org / report-line + team size, process & timeline; and
+**"save for the hiring manager"** — domain-depth the recruiter reliably
+fumbles: role emphasis (which sub-domain carries the weight), squad
+structure (dedicated vs shared), and any strategy / constraint / "how do
+you balance X" question. Keep the HM group in the konspekt (so it's ready
+for the next round) but clearly marked *do not ask now*. For an HM or
+panel round, the domain questions move up into "ask this interviewer."
+Rule of thumb: a recruiter knows the candidate, the org basics, the money,
+and the process; the hiring manager knows the domain, the team, and the
+strategy. Match each question to the person who owns the answer.
 
 **Deep-dive links.** For any answer the interviewer might probe further,
 add clickable links to the underlying storybank entries so the candidate
@@ -507,6 +553,51 @@ governs how the answer **text** gets built from it.
 matched story's actual metrics, so the draft came out as correct-story /
 generic-content. The bridge from "mapped `S###`" to "concrete answer text"
 was missing. This rule is that bridge.
+
+**Case answers follow STAR, reshaped from the source — not rebuilt
+(candidate-directed 2026-07-28, Jared).** When the question asks for a case
+(proudest accomplishment, "tell me about a time", conflict, failure), the
+answer follows STAR (Situation–Task–Action–Result). The storybank stories
+already *are* STAR, so either **take the mapped story's STAR as-is** if it
+fits the question cleanly, or **reshape its emphasis / syntax so the
+S-T-A-R maps onto what this specific question tests** — a conflict story
+re-cut to foreground the structural lesson over the drama, a launch story
+re-cut to foreground the decision under constraint. Reshape the *framing*,
+never the *facts*: do not rebuild the story from scratch and do not invent
+beats to make it fit (Rule 13).
+
+---
+
+## 1g. Question headings in the candidate's scanning language, not the interview language
+
+**Rule (candidate-directed 2026-07-28, Jared — after a live recruiter
+screen).** In the 🗣️ likely-questions section, the **heading** of each
+question (the `### Q3. …` line the candidate scans to find the block) is
+written in the **candidate's own reading language**, not the language the
+interview is conducted in. For Jared that means the Q-headings are in
+**Russian**, even though the answers are delivered in English.
+
+- The heading is an **index / locator**, not a script. Under live pressure
+  the candidate is scanning the konspekt to jump to the right block fast;
+  he finds it fastest in the language he reads fastest. The English trigger
+  is already understood **by ear** when the interviewer says it — he does
+  not need it repeated on the page.
+- Do **not** duplicate the English question in the heading. The candidate's
+  words: "я легко понимаю вопрос, а искать мне ответ проще на русском."
+  An English heading actively slows his scan and earns nothing.
+- This governs the **heading only**. The spoken answer stays two-column
+  (RU left / EN right per 1c); the strategy caption stays in the narrative
+  language. Only the section/question **titles** switch to the scanning
+  language.
+- Generalize by candidate: use the language recorded as the candidate's
+  preferred reading/narrative language for all structural headings the
+  candidate navigates by. If a candidate interviews and reads in the same
+  language, this is a no-op.
+
+**Why.** In a real Splash recruiter screen the English Q-headings made the
+candidate hunt for his own answers mid-call. He understands the spoken
+English fine; the bottleneck was *locating* the prepared answer, and a
+Russian heading is the faster key.
 
 ---
 
@@ -832,6 +923,234 @@ This closes the feedback loop the whole skill depends on: recurring **miss** cat
 
 ---
 
+## 11. Technical / quantitative prep — one running dataset, def→formula→purpose, zero un-quantified words
+
+**Rule (candidate-directed 2026-07-26, Jared — codified after a full matstat/A-B prep session for the Plata / Palukhin round degraded into decontextualized formula-drilling and cost him ~40 minutes of policing the assistant's behavior).** When coaching any **technical / exact-science topic** — mathematical statistics, A/B testing, probability, SQL, metrics math, unit economics, any subject where a wrong number is a wrong answer — run the session in this exact protocol. It overrides the assistant's default "answer the question in front of me" instinct, which is the failure mode this rule exists to kill.
+
+**The protocol (non-negotiable order and shape):**
+
+1. **Follow the candidate's own topic list, strictly in order.** At the start of each step, name two things: which item of *their* brief / JD / test we are on → the specific topic under discussion. Never jump ahead past an unfinished check; never reorder for the assistant's convenience.
+2. **ONE running case for the whole section, ONE dataset inside a topic.** Pick a single concrete case the candidate actually lived (Plata: the credit-card application-form A/B — group A long form, group B short form, metric = conversion) and hold it across every topic. Inside a topic, hold ONE dataset and compute *every* measure and formula on it. It is forbidden to grab a fresh fragment of numbers per idea, or to start from a truncated hypothesis and bolt later terms onto it. The case is the spine; the theory hangs off it.
+3. **Per concept, three mandatory parts, in this order:** (a) definition in plain words; (b) the formula *plus its calculation on our concrete numbers*; (c) what it is for / where it applies (the business meaning). Describe the example humanly and in full first, then show how the theory maps onto it — not the reverse.
+4. **Medium depth, ZERO abstractions.** Essence + example + formula, no gratuitous expansion. But every qualitative word — "много / мало", "большой / маленький разброс", "однородно", "typical", "spread out" — is banned unless backed by a number or a formula. Statistics is exact: judge spread by the coefficient of variation (σ/mean) or a direct σ comparison, never "by eye". If the assistant writes a size/quality word without a number attached, that is a defect.
+5. **Whole topic in one message; verification as a question-block at the end.** Move to the next topic only after the candidate says "дальше" (or equivalent). Do not spoon-feed one concept per message, and do not advance on the assistant's own initiative.
+6. **Verify for real — grade every answer explicitly.** Mark each candidate answer right / wrong / incomplete, compute the correct value yourself, and never attribute knowledge the candidate has not demonstrated (a past failure: telling him "ты всё знаешь" before he had shown a single definition). Real verification is the point of the exercise, not a courtesy.
+7. **Primary term always comes from THEIR file.** If the candidate's brief / JD / test uses a term (Plata: "стандартное отклонение"), use exactly that as the primary term — never a synonym or acronym the assistant prefers ("СКО"). One term per concept to minimise load; alternative names go only in the cheat sheet, only as secondary labels, never as the primary.
+8. **Cheat sheet is a separate short file, grown concept by concept, as DEFINITION ENTRIES (validated format 2026-07-27, Jared — "вот такая шпаргалка мне и нужна").** Write it to `..._ШПАРГАЛКА.md` alongside the session state — never into the big konspekt. Each concept is one entry: a heading `## N.N Название · СИМВОЛ` — the standard symbol/notation for the quantity after a ` · ` separator (e.g. `Дисперсия · σ²`, `Биномиальное распределение · Bin(n, p)`, `Стандартная ошибка доли · SE`, `p-значение · p`) — followed by exactly four parts as bullets, in this order: **Определение** (plain-words definition using the official term); **Для меня** (what it means for the candidate's real work and how it is applied); **Формула** — the formula computed on our running numbers, AND, mandatory, a `Вытекает из:` clause naming the earlier concept(s) the formula is built from (e.g. "SE = √(p(1−p)/n) … вытекает из стандартного отклонения наблюдения (3.2), делённого на √n по ЦПТ (3.1)"). The `Вытекает из` chain is the whole point of the format: it makes each number visibly flow from the previous one — the candidate rejected the earlier table-row format precisely because the numbers read as disconnected ("новые цифры, не связаны с тем, что прошли; математика — это когда одни значения высчитываются из других"). A formula entry with no derivation pointer is a defect. Do **not** revert to the old `Название | Что это | Формула | На нашем примере | Зачем` table format. One running case for the whole file; every formula's terms get their own entry (a cheat sheet missing a formula's terms is "дырявая"). Prose teaching still lives in the chat message, never in the ШПАРГАЛКА.
+9. **Serve the actual interview goal, not corner-completeness.** The session exists so the candidate can *reason aloud correctly under live pressure* on the real questions the interviewer asks — not so every theoretical corner is drilled. Weight depth by interview relevance; do a **mock** (candidate reasoning aloud on a real question in the round's language) before the interview — that is what the round actually tests, and skipping it is the biggest miss.
+
+**Why.** The candidate is anxious, the stakes are high, and matstat is not his daily tool. Vague abstractions, attributed-but-unproven knowledge, fresh datasets per concept, and robotic "next / compact" pushes destroy trust and burn the exact time the prep was meant to save. He said it plainly: "проверяй, что я реально знаю, правильно это или нет", and "ты действуешь согласно цели или просто как болванчик отрабатываешь несвязно отдельные вопросы?" This rule is the answer to that.
+
+**How to apply.** Enter this protocol immediately on any technical prep — do not re-derive it live or make the candidate re-specify the format. It is the standard for `prep` / `practice` / `mock` whenever the subject is quantitative. Related: rule 1e (one physical line per paragraph — the cheat-sheet and konspekt are read in Obsidian), rule 6 (capture new ground-truth facts as they surface). This mirrors the memory file `feedback_technical_prep_format.md`; if the two ever diverge, the more specific candidate correction wins and both get updated.
+
+---
+
+## 12. Answer architecture — one question one job; identity opener; craft ≠ results; logical arc
+
+**Rule (candidate-directed 2026-07-28, Jared — after a Splash
+recruiter-screen konspekt where Q1 dumped every metric and Q2/Q3/Q4
+recited the same stories+numbers three times, costing a long correction
+pass).** The *set* of predicted-question answers must be architected so
+each answer does distinct work. Four sub-rules:
+
+1. **The opener is identity, not a metrics dump.** "Tell me about
+   yourself" is answered high-level *about the person* — role tenure →
+   current domain → trajectory → current mode — with 2–3 hooks the
+   interviewer pulls on. Numbers are **not** crammed here; they are
+   distributed to the specific later questions that ask for them. Explicit
+   carve-out from Rule 1f (see below).
+2. **One question, one job — no story carries two adjacent answers.** Each
+   predicted question tests something different; do not let the same
+   story+numbers headline two neighbouring answers, and give each negative
+   fact (a flop, a burnout, "didn't take off") exactly **one** home rather
+   than smearing it across several answers. Canonical split for the early
+   cluster:
+   - *tell me about yourself* → **identity** (sub-rule 1)
+   - *walk me through your experience / recent roles* → **highlight reel**
+     — results and numbers, one line each (Rule 1f in full force here)
+   - *tell me about your [domain] experience* → **the craft: what you
+     actually DID** — the process, how the work happened day-to-day —
+     proving the candidate is an operator, not a metric-reciter
+   - *proudest / hardest / how you decided* → **one deep-dive** on a single
+     case with the judgment layer (what was hard, how decided)
+3. **At least one answer shows HOW, separate from WHAT.** There must be a
+   "craft" answer about *how the candidate worked* (process, decisions,
+   what they built to make the work possible) distinct from the *results*
+   answers. Recruiters distrust pure metric recitation — the craft answer
+   is the proof the person did the job, not just memorised outcomes. It
+   carries process, not a numbers recap (second carve-out from Rule 1f).
+4. **Sequence the anchors as a logical arc.** Order the predicted-question
+   sections: **identity → what you did → why leaving / why them / what you
+   want → self-assessment (strengths / weakness / 3×3) → logistics (salary,
+   work-auth).** The interviewer can jump anywhere; the candidate navigates
+   by heading — but the default reading order must be a coherent story, not
+   a shuffled bag.
+
+**Seniority framing rides the same architecture.** Frame the "what you're
+looking for" and salary answers to the JD's seniority band. If the JD
+targets mid (not senior / lead), do **not** coach the candidate to insist
+on the title or argue level — sell ownership and scope, let the rounds
+prove level. Reading the band wrong and coaching a title fight is a
+self-inflicted rejection.
+
+**Relationship to Rule 1f (no conflict, explicit carve-out).** 1f — "every
+answer lifts a concrete `Result` fact, no generic prose" — governs the
+**result-bearing** answers: the highlight reel and the deep-dive. The
+**identity opener** and the **craft answer** are the two carve-outs: the
+opener carries positioning hooks, the craft answer carries the *how*.
+Numbers still appear across the set — they are just placed where the
+question asks for them, not dumped into Q1. A craft answer built from
+invented process detail is a Rule 13 violation; a craft answer that is
+vague hand-waving is a Rule 1f-style defect — pull the real process from
+the candidate (Rule 13), don't pad.
+
+**Why.** Splash screen (2026-07-28): Rule 1f, read alone, pushed every
+answer toward a metric dump, so Q1 became a numbers wall and Q2/Q3/Q4
+repeated the same three stories. The candidate rebuilt the arc by hand: Q1
+→ identity, Q2 → highlights, Q3 → the actual work, Q4 → one deep-dive. This
+rule encodes that architecture so the next konspekt ships it by default.
+
+**How to apply.** After story-mapping and before writing answers: (1) label
+each predicted-question section with its *job* (identity / highlight /
+craft / deep-dive / motivation / self-assessment / logistics); (2) verify
+no story+number pair headlines two adjacent sections; (3) verify at least
+one craft answer exists; (4) order the sections into the arc; (5) confirm
+the opener has hooks, not a metric dump. Part of DoD for any konspekt.
+
+---
+
+## 13. Never invent operational texture — ask for the real "how"
+
+**Rule (candidate-directed 2026-07-28, Jared — the single largest
+time-sink of the Splash prep: the assistant invented *how* the candidate
+did the work, the candidate caught and corrected it, repeatedly).** Do not
+fabricate the **mechanism** of how the candidate did something — team
+structures, process cadences, who they sat with, what they analysed, "ran a
+weekly health-check", "sat down with each aggregator and dissected their
+economics", "built the channel from scratch" — when that texture is **not**
+in `coaching_state.md` (storybank row or `Story Details`). Plausible
+invented process detail is the #1 correction-pass generator: it reads right
+to the assistant and wrong to the candidate, who then has to catch every
+fabricated beat.
+
+When the real "how" is missing, **stop and ask** 1–3 targeted questions
+before drafting that answer — e.g. *"For the partner channel — did you
+build it, or inherit it and find growth in it? What did the day-to-day work
+actually look like?"* — then write from the answer and capture it as
+ground-truth per Rule 6.
+
+**Distinct from neighbouring rules.** Rule 2 = fabricated *labels*
+(commercial profile). Rule 4 = *compressing* two real facts into one. Rule
+1f = answer *substance* must lift a real `Result` metric. **Rule 13 =
+inventing the *process / how* that no source states.** A single answer can
+satisfy 2, 4 and 1f (right label, both facts separate, real number) and
+still violate 13 by wrapping that real number in an invented workflow.
+
+**Why.** Splash (2026-07-28): the assistant wrote "I sat with each
+aggregator and dissected their economics" (he inherited the channel and
+optimised it) and "five teams, an owner on each, a weekly health-check"
+(invented outright). Both had to be ripped out. The metric was real; the
+*how* around it was fiction — and fiction about process is as
+disqualifying to an interviewer as a fabricated number.
+
+**How to apply.** Before writing any answer whose force comes from *how the
+work was done* (not just the result): check the process detail is in
+storybank / `Story Details`. If it is not there — do not invent it, ask. A
+one-line question to the candidate always beats a plausible guess. Part of
+DoD for any konspekt with craft/process answers (Rule 12 sub-rule 3).
+
+---
+
+## 14. Internal consistency — causal chains hold, no cross-answer contradictions
+
+**Rule (candidate-directed 2026-07-28, Jared).** Before delivering a
+konspekt, verify two things across the whole file: (a) each answer's
+narrative is a **causal chain that actually holds** (cause → effect, not a
+bag of claims in sequence), and (b) **no answer contradicts a claim made
+elsewhere** in the konspekt or in the candidate's real history. A konspekt
+that sells one framing in Q7 and undercuts it in Q1 hands the interviewer
+the contradiction.
+
+**Why.** Splash (2026-07-28): Q7 was drafted as "this is my domain but from
+a side of the table I haven't sat on yet — that makes me stronger", while
+Q1 and the Credit Mentor story established he *had* worked exactly that
+side. The two answers contradicted; the candidate caught it. Separately,
+the Q1 opener had to be re-cut into a real causal chain (consumer lending →
+set up the same monetisation the company uses → off the back of prior bank
+experience on the other side) because the first draft was a sequence of
+facts with no connective logic.
+
+**How to apply.** As a delivery gate: (1) read each answer and check the
+beats form a because-chain, not a list; (2) scan for any claim a
+*different* answer or the candidate's known history falsifies — a "first
+time", a "haven't done", a "new to me" that another answer contradicts is
+the classic tell. Fix before emitting. Part of DoD for any konspekt.
+
+---
+
+## 15. Stretch audit — pre-script the honest framing for every натяжка
+
+**Rule (candidate-directed 2026-07-28, Jared — the root cause of his
+in-interview freezing).** The candidate does not freeze on hard questions;
+he freezes when the role's language asks him to claim something that, said
+plainly, feels to him like a lie. At Splash the word was *"marketplace"*:
+in his own head Alfa is **a side of** a lending marketplace, not a
+marketplace, so "I have marketplace experience" registered as a натяжка
+(overstatement) — and rather than say it, he tangled, defaulted to a
+non-fintech story that *was* literally true, and never aired his strongest
+fit. **The fix is not "be more confident." The fix is to find every stretch
+during `prep` and hand him a framing that is 100% true, defensible, and
+still lands the point — so his honesty instinct becomes the script instead
+of the thing that derails him.** His own analogy: this is exactly what he
+did packaging his green-card case — the facts were real, the *framing* was
+built deliberately in advance, not improvised under pressure.
+
+**Stretch audit — a mandatory `prep` step.** Before writing answers, scan
+the positioning for every place where the role's language, the JD, or a
+predicted question maps onto the candidate's real history at an **angle** —
+where saying it the interviewer's way would require a claim the candidate
+would flinch at as an overstatement. Typical shapes:
+- a **category the candidate was adjacent to, not inside** ("marketplace",
+  "growth", "platform", "0→1") — he owned *a side / a slice / the
+  downstream* of it, not the whole;
+- a **scope inflation** ("led / owned / built" where he influenced,
+  inherited-and-grew, or ran one part);
+- a **domain the role assumes** that he touched from a neighbouring seat;
+- a **seniority or title gap** between what he did and what the level implies.
+
+**For each stretch, pre-write three things into the konspekt** (a short
+`⚠️ Натяжка` note under the relevant answer, or a dedicated `## Скользкие
+формулировки` block if several cluster):
+1. **The honest reframe** — the one line that is fully true *and* still
+   claims the fit. Never "Alfa is a marketplace"; always "I ran **one side**
+   of exactly this model — the bank end that takes traffic from lending
+   marketplaces." The stretch is dissolved by naming the real relationship
+   precisely, not by inflating or by retreating.
+2. **The question-split** — because the same word means two questions.
+   *"Did you BUILD a marketplace?"* → the genuinely-true story (SMMACC, both
+   sides from scratch). *"Do you KNOW the lending marketplace?"* → Alfa
+   lender side + Credit Mentor aggregator side. Pre-deciding which story
+   each phrasing pulls is what stops the freeze-and-grab-the-wrong-one.
+3. **The one-line bridge to the strongest fit** — so a stretch becomes a
+   launchpad, not a place to survive: "…so I've now sat on both ends of the
+   integration Splash sits in the middle of."
+
+**How to apply.** Run the stretch audit as an explicit pre-flight line item
+for `prep` ("scanning for натяжки and pre-scripting the honest framings"),
+and surface the found stretches to the candidate *by name* — "here are the
+three places the role's language and your real history sit at an angle, and
+the true way to say each" — so he rehearses the bridge, not the wording,
+cold. Capture confirmed reframes into `coaching_state.md → Interview
+Intelligence → Effective Patterns` so a stretch solved once is never
+re-derived. Distinct from its neighbours: Rule 2 stops *me* from inventing a
+label; Rule 4 stops *me* compressing two facts; **Rule 15 handles the case
+where the fact is real but the candidate can't say it the role's way without
+feeling dishonest — and pre-builds the truthful bridge he can.** Part of DoD
+for any `prep` konspekt: no answer touching a known stretch ships without its
+honest framing already written.
+
+---
+
 ## How these rules surface
 
 These rules are loaded at the top of every command's instruction set:
@@ -866,6 +1185,14 @@ These rules are loaded at the top of every command's instruction set:
 - **`prep`** (Rule 8): classify the interview format first and predict from its template (recruiter behavioral / Topgrading reference / HM chronological / competency panel / founder), then layer JD-specific questions on top — the 3×3 "rate 1–10 / why-leave last-3-roles" is a Topgrading tell.
 - **`prep`** (Rule 9): positioning questions (tell-me-about-yourself / recent-roles / environments / why-company / why-fit) collapse to ≤2 sections; reallocate the freed budget to behavioral + reference mechanics; work-auth is a one-liner unless the role has visa friction.
 - **`analyze` / `debrief` / `feedback`** (Rule 10): every real-interview debrief writes a prediction scorecard (recall / precision + misses + dead-preps) to `coaching_state.md → Interview Intelligence → Prediction Scorecard`, feeding Rules 7–9.
+- **`prep` / `practice` / `mock` (technical / quantitative topics)** (Rule 11): one running case for the section, one dataset per topic; per concept — plain definition + formula computed on our numbers + business purpose; zero un-quantified size/quality words; whole topic then a check-block, grade every answer, primary term from their file; cheat sheet is a separate `..._ШПАРГАЛКА.md` of definition entries (`## Название · символ` → Определение / Для меня / Формула with a mandatory `Вытекает из:` derivation pointer), all formula terms captured; weight depth by interview relevance and run a mock before the round.
+- **`prep`** (Rule 12): the answer *set* is architected — identity opener (hooks, not a metric dump), one-question-one-job (no story headlines two adjacent answers, each negative fact one home), at least one craft/"how" answer distinct from the results answers, sections ordered into a logical arc (identity → what you did → why leaving / why them / what you want → self-assessment → logistics), seniority framing riding the JD band. Explicit carve-out from Rule 1f for the identity opener and the craft answer. Rule 1f gates case answers to STAR reshaped from the source (take as-is or re-cut framing, never facts).
+- **`prep`** (Rule 13): never invent the *how* — team structures, process cadences, who the candidate sat with, "built it from scratch" — when no source states it; stop and ask 1–3 targeted questions, then capture the answer (Rule 6). Distinct from Rule 2 (labels) / Rule 4 (compression) / Rule 1f (metric substance).
+- **`prep`** (Rule 14): delivery gate — each answer is a causal chain that holds, and no answer contradicts another answer or the candidate's real history.
+- **`prep`** (Rule 15): run a **stretch audit** before writing answers — find every натяжка where the role's language maps onto the candidate's real history at an angle (adjacent category, scope inflation, assumed domain, level gap), and for each pre-write the honest reframe + the question-split (BUILD-it vs KNOW-it → different true stories) + the one-line bridge to the strongest fit. Surface the stretches to the candidate by name so he rehearses the truthful bridge cold, not improvises it under pressure. Distinct from Rule 2 (my labels) / Rule 4 (my compression): Rule 15 = the fact is real but the candidate can't say it the role's way without feeling dishonest. DoD: no answer touching a known stretch ships without its honest framing written.
+- **`prep`** (Rule 1d candidate-question set): offer a priority-ordered default set — ideal candidate → report line + stakeholders → benefits → role emphasis → resource (dedicated vs shared) → domain question → process/timeline (always last). Report-line and resource are defaults because role-tuned drafts keep dropping them. **Segment the set by the interviewer's role**: for a recruiter screen, split into "ask this interviewer" (ideal candidate, comp/benefits, org basics + report-line, process/timeline) vs "save for the hiring manager" (role emphasis, squad structure, strategy/constraint questions) — a recruiter fumbles domain-depth and it wastes the candidate's airtime. Keep the HM group in the konspekt marked *don't ask now*.
+- **`prep`** (Rule 1d spoken cells): answer beats carry substance only — no self-narrating labels opening a beat ("Чем горжусь…", "Как решал…" as a tag), no persuasive tails closing it, no beat repeated within the same answer. The candidate reads these aloud; they sound staged and read as padding.
+- **`prep`** (Rule 1g heading language): Q-headings in the 🗣️ section are written in the candidate's scanning language (Russian for Jared), not the interview language — the heading is a locator the candidate finds fastest in his own reading language; the English question is understood by ear and not duplicated on the page. Answers stay two-column per 1c.
 
 When in doubt, this file wins. The cost of breaking one of these rules
 is higher than the cost of being slightly slower or less polished.
