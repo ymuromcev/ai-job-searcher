@@ -17,7 +17,18 @@ const FREEZE_HOURS = 4;
 // Markers are structural (headings and table column names), never prose, so a
 // template that merely *mentions* a forbidden section does not trip a detector.
 const FORBIDDEN_MARKERS = {
-  exam: ["Компания за 60 секунд", "Карта соответствия", "Твоё позиционирование"],
+  // An exam round may not carry selling material: a company blurb, a fit map,
+  // or a positioning / self-intro block. Both konspekt formats are listed —
+  // the pre-2026-08-04 lettered schema and the story-centric skeleton that
+  // replaced it (references/konspekt-skeleton.md) — because round files
+  // written under either one are still on disk.
+  exam: [
+    "Компания за 60 секунд",
+    "Карта соответствия",
+    "Твоё позиционирование",
+    "## 📖 Справка по компании",
+    "## 🗣️ Вводные вопросы",
+  ],
   screening: ["## Программа", "Источник (раздел)"],
   manager: ["## Программа", "Источник (раздел)"],
 };

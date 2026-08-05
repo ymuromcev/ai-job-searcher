@@ -16,7 +16,7 @@ The rest of this file is the `screening` / `manager` flow. For `exam`, stop here
 
 The round file carries `kind:` in its frontmatter, and `kind` decides which sections are even allowed:
 
-- `kind: exam` → selling material is **forbidden**: a company blurb, a карта соответствия, and a positioning / self-intro block have no place in an exam round. An exam is not a pitch. (`scripts/round_audit.js` detector 8 matches this by the historical section names «Компания за 60 секунд», «Карта соответствия», «Твоё позиционирование».)
+- `kind: exam` → selling material is **forbidden**: a company blurb, a карта соответствия, and a positioning / self-intro block have no place in an exam round. An exam is not a pitch. (`scripts/round_audit.js` detector 8 enforces this, matching both konspekt formats: the historical «Компания за 60 секунд» / «Карта соответствия» / «Твоё позиционирование» and the story-centric «## 📖 Справка по компании» / «## 🗣️ Вводные вопросы».)
 - `kind: screening` / `kind: manager` → a curriculum table, a running dataset, and graded numeric drills are **forbidden**. These flows do not teach a discipline.
 
 A forbidden section inside a round file is a defect caught by `scripts/round_audit.js` (detector 8). The coach is not trusted to remember the boundary — the artifact enforces it.
