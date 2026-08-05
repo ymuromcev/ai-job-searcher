@@ -16,7 +16,7 @@ The rest of this file is the `screening` / `manager` flow. For `exam`, stop here
 
 The round file carries `kind:` in its frontmatter, and `kind` decides which sections are even allowed:
 
-- `kind: exam` → the sections `📖 A. Компания за 60 секунд`, `📖 D. Карта соответствия`, and `🗣️ 5. Твоё позиционирование` are **forbidden**. An exam is not a pitch.
+- `kind: exam` → selling material is **forbidden**: a company blurb, a карта соответствия, and a positioning / self-intro block have no place in an exam round. An exam is not a pitch. (`scripts/round_audit.js` detector 8 matches this by the historical section names «Компания за 60 секунд», «Карта соответствия», «Твоё позиционирование».)
 - `kind: screening` / `kind: manager` → a curriculum table, a running dataset, and graded numeric drills are **forbidden**. These flows do not teach a discipline.
 
 A forbidden section inside a round file is a defect caught by `scripts/round_audit.js` (detector 8). The coach is not trusted to remember the boundary — the artifact enforces it.
@@ -340,8 +340,9 @@ Companies have interviewing cultures that transcend individual JDs. When a known
 #### The 8-step research screen (mandatory — this is the 📖 front-matter)
 
 `prep` **always** opens with a systematic 8-step company + role research
-screen. These 8 steps *are* the 📖 sections of the konspekt (see Output
-Schema → 📖 A–H); there is no separate research file. **All 8 steps always
+screen. These 8 steps feed the 📖 sections of the konspekt (see "Deliverable —
+the konspekt" below for the step → section mapping); there is no separate
+research file. **All 8 steps always
 run at full depth**, even for a 15-minute coffee chat — the research is what
 tells the candidate whether the call is worth taking at all. Only the 🗣️
 speech sections downstream scale to the round's length and format. (This
@@ -354,42 +355,48 @@ either **verified** (cite the source) or **unverified** (label it, and for
 numbers say "don't state").
 
 1. **Pull JD from the primary source.** In: JD URL / ATS id / candidate's
-   pasted copy. Out: canonical JD text in 📖 B. Rule: primary source only —
+   pasted copy. Out: canonical JD text — the source the карта
+   соответствия is built from, not a konspekt section. Rule: primary source only —
    if the page is JS-rendered, hit the ATS API (e.g. Workable
    `apply.workable.com/api/v2/accounts/<slug>/jobs/<shortcode>`); reconcile
    against the candidate's copy; **canon = the candidate's copy**; list any
    divergences (salary band especially) explicitly.
 2. **Requirements + anti-requirements.** In: canonical JD. Out: a requirement
-   list *and* an explicit disqualifier list in 📖 B. Rule: extract
+   list *and* an explicit disqualifier list, both feeding the карта
+   соответствия (`conventions.md` 17). Rule: extract
    disqualifiers, not only requirements — this both removes phantom gaps
    (something explicitly *not* required, e.g. "Python/ML not needed") and
    flags any candidate story that trips a disqualifier as a **landmine**
-   (feeds ⚠️ E and story selection in 🗣️ 6).
+   (feeds 📖 Ловушки and story selection in 🗣️ Истории).
 3. **Business model.** In: company site, filings, press. Out: product /
    customer / **how they make money** / why this role is the lever for their
-   economics, in 📖 A. Rule: "how they earn", not "what they do"; add a
+   economics, in 📖 Справка по компании. Rule: "how they earn", not "what they do"; add a
    one-line "how to read it" (e.g. capital-efficient → margin, not
    growth-at-any-cost) and 1–2 honest "why this genuinely interests you" hooks.
 4. **Reputation recheck.** In: Trustpilot / BBB / Glassdoor / forums. Out: a
-   **verified** table + an **unverified** list marked "don't state", in 📖 F.
+   **verified** set for 📖 Справка по компании + an **unverified** list marked
+   "don't state" for 📖 Ловушки.
    Rule: keep competitors' claims out of the sources; confirm every negative
    is about *this* company, not dragged from an adjacent file.
 5. **People.** In: LinkedIn / TheOrg / interviews / press. Out: recruiter +
-   hiring-manager dossier in 📖 C, freshness-checked, with a resonance hook.
+   hiring-manager dossier in 📖 Кто интервьюер, freshness-checked, with a
+   resonance hook and the «что из этого следует» conclusions.
    Rule: press releases go stale — verify the current seat (self-reported
    LinkedIn title > aggregators); mark hypotheses as hypotheses.
 6. **Fit map.** In: requirements (step 2) + storybank. Out: a requirement →
-   specific-story table in 📖 D with **landmines marked explicitly**. Rule:
+   specific-story карта соответствия with **landmines marked explicitly** —
+   an intermediate artifact the candidate approves, never a konspekt section. Rule:
    every claim points to a real storybank story.
 7. **Culture layer.** In: careers video / values / JD language. Out: their
-   exact lexicon + a tie-in to a candidate story, in 📖 G. Rule: mirror the
+   exact lexicon + a tie-in to a candidate story — it sets the tone of the
+   spoken lines and feeds 📖 Ловушки. Rule: mirror the
    tone, **never quote verbatim**.
 8. **Comp / benefits.** In: JD comp + market. Out: a US-comp mechanics read +
-   a what-to-ask list in 📖 H. Rule: net-to-net; equity-liquidity realism for
+   a what-to-ask list, landing in 🗣️ Бюрократия and the candidate's questions. Rule: net-to-net; equity-liquidity realism for
    a private company; flag what the posting omits. Hooks into the `salary`
    command.
 
-Cross-cutting: sensitive topics (a scandal, a lawsuit) go into ⚠️ E held in
+Cross-cutting: sensitive topics (a scandal, a lawsuit) go into 📖 Ловушки held in
 reserve — surface **only if the interviewer raises it**, note the risk
 symmetry, never lead with it.
 
@@ -441,7 +448,7 @@ If the candidate provides company culture context, integrate it into question pr
 
 #### Real reported questions — pull them and fold into the predicted set (even recruiter screens)
 
-Before finalizing predicted questions (Step 8), search for the company's **real reported interview experience** — Glassdoor interview reviews, Reddit, Blind, "[Company] interview questions [role]". This is available even when the interviewer is unknown (recruiter screens), because it surfaces **company-level patterns**, not interviewer-level ones: the actual funnel / stages, recurring real questions, and format warnings (take-homes, exercises). Do NOT treat Glassdoor as a format-only fallback — it is a **primary source of real questions**. Fold any recurring reported question into the predicted set as its own anchor (Rule 1d section), and record the real funnel in 📖 C / ⚠️ E so the candidate knows the stages and the company's ghosting/timeline patterns.
+Before finalizing predicted questions (Step 8), search for the company's **real reported interview experience** — Glassdoor interview reviews, Reddit, Blind, "[Company] interview questions [role]". This is available even when the interviewer is unknown (recruiter screens), because it surfaces **company-level patterns**, not interviewer-level ones: the actual funnel / stages, recurring real questions, and format warnings (take-homes, exercises). Do NOT treat Glassdoor as a format-only fallback — it is a **primary source of real questions**. Fold any recurring reported question into the `Годится на вопросы` list of the story that answers it, and record the real funnel in 📖 Кто интервьюер / 📖 Ловушки so the candidate knows the stages and the company's ghosting/timeline patterns.
 
 Evidence (Splash 2026-07-28): this surfaced "tell me about a conflict with a peer", "a product you built from scratch", and a PR-review take-home — **none derivable from the JD**, all real, and one of them ("conflict with a peer") a genuine gap the JD-only draft had missed. Tier every claim per Company Knowledge Sourcing above: a reported question is Tier 1 when you can point to the review; the specific numbers / anecdotes inside a review stay unverified. This applies to **every** prep, recruiter screens included — the interviewer being unknown is not a reason to skip it, because company-level question patterns don't need the interviewer's name.
 
@@ -556,271 +563,39 @@ In the `Story Mapping → Notes` column for each row, append `(profile: B2B veri
 
 The recurring failure (caught 2026-05-14 on Ross Burton prep) is to skip Step 7.5, invent commercial profiles from story titles, build a coherent-sounding "enterprise B2B bridge" narrative, and ship the brief. The candidate then catches the fabrication and the brief has to be rewritten from scratch. Step 7.5 exists specifically to make this failure impossible — if executed, fabrication cannot happen.
 
-### Output Schema
+### Deliverable — the konspekt
 
-**Applies to `kind: screening` and `kind: manager` only.** `kind: exam` has its own deliverable — do not emit this brief for an exam round (sections A, D and 5 are forbidden there; see "Mutual exclusion" at the top of this file).
+**Applies to `kind: screening` and `kind: manager` only.** `kind: exam` has its own deliverable — see `references/commands/prep-exam.md`.
 
-The prep brief has two parts in a **fixed, strict order — do not reorder**:
+Everything above this line is the **research protocol**: what the coach must find out. How the findings are laid out in the document the candidate opens on the call is described in **`references/konspekt-skeleton.md`** — section order, the story-block template, the two-column tables, what never goes in. That file is the single description of the format; do not restate it here and do not invent a second schema.
 
-1. **📖 A–H research front-matter** — the 8-step company + role screen (see
-   "The 8-step research screen" above). This is the systematic research base,
-   always present, always full-depth.
-2. **Sections 5–10 (🗣️ speech, with 📖 §9 plan inside)** — positioning, Q&A,
-   concerns, questions, plan, cheat sheet. These read from the front-matter and
-   scale to the round.
+Where the research output lands:
 
-Visual markers separate reference material from speaking material.
+| Research step | Where it surfaces in the konspekt |
+| --- | --- |
+| 1–2 (JD from source, requirements + anti-requirements) | карта соответствия (`conventions.md` 17), then `Закрывает требования` inside story blocks |
+| 3 (business model) | 📖 Справка по компании |
+| 4 (reputation recheck) | 📖 Справка по компании (verified only) + 📖 Ловушки for anything unverified |
+| 5 (people / interviewer) | 📖 Кто интервьюер, including the «что из этого следует» conclusions |
+| 6 (fit map) | карта соответствия — approved by the candidate **before** the konspekt is written; never a section of the konspekt itself |
+| 7 (culture layer) | tone of the spoken lines; 📖 Ловушки |
+| 8 (comp / benefits) | 🗣️ Бюрократия + the candidate's questions |
+| Real reported questions | `Годится на вопросы` lists inside story blocks |
+| Unknowns and risks | 📖 Чего мы не знаем · 📖 Ловушки |
 
-**Section markers (use as prefixes in section headers):**
+### Time-to-interview mode
 
-- **📖 = read once, reference material.** Context the candidate skims before the call to load mental state. Not memorized.
-- **⚠️ = risk / do-not-trip.** Landmines, structural gaps, and sensitive topics the candidate holds in reserve. Read carefully, act defensively.
-- **🗣️ = learn and speak.** Material the candidate actually delivers in the interview. Russian summary of *what to say* + English anchor phrases (1-5 words each) that are short enough to recall under pressure. No long English scripts to read aloud — those break under ESL pressure. See `references/conventions.md` rule 1.
+The coach's own plan, not a section of the konspekt. Mode is picked automatically from hours-to-interview in the Interview Loop in `coaching_state.md` and is what `SKILL.md` calls the time-aware coaching mode.
 
-**Header line (always include at the top of the brief):**
+1. Read the interview date/time from the Interview Loop. No time recorded → default to start-of-business on that date.
+2. Compute hours-to-interview from the session timestamp.
+3. Mode: `< 24h` → **triage** · `24h — 7 days` → **focused** · `> 7 days` → **full**.
+4. Date TBD → **focused**, and the first action is "ask the recruiter for the date and re-run prep".
 
-> `📖 = справка, читай один раз. ⚠️ = риск, не наступи. 🗣️ = речь, опорный конспект (смысл по-русски + anchor phrases на английском). После любой 🗣️ фразы — пауза, дай интервьюеру среагировать.`
+Constraints per mode:
 
-(Translate to the candidate's narrative language if not Russian. The header is the orientation device — without it, the markers don't land.)
+- **Triage** — one action, no more. *«Сегодня вечером прочитать конспект один раз. Завтра за 15 минут до звонка — ещё раз. Это весь план.»* Do not recommend `practice` / `stories` / `mock` — that adds anxiety, not value. A critical storybank gap is named as an accepted gap, not homework.
+- **Focused** — at most one action per day. One `practice` drill every 1-2 days, not daily. The evening before is `hype` + rest, not new drilling.
+- **Full** — weekly granularity, not daily. 2-3 milestones per week, the candidate self-schedules inside them.
 
-**The structure — 📖 A–H research front-matter, then sections 5–10 (🗣️ speech + 📖 §9 plan), strict order:**
-
-```markdown
-# Prep — [Company] [Round/Stage] — [Interviewer] — [Date]
-
-📖 = справка, читай один раз. ⚠️ = риск, не наступи. 🗣️ = речь, опорный конспект (смысл по-русски + anchor phrases на английском). После любой 🗣️ фразы — пауза, дай интервьюеру среагировать.
-
-Файл лежит по абсолютному пути — указать здесь, в шапке.
-
----
-
-## 📖 A. Компания за 60 секунд
-
-Связный параграф (research step 3 — business model): продукт / клиент / **как они зарабатывают** (не «что делают»), почему именно эта роль — рычаг для их экономики. Одна строка «как это читать» (напр. capital-efficient → маржа, не рост любой ценой) + 1-2 честных хука «почему тебе это реально интересно» — без натяжки.
-
-Каждый факт — verified (сайт / JD / filings, с источником) или помечен как догадка. Стартовый контекст раунда (что за звонок, где компания в воронке кандидата, длительность, формат, дата/время) — одной фразой в начале параграфа.
-
-## 📖 B. Роль из первоисточника
-
-**JD из первоисточника (step 1).** Канонический текст вакансии — primary source, не пересказ. Если страница JS-рендерится — тянем ATS API (напр. Workable `apply.workable.com/api/v2/accounts/<slug>/jobs/<shortcode>`). Сверить с копией кандидата; **canon = копия кандидата**; расхождения (особенно вилка зарплаты) выписать явно.
-
-**Requirements + anti-requirements (step 2).** Два списка:
-
-- **Требования** — что реально нужно.
-- **Anti-requirements / дисквалификаторы** — что вычёркивает кандидата, ИЛИ что явно **НЕ** требуется (снимает фантомный гэп, напр. «Python/ML не нужен»).
-
-Дисквалификатор, совпавший с историей кандидата, помечает её как **landmine** — уходит в ⚠️ E и влияет на выбор истории в 🗣️ 6.
-
-## 📖 C. Кто такой [Interviewer Name] и что он на самом деле ищет
-
-Связный параграф про интервьюера (research step 5) — функциональная линза, фон, специализация, что он скорее всего фильтрует. Заканчивается одной чёткой фразой: «Поэтому твоя задача за N минут — Y». То, что раньше было «Critical Reframe», живёт здесь как замыкающая мысль параграфа.
-
-**Freshness-check:** пресс-релизы устаревают — подтвердить текущую позицию (self-reported LinkedIn title > агрегаторы вроде The Org); гипотезу помечать как гипотезу. Найти **resonance hook** — естественную общую почву, не натянутую.
-
-Если есть инсайд от рекрутёра / кого-то, кто видел этого интервьюера — sub-секция `### Инсайд от [имя]` с прямой цитатой (без редактуры). Цитата стоит больше пересказа. Panel → отдельный параграф на каждого.
-
-## 📖 D. Карта соответствия (fit map)
-
-Role-Fit Assessment как **bullets / параграф, не таблица**. Прохожу по 5 измерениям:
-
-- **Requirement Coverage** — что покрыто резюме, что нет (одна фраза).
-- **Seniority Alignment** — скоуп, лидерство, годы.
-- **Domain Relevance** — насколько домен переносим.
-- **Competency Overlap** — карта JD-компетенций на storybank, где сильное, где гэп.
-- **Trajectory Coherence** — логичен ли этот шаг как next career move.
-
-Под каждым — конкретика, не «Strong / Moderate / Weak» вакуумно.
-
-Затем таблица **requirement → конкретная история storybank** (research step 6). Каждое требование из §B → реальный S###. **Landmines помечены явно** — истории, с которых НЕ начинать (из anti-requirements §B).
-
-Verdict (Strong Fit / Investable Stretch / Long-Shot Stretch / Weak Fit) — в одну строку в конце.
-
-## ⚠️ E. Риски и landmines
-
-- **Landmines** — истории / темы, которые триггерят дисквалификатор из §B. Не вести с них.
-- **Frameable gaps** — что бридж-нарративом покрывается (counter-line готовим в 🗣️ 7).
-- **Structural gaps** — что нарративом не покрыть; называем честно, готовимся к probing.
-- **Что НЕ гэп** — фантомные требования, снятые в §B. Не извиняться за то, чего не просят.
-- **Чего мы не знаем** — короткий честный список реальных unknowns, влияющих на готовность (формат / длительность / фокус интервьюера не подтверждены, качество историй storybank). Мета-калибровка, не «что могу узнать».
-- **Sensitive topics** — щекотливое (скандал, иск, публичный факап): держать в резерве, поднимать **только если интервьюер сам заговорил**, отметить симметрию риска, никогда не вести с этого.
-
-## 📖 F. Репутация: verified vs unverified
-
-Две группы, разделять жёстко:
-
-- **Verified** (Trustpilot / BBB / Glassdoor — с источником): факты, которые можно называть на звонке.
-- **Unverified** (форумы, заявления конкурентов, маркетинговые цифры): помечены **«не называть»**.
-
-Конкурентов отфильтровать из источников; убедиться, что каждый негатив — про **эту** компанию, а не притянут из соседнего файла.
-
-## 📖 G. Словарь культуры
-
-Их точный лексикон (careers video / values page / язык JD) → зеркалить тон **без дословного цитирования**. Каждый маркер культуры привязать к конкретной истории кандидата (research step 7).
-
-## 📖 H. Комп и бенефиты
-
-US-comp механика под кандидата (research step 8): base net-of-tax, equity в частной компании (реализм ликвидности), PTO, 401k, healthcare. Что **отсутствует** в постинге → в список «спросить на звонке». Считать net-to-net. Хук в команду `salary`.
-
-## 🗣️ 5. Твоё позиционирование
-
-**Headline** (одна строка, выучить дословно). Russian: смысл. English (1-2 коротких anchor phrase): то, что произносится.
-
-Headline — это ответ на вопрос «расскажи о себе», который ты даёшь **первым**. Дальше — расширения по non-repetition principle:
-
-**Если попросит больше (30-секундная версия):**
-- Только **новые слои**, не повтор+добавка. Headline уже сказан — не повторяй его, добавь следующий уровень глубины.
-- Russian bullets: о чём говорить.
-- Anchor phrases: 3-5 английских фраз по 1-5 слов.
-
-**Если попросит ещё шире:**
-- Ещё один слой, опять без повтора предыдущих.
-
-Принцип non-repetition: каждое расширение **дополняет**, не повторяет. Кандидат не должен в третий раз произносить ту же headline — это сигнал «у меня одна история и я её мну».
-
-## 🗣️ 6. Вероятные вопросы и истории
-
-7-10 блоков, каждый — Q&A в стандартном формате:
-
-```
-### Q[N]. [Текст вопроса на русском или английском, как услышит]
-
-**Зачем спросит:** 1-2 предложения — что он на самом деле проверяет этим вопросом (компетенцию, концерн, signal).
-
-**Когда применять:** одна строка — на каких триггерах эта история подходит, а на каких нет. Помогает не использовать её на неправильном вопросе.
-
-**О чём говорить:**
-- Russian bullet 1 (смысл, не дословная фраза).
-- Russian bullet 2.
-- Russian bullet 3.
-- [последний bullet — «Скажи цифру / факт X и сделай паузу.»]
-
-**Anchor phrases:**
-- `English phrase 1` (1-5 слов)
-- `English phrase 2`
-- `English phrase 3`
-- [3-6 коротких anchor'ов — это то, что произносится; не длинные предложения, а опорные точки]
-
-**Backup история (если попросит другой пример):** [S### + одна строка чем заходит]
-
-**Recovery line (если затупил):** одна короткая фраза по-английски, чтобы выкупить 5 секунд на сборку мысли. Дать русское описание смысла рядом.
-
-<details>
-<summary>📖 S### — [Title] — полная STAR</summary>
-
-[Полная STAR-история из Story Details в coaching_state.md. Markdown allowed. Раскрывается одним кликом в Obsidian / GitHub / любом markdown viewer'е.]
-
-</details>
-```
-
-Маркеры в `<summary>` блоков `<details>`:
-- **📖** — полная отполированная STAR-история, лежит в storybank.
-- **📝** — черновик, не финализирован, ещё нужен `stories` для доработки.
-
-Если у вопроса есть отдельный sub-блок (например, Earned Secret для конкретной истории) — выноси в `### Q[N]+ — Earned secret для [история]` после основного блока, не мешай внутрь.
-
-Порядок внутри Q&A блока **фиксирован**: справочная информация (Зачем / Когда) → операционка (О чём / Anchor / Backup / Recovery) → раскрывашка (`<details>`). Не перемешивать.
-
-## 🗣️ 7. Концерны и контры
-
-Топ-3 концерна интервьюера (из 📖 D fit-map / ⚠️ E рисков или из истории компании). Каждый — блок:
-
-```
-### Концерн N: [Одна фраза, что его насторожит]
-
-**Почему подсветит:** 1-2 предложения.
-
-**О чём отвечать:**
-- Russian bullet 1.
-- Russian bullet 2.
-- Russian bullet 3.
-
-**Anchor phrases:**
-- `English phrase 1`
-- `English phrase 2`
-- `English phrase 3`
-
-**Earned secret / why it lands:** одна строка — почему контра убедительна, а не отмазка.
-```
-
-Тот же порядок внутри блока: справка → операционка.
-
-## 🗣️ 8. Твои вопросы к [Interviewer Name]
-
-5 готовых вопросов, отсортированы **от сильнейшего к слабому**. Каждый — мини-блок:
-
-```
-### Вопрос N
-
-**Anchor question (English):** `Точная формулировка вопроса`
-
-**Зачем спросить (Russian):** 1-2 предложения — что ты этим сигналишь и что узнаёшь.
-
-**Что искать в ответе:** одна строка — какой ответ хороший знак, какой плохой.
-```
-
-Сильнейший вопрос — первый. Если интервью обрезается, кандидат уходит с лучшим в кармане.
-
-## 📖 9. План на оставшиеся часы
-
-Adaptive footer — этот пункт встроен сюда как **логическое завершение брифа**, не отдельный аппендикс. Режим (triage / focused / full) выбирается автоматически по hours-to-interview из Interview Loop в `coaching_state.md`.
-
-**Логика выбора режима:**
-
-1. Прочитать дату/время интервью из Interview Loop. Если время не записано — default start-of-business этой даты.
-2. Вычислить часы-до-интервью от сейчас (timestamp сессии).
-3. Режим:
-   - `< 24h` → **triage**
-   - `24h — 7 days` → **focused**
-   - `> 7 days` → **full**
-4. Если дата TBD — **focused** mode, первое действие «уточнить дату у рекрутёра и пере-запустить prep».
-
-**Constraints по режимам:**
-
-- **Triage** — одно действие, не больше. *«Сегодня вечером: прочитать §10 cheat sheet один раз. Завтра за 15 минут до звонка — ещё раз. Это весь план.»* Не рекомендовать `practice` / `stories` / `mock` — добавляет тревогу, не пользу. Если есть критический storybank gap — назвать его «accepted gap», не домашка.
-- **Focused** — максимум одно действие в день. Drill 1 `practice` каждые 1-2 дня, не каждый день. Канун интервью — `hype` + отдых, не новый drilling.
-- **Full** — недельная гранулярность, не дневная. 2-3 milestone'а в неделю, кандидат self-schedule'ит внутри.
-
-**Содержимое секции:**
-
-- **Что у тебя есть** (3-5 буллетов): абсолютный путь к этому брифу, абсолютный путь к anchor_phrases_en.md если есть, топ-3 истории готовые к deploy, самый вероятный концерн, ссылка на §10 cheat sheet того же файла.
-- **Что делать дальше** (по режиму, dated + command-attached): triage / focused / full plan.
-- **Одна строка summary** (всегда): `Recommended next command: [command] — [why, 8 words или меньше]`.
-
-**File path requirement:** в «Что у тебя есть» использовать **абсолютные пути**. Это единственное место в брифе, где абсолютные пути обязательны.
-
-## 🗣️ 10. Day-of cheat sheet
-
-Эта секция — **указатель, не пересказ**. Кликабельные markdown-ссылки на якоря секций того же файла, чтобы за 15 минут до звонка кандидат прыгнул в нужное место, а не перечитывал весь бриф.
-
-Формат:
-
-```markdown
-За 15 минут до звонка — пробежать глазами это.
-
-**Что вспомнить:**
-- Твоё позиционирование → [§5](#-5-твоё-позиционирование)
-- Твои истории и anchor phrases → [§6](#-6-вероятные-вопросы-и-истории)
-- Концерны и контры → [§7](#-7-концерны-и-контры)
-- Твои вопросы к интервьюеру → [§8](#-8-твои-вопросы-к-interviewer-name)
-
-**Три anchor-numbers закрепить:**
-- `[number] [unit]` ([что это, 1 строка])
-- `[number] [unit]` ([что это])
-- `[number] [unit]` ([что это])
-
-**Один reminder:**
-- [Одна фраза про энергию / темп / то, что важно держать в голове весь звонок]
-```
-
-**Syntax якорей в markdown:** заголовок `## 📖 5. Твоё позиционирование` → якорь `#-5-твоё-позиционирование` (эмодзи срезается, цифра и слова кириллицей сохраняются, пробелы → дефисы, нижний регистр). Cyrillic-якоря работают в Obsidian (подтверждено эмпирически 2026-05-19). В GitHub markdown viewer'е работают через перцент-энкодинг — Obsidian-формат с кириллицей пишем как есть.
-
-Если интервью — мульти-раундовое и cheat sheet будет открываться на разных раундах, anchor-numbers могут быть разные — это ок, секция переписывается под раунд.
-
----
-
-[конец брифа]
-```
-
-**Section ordering — НЕ переставлять.** Порядок (📖 A–H research front-matter → 🗣️ §5–8 → 📖 §9 → 🗣️ §10) выверен эмпирически: сначала систематический ресёрч (8-шаговый screen как справочная база), потом материал для разговора, потом мета-план, потом cheat sheet как навигация. 8-шаговый ресёрч всегда идёт первым и на полной глубине (RFC 064) — именно он говорит кандидату, стоит ли вообще выделять время на звонок. Любая перестановка ломает «нарратив» брифа.
-
-**Когда что-то не применимо:** если у тебя нет данных про 📖 C (recruiter не дал ничего про интервьюера) — оставь параграф коротким и честно скажи «У нас минимум интел — что знаем: X. Чего не знаем: Y». ⚠️ E (блок «Чего мы не знаем») дублирует это явно. Не выдумывай.
+Close the run with one line: `Recommended next command: [command] — [why, 8 words or fewer]`, and give the absolute path to the konspekt file.

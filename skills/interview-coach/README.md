@@ -418,6 +418,9 @@ interview-coach-skill/
     │   ├── feedback.md
     │   ├── reflect.md
     │   └── help.md
+    ├── conventions.md                  # Behavior rules, grouped by artifact, original numbers kept as aliases
+    ├── decisions-log.md                # Why each rule exists: dates, incidents, candidate quotes
+    ├── konspekt-skeleton.md            # The one description of the konspekt format (section order, story block, two-column tables)
     ├── cross-cutting.md                # Shared modules: gap-handling, signal-reading, differentiation, cultural awareness, psychological readiness, cross-command dependencies
     ├── rubrics-detailed.md             # Scoring anchors, root causes, seniority calibration
     ├── role-drills.md                  # Role-specific drills + interviewer archetypes
