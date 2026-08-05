@@ -558,6 +558,16 @@ The recurring failure (caught 2026-05-14 on Ross Burton prep) is to skip Step 7.
 
 ### Output Schema
 
+> ⚠️ **Схема документа ниже устарела и НЕ является тем, что отдаётся кандидату.**
+> Действующий скелет конспекта — `conventions.md` rule 28 + 28a (story-centric).
+> Что остаётся в силе из этой секции: **исследовательский протокол** — 8-шаговый
+> research screen, fit-assessment, commercial-profile pre-check, real-reported-questions.
+> Это то, что коуч должен **выяснить**. Как это раскладывается в документ — решает rule 28a:
+> четыре справочных раздела `📖` (что за звонок · кто интервьюер · справка по компании ·
+> чего мы не знаем), затем `🗣️ Вводные вопросы` → `🗣️ Истории` → `🗣️ Бюрократия`,
+> затем вопросы кандидата к интервьюеру и `📖 Ловушки`.
+> Буквенные секции A–H, нумерованные 5–10 и таблица-карта внутри документа — не воспроизводить.
+
 **Applies to `kind: screening` and `kind: manager` only.** `kind: exam` has its own deliverable — do not emit this brief for an exam round (sections A, D and 5 are forbidden there; see "Mutual exclusion" at the top of this file).
 
 The prep brief has two parts in a **fixed, strict order — do not reorder**:
@@ -631,7 +641,7 @@ Role-Fit Assessment как **bullets / параграф, не таблица**. 
 
 Под каждым — конкретика, не «Strong / Moderate / Weak» вакуумно.
 
-Затем таблица **requirement → конкретная история storybank** (research step 6). Каждое требование из §B → реальный S###. **Landmines помечены явно** — истории, с которых НЕ начинать (из anti-requirements §B).
+Затем **карта соответствия** requirement → конкретная история storybank (research step 6, rule 17). Каждое требование из §B → реальный S###. **Landmines помечены явно** — истории, с которых НЕ начинать (из anti-requirements §B). ⚠️ Карта — **промежуточный артефакт для утверждения кандидатом**, в сам конспект она отдельной секцией не идёт: по rule 28a требования разъезжаются по блокам историй списком «Закрывает требования».
 
 Verdict (Strong Fit / Investable Stretch / Long-Shot Stretch / Weak Fit) — в одну строку в конце.
 
