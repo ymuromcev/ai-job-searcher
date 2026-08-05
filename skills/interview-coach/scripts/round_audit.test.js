@@ -203,6 +203,30 @@ test("detector 8 — a selling section inside an exam round", () => {
   assert.match(found[0].message, /запрещена/);
 });
 
+test("detector 8 — a story-centric konspekt section inside an exam round", () => {
+  // The konspekt format changed on 2026-08-04; the detector has to catch
+  // selling material written under the new skeleton, not only the old schema.
+  const company = round().replace(
+    "# Plata — раунд",
+    "# Plata — раунд\n\n## 📖 Справка по компании\n\nтекст"
+  );
+  assert.equal(audit.detectForbiddenSection(company).length, 1);
+
+  const intro = round().replace(
+    "# Plata — раунд",
+    "# Plata — раунд\n\n## 🗣️ Вводные вопросы\n\n### Q0. Что ты знаешь о нас"
+  );
+  assert.equal(audit.detectForbiddenSection(intro).length, 1);
+});
+
+test("detector 8 — an exam round that only mentions the words stays clean", () => {
+  const text = round().replace(
+    "# Plata — раунд",
+    "# Plata — раунд\n\nСправка по компании лежит в конспекте под нанимающего, сюда не копируем."
+  );
+  assert.deepEqual(audit.detectForbiddenSection(text), []);
+});
+
 test("detector 8 — a curriculum table inside a screening round", () => {
   const text = round({ kind: "screening" });
   const codes = audit.detectForbiddenSection(text).map((f) => f.code);
