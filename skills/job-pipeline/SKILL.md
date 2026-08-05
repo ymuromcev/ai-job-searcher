@@ -124,6 +124,7 @@ Default mode prints the plan and runs the read-only pull preview. **Pass `--appl
 - **Do not** commit `data/` or `profiles/<id>/` to git — both are in `.gitignore` for a reason. Only `profiles/_example/` is committed.
 - **Do not** mix profiles in one process. Each CLI invocation loads exactly one profile's secrets — never load `JARED_*` and `PAT_*` together.
 - **Do not** generate a new application answer without first running `answer --phase search` and inspecting matches. Reuse before regenerate is the rule for `/job-pipeline answer`.
+- **Do not** write a single line of answer text before the eligibility gate (Step 0) and, for multi-question forms, before the story plan (Step 4a) is approved. A hard blocker found mid-flight has to open the reply, not close it.
 - **Do not** push an answer to the Notion Q&A DB without an explicit user approval signal (`пойдет` / `good` / `submitted` / `залил`). Same shared-state rule as the cover-letter flow.
 - **Do not** invent new Q&A categories. Use one of the 8 canonical names from the DB; the categorizer picks a default automatically.
 
@@ -740,6 +741,21 @@ Prints JSON to stdout:
 
 #### Phase 2 — SKILL (Claude executes)
 
+**Step 0 — Eligibility gate. Runs before anything else, always.**
+
+The user usually pastes only the questions, not the posting. Recon is Claude's job, not a question back to the user. Find the live JD first (WebSearch `<Company> <role>` + fetch the ATS posting), then check these hard blockers against `constraints.md` / `profile.json` / comp memory:
+
+| Blocker            | What to check                                                                                            |
+| ------------------ | -------------------------------------------------------------------------------------------------------- |
+| Work location      | Remote-eligible **state list** vs the candidate's state; onsite/hybrid city; mandatory travel cadence      |
+| Comp               | Posted band vs the candidate's floor and net break-even                                                    |
+| Work authorization  | Sponsorship-only, clearance, citizenship requirements                                                     |
+| Level              | Director / Staff+ / Principal when the target band is PM / Senior PM                                       |
+
+**Report every blocker you find in the opening lines of the reply, before any answer text.** A remote role whose state list excludes the candidate's state is a drop candidate, not a footnote at the bottom of five polished answers. If a blocker fires, say so and ask whether to continue; do not spend the turn drafting.
+
+If the JD cannot be found, say that explicitly and ask the user for the link before drafting.
+
 **Step 1 — Parse the user request.** Extract `<company>`, `<role>`, and `<question>` from the user input. If any is missing or ambiguous, ask the user once.
 
 **Step 2 — Run search phase.** Call the CLI Phase 1 above with the three values.
@@ -756,6 +772,24 @@ Prints JSON to stdout:
 - Files matching `feedback_*.md` under `memory.feedback_dir`
 
 If the `memory` block is absent or any file is missing, fall back to `profiles/<id>/resume_versions.json`.
+
+**Step 4a — Story plan first (образ результата). Mandatory for any form with 2+ questions or any essay-length answer.**
+
+Before writing prose, post the plan and wait for an explicit OK:
+
+```
+Q1 (align stakeholders w/o authority) → S008 + S009 — почему: ...
+Q2 (system integration + trade-offs)  → S010 + S031 — почему: ...
+...
+```
+
+Rules for the plan:
+
+- One line per question: question → story id(s) from the storybank → one clause on why that story answers *this* literal ask.
+- No story reused across two questions in the same form.
+- Pick by the story's `Deploy for` line, not by vibe. If the strongest honest match is still weak, say so plainly in the plan and offer the alternatives rather than stretching a case into a shape it does not have.
+- AI/ML questions: match the JD's own use case wording (pricing / search / recommendations / support automation). Internal AI tooling and AI-native workflow are a different claim than an AI feature in the customer path; label which one you are offering.
+- The user edits the plan; only then do you draft. This is the cheapest place to be wrong.
 
 **Step 5 — Generate the answer.** Apply [Humanizer Rules](#humanizer-rules-prepare--answer-modes) throughout. Default character limit: see `feedback_210_char_limit.md` (210 chars unless the form specifies otherwise; for essay-type questions like Linear's, ignore the default and write a fuller answer).
 
