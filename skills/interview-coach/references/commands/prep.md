@@ -16,7 +16,7 @@ The rest of this file is the `screening` / `manager` flow. For `exam`, stop here
 
 The round file carries `kind:` in its frontmatter, and `kind` decides which sections are even allowed:
 
-- `kind: exam` → the sections `📖 A. Компания за 60 секунд`, `📖 D. Карта соответствия`, and `🗣️ 5. Твоё позиционирование` are **forbidden**. An exam is not a pitch.
+- `kind: exam` → selling material is **forbidden**: a company blurb, a карта соответствия, and a positioning / self-intro block have no place in an exam round. An exam is not a pitch. (`scripts/round_audit.js` detector 8 matches this by the historical section names «Компания за 60 секунд», «Карта соответствия», «Твоё позиционирование».)
 - `kind: screening` / `kind: manager` → a curriculum table, a running dataset, and graded numeric drills are **forbidden**. These flows do not teach a discipline.
 
 A forbidden section inside a round file is a defect caught by `scripts/round_audit.js` (detector 8). The coach is not trusted to remember the boundary — the artifact enforces it.
@@ -340,8 +340,9 @@ Companies have interviewing cultures that transcend individual JDs. When a known
 #### The 8-step research screen (mandatory — this is the 📖 front-matter)
 
 `prep` **always** opens with a systematic 8-step company + role research
-screen. These 8 steps *are* the 📖 sections of the konspekt (see Output
-Schema → 📖 A–H); there is no separate research file. **All 8 steps always
+screen. These 8 steps feed the 📖 sections of the konspekt (see "Deliverable —
+the konspekt" below for the step → section mapping); there is no separate
+research file. **All 8 steps always
 run at full depth**, even for a 15-minute coffee chat — the research is what
 tells the candidate whether the call is worth taking at all. Only the 🗣️
 speech sections downstream scale to the round's length and format. (This
@@ -354,42 +355,48 @@ either **verified** (cite the source) or **unverified** (label it, and for
 numbers say "don't state").
 
 1. **Pull JD from the primary source.** In: JD URL / ATS id / candidate's
-   pasted copy. Out: canonical JD text in 📖 B. Rule: primary source only —
+   pasted copy. Out: canonical JD text — the source the карта
+   соответствия is built from, not a konspekt section. Rule: primary source only —
    if the page is JS-rendered, hit the ATS API (e.g. Workable
    `apply.workable.com/api/v2/accounts/<slug>/jobs/<shortcode>`); reconcile
    against the candidate's copy; **canon = the candidate's copy**; list any
    divergences (salary band especially) explicitly.
 2. **Requirements + anti-requirements.** In: canonical JD. Out: a requirement
-   list *and* an explicit disqualifier list in 📖 B. Rule: extract
+   list *and* an explicit disqualifier list, both feeding the карта
+   соответствия (`conventions.md` 17). Rule: extract
    disqualifiers, not only requirements — this both removes phantom gaps
    (something explicitly *not* required, e.g. "Python/ML not needed") and
    flags any candidate story that trips a disqualifier as a **landmine**
-   (feeds ⚠️ E and story selection in 🗣️ 6).
+   (feeds 📖 Ловушки and story selection in 🗣️ Истории).
 3. **Business model.** In: company site, filings, press. Out: product /
    customer / **how they make money** / why this role is the lever for their
-   economics, in 📖 A. Rule: "how they earn", not "what they do"; add a
+   economics, in 📖 Справка по компании. Rule: "how they earn", not "what they do"; add a
    one-line "how to read it" (e.g. capital-efficient → margin, not
    growth-at-any-cost) and 1–2 honest "why this genuinely interests you" hooks.
 4. **Reputation recheck.** In: Trustpilot / BBB / Glassdoor / forums. Out: a
-   **verified** table + an **unverified** list marked "don't state", in 📖 F.
+   **verified** set for 📖 Справка по компании + an **unverified** list marked
+   "don't state" for 📖 Ловушки.
    Rule: keep competitors' claims out of the sources; confirm every negative
    is about *this* company, not dragged from an adjacent file.
 5. **People.** In: LinkedIn / TheOrg / interviews / press. Out: recruiter +
-   hiring-manager dossier in 📖 C, freshness-checked, with a resonance hook.
+   hiring-manager dossier in 📖 Кто интервьюер, freshness-checked, with a
+   resonance hook and the «что из этого следует» conclusions.
    Rule: press releases go stale — verify the current seat (self-reported
    LinkedIn title > aggregators); mark hypotheses as hypotheses.
 6. **Fit map.** In: requirements (step 2) + storybank. Out: a requirement →
-   specific-story table in 📖 D with **landmines marked explicitly**. Rule:
+   specific-story карта соответствия with **landmines marked explicitly** —
+   an intermediate artifact the candidate approves, never a konspekt section. Rule:
    every claim points to a real storybank story.
 7. **Culture layer.** In: careers video / values / JD language. Out: their
-   exact lexicon + a tie-in to a candidate story, in 📖 G. Rule: mirror the
+   exact lexicon + a tie-in to a candidate story — it sets the tone of the
+   spoken lines and feeds 📖 Ловушки. Rule: mirror the
    tone, **never quote verbatim**.
 8. **Comp / benefits.** In: JD comp + market. Out: a US-comp mechanics read +
-   a what-to-ask list in 📖 H. Rule: net-to-net; equity-liquidity realism for
+   a what-to-ask list, landing in 🗣️ Бюрократия and the candidate's questions. Rule: net-to-net; equity-liquidity realism for
    a private company; flag what the posting omits. Hooks into the `salary`
    command.
 
-Cross-cutting: sensitive topics (a scandal, a lawsuit) go into ⚠️ E held in
+Cross-cutting: sensitive topics (a scandal, a lawsuit) go into 📖 Ловушки held in
 reserve — surface **only if the interviewer raises it**, note the risk
 symmetry, never lead with it.
 
@@ -441,7 +448,7 @@ If the candidate provides company culture context, integrate it into question pr
 
 #### Real reported questions — pull them and fold into the predicted set (even recruiter screens)
 
-Before finalizing predicted questions (Step 8), search for the company's **real reported interview experience** — Glassdoor interview reviews, Reddit, Blind, "[Company] interview questions [role]". This is available even when the interviewer is unknown (recruiter screens), because it surfaces **company-level patterns**, not interviewer-level ones: the actual funnel / stages, recurring real questions, and format warnings (take-homes, exercises). Do NOT treat Glassdoor as a format-only fallback — it is a **primary source of real questions**. Fold any recurring reported question into the predicted set as its own anchor (Rule 1d section), and record the real funnel in 📖 C / ⚠️ E so the candidate knows the stages and the company's ghosting/timeline patterns.
+Before finalizing predicted questions (Step 8), search for the company's **real reported interview experience** — Glassdoor interview reviews, Reddit, Blind, "[Company] interview questions [role]". This is available even when the interviewer is unknown (recruiter screens), because it surfaces **company-level patterns**, not interviewer-level ones: the actual funnel / stages, recurring real questions, and format warnings (take-homes, exercises). Do NOT treat Glassdoor as a format-only fallback — it is a **primary source of real questions**. Fold any recurring reported question into the `Годится на вопросы` list of the story that answers it, and record the real funnel in 📖 Кто интервьюер / 📖 Ловушки so the candidate knows the stages and the company's ghosting/timeline patterns.
 
 Evidence (Splash 2026-07-28): this surfaced "tell me about a conflict with a peer", "a product you built from scratch", and a PR-review take-home — **none derivable from the JD**, all real, and one of them ("conflict with a peer") a genuine gap the JD-only draft had missed. Tier every claim per Company Knowledge Sourcing above: a reported question is Tier 1 when you can point to the review; the specific numbers / anecdotes inside a review stay unverified. This applies to **every** prep, recruiter screens included — the interviewer being unknown is not a reason to skip it, because company-level question patterns don't need the interviewer's name.
 
