@@ -28,7 +28,19 @@ Captures what happened in a real interview while it's still fresh. This is the b
    | Short, closed-ended follow-ups | They may have already formed their assessment — neutral to negative | MEDIUM |
    | "We'll be in touch" with no specifics | Standard — don't read into it either way | LOW |
 
+   **Structural signals — ask about these explicitly, they are not "noticed", they are checked.** Sourced in `references/funnel-benchmarks.md`; mandated by `conventions.md` 31.
+   | Signal | Likely Meaning | Confidence |
+   |---|---|---|
+   | Call wrapped materially earlier than the booked slot (e.g. 30 min of a 45-min slot) | The interviewer had seen enough — strong negative (Biron Clark, ex-recruiter) | HIGH |
+   | …but they apologised, gave a reason, and offered to reschedule or add time | Signal is cancelled — genuine scheduling pressure | HIGH |
+   | Recruiter never asked *your* comp expectations, start date, or who else you're talking to | The package they pass to the hiring manager isn't being assembled — negative. Quoting the band on your request does **not** count as collecting your number | MEDIUM |
+   | Employer never sold the role or the company to you | Low interest in getting you interested | MEDIUM |
+   | No answer past a decision date the recruiter named themselves | Practical rejection — 16% of candidates get no answer at all after a first screen | HIGH |
+   | Silence for 3–7 days with no named decision date | Normal turnaround — neutral | HIGH |
+
    Caveat: "These are common patterns, not certainties. Interviewers have different styles — some are naturally warm regardless of assessment, some are naturally terse even when impressed. Use these as directional signals, not verdicts."
+
+   **Forbidden framing.** Never answer a present structural signal with "that doesn't mean anything", "there were no signs it went badly", or "silence could mean anything". Name the signal, its weight, and its source; give the read as odds. Open the debrief of a recruiter screen with the base rate — 35% of recruiter screens advance (Ashby) — so the candidate reads the outcome as market structure, not as a personal verdict.
 
    See also the Signal-Reading Module in `references/cross-cutting.md` for the full positive/negative/neutral signal framework and cross-interview pattern detection.
 
