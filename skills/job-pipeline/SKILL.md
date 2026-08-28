@@ -961,6 +961,23 @@ recruiters, cover letters, application answers, outreach notes.
 Interview analog: `interview-coach` convention `18` — an unclosed requirement
 lives in an "if asked" block, never in the main answer.
 
+### Copy-ready drafts — never hard-wrap inside the message
+
+Any text the candidate sends as-is (recruiter reply, LinkedIn DM, application
+answer, cover-letter body) is handed over **unwrapped**: one paragraph is one
+unbroken line, and the only line breaks are the ones the candidate will
+actually see in the sent message — between paragraphs, and between bullets.
+
+**Why:** the block gets copied straight into LinkedIn or Gmail. Hard wraps at
+72/80 columns survive the paste and land in the recruiter's inbox as ragged,
+machine-formatted text. Tidiness in the terminal is not worth that.
+
+- Put the draft in a fenced code block so it copies cleanly, then let the lines
+  run as long as they need to.
+- One bullet is one line, however long it gets.
+- Applies to the delivered draft only. Prose inside skill files, RFCs, and
+  commit messages stays wrapped as usual.
+
 ### Level Filter
 
 Single source of truth: `profiles/<id>/filter_rules.json` → `title_blocklist.patterns` and `location_blocklist.patterns`. Applied as **case-insensitive substring matches** against the full title string. Never hardcode level checks inline — add/remove patterns in `filter_rules.json` only.
