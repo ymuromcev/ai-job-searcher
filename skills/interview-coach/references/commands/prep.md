@@ -55,20 +55,30 @@ Why this rule exists: candidates have reported losing track of what the skill is
 
 **Format of the pre-flight message:**
 
-Write in the candidate's preferred narrative language. Keep to 5-8 lines. Cover:
+Write in the candidate's preferred narrative language. Keep it tight — one line per item, two at most for the coverage audit. Cover:
 
 1. **Company and round** — what you understood ("Synoptix AI, Round 2 with Ross Burton, 2026-05-18, 30 minutes, phone screen").
-2. **What the coach will do** — name the discovery and generation steps in user-level terms ("I'll do a quick discovery on the company and a deeper one on Ross's profile, parse the JD, then generate a prep brief").
-3. **Which stories are likely to be used** — list the candidate's S### IDs that the coach expects to draw on ("Likely stories: S001, S005, S007"). If the storybank is empty, say so.
-4. **Output file** — the absolute path of the prep brief that will be created ("Brief will land at `/Users/.../profiles/<id>/interview-coach-state/2026-05-18_synoptix-round2.md`").
-5. **One question to confirm** — *"Sound right, or do you want to change anything before I start?"*
+2. **What the role is actually about** — the two keys of the vacancy (`conventions.md` rule 30) in one line each: **subject** (what product, sold to whom) and **craft** (what kind of product work). In the candidate's own terms, not the JD's phrasing. This is the single most useful line in the message: it is where the candidate finds out whether the coach read the same vacancy they did.
+3. **What the interviewer is there to check** — two or three things, derived from their role and background, not from a generic list ("twenty years of platform work — he'll read any stretch on platform primitives instantly"; "he came up in consumer credit, so the funnel material needs no translation").
+4. **Coverage audit with the deficit named** (`conventions.md` rule 30) — for each key, is coverage full, partial, or absent, and what the nearest real material is. Never soften this. If a key has no real coverage, say the word "none". The audit rides here precisely because a separate step gets skipped.
+5. **Grade mismatch, if any** — if the vacancy's level sits outside the `Seniority band` recorded in Profile, name it once as a fact. **It is not a recommendation to decline.** An interview invitation is not dropped over a title; the candidate simply gets to know before they prepare, not after.
+6. **What the coach will do** — name the discovery and generation steps in user-level terms ("I'll do a quick discovery on the company and a deeper one on Ross's profile, parse the JD, then generate a prep brief").
+7. **Which stories are likely to be used** — list the candidate's S### IDs that the coach expects to draw on ("Likely stories: S001, S005, S007"). If the storybank is empty, say so.
+8. **Output file** — the absolute path of the prep brief that will be created ("Brief will land at `/Users/.../profiles/<id>/interview-coach-state/2026-05-18_synoptix-round2.md`").
+9. **One question to confirm** — *"Sound right, or do you want to change anything before I start?"*
+
+Items 2-5 are the substance; 6-8 are the logistics. If the message is running long, cut the logistics, never the substance. **Do not open the konspekt file before the candidate answers.**
 
 **Example pre-flight (English):**
 
 > Quick sanity check before I run prep:
 >
 > - **Round**: Synoptix AI, Round 2 with Ross Burton (Investigo recruiter), Monday 2026-05-18, 30-minute phone screen.
-> - **What I'll do**: discovery on Synoptix (10 min), interviewer intel on Ross (5 min), JD parse, then a prep brief — Predicted Q&A, story mapping, Day-Of Cheat Sheet, "what to do next" footer.
+> - **What the role is**: subject — a fraud-scoring API sold to mid-size lenders. Craft — platform boundaries: turning what different lender segments need into one shared capability.
+> - **What Ross is checking**: he's a recruiter, not the hiring manager, so it's fit against the brief, money, and whether you're real. No domain depth here.
+> - **Coverage**: craft — full, S007 and S009 are both load-bearing. Subject — partial: you've worked lending funnels but never fraud scoring; nearest real material is the МФО integration in S005.
+> - **Grade**: the JD says Staff, your band says Senior/Lead. Naming it so you know — not a reason to skip the call.
+> - **What I'll do**: discovery on Synoptix (10 min), interviewer intel on Ross (5 min), JD parse, then the konspekt.
 > - **Stories I'll likely use**: S001, S005, S007. If you want me to swap or skip any, say now.
 > - **Output**: `/Users/ymuromcev/Desktop/Claude Code/ai-job-searcher/profiles/jared/interview-coach-state/2026-05-18_ross-burton-round2.md`.
 >
@@ -82,12 +92,14 @@ Write in the candidate's preferred narrative language. Keep to 5-8 lines. Cover:
 
 **When to skip pre-flight:**
 
-- The candidate explicitly said in their message: *"just run prep, no confirmation"* or *"prep with default plan."* Honor that for this run only — do not extend to future runs.
+- The candidate explicitly said in their message: *"just run prep, no confirmation"* or *"prep with default plan."* Honor that for this run only — do not extend to future runs. **Even then, still send items 2-5** (what the role is, what the interviewer checks, the coverage audit, any grade mismatch) and proceed without waiting. What the candidate waived is the wait, not the substance — the coverage audit exists so a deficit surfaces before prep, not on the call.
 - This is a re-run of `prep` within the same session after a confirmed pre-flight, and the scope hasn't changed (e.g., same company, same round, same stories) — say one line *"Re-running prep with the same scope as before"* and proceed.
 
 **Failure mode this rule prevents:**
 
 The coach launches into a 5-10 minute discovery + generation cycle, the candidate sees only intermittent tool calls, and the resulting brief surprises them ("why did you research X?", "where did this story come from?", "I didn't know you'd write to that file"). The pre-flight makes the run a conversation, not a black box.
+
+The second failure mode, added after a real miss: the coach reads the vacancy, forms a view of what the role is about and where the candidate's coverage is thin, and never says any of it out loud — the reading goes straight into the file. The candidate then has to reverse-engineer the coach's reading from the finished konspekt, and a deficit the coach silently noticed (an "if asked" block for an uncovered requirement) can be dropped without anyone noticing. Items 2-5 exist to put that reading in the chat before it goes in the file.
 
 ### Logic
 
