@@ -332,11 +332,34 @@ function renderInner(source, scopes) {
   return s;
 }
 
+// A section heading whose SLOT rendered to nothing (e.g. a resume with no
+// personal projects) would otherwise leave a dangling <h2> in the PDF. The
+// DOCX generator already skips empty sections; mirror that here. A heading is
+// dropped when everything up to the next heading (or the end of the document)
+// is whitespace and structural closing tags only.
+function dropEmptySections(html) {
+  if (typeof html !== "string") return html;
+  const HEADING = /<h2\b[^>]*>[\s\S]*?<\/h2>/gi;
+  const STRUCTURAL = /^(?:\s|<\/(?:div|main|section|body|html)>)*$/i;
+  const headings = [...html.matchAll(HEADING)];
+  const drop = [];
+  headings.forEach((m, i) => {
+    const gapStart = m.index + m[0].length;
+    const gapEnd = i + 1 < headings.length ? headings[i + 1].index : html.length;
+    if (STRUCTURAL.test(html.slice(gapStart, gapEnd))) drop.push(m);
+  });
+  let out = html;
+  for (const m of drop.reverse()) {
+    out = out.slice(0, m.index) + out.slice(m.index + m[0].length);
+  }
+  return out;
+}
+
 function renderHtml(data, templateSource) {
   if (typeof templateSource !== "string") {
     throw new Error("renderHtml: templateSource must be a string");
   }
-  return renderInner(templateSource, [data || {}]);
+  return dropEmptySections(renderInner(templateSource, [data || {}]));
 }
 
 // ----------------------------------------------------------------------------
@@ -603,6 +626,7 @@ module.exports = {
   capRoleBullets,
   compressProjects,
   renderHtml,
+  dropEmptySections,
   runsToHtml,
   prepareTemplateData,
   prepareRoles,
