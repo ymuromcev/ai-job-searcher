@@ -486,3 +486,43 @@ test("generateResumePdf: real Chrome renders template to 1-page PDF", async (t) 
     if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
   }
 });
+
+// ============================================================================
+// dropEmptySections
+// ============================================================================
+
+test("dropEmptySections removes a heading whose section rendered empty", () => {
+  const { dropEmptySections } = mod;
+  const html =
+    "<h2>Experience</h2><div>role</div>\n<h2>Personal Projects</h2>\n\n<h2>Education</h2><div>school</div>";
+  const out = dropEmptySections(html);
+  assert.ok(!out.includes("Personal Projects"));
+  assert.ok(out.includes("Experience"));
+  assert.ok(out.includes("Education"));
+  assert.ok(out.includes("<div>school</div>"));
+});
+
+test("dropEmptySections removes a trailing empty heading before closing tags", () => {
+  const { dropEmptySections } = mod;
+  const html = "<body><h2>Skills</h2><div>sql</div><h2>Projects</h2>\n</body></html>";
+  const out = dropEmptySections(html);
+  assert.ok(!out.includes("Projects"));
+  assert.ok(out.includes("<div>sql</div>"));
+});
+
+test("dropEmptySections keeps headings that have content", () => {
+  const { dropEmptySections } = mod;
+  const html = "<h2>A</h2><div>x</div><h2>B</h2><ul><li>y</li></ul>";
+  assert.equal(dropEmptySections(html), html);
+});
+
+test("renderHtml drops the projects heading when there are no projects", () => {
+  const template =
+    "<h2>Experience</h2>\n<!-- SLOT:roles -->\n<div>{{name}}</div>\n<!-- /SLOT:roles -->\n" +
+    "<h2>Personal Projects</h2>\n<!-- SLOT:projects -->\n<div>{{name}}</div>\n<!-- /SLOT:projects -->\n" +
+    "<h2>Education</h2>\n<div>school</div>";
+  const out = renderHtml({ roles: [{ name: "Alfa" }], projects: [] }, template);
+  assert.ok(out.includes("Alfa"));
+  assert.ok(!out.includes("Personal Projects"));
+  assert.ok(out.includes("Education"));
+});
