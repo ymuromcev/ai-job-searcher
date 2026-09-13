@@ -44,5 +44,16 @@
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.6.0",
     "prettier": "^3.8.3"
+  },
+  "overrides": {
+    "imapflow": {
+      "ip-address": "10.3.1"
+    },
+    "ip-address": {
+      "ip-address": "10.3.1"
+    },
+    "socks": {
+      "ip-address": "10.3.1"
+    }
   }
 }
