@@ -170,3 +170,5 @@ For architecture details see [ARCHITECTURE.md](ARCHITECTURE.md) and [docs/archit
 - Onboarding flows for non-technical users. This is a personal tool
   first; the code is public for transparency, not as a product.
 - Windows support. Targets macOS + Linux (Node 20+).
+
+night-run: private/backlog
