@@ -5,7 +5,7 @@ description: "Multi-profile job-search pipeline — scan ATS adapters, validate 
 
 # job-pipeline — Multi-profile Job Search Pipeline
 
-Single engine, per-profile data. All commands take `--profile <id>`. Currently supported profiles: **jared**.
+Single engine, per-profile data. All commands take `--profile <id>`. Currently supported profiles: **jared**, **lilia** (see `profiles/`; `_example` is the template, not a profile).
 
 ## Commands
 
@@ -24,16 +24,11 @@ If no mode is specified, show this help and ask which to run.
 
 ## Repo location
 
-The tool is installed at `~/.ai-job-searcher/` (fixed path, RFC 048).
-**Run every Bash command in this skill from `~/.ai-job-searcher/`.**
-Either `cd ~/.ai-job-searcher` once at the start of execution, or
-prefix each command with `cd ~/.ai-job-searcher && ...`. All relative
-paths in this document (`data/`, `profiles/`, `engine/`, `scripts/`)
-resolve from there.
+The skill lives inside the repo: `~/.claude/skills/job-pipeline` is a symlink to `<repo>/skills/job-pipeline`, so the repo root is two levels above the skill's real folder. Resolve it once per session: `realpath ~/.claude/skills/job-pipeline/../..` (`realpath` follows the symlink first). On the owner's Mac this is `/Users/ymuromcev/Desktop/Claude Code/ai-job-searcher`; a fresh install via the bootstrap (RFC 048) puts it at `~/.ai-job-searcher/`.
 
-If `~/.ai-job-searcher/` does not exist, the tool is not installed.
-Tell the user: in a fresh Claude Code chat say "install job-searcher
-from https://github.com/ymuromcev/ai-job-searcher".
+**Run every Bash command in this skill from the repo root.** Shell state does not persist between Bash calls, so prefix each command with `cd "<repo>" && ...`, and always quote the path (the owner's path contains a space). All relative paths in this document (`data/`, `profiles/`, `engine/`, `scripts/`) resolve from there.
+
+If neither the symlink nor `~/.ai-job-searcher/` resolves to a repo with `engine/` and `profiles/`, the tool is not installed. Tell the user: in a fresh Claude Code chat say "install job-searcher from https://github.com/ymuromcev/ai-job-searcher".
 
 ---
 
@@ -108,7 +103,7 @@ Default mode prints the plan and runs the read-only pull preview. **Pass `--appl
 ## Failure modes / how to recover
 
 - **`companies pool is empty`** — run `node engine/bin/seed_companies.js` once.
-- **`missing JARED_NOTION_TOKEN`** — load it from `~/.bashrc` / `.env`. Token format: `ntn_…`.
+- **`missing JARED_NOTION_TOKEN`** — load it from `~/.zshrc` / `.env`. Token format: `ntn_…`.
 - **`adapter source mismatch` or `no adapter for source X`** — profile.json references an unknown discovery module. Either remove from `modules` or add the adapter file.
 - **HTTP 429 from greenhouse/lever** — adapters retry with exp backoff up to 3 attempts; on persistent 429, the source is reported in the summary and the rest of the run continues.
 - **CalCareers HTML changed** — sanity warn `ResultCount marker missing` indicates upstream changed; investigate `engine/modules/discovery/calcareers.js` regexes.
@@ -359,7 +354,7 @@ If a Strong row genuinely cannot proceed (e.g. `master_profile.md` is missing an
 - `final_coverage < 85 && last_delta >= 1 && iterations == 6` → `tailorEscalated = true`, `tailorEscalationReason = "iteration_cap_below_threshold"`.
 
 **Per-row fields to attach** (carried into the results.json entry written in Step 10):
-- `tailoredResume` — the final `resume_data` object from the last subagent run. Schema matches `engine/modules/resume/resume_docx.js` input.
+- `tailoredResume` — the final `resume_data` object from the last subagent run. Schema matches `engine/modules/generators/resume_docx.js` input.
 - `tailorCoverage` — final `coverage_pct` (0-100, number).
 - `tailorEscalated` — boolean.
 - `tailorEscalationReason` — one of `"no_growth_below_threshold" | "iteration_cap_below_threshold" | "uncertain_about_fact" | null`.
@@ -459,7 +454,7 @@ Per-row schema (`results[]` entry):
 - `flags` — optional array of advisory strings (e.g. `["bridge-track", "early-stage"]`). Engine does not act on these; they surface in Notion `Notes` for the operator.
 - `clKey` + `clParagraphs` + `clBaseKey` + `resumeVer` + `salaryMin` + `salaryMax` + `city` + `state` + `workFormat` — present **iff** `fitScore` is `"Strong"` or `"Medium"`. For `"Weak"`, omit `clParagraphs` (the cover letter is generated on-demand if the operator triages "actually I want to apply" — RFC 034 §5 option A). The row still goes to Notion; the Cover Letter field in Notion will be empty.
 - **Strong-fit tailoring fields** (BL-123 / RFC 043) — emitted **only** when `fitScore == "Strong"` and Step 6.5 ran:
-  - `tailoredResume: object | null` — structured resume data matching `engine/modules/resume/resume_docx.js` input schema. The engine renders the per-job DOCX/PDF from this object instead of the archetype pick.
+  - `tailoredResume: object | null` — structured resume data matching `engine/modules/generators/resume_docx.js` input schema. The engine renders the per-job DOCX/PDF from this object instead of the archetype pick.
   - `tailorCoverage: number | null` — final coverage score, 0-100.
   - `tailorEscalated: boolean` — true when the loop exited without auto-ship (see escalation decision in Step 6.5).
   - `tailorEscalationReason: "no_growth_below_threshold" | "iteration_cap_below_threshold" | "uncertain_about_fact" | null`.
@@ -839,7 +834,7 @@ Summarize:
 #### Failure modes (answer-specific)
 
 - **`no notion.application_qa_db_id configured`** — profile.json is missing the field. For `jared` it's `ca4fa9e8-b3a6-4ccb-bcc2-3a13ff6b06ae`. For other profiles, create the Q&A DB in Notion first.
-- **`missing JARED_NOTION_TOKEN`** — load it from `~/.bashrc` / `.env`. Same token used by `sync` and `check`.
+- **`missing JARED_NOTION_TOKEN`** — load it from `~/.zshrc` / `.env`. Same token used by `sync` and `check`.
 - **`invalid category`** — the draft includes a category not in the canonical 8. Fix to one of: Behavioral, Technical, Culture Fit, Logistics, Salary, Other, Experience, Motivation. The categorize() helper picks a default automatically.
 - **Notion 400 on create** — usually a missing required property or a Category option that doesn't exist in the DB. Categories must already be in the DB schema; do not invent new ones.
 - **Search returns nothing for a clearly recurring question** — the question text drift may exceed the 120-char dedup window. Look at `partials` for near-matches.
@@ -855,6 +850,44 @@ This is the mirror image of `prepare`: `prepare` scores Inbox jobs *before* an a
 **Use when:** the user pastes a vacancy the company has responded to (a job URL, a JD text block, or a recruiter's reply email) and asks to "analyze / разбери / стоит ли идти / go or pass". Also on explicit `/job-pipeline analyze`.
 
 **Do NOT** create Notion pages, touch `applications.tsv`, write files, or run `prepare`/`tailor`/`interview-coach`. This mode ends at a recommendation. On a `Go` verdict, *offer* the next step (interview-coach brief for the role, tailored CV) but execute only if the user says yes.
+
+#### Off-pipeline tailoring (when the user says yes to a tailored CV)
+
+A vacancy that arrives through `analyze` has **no `applications.tsv` row**, so neither
+`prepare --phase commit` nor `retro-tailor` will ever render it. Claude invokes the
+`resume-tailor-mirror` subagent directly and is therefore the orchestrator — which
+means Claude, not the engine, owns persistence, rendering and the file path.
+
+The subagent returns a JSON payload and nothing else: **it has no `Write` tool, so no
+file exists until Claude creates one.** Do not report a CV as ready off the subagent's
+result alone.
+
+After the loop exits, Claude MUST:
+
+1. **Persist** the final `resume_data` object to the scratchpad as JSON (the subagent
+   cannot; the payload lives only in the task result).
+2. **Render** DOCX + PDF by calling `generateResumeDocx` and `generateResumePdf`
+   (`engine/modules/generators/`) from a one-off script, with
+   `{ layout: profile.resume.layout || "one_page" }`.
+3. **Write them to the canonical location**, never to the scratchpad and never to an
+   ad-hoc filename. Build the path with the same helpers the engine uses —
+   `slugifyCompany` (`engine/core/company_slug.js`), `slugifyRole`
+   (`engine/core/role_slug.js`), and `tailoredResumePath` / `tailoredResumePathPdf`
+   (`engine/modules/tailor/dispatcher.js`) — resolved against the profile root:
+
+   ```
+   profiles/<id>/resumes/tailored/<companySlug>_<roleSlug>_<YYYYMMDD>.{docx,pdf}
+   ```
+
+   Never hand-format this name. If a file already exists at that path, say so and ask
+   before overwriting.
+4. **Check the PDF is 1 page** and warn the user if it is not.
+5. **Hand the PDF to the user** with `SendUserFile`, and state the repo-relative path
+   so the file is findable later.
+
+Still no Notion page and no TSV row — `analyze` stays write-free *with respect to
+pipeline state*. The tailored CV is a user deliverable, not pipeline state, and it
+belongs in `resumes/tailored/` like every other tailored CV.
 
 #### Step 1 — Assemble the vacancy
 

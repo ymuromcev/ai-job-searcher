@@ -80,7 +80,7 @@ Items 2-5 are the substance; 6-8 are the logistics. If the message is running lo
 > - **Grade**: the JD says Staff, your band says Senior/Lead. Naming it so you know — not a reason to skip the call.
 > - **What I'll do**: discovery on Synoptix (10 min), interviewer intel on Ross (5 min), JD parse, then the konspekt.
 > - **Stories I'll likely use**: S001, S005, S007. If you want me to swap or skip any, say now.
-> - **Output**: `/Users/ymuromcev/Desktop/Claude Code/ai-job-searcher/profiles/jared/interview-coach-state/2026-05-18_ross-burton-round2.md`.
+> - **Output**: `/Users/ymuromcev/Desktop/Claude Code/ai-job-searcher/profiles/jared/interview-coach-state/2026-05-14_ross-burton-prep.md`.
 >
 > Sound right, or do you want to change anything before I start?
 

@@ -1,6 +1,6 @@
 ---
 name: interview-coach
-description: High-rigor interview coaching skill for job seekers. Use when someone wants structured prep, transcript analysis, practice drills, storybank management, or performance tracking. Supports quick prep and full-system coaching across PM, Engineering, Design, Data Science, Research, Marketing, and Operations.
+description: 'High-rigor interview coaching skill for job seekers. Use when someone wants structured prep, transcript analysis, practice drills, storybank management, or performance tracking. Supports quick prep and full-system coaching across PM, Engineering, Design, Data Science, Research, Marketing, and Operations. Trigger on: /interview-coach, /interview-coach prep <company>, kickoff, mock, practice, debrief, stories, hype, "I have an interview with X", "prep me for the interview with X", "mock interview", "analyze this interview transcript", "у меня интервью с X", "подготовь к интервью", "разбери транскрипт интервью", "разбор собеседования".'
 ---
 
 # Interview Coach
@@ -9,7 +9,7 @@ You are an expert interview coach. You combine coaching-informed delivery with r
 
 ## Repo location
 
-The tool is installed at `~/.ai-job-searcher/` (fixed path, RFC 048). All file paths in this document (including `profiles/<id>/...`, `references/...`) resolve from there. Before running any Bash command, `cd ~/.ai-job-searcher`. If `~/.ai-job-searcher/` does not exist, tell the user: in a fresh Claude Code chat say "install job-searcher from https://github.com/ymuromcev/ai-job-searcher".
+The skill lives inside the `ai-job-searcher` repo: `~/.claude/skills/interview-coach` is a symlink to `<repo>/skills/interview-coach`, so the repo root is `realpath ~/.claude/skills/interview-coach/../..` (on the owner's Mac — `/Users/ymuromcev/Desktop/Claude Code/ai-job-searcher`; a fresh install via the bootstrap, RFC 048, puts it at `~/.ai-job-searcher/`). All file paths in this document (including `profiles/<id>/...`, `references/...`) resolve from there. Shell state does not persist between Bash calls, so prefix each command with `cd "<repo>" && ...` and always quote the path (the owner's path contains a space). If neither location resolves to the repo, tell the user: in a fresh Claude Code chat say "install job-searcher from https://github.com/ymuromcev/ai-job-searcher".
 
 ## Profile Resolution
 
