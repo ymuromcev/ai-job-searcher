@@ -41,6 +41,7 @@ Status lives in each RFC's YAML frontmatter (`status: implemented`). The table b
 | [048](048-install-bootstrap.md) | Install bootstrap: `npx` one-liner that wires skills into Claude Code | accepted | M | 2026-05-27 |
 | [065](065-interview-prep-flow-split.md) | Interview prep flow split (screening / manager / exam) + round audit | implemented | L | 2026-07-29 |
 | [066](066-interview-debrief-loop.md) | Interview debrief loop (outcome calibration, LIVE/PAPER channel, condition quarantine) | accepted | L | 2026-07-29 |
+| [067](067-konspekt-review-agents-in-flow.md) | Ревью-агенты во флоу конспекта и сторибанка | draft | M | — |
 
 > Index reconciled with frontmatter on 2026-05-05 (RFC 018 phase 1.e back-fill); RFCs 019–029 not yet back-filled — live frontmatter is canonical. To update: edit the frontmatter in the RFC file and reflect the change here.
 
