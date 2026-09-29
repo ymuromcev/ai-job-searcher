@@ -17,6 +17,12 @@
 //     uncertain_facts: Array<{fact, source_hint?, suggested_action?}>,
 //     master_source_hash: string,
 //     escalation_reason: "no_growth_below_threshold" | "uncertain_about_fact",
+//     // Optional (opt-in, set by retro-tailor — BL-139):
+//     job_label?: string,          // overrides the "company role" label
+//     iteration_history?: Array<{n, coverage_pct}> | null,
+//                                  // when the key is present, Details renders
+//                                  // a per-iteration table, or
+//                                  // "(history not provided)" for null/[]
 //   }
 //
 // Exports:
@@ -37,6 +43,51 @@ function formatIterationsLine(iterations) {
   if (list.length === 0) return "(no iterations)";
   const pcts = list.map((it) => `${it.coverage_pct}%`).join(", ");
   return `${pcts} (${list.length} iter${list.length === 1 ? "" : "s"})`;
+}
+
+/**
+ * Label for a record in the summary table, stdout and Details header.
+ * An explicit `job_label` wins; otherwise "company role"; "Job" as last resort.
+ *
+ * @param {object} rec
+ * @returns {string}
+ */
+function jobLabelOf(rec) {
+  const explicit = typeof rec.job_label === "string" ? rec.job_label.trim() : "";
+  if (explicit) return explicit;
+  return `${rec.company || ""} ${rec.target_role || ""}`.trim() || "Job";
+}
+
+/**
+ * Make a string safe for a single markdown table cell: newlines become
+ * spaces and "|" is escaped. Plain labels pass through unchanged.
+ *
+ * @param {string} s
+ * @returns {string}
+ */
+function escapeTableCell(s) {
+  return String(s).replace(/\r\n|\r|\n/g, " ").replace(/\|/g, "\\|");
+}
+
+/**
+ * Render the per-iteration coverage history as a markdown table (Details
+ * section). Empty / missing history renders "(history not provided)" — the
+ * producer did not pass it, which is different from "zero iterations ran".
+ *
+ * @param {Array<{n?: number, coverage_pct: number}>|null} history
+ * @returns {string[]} lines
+ */
+function formatIterationHistoryBlock(history) {
+  const list = Array.isArray(history) ? history.filter((h) => h && typeof h === "object") : [];
+  if (list.length === 0) return ["- Iterations: (history not provided)"];
+  const lines = ["- Iterations:", "", "  | Iter | Coverage |", "  |---|---|"];
+  list.forEach((h, i) => {
+    const n = h.n != null && h.n !== "" ? h.n : i + 1;
+    const pct = Number(h.coverage_pct);
+    lines.push(`  | ${n} | ${Number.isFinite(pct) ? `${pct}%` : "?"} |`);
+  });
+  lines.push("");
+  return lines;
 }
 
 /**
@@ -82,9 +133,13 @@ function formatUncertainSummary(uncertain) {
  */
 function renderRecordDetails(rec) {
   const lines = [];
-  const headerName = `${rec.company || ""} ${rec.target_role || ""}`.trim() || "Job";
+  const headerName = jobLabelOf(rec);
   lines.push(`### ${headerName} (row_key=${rec.row_key || "n/a"})`);
-  lines.push(`- Iterations: ${formatIterationsLine(rec.iterations)}`);
+  if (Object.prototype.hasOwnProperty.call(rec, "iteration_history")) {
+    lines.push(...formatIterationHistoryBlock(rec.iteration_history));
+  } else {
+    lines.push(`- Iterations: ${formatIterationsLine(rec.iterations)}`);
+  }
   lines.push(`- Exit reason: \`${rec.exit_reason || "unknown"}\``);
   lines.push(`- Escalation reason: \`${rec.escalation_reason || "n/a"}\``);
   lines.push(`- Final coverage: ${Number(rec.final_coverage_pct || 0)}%`);
@@ -136,13 +191,13 @@ function renderEscalationReport(records, opts = {}) {
   lines.push("| Job | Final coverage | Exit reason | Missing / Uncertain |");
   lines.push("|---|---|---|---|");
   for (const rec of list) {
-    const jobLabel = `${rec.company || ""} ${rec.target_role || ""}`.trim() || "Job";
+    const jobLabel = jobLabelOf(rec);
     const missing = formatMissingList(rec.missing_high_priority);
     const uncertain = formatUncertainSummary(rec.uncertain_facts);
     const summary =
       [missing !== "(none)" ? missing : "", uncertain].filter(Boolean).join(" | ") || "(none)";
     lines.push(
-      `| ${jobLabel} | ${Number(rec.final_coverage_pct || 0)}% | ${rec.exit_reason || "?"} | ${summary} |`
+      `| ${escapeTableCell(jobLabel)} | ${Number(rec.final_coverage_pct || 0)}% | ${rec.exit_reason || "?"} | ${summary} |`
     );
   }
   lines.push("");
@@ -169,7 +224,7 @@ function renderEscalationStdout(records) {
   lines.push(`Tailor escalations: ${list.length}`);
   lines.push("Job | Coverage | Reason | Hint");
   for (const rec of list) {
-    const jobLabel = `${rec.company || ""} ${rec.target_role || ""}`.trim() || "Job";
+    const jobLabel = jobLabelOf(rec);
     const hint =
       formatUncertainSummary(rec.uncertain_facts) || formatMissingList(rec.missing_high_priority);
     lines.push(
@@ -189,6 +244,9 @@ module.exports = {
   renderEscalationReport,
   renderEscalationStdout,
   formatIterationsLine,
+  formatIterationHistoryBlock,
+  jobLabelOf,
+  escapeTableCell,
   formatMissingList,
   formatUncertainSummary,
   formatTimestamp,
