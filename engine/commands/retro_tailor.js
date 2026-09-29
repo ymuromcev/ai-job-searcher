@@ -74,6 +74,42 @@ function parseSlugFromUrl(source, url) {
   return "";
 }
 
+// --- Escalation record -----------------------------------------------------
+
+/**
+ * Pure: build an escalation record for the retro-tailor MD report (BL-139).
+ *
+ * results.json carries no company / title, so the label is taken from the
+ * TSV row ("<companyName> / <title>"), falling back to the row key. The
+ * per-iteration coverage history comes from `tailorIterationHistory`
+ * ([{n, coverage_pct}]) or, failing that, from
+ * `tailorEscalationDetail.iterations`. With neither, `iteration_history` is
+ * null and the report says "(history not provided)".
+ *
+ * @param {object} r — results.json entry
+ * @param {object} [app] — matching applications.tsv row
+ * @returns {object} escalation record (see escalation_report.js)
+ */
+function buildRetroEscalationRecord(r, app) {
+  const rec = buildEscalationRecord(r);
+  const company = String((app && app.companyName) || rec.company || "").trim();
+  const title = String((app && app.title) || rec.target_role || "").trim();
+  rec.company = company;
+  rec.target_role = title;
+  rec.job_label = [company, title].filter(Boolean).join(" / ") || String((r && r.key) || "");
+
+  const provided = Array.isArray(r && r.tailorIterationHistory) ? r.tailorIterationHistory : [];
+  const history = provided.length > 0 ? provided : rec.iterations;
+  rec.iteration_history =
+    Array.isArray(history) && history.length > 0
+      ? history.map((h, i) => ({
+          n: h && h.n != null ? h.n : i + 1,
+          coverage_pct: h ? h.coverage_pct : undefined,
+        }))
+      : null;
+  return rec;
+}
+
 // --- Candidate identification ----------------------------------------------
 
 /**
@@ -327,7 +363,7 @@ async function runCommit(ctx, deps) {
     // Escalation branch: stash for the MD report, do not mutate TSV or
     // Notion. Mirrors RFC 044 commit semantics exactly.
     if (r.tailorEscalated === true) {
-      escalations.push(buildEscalationRecord(r));
+      escalations.push(buildRetroEscalationRecord(r, app));
       stats.escalated++;
       continue;
     }
@@ -542,6 +578,7 @@ function makeRetroTailorCommand(deps = {}) {
 const command = makeRetroTailorCommand();
 command.makeRetroTailorCommand = makeRetroTailorCommand;
 command.isRetroTailorCandidate = isRetroTailorCandidate;
+command.buildRetroEscalationRecord = buildRetroEscalationRecord;
 command.TAILORED_PREFIX = TAILORED_PREFIX;
 
 module.exports = command;

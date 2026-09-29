@@ -437,6 +437,98 @@ test("commit: escalated row does not touch TSV or Notion, escalation MD written"
   assert.equal(escalationPaths.length, 1);
 });
 
+// --- Escalation report content (BL-139) --------------------------------------
+
+async function runEscalation(resultEntry, appOverrides = {}) {
+  const apps = [
+    makeApp({
+      key: "gh:1",
+      companyName: "Acme Corp",
+      title: "Senior Product Manager",
+      resume_ver: "pm-builder",
+      notion_page_id: "notion-abc",
+      ...appOverrides,
+    }),
+  ];
+  const results = {
+    results: [
+      {
+        key: "gh:1",
+        tailorEscalated: true,
+        tailorEscalationReason: "no_growth_below_threshold",
+        tailorCoverage: 58,
+        ...resultEntry,
+      },
+    ],
+  };
+  const deps = makeDeps(apps, { readFile: () => JSON.stringify(results) });
+  const cmd = makeRetroTailorCommand(deps);
+  const ctx = makeCtx({ flags: { apply: true, resultsFile: "/r.json" } });
+  const code = await cmd(ctx);
+  assert.equal(code, 0);
+  const writes = deps._getWrites();
+  const mdPath = Object.keys(writes).find((p) => /retro-escalations-\d+\.md$/.test(p));
+  assert.ok(mdPath, "escalation MD written");
+  return { md: writes[mdPath], ctx };
+}
+
+test("commit: escalation report labels the row with TSV company / title", async () => {
+  const { md, ctx } = await runEscalation({});
+  assert.match(md, /^\| Acme Corp \/ Senior Product Manager \| 58% \|/m);
+  assert.match(md, /^### Acme Corp \/ Senior Product Manager \(row_key=gh:1\)$/m);
+  // Only the column header may say "Job"; no data row does.
+  assert.doesNotMatch(md, /^\| Job \| \d/m);
+  assert.doesNotMatch(md, /^### Job /m);
+  assert.ok(
+    ctx._lines.some((l) => /Acme Corp \/ Senior Product Manager \| 58%/.test(l)),
+    "stdout summary uses the same label"
+  );
+});
+
+test("commit: escalation label falls back to row key when TSV has no company / title", async () => {
+  const { md } = await runEscalation({}, { companyName: "", title: "" });
+  // makeApp's trailing `...overrides` spread keeps the empty strings.
+  assert.match(md, /^### gh:1 \(row_key=gh:1\)$/m);
+  assert.match(md, /^\| gh:1 \| 58% \|/m);
+});
+
+test("commit: escalation report renders tailorIterationHistory as a table", async () => {
+  const { md } = await runEscalation({
+    tailorIterationHistory: [
+      { n: 1, coverage_pct: 58 },
+      { n: 2, coverage_pct: 58 },
+    ],
+  });
+  assert.match(md, /- Iterations:\n\n {2}\| Iter \| Coverage \|\n {2}\|---\|---\|\n {2}\| 1 \| 58% \|\n {2}\| 2 \| 58% \|/);
+  assert.doesNotMatch(md, /history not provided/);
+  assert.doesNotMatch(md, /no iterations/);
+});
+
+test("commit: escalation history falls back to tailorEscalationDetail.iterations", async () => {
+  const { md } = await runEscalation({
+    tailorEscalationDetail: {
+      iterations: [
+        { n: 1, coverage_pct: 50, missing: ["foo"] },
+        { n: 2, coverage_pct: 61, missing: ["foo"] },
+      ],
+      uncertain_facts: [],
+    },
+  });
+  assert.match(md, /\| Iter \| Coverage \|\n {2}\|---\|---\|\n {2}\| 1 \| 50% \|\n {2}\| 2 \| 61% \|/);
+  assert.doesNotMatch(md, /history not provided/);
+});
+
+test("commit: '|' and newlines in the job label do not break the markdown table", async () => {
+  const { md } = await runEscalation({}, { companyName: "Acme|Labs", title: "PM\nGrowth" });
+  assert.match(md, /^\| Acme\\\|Labs \/ PM Growth \| 58% \|/m);
+});
+
+test("commit: escalation report says '(history not provided)' without iteration history", async () => {
+  const { md } = await runEscalation({});
+  assert.match(md, /^- Iterations: \(history not provided\)$/m);
+  assert.doesNotMatch(md, /no iterations/);
+});
+
 test("commit: Notion failure leaves TSV resume_ver unchanged", async () => {
   const apps = [
     makeApp({
