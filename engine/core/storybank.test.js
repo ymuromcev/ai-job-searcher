@@ -118,3 +118,69 @@ test("parseStorybank: no storybank section returns empty array", () => {
 test("parseStorybank: non-string input throws", () => {
   assert.throws(() => parseStorybank(null), /must be a string/);
 });
+
+// The real bank is hand-edited: rows get appended after a blank line.
+const GAPPED = `## Storybank
+| ID   | Title | Primary Skill | Secondary Skill | Commercial Profile | Earned Secret | Strength |
+|------|-------|---------------|-----------------|--------------------|---------------|----------|
+| S001 | One   | a             | b               | B2C                | x             | seed     |
+
+| S002 | Two   | a             | b               | B2C                | x             | seed     |
+| S003 | Three | a             | b               | B2C                | x             | seed     |
+
+| S004 | Four  | a             | b               | B2C                | x             | seed     |
+
+> A note that ends the table.
+
+| S005 | Not a storybank row | a | b | c | d | seed |
+
+### Story Details
+
+#### S001 — One
+
+| 🇷🇺 Говоришь так | 🇬🇧 English |
+|---|---|
+| Было медленно. | It was slow. |
+| Цикл сжался с недель до часов. | The cycle went from **weeks to hours**. |
+^say-s001
+
+- **Deploy for.** Speed.
+
+#### S002 — Two
+
+| 🇷🇺 Russian | 🇬🇧 English |
+|---|---|
+| **Result.** Выручка 3x. | **Result.** 3x revenue. |
+| **Earned Secret.** Секрет. | **Earned Secret.** A secret. |
+^say-s002
+
+#### S003 — Three
+
+| 🇷🇺 Говоришь так | 🇬🇧 English |
+|---|---|
+^say-s003
+
+#### S004 — Four
+
+| 🇷🇺 Говоришь так | 🇬🇧 English |
+|---|---|
+| Без якоря. | No anchor here. |
+`;
+
+test("parseStorybank: blank lines inside the table do not drop later rows", () => {
+  const stories = parseStorybank(GAPPED);
+  assert.deepEqual(
+    stories.map((s) => s.id),
+    ["S001", "S002", "S003", "S004"]
+  );
+});
+
+test("parseStorybank: say-aloud block takes the closing line as result", () => {
+  const byId = Object.fromEntries(parseStorybank(GAPPED).map((s) => [s.id, s]));
+  assert.equal(byId.S001.result, "The cycle went from weeks to hours.");
+  // A labelled Result row still wins over the closing line.
+  assert.equal(byId.S002.result, "3x revenue.");
+  // Header-only table and a table without the anchor yield no result.
+  assert.equal(byId.S003.result, undefined);
+  assert.equal(byId.S004.result, undefined);
+});
