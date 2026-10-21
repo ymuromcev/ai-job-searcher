@@ -225,8 +225,8 @@ test("prepare-fanout: one payload per row, shared memory.md, JD body in its own 
   const head = JSON.parse(r.out[0]);
   assert.equal(head.rows, 2);
   assert.equal(head.pending, 2);
-  const round = head.round_dir;
-  assert.ok(round.startsWith(path.join(t.profileDir, ".prepare-state", "rounds")));
+  const round = head.rows_dir;
+  assert.equal(round, path.join(t.profileDir, ".prepare-state", "rows"));
   assert.match(fs.readFileSync(path.join(round, "memory.md"), "utf8"), /real achievements/);
   assert.equal(
     fs.readFileSync(path.join(round, "jd", "greenhouse_1.md"), "utf8"),
@@ -235,6 +235,7 @@ test("prepare-fanout: one payload per row, shared memory.md, JD body in its own 
   const p1 = JSON.parse(fs.readFileSync(path.join(round, "payloads", "greenhouse_1.json"), "utf8"));
   assert.equal(p1.row_key, "greenhouse:1");
   assert.equal(p1.result_path, path.join(round, "results", "greenhouse_1.json"));
+  assert.equal(p1.tailor_dir, path.join(round, "tailor", "greenhouse_1"));
   assert.equal(p1.profile_context.companyTier, "A");
   assert.deepEqual(Object.keys(p1.profile_context.resumeVersions.versions), ["Growth"]);
   assert.equal(p1.tailoring.master_profile_path, path.join(t.profileDir, "master_profile.md"));
@@ -250,6 +251,32 @@ test("prepare-fanout: one payload per row, shared memory.md, JD body in its own 
   assert.equal(JSON.parse(again.out[0]).pending, 1);
   assert.equal(JSON.parse(again.out[0]).already_done, 1);
 
+  // A topup rewrites the context (new generatedAt, more rows): judged rows
+  // keep their results. A new fresh batch without greenhouse:1 prunes it.
+  writeJson(path.join(t.profileDir, "prepare_context.json"), {
+    ...CTX,
+    generatedAt: "2026-10-22T06:20:00.000Z",
+    batch: [...CTX.batch, { key: "lever:3", companyName: "Gamma", title: "PM", url: "u3" }],
+  });
+  const topup = JSON.parse((await t.run({ phase: "prepare-fanout" })).out[0]);
+  assert.deepEqual([topup.rows, topup.pending, topup.already_done], [3, 2, 1]);
+  fs.mkdirSync(path.join(round, "tailor", "greenhouse_1"), { recursive: true });
+  writeJson(path.join(t.profileDir, "prepare_context.json"), {
+    ...CTX,
+    generatedAt: "2026-10-23T06:00:00.000Z",
+    batch: [CTX.batch[1]],
+  });
+  const fresh = JSON.parse((await t.run({ phase: "prepare-fanout" })).out[0]);
+  assert.equal(fresh.pending, 1);
+  assert.ok(fresh.pruned >= 4, "payload, jd, result and tailor dir of greenhouse:1 removed");
+  for (const sub of ["payloads", "jd", "results"]) {
+    assert.ok(
+      !fs.readdirSync(path.join(round, sub)).some((n) => n.startsWith("greenhouse_1")),
+      `${sub} pruned`
+    );
+  }
+  assert.deepEqual(fs.readdirSync(path.join(round, "tailor")), []);
+
   assert.equal((await setup().run({ phase: "prepare-fanout" })).code, 1);
 });
 
@@ -257,7 +284,7 @@ test("prepare-collect: writes prepare_results_<ts>.json from valid rows; exit 2 
   const t = setup();
   writeJson(path.join(t.profileDir, "prepare_context.json"), CTX);
   const fan = await t.run({ phase: "prepare-fanout" });
-  const round = JSON.parse(fan.out[0]).round_dir;
+  const round = JSON.parse(fan.out[0]).rows_dir;
 
   const none = await t.run({ phase: "prepare-collect" });
   assert.equal(none.code, EXIT_STOP);
@@ -306,6 +333,10 @@ test("prepare-collect: writes prepare_results_<ts>.json from valid rows; exit 2 
   assert.equal(r2.json.committable, 1);
   assert.equal(r2.json.invalid[0].key, "greenhouse:1");
   assert.match(r2.err.join("\n"), /invalid greenhouse:1: .*clParagraphs/);
+  // …and its result file is removed so the next fan-out re-issues the row.
+  assert.equal(fs.existsSync(path.join(round, "results", "greenhouse_1.json")), false);
+  const refan = JSON.parse((await t.run({ phase: "prepare-fanout" })).out[0]);
+  assert.equal(refan.pending, 1);
 });
 
 test("apply-fanout: one job file per job with open questions; answers dir always exists", async () => {

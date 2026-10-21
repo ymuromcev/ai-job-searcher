@@ -220,7 +220,7 @@ function renderMemoryMarkdown(memory) {
 // One prepare batch entry → the row worker's input (pipeline-fit-evaluator
 // contract, with memory and the JD body moved to files).
 //   ctx: prepare_context.json
-//   opts: { profileId, resumeVersions, companyTiers, paths: { memory, jd, result },
+//   opts: { profileId, resumeVersions, companyTiers, paths: { memory, jd, result, tailor },
 //           masterProfilePath, storybankPath }
 function buildRowPayload(entry, ctx, opts = {}) {
   const tiers = opts.companyTiers || {};
@@ -230,6 +230,7 @@ function buildRowPayload(entry, ctx, opts = {}) {
     result_path: opts.paths && opts.paths.result,
     jd_text_path: opts.paths && opts.paths.jd,
     memory_path: opts.paths && opts.paths.memory,
+    tailor_dir: (opts.paths && opts.paths.tailor) || null,
     jd_status: entry.jdStatus || null,
     jd_structure: entry.jdStructure || null,
     profile_context: {

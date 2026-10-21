@@ -16,7 +16,8 @@
 //   night --profile <id> --phase prepare-fanout
 //     Splits prepare_context.json into one small input file per batch row
 //     (plus a shared memory.md and the JD body per row) under
-//     profiles/<id>/.prepare-state/rounds/<stamp>/, so the orchestrator can
+//     profiles/<id>/.prepare-state/rows/ (one rolling folder; files of rows
+//     no longer in the batch are pruned), so the orchestrator can
 //     hand rows to parallel subagents by path. Rows that already have a
 //     result file are not re-issued.
 //
@@ -24,7 +25,8 @@
 //     Reads the per-row result files, validates each against what
 //     `prepare --phase commit` accepts, and writes
 //     profiles/<id>/prepare_results_<ts>.json. Bad / missing rows are left
-//     out (they stay in Inbox) and listed. Exit 2 when nothing is committable.
+//     out (they stay in Inbox) and listed; an invalid result file is removed
+//     so the next fan-out re-issues the row. Exit 2 when nothing is committable.
 //
 //   night --profile <id> --phase apply-fanout
 //     Splits .apply-state/apply_context.json into one input file per job with
@@ -73,7 +75,7 @@ function makeDefaultDeps() {
     fileExists: (p) => fs.existsSync(p),
     listDir: (p) => (fs.existsSync(p) ? fs.readdirSync(p) : []),
     mkdirp: (p) => fs.mkdirSync(p, { recursive: true }),
-    removeFile: (p) => fs.rmSync(p, { force: true }),
+    removeFile: (p) => fs.rmSync(p, { force: true, recursive: true }),
     appendNightRun: nightLog.appendNightRun,
     stateDir: (env) => defaultStateDir(env),
     now: () => new Date(),
@@ -283,23 +285,57 @@ function storybankPath(root, deps) {
   return null;
 }
 
-function runPrepareFanout(ctx, profile, deps) {
-  const { stdout, stderr } = ctx;
-  const root = profile.paths.root;
+// One rolling folder for the prepare fan-out, not one per context: a manual
+// topup rewrites prepare_context.json (new generatedAt) and must keep the
+// results already judged. Files of rows that left the batch (committed, or
+// from an older round) are pruned on every fan-out, so a result is only ever
+// reused for the same row in the current batch.
+function rowsDirs(root) {
+  const base = path.join(root, PREPARE_STATE_DIR, "rows");
+  return {
+    base,
+    payloads: path.join(base, "payloads"),
+    jd: path.join(base, "jd"),
+    results: path.join(base, "results"),
+    tailor: path.join(base, "tailor"),
+    memory: path.join(base, "memory.md"),
+  };
+}
+
+function pruneRows(dirs, batchKeys, deps) {
+  let removed = 0;
+  for (const dir of [dirs.payloads, dirs.jd, dirs.results, dirs.tailor]) {
+    for (const name of deps.listDir(dir)) {
+      const stem = name.replace(/\.(json|md)$/, "");
+      if (batchKeys.has(stem)) continue;
+      deps.removeFile(path.join(dir, name));
+      removed++;
+    }
+  }
+  return removed;
+}
+
+function readPrepareContext(ctx, root, deps) {
   const context = readJson(path.join(root, "prepare_context.json"), deps);
   if (!context || !Array.isArray(context.batch)) {
-    stderr("error: prepare_context.json missing or has no batch — run prepare --phase pre first");
-    return 1;
+    ctx.stderr(
+      "error: prepare_context.json missing or has no batch — run prepare --phase pre first"
+    );
+    return null;
   }
-  const roundDir = path.join(root, PREPARE_STATE_DIR, "rounds", stamp(context.generatedAt));
-  const dirs = {
-    payloads: path.join(roundDir, "payloads"),
-    jd: path.join(roundDir, "jd"),
-    results: path.join(roundDir, "results"),
-  };
-  for (const d of Object.values(dirs)) deps.mkdirp(d);
-  const memoryPath = path.join(roundDir, "memory.md");
-  deps.writeFile(memoryPath, plan.renderMemoryMarkdown(context.memory));
+  return context;
+}
+
+function runPrepareFanout(ctx, profile, deps) {
+  const { stdout } = ctx;
+  const root = profile.paths.root;
+  const context = readPrepareContext(ctx, root, deps);
+  if (!context) return 1;
+  const dirs = rowsDirs(root);
+  for (const d of [dirs.payloads, dirs.jd, dirs.results, dirs.tailor]) deps.mkdirp(d);
+  const batchKeys = new Set(context.batch.map((e) => plan.safeKey(e.key)));
+  const pruned = pruneRows(dirs, batchKeys, deps);
+  deps.writeFile(dirs.memory, plan.renderMemoryMarkdown(context.memory));
 
   const masterProfile = path.join(root, "master_profile.md");
   const common = {
@@ -324,17 +360,23 @@ function runPrepareFanout(ctx, profile, deps) {
     const payloadPath = path.join(dirs.payloads, `${sk}.json`);
     const payload = plan.buildRowPayload(entry, context, {
       ...common,
-      paths: { memory: memoryPath, jd: jdPath, result: resultPath },
+      paths: {
+        memory: dirs.memory,
+        jd: jdPath,
+        result: resultPath,
+        tailor: path.join(dirs.tailor, sk),
+      },
     });
     deps.writeFile(payloadPath, JSON.stringify(payload, null, 2));
     pending.push({ payloadPath, entry });
   }
 
   printJson(stdout, {
-    round_dir: roundDir,
+    rows_dir: dirs.base,
     rows: context.batch.length,
     pending: pending.length,
     already_done: done,
+    pruned,
     brief: "skills/job-pipeline/references/night_row_worker.md",
   });
   for (const p of pending) {
@@ -346,21 +388,13 @@ function runPrepareFanout(ctx, profile, deps) {
 function runPrepareCollect(ctx, profile, deps) {
   const { stdout, stderr } = ctx;
   const root = profile.paths.root;
-  const context = readJson(path.join(root, "prepare_context.json"), deps);
-  if (!context || !Array.isArray(context.batch)) {
-    stderr("error: prepare_context.json missing or has no batch — run prepare --phase pre first");
-    return 1;
-  }
-  const resultsDir = path.join(
-    root,
-    PREPARE_STATE_DIR,
-    "rounds",
-    stamp(context.generatedAt),
-    "results"
-  );
+  const context = readPrepareContext(ctx, root, deps);
+  if (!context) return 1;
+  const dirs = rowsDirs(root);
+  const pathOf = (key) => path.join(dirs.results, `${plan.safeKey(key)}.json`);
   const byKey = new Map();
   for (const entry of context.batch) {
-    const p = path.join(resultsDir, `${plan.safeKey(entry.key)}.json`);
+    const p = pathOf(entry.key);
     if (!deps.fileExists(p)) continue;
     const parsed = readJson(p, deps);
     byKey.set(entry.key, parsed === null ? "unparseable" : parsed);
@@ -373,6 +407,8 @@ function runPrepareCollect(ctx, profile, deps) {
     unknownTierCompanies: context.unknownTierCompanies || [],
     resumeVersionKeys: new Set(versions),
   });
+  // An invalid result is removed so the next prepare-fanout re-issues the row.
+  for (const bad of c.invalid) deps.removeFile(pathOf(bad.key));
 
   let resultsFile = null;
   if (c.results.length) {
@@ -400,7 +436,11 @@ function runPrepareCollect(ctx, profile, deps) {
     invalid: c.invalid,
     untiered_companies: c.untiered,
   });
-  for (const bad of c.invalid) stderr(`  invalid ${bad.key}: ${bad.problems.join("; ")}`);
+  for (const bad of c.invalid) {
+    stderr(
+      `  invalid ${bad.key}: ${bad.problems.join("; ")} (result removed — re-issued on fan-out)`
+    );
+  }
   if (c.missing.length) stderr(`  no result yet: ${c.missing.length} row(s) — they stay in Inbox`);
   return resultsFile ? 0 : EXIT_STOP;
 }
