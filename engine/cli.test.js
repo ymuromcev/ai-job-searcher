@@ -207,6 +207,7 @@ test("KNOWN_COMMANDS lists exactly the supported commands", () => {
     "check",
     "companies-upsert",
     "indeed-prep",
+    "night",
     "prepare",
     "reclassify",
     "report",
@@ -270,9 +271,60 @@ test("report: --weekly and --out reach the command through ctx.flags", async () 
   assert.equal(report2.calls[0].flags.out, "");
 });
 
-test("board / report are read-only: no lazy sweeps run before them", async () => {
+test("board / report / night are read-only: no lazy sweeps run before them", async () => {
   const { READ_ONLY_COMMANDS } = require("./cli.js");
-  assert.deepEqual([...READ_ONLY_COMMANDS].sort(), ["board", "report"]);
+  assert.deepEqual([...READ_ONLY_COMMANDS].sort(), ["board", "night", "report"]);
+});
+
+// RFC 068 §9 / BL-225: night + apply --deadline flags reach ctx.flags.
+test("night: --target / --stop-at / --max-hours / --stop-reason reach ctx.flags", async () => {
+  const s = makeStreams();
+  const night = spyCommand();
+  const code = await runCli({
+    argv: [
+      "night",
+      "--profile",
+      "jared",
+      "--phase",
+      "start",
+      "--target",
+      "120",
+      "--stop-at",
+      "05:45",
+      "--max-hours",
+      "8.5",
+      "--stop-reason",
+      "deadline",
+    ],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { night },
+  });
+  assert.equal(code, 0);
+  const f = night.calls[0].flags;
+  assert.equal(f.phase, "start");
+  assert.equal(f.target, 120);
+  assert.equal(f.stopAt, "05:45");
+  assert.equal(f.maxHours, 8.5);
+  assert.equal(f.stopReason, "deadline");
+
+  const s2 = makeStreams();
+  const apply = spyCommand();
+  await runCli({
+    argv: [
+      "apply",
+      "--profile",
+      "jared",
+      "--phase",
+      "submit",
+      "--deadline",
+      "2026-10-22T13:30:00Z",
+    ],
+    stdout: s2.stdout,
+    stderr: s2.stderr,
+    commands: { apply },
+  });
+  assert.equal(apply.calls[0].flags.deadline, "2026-10-22T13:30:00Z");
 });
 
 // Regression (RFC 063): ctx.flags is an explicit whitelist, so registering a

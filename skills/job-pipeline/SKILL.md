@@ -126,19 +126,42 @@ Default mode prints the plan and runs the read-only pull preview. **Pass `--appl
 
 ### prepare
 
-`prepare` is **autonomous** (BL-9 Step 5, 2026-05-05; simplified by RFC 034). The user invokes `/job-pipeline prepare` once. Claude orchestrates a multi-iteration loop that calls the CLI repeatedly and judges batches, until either Strong ≥ 30 is met or the Inbox is exhausted. Then a single push to Notion finalizes the result.
+`prepare` is **autonomous** (BL-9 Step 5, 2026-05-05; simplified by RFC 034). The user invokes `/job-pipeline prepare` once. Claude orchestrates a multi-iteration loop that calls the CLI repeatedly and judges batches, until either Strong ≥ `TARGET` is met or the Inbox is exhausted. Then a single push to Notion finalizes the result.
 
 The loop has two CLI phases (fresh + topup), both using the same `prepare_context.json` file. Weak rows go to Notion as-is — there is no weak-fallback re-evaluation phase. (RFC 034 removed `--mode weak-fallback`.)
 
 | Mode | Source pool | When |
 |---|---|---|
 | `--mode fresh` | Inbox rows that pass blocklist / cap / URL-check (the standard pipeline) | First iteration of every run |
-| `--mode topup` | `deferredQueue` (rows that passed filter but didn't fit the previous batch) | Iterations 2–3 if Strong < 30 |
+| `--mode topup` | `deferredQueue` (rows that passed filter but didn't fit the previous batch) | Iterations 2–3 if Strong < `TARGET` |
+
+#### Run parameters — manual run vs. the night
+
+The engine has no cap on batch size (`--batch N`, `--need K` take any number); the size of a run is chosen here.
+
+| Parameter | Manual `/job-pipeline prepare` (default) | Night run ([`night-apply.md`](night-apply.md)) |
+|---|---|---|
+| `TARGET` — the `--batch` of the fresh pre | **30** (or the number the user names) | `prepare_batch` from `night --phase check` (10–40 per round) |
+| What counts toward `TARGET` | Strong rows | — (one round = one fresh pre; `night check` decides whether another round runs) |
+| Iterations (fresh + topups) | ≤ 3 | 1 per round; the night repeats rounds until its own stop condition |
+| Per-row work (Steps 3–8) | fanned out to subagents, see [Parallel row dispatch](#parallel-row-dispatch) | same — always fanned out |
+| Commit | once, at the end | once per round (each round's rows reach `To Apply` and the apply queue right away) |
+
+#### Parallel row dispatch
+
+Per-row judgement (Steps 3, 4, 5.7, 6, **6.5**, 7, 8) is independent between rows, so it runs in parallel subagents — one subagent per row — instead of one long sequential pass. This is what makes a 100-application night possible; a Strong row's tailoring loop alone takes several minutes.
+
+1. `node engine/cli.js night --profile <id> --phase prepare-fanout` — splits `prepare_context.json` into one payload file per row that has no result yet (plus a shared `memory.md` and the JD body per row) under `profiles/<id>/.prepare-state/rows/` (one rolling folder; files of rows no longer in the batch are pruned). The first stdout line is a JSON header; every following line is `<payload path>\t<company> — <title>`. Works with or without a running night.
+2. Launch one `general-purpose` subagent per payload line with the brief [`references/night_row_worker.md`](references/night_row_worker.md) and the payload path. **Batches of 10–20 in parallel**: send one message with that many Agent calls, wait for all of them, then the next batch. The worker does fit (the `pipeline-fit-evaluator` contract), the archetype + cover letter, the full Strong tailoring loop (the `resume-tailor-mirror` contract, Step 6.5 rules unchanged — no early exit), the tier for unknown companies, and writes its own result file. It replies with one JSON line; keep only that line.
+3. `node engine/cli.js night --profile <id> --phase prepare-collect` — validates every result file against the commit contract and writes `profiles/<id>/prepare_results_<ts>.json` (Step 10 is done for you, including `companyTiers`). Rows with a missing or invalid result are listed and stay in `Inbox` for the next run. Exit 2 = nothing committable.
+4. Step 11 commit with that file.
+
+The orchestrating session never reads JD bodies, cover letters or tailored resumes — it moves file paths and one-line summaries, so its context stays small across a night of rounds. Topup iterations (manual runs) re-run step 1: rows already judged keep their result files and are not re-issued.
 
 #### Phase 1 — pre (CLI, called by Claude)
 
 ```
-node engine/cli.js prepare --profile <id> --phase pre --mode <fresh|topup> [--batch 30] [--need K] [--dry-run]
+node engine/cli.js prepare --profile <id> --phase pre --mode <fresh|topup> [--batch TARGET] [--need K] [--dry-run]
 ```
 
 Runs without LLM cost. Outputs `profiles/<id>/prepare_context.json`:
@@ -153,41 +176,43 @@ Runs without LLM cost. Outputs `profiles/<id>/prepare_context.json`:
 When the user invokes `/job-pipeline prepare`, Claude runs the following loop. **Loop logic lives in the SKILL; the engine is stateless.**
 
 ```text
+TARGET = 30 unless the user names a number (night: see night-apply.md)
+
 Step 5 — fresh mode (initialize)
   iteration = 0
   evaluated = []    # flat list of judged rows (each carries fitScore)
-  Run: prepare --phase pre --mode fresh --batch 30
-  Read: profiles/<id>/prepare_context.json
+  Run: prepare --phase pre --mode fresh --batch TARGET
+  Read: the stats block of profiles/<id>/prepare_context.json (not the batch)
 
 Step 6 — topup mode (chase Strong)
   while True:
     iteration += 1
-    new_entries = batch entries we haven't judged yet
-    For each entry in new_entries:
-      run Steps 1, 3, 4, 5, 5.7, 6, 7, 8 (fit + CL gen for Strong/Medium)
-      append to evaluated[]
+    Run: night --phase prepare-fanout        # payloads for rows not judged yet
+    Fan the payloads out to row workers, 10–20 in parallel per batch
+      (each runs Steps 3, 4, 5.7, 6, 6.5, 7, 8 for its row and writes its result file)
+    append the workers' one-line summaries to evaluated[]
 
     # Stop conditions — keep iterating to chase more Strong even if
     # Medium / Weak are plentiful. Selection priority for the chase is
     # Strong; Mediums and Weaks do not satisfy the target.
     strongCount = count of evaluated where fitScore === "Strong"
-    if strongCount >= 30: break
+    if strongCount >= TARGET: break
     if stats.inboxExhausted: break
     if iteration >= 3: break
 
     # Topup — try to find more Strong
-    Run: prepare --phase pre --mode topup --need (30 - strongCount)
-    Re-read prepare_context.json → continue
+    Run: prepare --phase pre --mode topup --need (TARGET - strongCount)
+    Re-read prepare_context.json stats → continue
 
   # Note: no weak-fallback. Weak rows already in `evaluated` are pushed to
   # Notion as-is by the engine. The operator triages Strong / Medium / Weak
   # in Notion. This is the contract change in RFC 034.
 
 Step 7 — push results + commit
-  Step 10: write prepare_results_<timestamp>.json
-    Every entry in `evaluated` becomes a results.evaluated[] row carrying
-    fitScore + fitRationale (+ clParagraphs if Strong/Medium). No
-    `decision` field — the engine pushes every row.
+  Step 10: night --phase prepare-collect → prepare_results_<timestamp>.json
+    Every row with a valid result file becomes a results[] row carrying
+    fitScore + fitRationale (+ clParagraphs if Strong/Medium, + tailor
+    fields if Strong). No `decision` field — the engine pushes every row.
   Step 11: prepare --phase commit --results-file <path>
     Engine writes PDF (when clParagraphs present) + creates Notion page
     + updates TSV atomically per-row. Notion-page-creation owned by
@@ -217,12 +242,14 @@ pushing all 13 evaluated to Notion (4 Strong + 7 Medium + 2 Weak)
 
 - **Do not** create Notion pages inside the iteration loop or in any SKILL step. Notion-page creation is owned by `engine/commands/prepare.js` `runCommit` since RFC 022 (BL-23). The SKILL just writes `results.json` (Step 10) — the engine commit phase handles PDF + Notion + TSV atomically per-row.
 - **Do not** emit a `decision` field on results entries. RFC 034 removed it. Every evaluated row goes to Notion as `To Apply`; the engine owns the push. If a row should not reach Notion, fix the engine pre-filter (`applyPrepareFilter`) — never gate via SKILL prose.
-- **Do not** keep iterating past 3 even if Strong < 30 and Inbox isn't exhausted. The cap is by design — token budget protection.
-- **Do not** stop the loop just because Strong+Medium ≥ 30. Selection priority is Strong; Mediums don't satisfy the target. Stop only on Strong ≥ 30, iter ≥ 3, or `inboxExhausted`.
+- **Do not** keep iterating past 3 even if Strong < `TARGET` and Inbox isn't exhausted. The cap is by design — token budget protection. (The night does not iterate topups at all: it runs fresh rounds under `night --phase check`, which owns the stop conditions.)
+- **Do not** stop the loop just because Strong+Medium ≥ `TARGET`. Selection priority is Strong; Mediums don't satisfy the target. Stop only on Strong ≥ `TARGET`, iter ≥ 3, or `inboxExhausted`.
+- **Do not** judge rows inline in the orchestrating session, and do not paste JD bodies, cover letters or tailored resumes into it. Rows go to row workers by payload path; the orchestrator keeps one summary line per row.
+- **Do not** launch more than 20 row workers at once, and do not start the next batch before the current one has finished.
 - **Do not** terminate the loop early just because iteration N had 0 Strong. Strong from later iterations can still hit the target; keep going until one of the three stop conditions is true.
 - **Do not** invoke `--mode topup` directly without first running `--mode fresh` to seed `prepare_context.json`. Topup exits 1 if the context file is missing.
 
-The reference for each Step (1, 2, 3, 4, 5, 5.7, 6, 7, 8, 9, 10, 11, 12) is below — these describe the per-job evaluation logic that the loop above orchestrates.
+The reference for each Step (1, 2, 3, 4, 5, 5.7, 6, 7, 8, 9, 10, 11, 12) is below — these describe the per-job evaluation logic that the loop above orchestrates. Steps 1 and 3–8 are executed by the row workers (one row each); Steps 2, 5, 10–13 by the orchestrating session.
 
 After the CLI writes `prepare_context.json`, Claude then:
 
@@ -242,7 +269,7 @@ Use those strings directly. If `memory.writingStyle` is `null`, the per-profile 
 Read profiles/<id>/prepare_context.json
 ```
 
-Report stats: `inboxTotal` / `afterFilter` / `inBatch` / `urlAlive` / `urlDead`. Proceed without confirmation — the CLI's `--batch N` flag already gates batch size; Claude does not re-prompt the user. Default is 30; adjust by re-running pre-phase with a different `--batch`.
+Report stats: `inboxTotal` / `afterFilter` / `inBatch` / `urlAlive` / `urlDead`. Proceed without confirmation — the CLI's `--batch N` flag already gates batch size; Claude does not re-prompt the user. Default `TARGET` is 30; adjust by re-running pre-phase with a different `--batch`. Read only the `stats` / `inbox_health` blocks yourself (e.g. `node -e` printing `JSON.stringify(require('./profiles/<id>/prepare_context.json').stats)`); the batch rows go to the row workers.
 
 **Per-row JD payload (RFC 039 / BL-89).** Prefer `batch[i].jdStructure` — a deterministic `{ requirements: string[], responsibilities: string[], salary_text, location_text, full_text_excerpt }` payload produced by the engine's heuristic JD extractor. Read `requirements[]` and `responsibilities[]` directly; use `full_text_excerpt` as the prose fallback when those arrays are empty. The legacy `batch[i].jdText` (raw JD body) is still emitted for one release as a fallback for stale engine builds; if `jdStructure` is absent, fall back to `jdText`. Do not re-fetch the JD when `jdStructure` is present — the engine already extracted it.
 
@@ -293,6 +320,8 @@ After tiering, the engine will persist the assignments to `profile.json.company_
 Read `prepare_context.batch[i].salary` — pass through. Engine computes via `salary_calc.js`.
 
 **Step 6.5 — Strong-fit tailoring loop (per Strong row)**
+
+With [parallel row dispatch](#parallel-row-dispatch) this loop runs inside the row's worker, so Strong rows tailor in parallel with each other (the rules below are unchanged; the worker writes each iteration to `.prepare-state/rows/tailor/<row>/iter-<n>.json`).
 
 For every row classified as `Strong` in Step 4, run an autonomous tailoring loop **instead of** Step 7's archetype pick. Weak / Medium rows skip this step entirely and proceed to Step 7. The loop produces a fully tailored, role-specific structured resume by iterating against a coverage score until either the threshold is hit, growth stalls, or the iteration cap is reached.
 
@@ -446,6 +475,8 @@ What you (SKILL) used to compute in Step 9 now goes into `results.json` `to_appl
 
 **Step 10 — Write results file**
 
+With [parallel row dispatch](#parallel-row-dispatch), `night --phase prepare-collect` writes this file from the row workers' result files — the schema below is what each worker writes for its row and what collect validates.
+
 Write `profiles/<id>/prepare_results_<YYYYMMDD_HHMMSS>.json` ONCE at the end of the run, covering every job evaluated across all loop iterations. Per RFC 034, **every evaluated row is emitted in `results[]` with no `decision` field**. The engine pushes all of them to Notion as `To Apply`.
 
 Per-row schema (`results[]` entry):
@@ -522,7 +553,7 @@ This processes every entry in `results[]`: sets TSV `status="To Apply"`, writes 
 
 Summarize at the user level (BL-11 — what the user sees, not engine internals):
 
-- **Headline**: `pushed N jobs to Notion (Strong: A, Medium: B, Weak: C)`. N = every evaluated row (no top-N cap). If A < 30, mention `loop stopped: <reason>` (`Inbox exhausted` or `iter limit reached`) but still push all evaluated.
+- **Headline**: `pushed N jobs to Notion (Strong: A, Medium: B, Weak: C)`. N = every evaluated row (no top-N cap). If A < `TARGET`, mention `loop stopped: <reason>` (`Inbox exhausted` or `iter limit reached`) but still push all evaluated.
 - **Loop summary**: how many iterations ran. Example: `loop: 2 iterations of fresh+topup`.
 - **CL reuse breakdown**: group by `clBaseKey` — `8 reused affirm_capital, 3 reused chime_growth, 1 written from scratch`. (Weak rows have no CL — exclude from this breakdown.)
 - **Pre-phase skips**: read from `prepare_context.stats.skipReasons` and surface the breakdown verbatim (e.g. `company_cap: 5, title_blocklist: 2, url_dead: 1`). Omit if `{}`.
@@ -842,7 +873,7 @@ Summarize:
 
 ### apply
 
-**The bot submits applications** (RFC 068). Nightly step after `prepare`; also on explicit `/job-pipeline apply`. Three phases, same shape as `prepare`: deterministic CLI → Claude → deterministic CLI. Claude's job is phase 2 only: answer the questions the engine could not, honestly, fast, in parallel.
+**The bot submits applications** (RFC 068). Nightly step after `prepare` (the whole night is [`night-apply.md`](night-apply.md)); also on explicit `/job-pipeline apply`. Three phases, same shape as `prepare`: deterministic CLI → Claude → deterministic CLI. Claude's job is phase 2 only: answer the questions the engine could not, honestly, fast, in parallel.
 
 #### Phase 1 — pre (CLI)
 
@@ -863,7 +894,7 @@ Queue = `To Apply` rows with `fit_score` Strong/Medium, empty `applied_date`, no
 #### Phase 2 — answer the open questions (Claude)
 
 1. Read `apply_context.json`. Work only on `jobs[].unanswered[]`. Never touch `answers[]` (they are deterministic and already correct).
-2. **Fan out: one subagent per job, in parallel batches of 10–20** (target throughput 100 applications per night). Each job subagent gets: the job (company, title, URL), its `unanswered[]`, and the source paths below. It returns `[{label, answer, sources[]}]` or "no honest answer" per question.
+2. **Fan out: one subagent per job, in parallel batches of 10–20** (target throughput 100 applications per night). Each job subagent gets: the job (company, title, URL), its `unanswered[]`, and the source paths below. It returns `[{label, answer, sources[]}]` or "no honest answer" per question. With many jobs, use the [file flow](#apply-file-flow) below so the orchestrating session only moves paths.
 3. **Sources — the only ones allowed** (all under `profiles/<id>/`): `master_profile.md`, `fit_profile.md`, the storybank (`## Storybank` in `interview-coach-state/coaching_state.md`), the `profile.json` `memory` files, and the job posting for company facts. Style: `profile.answer.style_guidance` + [Humanizer Rules](#humanizer-rules-prepare--answer-modes). Never invent a fact to fill a field.
 4. **What to answer.**
    - Required questions: always attempt.
@@ -884,11 +915,23 @@ Queue = `To Apply` rows with `fit_score` Strong/Medium, empty `applied_date`, no
    { "answers": [ { "key": "<job key>", "label": "<question label, verbatim>", "answer": "<text or exact option>", "bank_page_id": "<pageId from push, or null>" } ] }
    ```
 
+<a id="apply-file-flow"></a>
+**File flow (always at night; any time there are more than a handful of jobs).** Same rules as steps 1–7, but every hand-off is a file, so the orchestrating session never holds answer text:
+
+1. `node engine/cli.js night --profile <id> --phase apply-fanout` → one job file per job with open questions under `.apply-state/rounds/<stamp>/jobs/`, each naming its `draft_path`, `review_path`, `answers_path` and `bank_dir`; the `answers/` directory is created even when no job has questions. Stdout: a JSON header (with `answers_dir`, `bank_dir`) and one `<job file>\t<company> — <title> (N open)` line per job.
+2. **Drafters** — one fresh `general-purpose` subagent per job file, 10–20 in parallel per batch. Brief: steps 3–4 above. It reads the job file and the sources, writes `draft_path` = `{"key", "answers": [{"label", "answer", "sources": [{"file", "quote"}]}], "no_honest_answer": ["<label>", …]}` and replies with one line (`drafted N, no answer M`).
+3. **Reviewers** — one *different* fresh subagent per drafted job, same batching. Brief: [`references/apply_truth_review.md`](references/apply_truth_review.md), the job file and the draft. Per answer it decides PASS / FAIL. It writes `review_path` = `{"verdicts": [{"label", "verdict": "PASS|FAIL", "problems": ["…"]}]}`, appends every PASS answer **verbatim** to `answers_path` (`{"answers": [{"key", "label", "answer", "bank_page_id": null}]}`), and for each PASS free-text answer (not a single option like "Yes") writes a bank draft `<bank_dir>/<job>-<n>.json` = `{"company", "role": <job title>, "question": <label>, "answer", "notes": "apply bot, truth-checked"}`. Replies `PASS n / FAIL m`.
+4. **One rewrite** — for jobs with a FAIL only: a fresh drafter reads the draft and the review, rewrites just the failed labels fixing every listed problem, and overwrites `draft_path` with those labels only. A fresh reviewer checks them the same way (PASS → appended to `answers_path` + bank draft; FAIL → dropped). No third attempt.
+5. Bank: `for f in <bank_dir>/*.json; do node engine/cli.js answer --profile <id> --phase push --results-file "$f"; done` — a failed push is logged and never blocks submission.
+6. Submit with `--answers-file <answers_dir>` (the directory). A job whose required question has no PASS answer goes `manual` / `no_honest_answer` by itself.
+
 #### Phase 3 — submit (CLI)
 
 ```
-node engine/cli.js apply --profile <id> --phase submit --answers-file profiles/<id>/.apply-state/answers-<ts>.json [--dry-run] [--concurrency 4]
+node engine/cli.js apply --profile <id> --phase submit --answers-file <answers-<ts>.json | answers dir> [--dry-run] [--concurrency 4] [--deadline <ISO>]
 ```
+
+`--deadline` (the night passes its own): no new form is opened after it; those jobs stay queued for the next run.
 
 For each job whose required questions are all answered: fill, attach resume PDF + cover letter PDF, pre-submit check (every required field filled, files attached), re-check `applied_date`, Submit, wait for the ATS confirmation, screenshot to `.apply-state/shots/<key>.png`. Success → `status=Applied`, `applied_by=bot`, `apply_state=submitted`, Notion status Applied. No confirmation → `failed` (never retried automatically). Captcha / login / email code / unexpected screen → `manual` with reason. `--dry-run` stops before the Submit click and keeps a screenshot of the filled form.
 

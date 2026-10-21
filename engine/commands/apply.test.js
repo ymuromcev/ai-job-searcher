@@ -638,6 +638,15 @@ test("alreadyApplied guard", () => {
   assert.equal(alreadyApplied({ status: "To Apply", apply_state: "submitted" }), "already_applied");
   assert.equal(alreadyApplied({ status: "No Response" }), "status_No_Response");
   assert.equal(alreadyApplied({ status: "To Apply", applied_date: "" }), null);
+  // A submit run that died after the click: a re-run must not click again.
+  assert.equal(
+    alreadyApplied({
+      status: "To Apply",
+      apply_state: "queued",
+      apply_note: "submitting:2026-10-22T08:00:00.000Z",
+    }),
+    "interrupted_submit"
+  );
 });
 
 test("loadAnswersFile groups answers by job key and drops empty ones", () => {
@@ -820,4 +829,109 @@ test("pre: aggregator 404 from fetch is re-checked in the browser", async () => 
   // Browser blocked: fetch's 404 stands.
   assert.equal(skipped.blk, "url_dead");
   assert.equal(h.log.filter((l) => l[0] === "viaPage").length, 3);
+});
+
+// ---- night run support (BL-225) ---------------------------------------------
+
+test("pre: writes a stamped apply_pre-<ts>.json with the keys it looked at", async () => {
+  const h = harness({
+    apps: [
+      row({ key: "gh1", companyName: "Acme", url: GH_URL }),
+      row({ key: "wd", companyName: "Epsilon", url: "https://epsilon.wd5.myworkdayjobs.com/j/1" }),
+      row({ key: "dead", companyName: "Zeta", url: "https://grnh.se/gone" }),
+    ],
+    files: [RESUME],
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const name = [...h.disk.keys()].find((k) => /apply_pre-.*\.json$/.test(k));
+  assert.ok(name, "stamped pre summary written");
+  assert.equal(path.dirname(name), path.join(ROOT, ".apply-state"));
+  const pre = JSON.parse(h.disk.get(name));
+  assert.equal(pre.generated_at, "2026-10-21T08:00:00.000Z");
+  assert.equal(pre.dry_run, false);
+  assert.deepEqual(pre.jobs, [{ key: "gh1" }]);
+  assert.deepEqual(pre.manual, [
+    { key: "wd", reason: "unsupported_ats:epsilon.wd5.myworkdayjobs.com" },
+  ]);
+  assert.deepEqual(pre.skipped, [{ key: "dead", reason: "url_dead" }]);
+});
+
+test("submit --deadline: no form is opened after the deadline; rows stay queued", async () => {
+  const h = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL, apply_state: "queued" })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers: [WHY("gh1")],
+  });
+  // harness clock: 2026-10-21T08:00:00Z
+  const code = await h.run({
+    phase: "submit",
+    answersFile: "/fake/answers.json",
+    deadline: "2026-10-21T07:59:00Z",
+  });
+  assert.equal(code, 0);
+  assert.equal(h.log.filter((l) => l[0] === "open").length, 0);
+  const r = h.store.apps.find((a) => a.key === "gh1");
+  assert.equal(r.apply_state, "queued");
+  assert.equal(r.apply_note, "");
+  assert.equal(r.status, "To Apply");
+  assert.match(h.out.join("\n"), /1 left for the next run: deadline/);
+  const results = [...h.disk.entries()].find(([k]) => /apply_results-/.test(k));
+  assert.equal(JSON.parse(results[1]).results[0].reason, "deadline");
+
+  // Before the deadline the job goes out as usual.
+  const h2 = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers: [WHY("gh1")],
+  });
+  await h2.run({
+    phase: "submit",
+    answersFile: "/fake/answers.json",
+    deadline: "2026-10-21T09:00:00Z",
+  });
+  assert.equal(h2.store.apps[0].status, "Applied");
+
+  const h3 = submitHarness({ apps: [], keys: [], answers: [] });
+  assert.equal(
+    await h3.run({ phase: "submit", answersFile: "/fake/answers.json", deadline: "soon" }),
+    1
+  );
+  assert.match(h3.err.join("\n"), /--deadline must be an ISO timestamp/);
+});
+
+test("submit: --answers-file may be a directory of per-job answer files", async () => {
+  const h = submitHarness({
+    apps: [
+      row({ key: "a", companyName: "Acme", url: GH_URL }),
+      row({ key: "b", companyName: "Beta", url: GH2_URL }),
+    ],
+    keys: [
+      ["a", GH_URL, "Acme"],
+      ["b", GH2_URL, "Beta"],
+    ],
+    answers: [],
+  });
+  const dir = "/fake/round/answers";
+  h.disk.set(dir, "<dir>");
+  h.disk.set(`${dir}/a.json`, JSON.stringify({ answers: [WHY("a")] }));
+  h.disk.set(`${dir}/b.json`, JSON.stringify({ answers: [WHY("b")] }));
+  h.deps.isDirectory = (p) => p === dir;
+  h.deps.listDir = () => ["b.json", "a.json", ".DS_Store", "notes.txt"];
+  assert.equal(await h.run({ phase: "submit", answersFile: dir }), 0);
+  assert.deepEqual(
+    h.store.apps.map((r) => r.status),
+    ["Applied", "Applied"]
+  );
+});
+
+test("loadAnswersFile: an empty directory is valid (deterministic answers only)", () => {
+  const deps = {
+    fileExists: () => true,
+    isDirectory: () => true,
+    listDir: () => [],
+    readFile: () => {
+      throw new Error("no files to read");
+    },
+  };
+  assert.equal(loadAnswersFile("/empty", deps).size, 0);
 });

@@ -29,12 +29,15 @@ const KNOWN_COMMANDS = [
   "board",
   "report",
   "apply",
+  "night",
 ];
 
-// Commands that only read profile state (RFC 068 §8 / §10). The lazy
-// auto-Dead / auto-No-Response sweeps write the TSV and Notion, so they are
-// skipped for these — opening the registry must never change data.
-const READ_ONLY_COMMANDS = new Set(["board", "report"]);
+// Commands that never write applications.tsv / Notion (RFC 068 §8 / §10). The
+// lazy auto-Dead / auto-No-Response sweeps write the TSV and Notion, so they
+// are skipped for these — opening the registry must never change data, and
+// `night` (only its own lock / log / fan-out files) is polled many times a
+// night, where a sweep on every call would only add Notion traffic.
+const READ_ONLY_COMMANDS = new Set(["board", "report", "night"]);
 
 const PARSE_OPTIONS = {
   options: {
@@ -80,6 +83,12 @@ const PARSE_OPTIONS = {
     // `apply` (RFC 068).
     "answers-file": { type: "string" },
     concurrency: { type: "string" },
+    deadline: { type: "string" },
+    // `night` (RFC 068 §9, BL-225).
+    target: { type: "string" },
+    "stop-at": { type: "string" },
+    "max-hours": { type: "string" },
+    "stop-reason": { type: "string" },
   },
   allowPositionals: true,
   strict: true,
@@ -152,6 +161,12 @@ Commands:
              answers the open questions; --phase submit fills, submits and
              marks Applied. --dry-run stops before the Submit click.
              See RFC 068.
+  night      Rails for the unattended nightly run (skills/job-pipeline/
+             night-apply.md): lock + deadline (start), what to do next
+             (check), per-row / per-job fan-out files for parallel
+             subagents (prepare-fanout, prepare-collect, apply-fanout), and
+             one line per night in .health/apply_runs.jsonl (finish).
+             Never writes applications.tsv or Notion. See RFC 068 §9 / §11.
 
 Flags:
   --profile <id>       Profile id (required for all commands). Lowercase, alphanum + - _.
@@ -227,11 +242,26 @@ apply flags:
   --phase <pre|submit>   Required.
   --limit <N>            pre: cap the queue at N jobs (newest first).
   --answers-file <path>  Required for --phase submit. JSON written by the skill:
-                         {"answers":[{"key","label","answer","bank_page_id"}]}.
+                         {"answers":[{"key","label","answer","bank_page_id"}]},
+                         or a directory of such files (one per job — the
+                         night run's answers/ folder; may be empty).
   --concurrency <N>      Parallel browser contexts (default 4; at most one
                          open form per ATS tenant).
+  --deadline <ISO>       submit: start no new form after this time; the rest
+                         stay queued for the next run (outcome "deadline").
   --dry-run              pre: no TSV writes. submit: everything except the
                          Submit click; keeps a screenshot of the filled form.
+
+night flags:
+  --phase <start|check|prepare-fanout|prepare-collect|apply-fanout|finish>
+                         Required. check exits 2 when the night must stop;
+                         start exits 3 when another night holds the lock.
+  --target <N>           start: applications to aim for tonight (default 100).
+  --stop-at <HH:MM>      start: local time to stop starting new work
+                         (default 06:30).
+  --max-hours <N>        start: hard cap on the run length (default 10).
+  --stop-reason <text>   finish: why the night ended (deadline, target_reached,
+                         queue_empty, usage_budget, scan_failed, …).
 
 answer flags:
   --phase <search|push>  Required. "search" looks up existing Q&A by company+role+question
@@ -300,6 +330,7 @@ function defaultCommands() {
     board: require("./commands/board.js"),
     report: require("./commands/report.js"),
     apply: require("./commands/apply.js"),
+    night: require("./commands/night.js"),
   };
 }
 
@@ -381,6 +412,12 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
       // apply (RFC 068)
       answersFile: parsed.values["answers-file"] || "",
       concurrency: parsed.values.concurrency ? parseInt(parsed.values.concurrency, 10) : null,
+      deadline: parsed.values.deadline || "",
+      // night (RFC 068 §9, BL-225)
+      target: parsed.values.target ? parseInt(parsed.values.target, 10) : null,
+      stopAt: parsed.values["stop-at"] || "",
+      maxHours: parsed.values["max-hours"] ? Number(parsed.values["max-hours"]) : null,
+      stopReason: parsed.values["stop-reason"] || "",
     },
     env,
     stdout: writeOut,

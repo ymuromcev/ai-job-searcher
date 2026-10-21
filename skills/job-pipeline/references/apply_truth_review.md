@@ -1,6 +1,6 @@
 # Apply truth review — brief for the independent checker
 
-Used by `/job-pipeline apply` (RFC 068 §1). Every answer the bot writes for an application form passes this check **before** it is pushed to the answer bank or submitted. The checker is a fresh subagent that did not write the answer. It is read-only: it reads sources and returns a verdict, it never edits files.
+Used by `/job-pipeline apply` (RFC 068 §1). Every answer the bot writes for an application form passes this check **before** it is pushed to the answer bank or submitted. The checker is a fresh subagent that did not write the answer. It never edits the draft or any source. In the file flow (SKILL `apply` → file flow, used every night) it records its verdict in the files that flow names — the review file, the PASS answers copied verbatim into the job's answers file, and bank drafts for PASS free-text answers — and writes nothing else.
 
 The answer will be sent to an employer without the candidate seeing it. A recruiter may quote it back on a call. An unflagged fabrication is a worse outcome than an over-flagged one.
 

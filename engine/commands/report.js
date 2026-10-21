@@ -2,7 +2,8 @@
 //
 //   node engine/cli.js report --profile <id> --weekly [--out <dir>]
 //
-// Reads applications.tsv (read-only), builds the weekly stats for today and
+// Reads applications.tsv and .health/apply_runs.jsonl (read-only), builds the
+// weekly stats for today (nightly runs included) and
 // writes a self-contained HTML page `weekly-<YYYY-MM-DD>.html` into <dir>.
 // Default <dir>: $AI_JOB_SEARCHER_DATA_DIR/reports, else <repo>/data/reports.
 // Prints the written path. Re-running the same day overwrites that day's page.
@@ -15,6 +16,7 @@ const applications = require("../core/applications_tsv.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 const { buildWeeklyReport, renderWeeklyHtml } = require("../core/weekly_report.js");
 const { todayLocalISO } = require("../core/auto_dead_sweep.js");
+const { readNightRuns, nightRunsPath } = require("../core/night_runs_log.js");
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 
@@ -46,7 +48,8 @@ function makeReportCommand(overrides = {}) {
     const { apps } = deps.loadApplications(profile.paths.applicationsTsv);
 
     const today = deps.today();
-    const report = buildWeeklyReport(apps, today);
+    const nights = readNightRuns(nightRunsPath(profile.paths.root));
+    const report = buildWeeklyReport(apps, today, { nights });
     const html = renderWeeklyHtml(report, { profileId: profile.id, generatedAt: deps.now() });
 
     const outDir = flags.out ? path.resolve(flags.out) : defaultReportsDir(env);
