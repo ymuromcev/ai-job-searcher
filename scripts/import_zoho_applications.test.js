@@ -64,25 +64,41 @@ test("parseArgs: defaults to dry-run, validates --since and --plan", () => {
     profile: "x",
     since: "",
     mbox: "",
+    folders: [],
+    exportMessages: "",
+    extracted: "",
     apply: false,
     plan: "",
     help: false,
   });
+  assert.deepEqual(parseArgs(["--profile", "x", "--folders", "INBOX, Rejections"]).folders, [
+    "INBOX",
+    "Rejections",
+  ]);
+  assert.throws(
+    () => parseArgs(["--profile", "x", "--export-messages", "m.json", "--apply"]),
+    /only exports/
+  );
+  assert.throws(
+    () => parseArgs(["--profile", "x", "--extracted", "e.json", "--mbox", "a.mbox"]),
+    /reads no mail/
+  );
   assert.throws(() => parseArgs([]), /--profile/);
   assert.throws(() => parseArgs(["--profile", "x", "--since", "03/01/2025"]), /YYYY-MM-DD/);
   assert.throws(() => parseArgs(["--profile", "x", "--plan", "p.json"]), /only used with --apply/);
   assert.throws(() => parseArgs(["--profile", "x", "--bogus"]), /unknown argument/);
 });
 
-test("pickFolders: INBOX plus applied / jobs / applications folders", () => {
-  const folders = pickFolders([
-    { path: "INBOX", name: "INBOX" },
+test("pickFolders: every selectable folder by default, --folders override", () => {
+  const list = [
     { path: "Sent", name: "Sent" },
+    { path: "INBOX", name: "INBOX" },
+    { path: "Jobs", name: "Jobs", flags: new Set(["\\Noselect"]) },
     { path: "Jobs/Applied", name: "Applied" },
-    { path: "Applications", name: "Applications" },
-    { path: "Spam", name: "Spam" },
-  ]);
-  assert.deepEqual(folders, ["INBOX", "Jobs/Applied", "Applications"]);
+    { path: "Rejections", name: "Rejections" },
+  ];
+  assert.deepEqual(pickFolders(list), ["INBOX", "Sent", "Jobs/Applied", "Rejections"]);
+  assert.deepEqual(pickFolders(list, ["rejections", "Applied"]), ["Jobs/Applied", "Rejections"]);
 });
 
 test("isAuthError recognises imapflow auth failures", () => {
@@ -250,7 +266,7 @@ function fixture(name) {
   return fs.readFileSync(path.join(FIXTURES, name), "utf8");
 }
 
-test("IMAP: falls back to imappro on auth failure, reads INBOX + job folders read-only", async () => {
+test("IMAP: falls back to imappro on auth failure, reads every folder read-only", async () => {
   const { profilesDir } = makeProfile();
   const { factory, calls } = fakeImapFactory({
     failAuthOn: ["imap.zoho.com"],
@@ -273,17 +289,17 @@ test("IMAP: falls back to imappro on auth failure, reads INBOX + job folders rea
   const locks = calls.filter((c) => c[0] === "lock");
   assert.deepEqual(
     locks.map((c) => c[1]),
-    ["INBOX", "Jobs/Applied"]
+    ["INBOX", "Jobs/Applied", "Spam"]
   );
   for (const l of locks) assert.deepEqual(l[2], { readOnly: true });
-  assert.equal(calls.filter((c) => c[0] === "release").length, 2);
+  assert.equal(calls.filter((c) => c[0] === "release").length, 3);
   const search = calls.find((c) => c[0] === "search");
   assert.ok(search[2].since instanceof Date);
   assert.equal(res.plan.source, "imap:imappro.zoho.com");
-  assert.equal(res.plan.stats.scanned, 3);
+  assert.equal(res.plan.stats.scanned, 4); // Spam is read too: every folder by default
   assert.equal(res.plan.stats.filtered, 1);
   assert.equal(res.plan.stats.matchedRows, 1);
-  assert.equal(res.plan.stats.newRows, 1);
+  assert.equal(res.plan.stats.newRows, 2);
   assert.equal(calls.at(-1)[0], "logout");
 });
 
@@ -322,4 +338,123 @@ test("IMAP: a non-auth connect error does not try the fallback host", async () =
 test("--apply pushes the new status to Notion for matched rows with a page", () => {
   assert.ok(notionCalls.length > 0, "expected at least one Notion status update");
   for (const c of notionCalls) assert.ok(c.pageId && c.status);
+});
+
+test("--export-messages writes compact records under .legacy-import and builds no plan", async () => {
+  const { profilesDir, root, tsvPath } = makeProfile();
+  const before = fs.readFileSync(tsvPath, "utf8");
+  const res = await quietRun({
+    argv: ["--profile", PROFILE, "--mbox", FIXTURES, "--export-messages", "../../escape.json"],
+    profilesDir,
+  });
+  assert.equal(res.exportPath, path.join(root, ".legacy-import", "escape.json"));
+  assert.equal(res.plan, undefined);
+  assert.equal(fs.readFileSync(tsvPath, "utf8"), before);
+  assert.equal(fs.readdirSync(path.join(root, ".legacy-import")).length, 1, "no plan file");
+  const records = JSON.parse(fs.readFileSync(res.exportPath, "utf8"));
+  assert.equal(records.length, 10);
+  const lever = records.find((r) => r.subject === "Thank you for your application to Globex");
+  assert.match(lever.id, /^[0-9a-f]{16}$/);
+  assert.equal(lever.date, "2025-03-04");
+  assert.deepEqual(lever.from, { name: "Globex", address: "no-reply@hire.lever.co" });
+  assert.match(lever.to, /pat\.example@example\.com/);
+  assert.equal(lever.status, "Applied");
+  assert.doesNotMatch(lever.excerpt, /<p>|&nbsp;/);
+  assert.match(lever.excerpt, /Sr\. Product Manager - Payments position at\sGlobex/);
+  assert.equal(records.find((r) => /more new jobs/.test(r.subject)).status, "Filtered");
+  for (const r of records) assert.ok(r.excerpt.length <= 1500);
+});
+
+test("--extracted builds the plan from LLM records (no mail read)", async () => {
+  const { profilesDir, tsvPath } = makeProfile();
+  const before = fs.readFileSync(tsvPath, "utf8");
+  const file = path.join(profilesDir, "extracted.json");
+  const rec = (id, company, title, status, date, extra = {}) => ({
+    id,
+    company,
+    title,
+    status,
+    date,
+    ...extra,
+  });
+  fs.writeFileSync(
+    file,
+    JSON.stringify([
+      rec("a1", "Acme", "Senior Product Manager, Growth", "Applied", "2025-03-03"),
+      rec("a2", "Acme", "Senior Product Manager, Growth", "Rejected", "2025-03-24"),
+      rec("b1", "Globex", "", "Applied", "2025-03-04"),
+      rec("c1", "Initech", "Product Manager", "Applied", "2025-03-05", { note: "linkedin" }),
+      rec("n1", "", "", "Ignore", "2025-03-06"),
+    ])
+  );
+  const res = await quietRun({
+    argv: ["--profile", PROFILE, "--extracted", file],
+    profilesDir,
+    makeImapClient: () => {
+      throw new Error("must not connect");
+    },
+  });
+  assert.equal(fs.readFileSync(tsvPath, "utf8"), before);
+  const s = res.plan.stats;
+  assert.equal(s.ignored, 1);
+  assert.equal(s.matchedRows, 1);
+  assert.equal(s.newRows, 2);
+  assert.equal(s.companyOnlyRows, 1);
+  assert.equal(res.plan.source, "extracted:extracted.json");
+  assert.equal(res.plan.updates[0].patch.status, "Rejected");
+  const initech = res.plan.appends.find((a) => a.companyName === "Initech");
+  assert.equal(initech.status, "Applied");
+  assert.equal(initech.applied_date, "2025-03-05");
+  assert.equal(initech.apply_note, "linkedin:2025-03-05");
+  const globex = res.plan.appends.find((a) => a.companyName === "Globex");
+  assert.equal(globex.title, "");
+  assert.equal(globex.status, "Applied");
+  assert.match(res.output, /ignored: 1/);
+});
+
+test("IMAP: a dropped connection mid-folder reconnects and fetches only the rest", async () => {
+  const { profilesDir } = makeProfile();
+  const box = [
+    fixture("01_greenhouse_ack_acme.eml"),
+    fixture("02_lever_ack_globex.eml"),
+    fixture("03_ashby_ack_initech.eml"),
+  ];
+  let connects = 0;
+  let dropped = false;
+  const fetched = [];
+  const factory = () => ({
+    async connect() {
+      connects += 1;
+    },
+    async logout() {},
+    async list() {
+      return [{ path: "INBOX", name: "INBOX" }];
+    },
+    async getMailboxLock() {
+      return { release() {} };
+    },
+    async search() {
+      return [1, 2, 3];
+    },
+    async *fetch(uids) {
+      for (const uid of uids) {
+        if (uid === 2 && !dropped) {
+          dropped = true;
+          throw new Error("Connection not available");
+        }
+        fetched.push(uid);
+        yield { uid, source: Buffer.from(box[uid - 1]), internalDate: new Date(NOW) };
+      }
+    },
+  });
+  const res = await quietRun({
+    argv: ["--profile", PROFILE, "--folders", "INBOX"],
+    profilesDir,
+    env: { TESTPROF_ZOHO_USER: "u", TESTPROF_ZOHO_APP_PASSWORD: "p" },
+    makeImapClient: factory,
+  });
+  assert.equal(connects, 2);
+  assert.deepEqual(fetched, [1, 2, 3]);
+  assert.equal(res.plan.stats.scanned, 3);
+  assert.match(res.output, /reconnecting/);
 });
