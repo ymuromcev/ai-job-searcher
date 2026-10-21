@@ -484,3 +484,146 @@ test("composition: plain title falls through to locations check", () => {
   const d = composeTitleDecision("Lead PM (Hybrid SF)", { mode: "us-wide" });
   assert.strictEqual(d.reject, false);
 });
+
+// --- Mode: home_state_or_remote (RFC 068 §3) -------------------------------
+
+const HSR = { mode: "home_state_or_remote", home_state: "CA", blocklist: [] };
+
+function hsr(locations, meta) {
+  return enforceGeo(locations, HSR, meta);
+}
+
+test("home_state_or_remote: 'San Francisco, CA' passes (home state, any format)", () => {
+  assert.deepStrictEqual(hsr(["San Francisco, CA"]), {
+    ok: true,
+    reason: null,
+    matchedBy: "home_state:CA",
+  });
+});
+
+test("home_state_or_remote: full state name 'California' passes", () => {
+  assert.strictEqual(hsr(["California"]).ok, true);
+  assert.strictEqual(hsr(["Los Angeles, California, United States"]).ok, true);
+});
+
+test("home_state_or_remote: 'Remote - CA' passes via home state", () => {
+  const r = hsr(["Remote - CA"]);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.matchedBy, "home_state:CA");
+});
+
+test("home_state_or_remote: hybrid / onsite in the home state still passes", () => {
+  assert.strictEqual(hsr(["San Jose, CA (Hybrid)"]).ok, true);
+  assert.strictEqual(hsr(["Sacramento, CA"], { workplaceType: "Onsite" }).ok, true);
+});
+
+test("home_state_or_remote: 'City, CA or Remote' passes", () => {
+  assert.strictEqual(hsr(["San Francisco, CA or Remote"]).ok, true);
+});
+
+test("home_state_or_remote: 'New York (Hybrid)' fails with geo_not_home_state_or_remote", () => {
+  assert.deepStrictEqual(hsr(["New York (Hybrid)"]), {
+    ok: false,
+    reason: "geo_not_home_state_or_remote",
+    matchedBy: null,
+  });
+});
+
+test("home_state_or_remote: out-of-state onsite fails", () => {
+  assert.strictEqual(hsr(["Austin, TX"]).reason, "geo_not_home_state_or_remote");
+  assert.strictEqual(hsr(["Seattle, WA", "New York, NY"]).ok, false);
+});
+
+test("home_state_or_remote: out-of-state remote location string passes", () => {
+  for (const loc of [
+    "Remote",
+    "Remote - US",
+    "Remote, United States",
+    "US Remote",
+    "Fully Remote (USA)",
+    "Remote (New York)",
+    "Anywhere",
+  ]) {
+    const r = hsr([loc]);
+    assert.strictEqual(r.ok, true, `expected ${loc} to pass`);
+    assert.strictEqual(r.matchedBy, "remote:location");
+  }
+});
+
+test("home_state_or_remote: multi-location with one remote entry passes", () => {
+  assert.strictEqual(hsr(["New York, NY", "Remote"]).ok, true);
+});
+
+test("home_state_or_remote: remote qualified to a non-US region fails", () => {
+  for (const loc of ["Remote - UK", "Remote, Canada", "Remote (EMEA)", "Remote - India"]) {
+    assert.strictEqual(hsr([loc]).ok, false, `expected ${loc} to fail`);
+  }
+});
+
+test("home_state_or_remote: structured isRemote=true passes out of state", () => {
+  const r = hsr(["Denver, CO"], { isRemote: true });
+  assert.deepStrictEqual(r, { ok: true, reason: null, matchedBy: "remote:structured" });
+});
+
+test("home_state_or_remote: structured workplaceType 'Remote' passes out of state", () => {
+  assert.strictEqual(hsr(["Chicago, IL"], { workplaceType: "Remote" }).ok, true);
+});
+
+test("home_state_or_remote: structured workplaceType 'Hybrid' overrides a remote string marker", () => {
+  const r = hsr(["Chicago, IL or Remote"], { workplaceType: "Hybrid" });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, "geo_not_home_state_or_remote");
+});
+
+test("home_state_or_remote: 'Remote' in the title passes for a US location", () => {
+  const r = hsr(["New York, NY"], { title: "Senior Product Manager (Remote)" });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.matchedBy, "remote:title");
+});
+
+test("home_state_or_remote: remote title does not rescue a foreign location", () => {
+  assert.strictEqual(hsr(["London, UK"], { title: "Product Manager - Remote" }).ok, false);
+});
+
+test("home_state_or_remote: region-exclusive remote title does not pass", () => {
+  assert.strictEqual(hsr(["New York, NY"], { title: "Senior PM - Remote (EMEA)" }).ok, false);
+});
+
+test("home_state_or_remote: empty locations fail with geo_no_location", () => {
+  assert.deepStrictEqual(hsr([]), { ok: false, reason: "geo_no_location", matchedBy: null });
+  assert.strictEqual(hsr(["", "  "]).reason, "geo_no_location");
+});
+
+test("home_state_or_remote: empty locations + structured remote passes", () => {
+  assert.strictEqual(hsr([], { isRemote: true }).ok, true);
+});
+
+test("home_state_or_remote: ambiguous location ('United States', 'Hybrid') fails", () => {
+  assert.strictEqual(hsr(["United States"]).reason, "geo_not_home_state_or_remote");
+  assert.strictEqual(hsr(["Hybrid"]).reason, "geo_not_home_state_or_remote");
+});
+
+test("home_state_or_remote: 'CA' as Canada country code does not count as California", () => {
+  assert.strictEqual(hsr(["Toronto, ON, CA"]).ok, false);
+  assert.strictEqual(hsr(["Vancouver, British Columbia, CA"]).ok, false);
+});
+
+test("home_state_or_remote: blocklisted-only locations fail with geo_blocklist", () => {
+  const geo = { ...HSR, blocklist: ["san francisco"] };
+  assert.strictEqual(enforceGeo(["San Francisco, CA"], geo).reason, "geo_blocklist");
+  assert.strictEqual(enforceGeo(["San Francisco, CA", "Los Angeles, CA"], geo).ok, true);
+});
+
+test("home_state_or_remote: legacy single-string location accepted", () => {
+  assert.strictEqual(enforceGeo("Oakland, CA", HSR).ok, true);
+});
+
+test("canonicalStateCode: code or name → upper-case code; non-states → null", () => {
+  const { canonicalStateCode } = require("./geo_enforcer.js");
+  assert.strictEqual(canonicalStateCode("ca"), "CA");
+  assert.strictEqual(canonicalStateCode("California"), "CA");
+  assert.strictEqual(canonicalStateCode("new york"), "NY");
+  assert.strictEqual(canonicalStateCode("XX"), null);
+  assert.strictEqual(canonicalStateCode(""), null);
+  assert.strictEqual(canonicalStateCode(undefined), null);
+});

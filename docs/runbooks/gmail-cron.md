@@ -55,6 +55,20 @@ For each profile:
 
 The `.env` is gitignored. Pre-commit hook detects common secret prefixes.
 
+Optional second mailbox (RFC 068 — the address the apply bot uses on
+applications). When both are set, `check --auto` searches this mailbox with
+the same queries and merges the results, dropping an email that arrived in
+both (same Message-ID). With only one of the two set it warns and checks the
+first mailbox only.
+
+```
+<ID_UPPER>_APPLY_GMAIL_USER=bar@gmail.com
+<ID_UPPER>_APPLY_GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
+```
+
+`scripts/set_fly_secrets_jared.sh` pushes the pair to fly when both are in
+`.env`.
+
 ### 1d. Local smoke test
 
 Dry-run first (no Notion writes, no TSV writes):

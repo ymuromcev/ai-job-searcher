@@ -51,6 +51,8 @@ const {
 } = require("../core/requirement_blockers.js");
 const { findTitleBlocklistHit } = require("../core/filter.js");
 const { evaluateJob } = require("../core/evaluate_job.js");
+const { getSalaryFloor } = require("../core/apply_defaults.js");
+const { publishedSalaryFromJd } = require("../core/published_salary.js");
 const { ensureFresh: ensureFreshFitProfile } = require("../core/fit_profile.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 const { resolveProfilesDir } = require("../core/paths.js");
@@ -652,6 +654,54 @@ function applyRequirementBlockersPass(aliveResults, jdByAppKey, compiledPatterns
   return { aliveResults: surviving, requirementBlockerSkipped };
 }
 
+// RFC 068 §4a: salary-floor pass. Runs after the blocker passes, once the JD
+// body is available — the employer-published range lives in the JD, not in
+// the TSV (TSV salary_min/max are the engine's tier ESTIMATE, written later
+// at commit). The rule itself is evaluateJob's `salary_below_floor` step; this
+// pass only extracts the published range and feeds it in. No-op when the
+// profile has no apply_defaults (or no floor). Rows without a JD body or
+// without a published range pass through.
+function applySalaryFloorPass(aliveResults, jdByAppKey, applyDefaults) {
+  if (getSalaryFloor(applyDefaults) === null) {
+    return { aliveResults, salaryFloorSkipped: [] };
+  }
+  const surviving = [];
+  const salaryFloorSkipped = [];
+  for (const urlRes of aliveResults) {
+    const jd = jdByAppKey[urlRes.key];
+    const jdText = jd && jd.text ? jd.text : "";
+    const published = jdText ? publishedSalaryFromJd(jdText) : null;
+    if (!published) {
+      surviving.push(urlRes);
+      continue;
+    }
+    const r = evaluateJob({
+      job: {
+        company: urlRes.companyName,
+        title: urlRes.title,
+        locations: [],
+        published_salary: published,
+      },
+      profile: { filter_rules: {}, applyDefaults },
+      appState: { companyCounts: {} },
+      context: "prepare",
+    });
+    if (r.decision === "skip" && r.skipReason === "salary_below_floor") {
+      salaryFloorSkipped.push({
+        key: urlRes.key,
+        reason: "salary_below_floor",
+        publishedMin: published.min,
+        publishedMax: published.max,
+        floor: r.matched.floor,
+        url: urlRes.url,
+      });
+      continue;
+    }
+    surviving.push(urlRes);
+  }
+  return { aliveResults: surviving, salaryFloorSkipped };
+}
+
 // Compute skip-reason breakdown from a flat list of skip records.
 function computeSkipReasons(skipped) {
   const skipReasons = {};
@@ -1027,11 +1077,19 @@ async function runPre(ctx, deps) {
     compiledRequirementPatterns
   );
 
+  // RFC 068 §4a: published salary range below apply_defaults salary.floor →
+  // archive as salary_below_floor before spending SKILL tokens on it.
+  const { aliveResults: aliveAfterSF, salaryFloorSkipped } = applySalaryFloorPass(
+    aliveAfterRB,
+    jdByAppKey,
+    profile.applyDefaults
+  );
+
   // Assemble batch entries. Track unique companies in batch whose tier is
   // unknown — SKILL Step 5.7 will assign them and pass back via results
   // (G-11/G-15: "Claude должен выставлять тиры самостоятельно").
   const unknownTierSet = new Set();
-  const batchOut = aliveAfterRB.map((urlRes) =>
+  const batchOut = aliveAfterSF.map((urlRes) =>
     buildBatchEntry(
       urlRes,
       jdByAppKey[urlRes.key],
@@ -1058,6 +1116,7 @@ async function runPre(ctx, deps) {
     ...deadSkipped,
     ...hardBlockerSkipped,
     ...requirementBlockerSkipped,
+    ...salaryFloorSkipped,
   ];
   // G-12: skip-reason breakdown so the user sees WHY 12 jobs got skipped
   // (company_cap: 5, title_blocklist: 2, url_dead: 1, …) instead of just
@@ -1424,8 +1483,15 @@ async function runPreTopup(ctx, deps) {
     compiledRequirementPatterns
   );
 
+  // RFC 068 §4a: salary-floor pass (topup mirror of runPre).
+  const { aliveResults: aliveAfterSF, salaryFloorSkipped } = applySalaryFloorPass(
+    aliveAfterRB,
+    jdByAppKey,
+    profile.applyDefaults
+  );
+
   const unknownTierSet = new Set(prevUnknownTiers);
-  const newEntries = aliveAfterRB.map((urlRes) =>
+  const newEntries = aliveAfterSF.map((urlRes) =>
     buildBatchEntry(
       urlRes,
       jdByAppKey[urlRes.key],
@@ -1452,6 +1518,7 @@ async function runPreTopup(ctx, deps) {
     ...droppedFromQueue,
     ...hardBlockerSkipped,
     ...requirementBlockerSkipped,
+    ...salaryFloorSkipped,
   ];
 
   // Remaining queue: apps that were eligible but not URL-checked yet, plus any
@@ -2716,6 +2783,7 @@ function makePrepareCommand(overrides = {}) {
 module.exports = makePrepareCommand();
 module.exports.makePrepareCommand = makePrepareCommand;
 module.exports.applyPrepareFilter = applyPrepareFilter;
+module.exports.applySalaryFloorPass = applySalaryFloorPass;
 module.exports.filterAlreadyEvaluated = filterAlreadyEvaluated;
 module.exports.buildActiveCounts = buildActiveCounts;
 module.exports.resolveCapWindowDays = resolveCapWindowDays;

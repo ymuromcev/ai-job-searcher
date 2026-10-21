@@ -101,7 +101,7 @@ test("save + load round-trips v3 fields (salary_min, salary_max, cl_path) + v5 l
   built[0].locations = ["San Francisco, CA"];
   apps.save(file, built);
   const back = apps.load(file);
-  assert.equal(back.schemaVersion, 7);
+  assert.equal(back.schemaVersion, 8);
   assert.equal(back.apps[0].salary_min, "140000");
   assert.equal(back.apps[0].salary_max, "190000");
   assert.equal(back.apps[0].cl_path, "Affirm_analyst_20260420");
@@ -120,7 +120,7 @@ test("save + load round-trips v4 fit fields (fit_score, fit_rationale, fit_evalu
   built[0].skip_reason = "weak_fit";
   apps.save(file, built);
   const back = apps.load(file);
-  assert.equal(back.schemaVersion, 7);
+  assert.equal(back.schemaVersion, 8);
   assert.equal(back.apps[0].fit_score, "Weak");
   assert.equal(back.apps[0].fit_rationale, "Energy domain — outside PM core");
   assert.equal(back.apps[0].fit_evaluated_at, "2026-05-05T14:17:47Z");
@@ -136,7 +136,7 @@ test("v5: save + load round-trips multi-element locations array", () => {
   built[0].locations = ["Remote (UK)", "United States", "New York, NY"];
   apps.save(file, built);
   const back = apps.load(file);
-  assert.equal(back.schemaVersion, 7);
+  assert.equal(back.schemaVersion, 8);
   assert.deepEqual(back.apps[0].locations, ["Remote (UK)", "United States", "New York, NY"]);
 });
 
@@ -195,7 +195,7 @@ test("load auto-upgrades v1 files (12 cols) with empty v2+v3+v4+v5 fields", () =
   // Re-saving promotes the file to v7.
   apps.save(file, back.apps);
   const after = apps.load(file);
-  assert.equal(after.schemaVersion, 7);
+  assert.equal(after.schemaVersion, 8);
 });
 
 test("load auto-upgrades v2 files (15 cols) with empty location and fit fields", () => {
@@ -232,7 +232,7 @@ test("load auto-upgrades v2 files (15 cols) with empty location and fit fields",
   // Re-saving promotes to v7.
   apps.save(file, back.apps);
   const after = apps.load(file);
-  assert.equal(after.schemaVersion, 7);
+  assert.equal(after.schemaVersion, 8);
 });
 
 test("load auto-upgrades v3 files (16 cols) — `location` wraps to [location]", () => {
@@ -270,7 +270,7 @@ test("load auto-upgrades v3 files (16 cols) — `location` wraps to [location]",
   // Re-saving promotes to v7.
   apps.save(file, back.apps);
   const after = apps.load(file);
-  assert.equal(after.schemaVersion, 7);
+  assert.equal(after.schemaVersion, 8);
 });
 
 // RFC 038: v4 (single-string `location`) wraps to [location] on read.
@@ -310,7 +310,7 @@ test("load auto-upgrades v4 files (20 cols) — `location` wraps to [location]",
   // Re-saving promotes to v7.
   apps.save(file, back.apps);
   const after = apps.load(file);
-  assert.equal(after.schemaVersion, 7);
+  assert.equal(after.schemaVersion, 8);
   assert.deepEqual(after.apps[0].locations, ["San Francisco, CA"]);
 });
 
@@ -521,7 +521,7 @@ test("v6: save + load round-trips the six outreach fields", () => {
   built[0].hm_outreach_date = "2026-06-03";
   apps.save(file, built);
   const back = apps.load(file);
-  assert.equal(back.schemaVersion, 7);
+  assert.equal(back.schemaVersion, 8);
   assert.equal(
     back.apps[0].company_people_search_url,
     "https://www.linkedin.com/search/results/people/?keywords=Affirm"
@@ -623,7 +623,7 @@ test("load auto-upgrades v5 files (20 cols) with the six v6 outreach defaults", 
   // Re-saving promotes the file to v7.
   apps.save(file, back.apps);
   const after = apps.load(file);
-  assert.equal(after.schemaVersion, 7);
+  assert.equal(after.schemaVersion, 8);
   assert.equal(after.apps[0].hm_outreach_status, "To do");
   assert.deepEqual(after.apps[0].locations, ["San Francisco, CA"]);
 });
@@ -655,7 +655,7 @@ test("load auto-upgrades v1 files with the v6 outreach defaults too", () => {
 
   apps.save(file, back.apps);
   const after = apps.load(file);
-  assert.equal(after.schemaVersion, 7);
+  assert.equal(after.schemaVersion, 8);
 });
 
 // --- RFC 059 amendment / BL-187: v7 applied_date column -------------------
@@ -672,7 +672,7 @@ test("v7: save + load round-trips the applied_date anchor", () => {
   built[0].applied_date = "2026-06-03";
   apps.save(file, built);
   const back = apps.load(file);
-  assert.equal(back.schemaVersion, 7);
+  assert.equal(back.schemaVersion, 8);
   assert.equal(back.apps[0].status, "Applied");
   assert.equal(back.apps[0].applied_date, "2026-06-03");
 });
@@ -769,7 +769,7 @@ test("load auto-upgrades v6 files (26 cols) with the v7 applied_date default", (
   // Re-saving promotes the file to v7.
   apps.save(file, back.apps);
   const after = apps.load(file);
-  assert.equal(after.schemaVersion, 7);
+  assert.equal(after.schemaVersion, 8);
   assert.equal(after.apps[0].applied_date, "");
   assert.equal(after.apps[0].hm_outreach_date, "2026-06-02");
 });
@@ -800,7 +800,7 @@ test("load auto-upgrades v1 files with the v7 applied_date default too", () => {
 
   apps.save(file, back.apps);
   const after = apps.load(file);
-  assert.equal(after.schemaVersion, 7);
+  assert.equal(after.schemaVersion, 8);
   assert.equal(after.apps[0].applied_date, "");
 });
 
@@ -815,4 +815,136 @@ test("decodeLocations falls back to [cell] on non-JSON v5 cell (defensive)", () 
   assert.deepEqual(apps.decodeLocations("Remote"), ["Remote"]);
   // malformed JSON also defensive-wraps:
   assert.deepEqual(apps.decodeLocations('["a",'), ['["a",']);
+});
+
+// --- RFC 068: v8 apply-tracking columns -----------------------------------
+
+test("appendNew seeds the three v8 apply defaults (empty)", () => {
+  const r = apps.appendNew([], [fixtureJob()], { now: "2026-10-21T00:00:00Z" });
+  assert.equal(r.apps[0].applied_by, "");
+  assert.equal(r.apps[0].apply_state, "");
+  assert.equal(r.apps[0].apply_note, "");
+});
+
+test("v8: header appends applied_by / apply_state / apply_note after applied_date", () => {
+  assert.deepEqual(apps.HEADER_V8.slice(0, apps.HEADER_V7.length), apps.HEADER_V7);
+  assert.deepEqual(apps.HEADER_V8.slice(apps.HEADER_V7.length), [
+    "applied_by",
+    "apply_state",
+    "apply_note",
+  ]);
+  assert.deepEqual(apps.HEADER, apps.HEADER_V8);
+});
+
+test("v8: save + load round-trips the apply columns", () => {
+  const file = tmp();
+  const { apps: built } = apps.appendNew([], [fixtureJob()], { now: "2026-10-21T00:00:00Z" });
+  built[0].status = "Applied";
+  built[0].applied_date = "2026-10-21";
+  built[0].applied_by = "bot";
+  built[0].apply_state = "submitted";
+  built[0].apply_note = ".apply-state/shots/greenhouse_1.png";
+  apps.save(file, built);
+
+  const raw = fs.readFileSync(file, "utf8").split("\n");
+  assert.equal(raw[0], apps.HEADER_V8.join("\t"));
+
+  const back = apps.load(file);
+  assert.equal(back.schemaVersion, 8);
+  assert.equal(back.apps[0].applied_date, "2026-10-21");
+  assert.equal(back.apps[0].applied_by, "bot");
+  assert.equal(back.apps[0].apply_state, "submitted");
+  assert.equal(back.apps[0].apply_note, ".apply-state/shots/greenhouse_1.png");
+  assert.deepEqual(back.apps[0].locations, ["SF"]);
+});
+
+test("v8: apply_note with tabs/newlines is flattened to one line", () => {
+  const file = tmp();
+  const { apps: built } = apps.appendNew([], [fixtureJob()], { now: "2026-10-21T00:00:00Z" });
+  built[0].apply_state = "manual";
+  built[0].apply_note = "captcha\ton\nlogin page";
+  apps.save(file, built);
+  const back = apps.load(file);
+  assert.equal(back.apps[0].apply_state, "manual");
+  assert.equal(back.apps[0].apply_note, "captcha on login page");
+});
+
+test("load auto-upgrades v7 files (27 cols) with the v8 apply defaults, re-saves as v8", () => {
+  const file = tmp();
+  const v7Header = apps.HEADER_V7.join("\t");
+  const v7Row = [
+    "greenhouse:1",
+    "greenhouse",
+    "1",
+    "Affirm",
+    "PM",
+    "https://x/1",
+    '["San Francisco, CA"]',
+    "Applied",
+    "abc",
+    "Risk_Fraud",
+    "cl_key1",
+    "140000",
+    "190000",
+    "Affirm_analyst_20260420",
+    "2026-01-01",
+    "2026-01-02",
+    "Strong",
+    "Great fit",
+    "2026-05-05T00:00:00Z",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "To do",
+    "",
+    "2026-06-03",
+  ].join("\t");
+  fs.writeFileSync(file, `${v7Header}\n${v7Row}\n`);
+
+  const back = apps.load(file);
+  assert.equal(back.schemaVersion, 7);
+  assert.equal(back.apps[0].applied_date, "2026-06-03");
+  assert.equal(back.apps[0].applied_by, "");
+  assert.equal(back.apps[0].apply_state, "");
+  assert.equal(back.apps[0].apply_note, "");
+
+  apps.save(file, back.apps);
+  const after = apps.load(file);
+  assert.equal(after.schemaVersion, 8);
+  assert.equal(after.apps[0].applied_date, "2026-06-03");
+  assert.equal(after.apps[0].fit_score, "Strong");
+  assert.equal(after.apps[0].applied_by, "");
+  assert.equal(after.apps[0].apply_state, "");
+  assert.equal(after.apps[0].apply_note, "");
+});
+
+test("load seeds the v8 apply defaults on v1 files too", () => {
+  const file = tmp();
+  const v1Row = [
+    "greenhouse:1",
+    "greenhouse",
+    "1",
+    "Affirm",
+    "PM",
+    "https://x/1",
+    "Applied",
+    "",
+    "",
+    "",
+    "2026-01-01",
+    "2026-01-02",
+  ].join("\t");
+  fs.writeFileSync(file, `${apps.HEADER_V1.join("\t")}\n${v1Row}\n`);
+  const back = apps.load(file);
+  assert.equal(back.apps[0].applied_by, "");
+  assert.equal(back.apps[0].apply_state, "");
+  assert.equal(back.apps[0].apply_note, "");
+});
+
+test("v8: allowed-value enums cover the RFC 068 contract", () => {
+  assert.deepEqual([...apps.APPLIED_BY_VALUES], ["", "bot", "manual", "legacy_bot"]);
+  assert.deepEqual([...apps.APPLY_STATE_VALUES], ["", "queued", "manual", "failed", "submitted"]);
+  assert.deepEqual(apps.applyStateDefaults(), { applied_by: "", apply_state: "", apply_note: "" });
 });

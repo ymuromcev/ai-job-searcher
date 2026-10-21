@@ -38,6 +38,7 @@
 const { assertJob } = require("./_types.js");
 const { defaultFetch } = require("./_http.js");
 const { sanitizeText, parseIsoDate, dedupeLocations } = require("./_normalize.js");
+const { canonicalStateCode } = require("../../core/geo_enforcer.js");
 
 const SOURCE = "adzuna";
 const BASE = "https://api.adzuna.com/v1/api/jobs/us/search/1";
@@ -147,9 +148,26 @@ function companySlug(name) {
   );
 }
 
+// Adzuna's display_name is often "City, County" with no state ("Santa Clara,
+// Santa Clara County"). The state lives in `location.area` —
+// ["US", "California", "Santa Clara County", "Santa Clara"]. Append the state
+// name when display_name doesn't already carry it, so state-aware geo modes
+// (RFC 068 home_state_or_remote) can place the job.
+function withAreaState(displayName, area) {
+  if (!Array.isArray(area) || typeof area[1] !== "string") return displayName;
+  const state = sanitizeText(area[1]);
+  if (!state || !canonicalStateCode(state)) return displayName;
+  if (!displayName) return state;
+  if (displayName.toLowerCase().includes(state.toLowerCase())) return displayName;
+  return `${displayName}, ${state}`;
+}
+
 function mapJob(listing) {
   const company = sanitizeText((listing.company && listing.company.display_name) || "Unknown");
-  const location = sanitizeText((listing.location && listing.location.display_name) || "");
+  const location = withAreaState(
+    sanitizeText((listing.location && listing.location.display_name) || ""),
+    listing.location && listing.location.area
+  );
   const job = {
     source: SOURCE,
     slug: companySlug(company),
@@ -295,5 +313,5 @@ module.exports = {
   discover,
   feedMode: true,
   // Exported for unit tests (BL-87). Not part of the adapter contract.
-  _internals: { deriveKeywordsFromRoleTargets, patternToKeywords },
+  _internals: { deriveKeywordsFromRoleTargets, patternToKeywords, withAreaState },
 };
