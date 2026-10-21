@@ -376,6 +376,47 @@ for (const ctx of ["scan", "prepare"]) {
     assert.equal(result.skipReason, "geo_country_miss");
   });
 
+  test(`geo home_state_or_remote × ${ctx} × home state keep`, () => {
+    const result = evaluateJob({
+      job: jobOf({ locations: ["San Francisco, CA"] }),
+      profile: { filter_rules: {}, geo: { mode: "home_state_or_remote", home_state: "CA" } },
+      appState: { companyCounts: {} },
+      context: ctx,
+    });
+    assert.equal(result.decision, "keep");
+  });
+
+  test(`geo home_state_or_remote × ${ctx} × structured remote (rawExtra) keep`, () => {
+    const result = evaluateJob({
+      job: jobOf({ locations: ["Denver, CO"], rawExtra: { isRemote: true } }),
+      profile: { filter_rules: {}, geo: { mode: "home_state_or_remote", home_state: "CA" } },
+      appState: { companyCounts: {} },
+      context: ctx,
+    });
+    assert.equal(result.decision, "keep");
+  });
+
+  test(`geo home_state_or_remote × ${ctx} × remote title keep`, () => {
+    const result = evaluateJob({
+      job: jobOf({ locations: ["Austin, TX"], title: "Senior PM, Remote" }),
+      profile: { filter_rules: {}, geo: { mode: "home_state_or_remote", home_state: "CA" } },
+      appState: { companyCounts: {} },
+      context: ctx,
+    });
+    assert.equal(result.decision, "keep");
+  });
+
+  test(`geo home_state_or_remote × ${ctx} × miss → geo_not_home_state_or_remote`, () => {
+    const result = evaluateJob({
+      job: jobOf({ locations: ["New York (Hybrid)"] }),
+      profile: { filter_rules: {}, geo: { mode: "home_state_or_remote", home_state: "CA" } },
+      appState: { companyCounts: {} },
+      context: ctx,
+    });
+    assert.equal(result.decision, "skip");
+    assert.equal(result.skipReason, "geo_not_home_state_or_remote");
+  });
+
   test(`geo remote-only × ${ctx} × match`, () => {
     const result = evaluateJob({
       job: jobOf({ locations: ["Remote"] }),

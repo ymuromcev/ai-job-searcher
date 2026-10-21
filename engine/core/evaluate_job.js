@@ -51,6 +51,17 @@ function normalizeJob(raw) {
     : job.location
       ? [String(job.location)]
       : [];
+  // RFC 068 §3: structured remote signals from the adapter, when present
+  // (top-level or under the adapter's `rawExtra`). Only the
+  // "home_state_or_remote" geo mode reads them.
+  const extra = job.rawExtra && typeof job.rawExtra === "object" ? job.rawExtra : {};
+  const isRemote =
+    typeof job.isRemote === "boolean"
+      ? job.isRemote
+      : typeof extra.isRemote === "boolean"
+        ? extra.isRemote
+        : null;
+  const workplaceTypeRaw = job.workplaceType != null ? job.workplaceType : extra.workplaceType;
   return {
     company: String(job.company || ""),
     title: String(job.title || ""),
@@ -58,6 +69,8 @@ function normalizeJob(raw) {
     url: job.url ? String(job.url) : "",
     source: job.source ? String(job.source) : "",
     jd_text: job.jd_text || "",
+    isRemote,
+    workplaceType: typeof workplaceTypeRaw === "string" ? workplaceTypeRaw : "",
   };
 }
 
@@ -254,7 +267,11 @@ function evaluateJob({ job, profile, appState, context }) {
   // recomputing downstream.
   if (shouldRunGeo(context) && profileGeo) {
     const locsForGeo = norm.locations.length > 0 ? norm.locations : [];
-    const geoResult = enforceGeo(locsForGeo, profileGeo);
+    const geoResult = enforceGeo(locsForGeo, profileGeo, {
+      isRemote: norm.isRemote,
+      workplaceType: norm.workplaceType,
+      title: norm.title,
+    });
     const mode = profileGeo.mode || "unrestricted";
     if (!geoResult.ok && mode !== "unrestricted") {
       // geoResult.reason is one of the enum values (geo_*).

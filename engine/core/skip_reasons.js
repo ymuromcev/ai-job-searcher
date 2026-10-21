@@ -48,6 +48,12 @@ const ENGINE_SKIP_REASONS = Object.freeze(
     "geo_country_miss",
     "geo_remote_only_miss",
     "geo_unknown_mode",
+    // RFC 068 §3: geo mode "home_state_or_remote" — outside the home state and
+    // not remote (or ambiguous).
+    "geo_not_home_state_or_remote",
+    // RFC 068 §4a: the published salary range tops out below
+    // `apply_defaults.json` salary.floor.
+    "salary_below_floor",
     // Geo title (RFC 039 / BL-89: extractTitleGeo via applyPrepareFilter)
     "geo_title_excluded",
     // URL liveness (checkUrls)

@@ -8,9 +8,17 @@
 //
 // See RFC 037 §3.1 for the full check list and severity matrix.
 
+const { canonicalStateCode } = require("../../geo_enforcer.js");
+
 const UUID_RE = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
 const VALID_FIT_TREATMENTS = new Set(["primary", "bridge"]);
-const VALID_GEO_MODES = new Set(["metro", "us-wide", "remote-only", "unrestricted"]);
+const VALID_GEO_MODES = new Set([
+  "metro",
+  "us-wide",
+  "remote-only",
+  "unrestricted",
+  "home_state_or_remote",
+]);
 const REGEX_ANCHOR_CHARS = /[\^$]|\\b/;
 
 function issue(severity, field, message) {
@@ -165,6 +173,16 @@ function checkGeoMode(profile, issues) {
         "error",
         "profile.geo.mode",
         `must be one of [${Array.from(VALID_GEO_MODES).join(", ")}], got ${JSON.stringify(g.mode)}`
+      )
+    );
+  }
+  // RFC 068 §3: home_state_or_remote needs a US home state.
+  if (g.mode === "home_state_or_remote" && !canonicalStateCode(g.home_state)) {
+    issues.push(
+      issue(
+        "error",
+        "profile.geo.home_state",
+        `required for mode "home_state_or_remote" — a US state code or name (e.g. "CA"), got ${JSON.stringify(g.home_state)}`
       )
     );
   }

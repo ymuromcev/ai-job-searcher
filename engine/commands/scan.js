@@ -318,6 +318,12 @@ function makeScanCommand(overrides = {}) {
       role: j.title,
       locations: Array.isArray(j.locations) ? j.locations.map(String) : [],
       location: Array.isArray(j.locations) && j.locations.length > 0 ? String(j.locations[0]) : "",
+      // RFC 068 §3: structured remote signals from the adapter's rawExtra
+      // (e.g. Ashby `isRemote`, Oracle `workplaceType`) for the
+      // home_state_or_remote geo mode.
+      isRemote: j.rawExtra && typeof j.rawExtra.isRemote === "boolean" ? j.rawExtra.isRemote : null,
+      workplaceType:
+        j.rawExtra && typeof j.rawExtra.workplaceType === "string" ? j.rawExtra.workplaceType : "",
     }));
     // L-4: inject profile.geo into filter rules. Default unrestricted block
     // means the geo check is a no-op for Jared (back-compat).

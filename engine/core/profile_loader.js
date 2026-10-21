@@ -14,6 +14,8 @@
 const fs = require("fs");
 const path = require("path");
 
+const { canonicalStateCode } = require("./geo_enforcer.js");
+
 const ID_REGEX = /^[a-z][a-z0-9_-]*$/;
 
 // BL-126 Block D: valid resume layout density presets. The PDF renderer
@@ -447,7 +449,9 @@ function normalizeResumeLayout(raw) {
 //
 // Schema (profile.json):
 //   "geo": {
-//     "mode": "metro" | "us-wide" | "remote-only" | "unrestricted",
+//     "mode": "metro" | "us-wide" | "remote-only" | "unrestricted"
+//             | "home_state_or_remote",
+//     "home_state": string,       // required when mode === "home_state_or_remote"
 //     "cities": [string],         // required when mode === "metro"
 //     "states": [string],         // required when mode === "metro" (per §8.1)
 //     "countries": [string],      // optional; ISO codes (informational in v1)
@@ -467,7 +471,17 @@ function normalizeResumeLayout(raw) {
 //   - mode "us-wide" without countries[] (defaults to ["US"] if missing —
 //     more permissive than metro since us-wide is meant to be loose)
 
-const VALID_GEO_MODES = new Set(["metro", "us-wide", "remote-only", "unrestricted"]);
+//   - mode "home_state_or_remote" (RFC 068 §3) without a valid `home_state`
+//     (US 2-letter code or full state name; canonicalized to the upper-case
+//     code, e.g. "california" → "CA").
+
+const VALID_GEO_MODES = new Set([
+  "metro",
+  "us-wide",
+  "remote-only",
+  "unrestricted",
+  "home_state_or_remote",
+]);
 
 function normalizeGeo(raw) {
   if (raw === undefined || raw === null) {
@@ -515,7 +529,20 @@ function normalizeGeo(raw) {
     }
   }
 
-  return { mode, cities, states, countries, remote_ok, blocklist, max_radius_miles };
+  const out = { mode, cities, states, countries, remote_ok, blocklist, max_radius_miles };
+
+  if (mode === "home_state_or_remote") {
+    const code = canonicalStateCode(raw.home_state);
+    if (!code) {
+      throw new Error(
+        `profile.geo.home_state is required when mode === "home_state_or_remote" — ` +
+          `a US state code or name (e.g. "CA"); got ${JSON.stringify(raw.home_state)}`
+      );
+    }
+    out.home_state = code;
+  }
+
+  return out;
 }
 
 module.exports = {
