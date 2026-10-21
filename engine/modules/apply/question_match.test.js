@@ -319,3 +319,16 @@ test("legal: truthfulness, arbitration, AI policy, privacy → affirmative; mark
   // Without the owner's policy the legal questions are not auto-answered.
   assert.equal(ask("AI Policy for Interviewers", "select", yn, {}), null);
 });
+
+test("work authorization that mentions 'citizen' stays a work-auth question", () => {
+  const r = matchQuestion(
+    {
+      label:
+        "Are you currently legally authorized to work in the country in which this job is based (e.g. you are a citizen or permanent resident)?",
+      type: "select",
+      options: ["Yes", "No"],
+    },
+    { applyDefaults: { ...OWNER, work_authorization: { authorized_us: true } } }
+  );
+  assert.deepEqual(r, { source: "defaults", value: "Yes" });
+});

@@ -403,12 +403,14 @@ const MATCHERS = [
   matchCountry,
   matchAddress,
   matchIdentity,
-  matchCitizenship,
-  matchLegal,
   matchEeo,
   matchPronouns,
   matchSponsorship,
   matchWorkAuth,
+  // After work authorization: "authorized to work … (e.g. you are a citizen)"
+  // is a work-auth question, not a citizenship one.
+  matchCitizenship,
+  matchLegal,
   matchRelocation,
   matchHowHeard,
   matchSalary,
