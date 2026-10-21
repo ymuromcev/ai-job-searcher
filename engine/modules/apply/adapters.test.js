@@ -1,3 +1,4 @@
+/* global document -- page.evaluate callbacks run in the browser */
 // Browser tests for the apply adapters against synthetic HTML fixtures
 // (file:// — no network). Skips with a clear message when Playwright's
 // Chromium is not installed (`npx playwright install chromium`).
