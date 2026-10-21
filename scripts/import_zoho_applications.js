@@ -5,15 +5,29 @@
 //
 // Usage:
 //   node scripts/import_zoho_applications.js --profile <id> [--since YYYY-MM-DD]
-//        [--mbox <path>] [--apply] [--plan <plan.json>]
+//        [--mbox <path>] [--folders a,b,c] [--export-messages <file.json>]
+//        [--extracted <file.json>] [--apply] [--plan <plan.json>]
 //
 // Sources (pick one):
 //   - IMAP (default): Zoho, credentials from .env via profile_loader.loadSecrets
 //       <ID_UPPER>_ZOHO_USER / <ID_UPPER>_ZOHO_APP_PASSWORD
 //     imap.zoho.com:993, falling back to imappro.zoho.com:993 on an auth
-//     failure. Reads INBOX plus any folder whose name matches
-//     /applied|jobs|applications/i. Mailboxes are opened read-only (EXAMINE)
-//     and bodies fetched with BODY.PEEK — flags are never modified.
+//     failure. Reads every selectable folder (the mailbox holds only
+//     job-search mail), or only `--folders a,b,c`. Mailboxes are opened
+//     read-only (EXAMINE) and bodies fetched with BODY.PEEK — flags are never
+//     modified.
+//   - --mbox <path>: a local mbox export, or a directory of .eml files. No
+//     network.
+//   - --extracted <file.json>: no mail at all. Records
+//       [{ id, company, title, status: Applied|Rejected|Interview|Closed|
+//          Account|Ignore, date, note? }]
+//     written by an LLM extraction pass over an `--export-messages` file
+//     replace the heuristic company/title extraction below.
+//
+// --export-messages <file.json>: after reading mail, write one compact record
+// per message (id, date, from, to, folder, subject, classifier status,
+// deterministic template match, cleaned ≤1500-char excerpt) to
+// profiles/<id>/.legacy-import/<file> and stop — no plan is built.
 //   - --mbox <path>: a local mbox export, or a directory of .eml files. No
 //     network.
 //
@@ -44,26 +58,50 @@ const path = require("path");
 const { loadProfile, loadSecrets, secretEnvName } = require("../engine/core/profile_loader");
 const { resolveProfilesDir } = require("../engine/core/paths");
 const appsTsv = require("../engine/core/applications_tsv");
-const { stripHtmlTags } = require("../engine/modules/tracking/gmail_imap");
-const { buildPlan, applyPlan, splitMbox, formatReport } = require("../engine/core/legacy_import");
+const {
+  buildPlan,
+  buildPlanFromExtracted,
+  applyPlan,
+  splitMbox,
+  formatReport,
+  plainText,
+  exportRecord,
+} = require("../engine/core/legacy_import");
 
 const ZOHO_HOSTS = ["imap.zoho.com", "imappro.zoho.com"];
 const ZOHO_PORT = 993;
-const FOLDER_RE = /applied|jobs|applications/i;
-const FETCH_CHUNK = 200;
+const FETCH_CHUNK = 50;
 const PLAN_DIR = ".legacy-import";
 
 const USAGE =
   "Usage: node scripts/import_zoho_applications.js --profile <id> [--since YYYY-MM-DD] " +
-  "[--mbox <path>] [--apply] [--plan <plan.json>]";
+  "[--mbox <path>] [--folders a,b,c] [--export-messages <file.json>] " +
+  "[--extracted <file.json>] [--apply] [--plan <plan.json>]";
 
 function parseArgs(argv) {
-  const out = { profile: null, since: "", mbox: "", apply: false, plan: "", help: false };
+  const out = {
+    profile: null,
+    since: "",
+    mbox: "",
+    folders: [],
+    exportMessages: "",
+    extracted: "",
+    apply: false,
+    plan: "",
+    help: false,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--profile") out.profile = argv[++i];
     else if (a === "--since") out.since = argv[++i] || "";
     else if (a === "--mbox") out.mbox = argv[++i] || "";
+    else if (a === "--folders") {
+      out.folders = String(argv[++i] || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } else if (a === "--export-messages") out.exportMessages = argv[++i] || "";
+    else if (a === "--extracted") out.extracted = argv[++i] || "";
     else if (a === "--plan") out.plan = argv[++i] || "";
     else if (a === "--apply") out.apply = true;
     else if (a === "--help" || a === "-h") out.help = true;
@@ -75,15 +113,29 @@ function parseArgs(argv) {
     throw new Error(`--since must be YYYY-MM-DD, got ${JSON.stringify(out.since)}`);
   }
   if (out.plan && !out.apply) throw new Error("--plan is only used with --apply");
-  if (out.plan && (out.mbox || out.since)) {
-    throw new Error("--plan applies a saved plan; do not combine it with --mbox / --since");
+  if (out.plan && (out.mbox || out.since || out.extracted || out.folders.length)) {
+    throw new Error("--plan applies a saved plan; do not combine it with mail / extraction flags");
+  }
+  if (out.exportMessages && (out.apply || out.extracted || out.plan)) {
+    throw new Error("--export-messages only exports; do not combine it with --apply / --extracted");
+  }
+  if (out.extracted && (out.mbox || out.folders.length)) {
+    throw new Error("--extracted builds the plan from the extracted file; it reads no mail");
   }
   return out;
 }
 
 // ---------- Message parsing ----------
 
-async function parseRawMessage(source, { parser, fallbackDate } = {}) {
+function hasCalendarPart(parsed) {
+  const atts = Array.isArray(parsed.attachments) ? parsed.attachments : [];
+  if (atts.some((a) => /text\/calendar|application\/ics/i.test(a.contentType || ""))) return true;
+  const ct = parsed.headers && parsed.headers.get ? parsed.headers.get("content-type") : null;
+  const v = ct && (ct.value || ct);
+  return typeof v === "string" && /text\/calendar/i.test(v);
+}
+
+async function parseRawMessage(source, { parser, fallbackDate, folder = "" } = {}) {
   const parse = parser || require("mailparser").simpleParser;
   const parsed = await parse(source);
   const date =
@@ -92,11 +144,22 @@ async function parseRawMessage(source, { parser, fallbackDate } = {}) {
       : fallbackDate instanceof Date
         ? fallbackDate.toISOString()
         : "";
+  const from0 = (parsed.from && Array.isArray(parsed.from.value) && parsed.from.value[0]) || {};
+  const recipients = [parsed.to, parsed.cc]
+    .flatMap((x) => (Array.isArray(x) ? x : x ? [x] : []))
+    .map((x) => x.text || "")
+    .filter(Boolean)
+    .join(", ");
   return {
     messageId: parsed.messageId || "",
     subject: parsed.subject || "",
     from: (parsed.from && parsed.from.text) || "",
-    body: parsed.text || (parsed.html ? stripHtmlTags(parsed.html) : "") || "",
+    fromName: from0.name || "",
+    fromAddress: from0.address || "",
+    to: recipients,
+    calendar: hasCalendarPart(parsed),
+    folder,
+    body: plainText(parsed.text || "", parsed.html || ""),
     date,
   };
 }
@@ -174,22 +237,34 @@ async function connectZoho(creds, { makeClient = defaultMakeClient, log = () => 
   throw lastErr || new Error("IMAP connect failed");
 }
 
-function pickFolders(list) {
-  const out = ["INBOX"];
-  for (const box of Array.isArray(list) ? list : []) {
-    if (!box || !box.path) continue;
-    if (box.path.toUpperCase() === "INBOX") continue;
-    if (FOLDER_RE.test(box.path) || FOLDER_RE.test(box.name || "")) out.push(box.path);
+// Every selectable folder by default (the mailbox holds only job-search mail;
+// the folder is a hint for the extraction pass). `override` = --folders list,
+// matched case-insensitively against the folder path or name.
+function pickFolders(list, override = []) {
+  const boxes = (Array.isArray(list) ? list : []).filter((b) => {
+    if (!b || !b.path) return false;
+    const flags = b.flags instanceof Set ? [...b.flags] : Array.isArray(b.flags) ? b.flags : [];
+    return !flags.some((f) => /\\(?:noselect|nonexistent)/i.test(f));
+  });
+  if (override.length) {
+    const want = new Set(override.map((s) => s.toLowerCase()));
+    return boxes
+      .filter((b) => want.has(b.path.toLowerCase()) || want.has(String(b.name || "").toLowerCase()))
+      .map((b) => b.path);
   }
+  const out = ["INBOX"];
+  for (const b of boxes) if (b.path.toUpperCase() !== "INBOX") out.push(b.path);
   return [...new Set(out)];
 }
 
-async function fetchFolder(client, folder, { since, parser }) {
+// Fetch one folder into `out`, skipping UIDs already in `done`. Resumable: a
+// dropped connection throws, the caller reconnects and calls again with the
+// same `done` / `out`, and only the remaining UIDs are fetched.
+async function fetchFolder(client, folder, { since, parser, done = new Set(), out = [] } = {}) {
   const lock = await client.getMailboxLock(folder, { readOnly: true });
-  const out = [];
   try {
     const query = since ? { since: new Date(`${since}T00:00:00Z`) } : { all: true };
-    const uids = (await client.search(query, { uid: true })) || [];
+    const uids = ((await client.search(query, { uid: true })) || []).filter((u) => !done.has(u));
     for (let i = 0; i < uids.length; i += FETCH_CHUNK) {
       const chunk = uids.slice(i, i + FETCH_CHUNK);
       for await (const msg of client.fetch(
@@ -197,31 +272,81 @@ async function fetchFolder(client, folder, { since, parser }) {
         { uid: true, envelope: true, internalDate: true, source: true },
         { uid: true }
       )) {
-        if (!msg || !msg.source) continue;
+        if (!msg) continue;
+        if (msg.uid !== undefined) done.add(msg.uid);
+        if (!msg.source) continue;
         try {
-          out.push(await parseRawMessage(msg.source, { parser, fallbackDate: msg.internalDate }));
+          out.push(
+            await parseRawMessage(msg.source, {
+              parser,
+              fallbackDate: msg.internalDate,
+              folder,
+            })
+          );
         } catch (_err) {
           // Unparseable MIME: skip, the report counts what was read.
         }
       }
     }
   } finally {
-    lock.release();
+    try {
+      lock.release();
+    } catch (_e) {
+      // connection already gone
+    }
   }
   return out;
 }
 
-async function collectFromImap(creds, { since, makeClient, parser, log = () => {} } = {}) {
-  const { client, host } = await connectZoho(creds, { makeClient, log });
+const MAX_RECONNECTS = 8;
+
+function isConnectionError(err) {
+  if (!err) return false;
+  if (
+    ["ECONNRESET", "ETIMEDOUT", "EPIPE", "NoConnection", "ClosedAfterConnectTLS"].includes(err.code)
+  )
+    return true;
+  return /connection not available|socket|timed? ?out|closed|ECONNRESET|EPIPE/i.test(
+    String(err.message || "")
+  );
+}
+
+async function collectFromImap(
+  creds,
+  { since, folders: override = [], makeClient, parser, log = () => {} } = {}
+) {
+  let conn = await connectZoho(creds, { makeClient, log });
+  const host = conn.host;
   const out = [];
   try {
-    const folders = pickFolders(await client.list());
+    const folders = pickFolders(await conn.client.list(), override);
+    if (override.length && folders.length < override.length) {
+      log(`warning: some --folders not found; reading ${folders.join(", ") || "(none)"}`);
+    }
     log(`IMAP ${host}: reading ${folders.join(", ")}`);
     for (const folder of folders) {
-      out.push(...(await fetchFolder(client, folder, { since, parser })));
+      const done = new Set();
+      const got = [];
+      let failures = 0;
+      for (;;) {
+        const before = done.size;
+        try {
+          await fetchFolder(conn.client, folder, { since, parser, done, out: got });
+          break;
+        } catch (err) {
+          if (!isConnectionError(err)) throw err;
+          failures = done.size > before ? 1 : failures + 1;
+          if (failures > MAX_RECONNECTS) throw err;
+          log(`  ${folder}: connection lost after ${done.size} message(s), reconnecting`);
+          await safeLogout(conn.client);
+          conn = await connectZoho(creds, { makeClient, log });
+        }
+      }
+      log(`  ${folder}: ${got.length} message(s)`);
+      out.push(...got);
     }
   } finally {
-    await safeLogout(client);
+    await safeLogout(conn.client);
   }
   return { messages: out, host };
 }
@@ -292,6 +417,20 @@ async function run(opts = {}) {
   if (args.plan) {
     ({ plan, file: planPath } = readPlan(args.plan, args.profile));
     log(formatReport(plan, { source: plan.source, planPath }));
+  } else if (args.extracted) {
+    const file = path.resolve(args.extracted);
+    if (!fs.existsSync(file)) throw new Error(`--extracted file not found: ${file}`);
+    const records = JSON.parse(fs.readFileSync(file, "utf8"));
+    const { apps } = appsTsv.load(tsvPath);
+    plan = buildPlanFromExtracted(apps, records, {
+      since: args.since,
+      companyAliases: profile.company_aliases || {},
+      now,
+    });
+    plan.profile = args.profile;
+    plan.source = `extracted:${path.basename(file)}`;
+    planPath = writePlan(root, plan, now);
+    log(formatReport(plan, { source: plan.source, planPath }));
   } else {
     let messages;
     let source;
@@ -302,12 +441,34 @@ async function run(opts = {}) {
       const creds = zohoCreds(args.profile, env);
       const res = await collectFromImap(creds, {
         since: args.since,
+        folders: args.folders,
         makeClient: opts.makeImapClient,
         parser: opts.parser,
         log,
       });
       messages = res.messages;
       source = `imap:${res.host}`;
+    }
+    if (args.exportMessages) {
+      // Personal data: always lands in the gitignored profile dir.
+      const dir = planDir(root);
+      fs.mkdirSync(dir, { recursive: true });
+      const out = path.join(dir, path.basename(args.exportMessages));
+      const seen = new Set();
+      const records = [];
+      for (const m of messages) {
+        if (args.since && m.date && m.date.slice(0, 10) < args.since) continue;
+        const r = exportRecord(m);
+        if (seen.has(r.id)) continue;
+        seen.add(r.id);
+        records.push(r);
+      }
+      fs.writeFileSync(out, JSON.stringify(records, null, 1) + "\n");
+      const byFolder = {};
+      for (const r of records) byFolder[r.folder || "-"] = (byFolder[r.folder || "-"] || 0) + 1;
+      log(`exported ${records.length} message(s) from ${source} → ${out}`);
+      for (const [f, n] of Object.entries(byFolder)) log(`  ${f}: ${n}`);
+      return { exported: records.length, exportPath: out, byFolder };
     }
     const { apps } = appsTsv.load(tsvPath);
     plan = buildPlan(apps, messages, {

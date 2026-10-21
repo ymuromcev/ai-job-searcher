@@ -438,3 +438,318 @@ test("formatReport lists counts and unparseable subjects, never bodies", () => {
   assert.match(out, /Thanks for applying/);
   assert.doesNotMatch(out, /SECRET BODY/);
 });
+
+// ---------- BL-225 follow-up: cleaning, sender noise, fragments ----------
+
+test("decodeEntities / plainText clean HTML leaking into text parts", () => {
+  assert.equal(
+    L.decodeEntities("Manager&nbsp;opportunity &amp; more &#39;x&#x27;"),
+    "Manager opportunity & more 'x'"
+  );
+  assert.equal(
+    L.plainText("<p>Hello&nbsp;Pat,</p><p>Thanks for applying</p>"),
+    "Hello Pat,\nThanks for applying"
+  );
+  assert.equal(L.plainText("", "<div>A<br>B</div><style>x{}</style>"), "A\nB");
+});
+
+test("validCompany strips sender noise and rejects ATS / support names", () => {
+  assert.equal(L.validCompany("Workday Support"), null);
+  assert.equal(L.validCompany("DoNotReply-WorkdayNotifications Carrier"), "Carrier");
+  assert.equal(L.validCompany("Group 1001 Talent Acquisition"), "Group 1001");
+  assert.equal(L.validCompany("Acme Careers"), "Acme");
+  assert.equal(L.validCompany("Globex Recruiting Team"), "Globex");
+});
+
+test("validTitle rejects sentence fragments, keeps real titles", () => {
+  assert.equal(L.validTitle("CrowdStrike, and we wish you success in your"), null);
+  assert.equal(L.validTitle("open"), null);
+  assert.equal(
+    L.validTitle("Product Manager (Remote)&nbsp;opportunity"),
+    "Product Manager (Remote)"
+  );
+  assert.equal(L.validTitle("Senior Product Manager, Growth"), "Senior Product Manager, Growth");
+});
+
+test("extractCompanyTitle: sender noise never becomes the company", () => {
+  const r = L.extractCompanyTitle({
+    from: '"Workday Support" <support@myworkday.com>',
+    subject: "Thank you for applying",
+    body: "Thank you for applying. We received your application for Product Manager.",
+  });
+  assert.equal(r.company, null);
+  assert.equal(r.title, "Product Manager");
+});
+
+test("exportRecord: stable id, folder, classifier status, capped clean excerpt", () => {
+  const m = msg({
+    messageId: "<abc@example.test>",
+    folder: "Rejections",
+    fromName: "Acme",
+    fromAddress: "no-reply@us.greenhouse-mail.io",
+    to: "pat@example.com",
+    body: `<p>We received your application&nbsp;for PM.</p>${"x".repeat(3000)}`,
+  });
+  const r = L.exportRecord(m);
+  assert.equal(r.id, L.messageKey(m));
+  assert.equal(r.id, L.exportRecord({ ...m, subject: "changed" }).id);
+  assert.equal(r.folder, "Rejections");
+  assert.equal(r.status, "Applied");
+  assert.equal(r.date, "2025-03-03");
+  assert.deepEqual(r.from, { name: "Acme", address: "no-reply@us.greenhouse-mail.io" });
+  assert.equal(r.excerpt.length, 1500);
+  assert.doesNotMatch(r.excerpt, /<p>|&nbsp;/);
+});
+
+test("buildPlan: new rows carry status / applied_date / provenance at top level", () => {
+  const plan = L.buildPlan([], [msg()], { now: NOW });
+  const a = plan.appends[0];
+  assert.equal(a.status, "Applied");
+  assert.equal(a.applied_date, "2025-03-03");
+  assert.equal(a.applied_by, "legacy_bot");
+  assert.equal(a.apply_state, "submitted");
+  assert.equal(a.apply_note, "zoho:2025-03-03");
+});
+
+// ---------- --extracted ----------
+
+function rec(id, company, title, status, date, extra = {}) {
+  return { id, company, title, status, date, ...extra };
+}
+
+test("buildPlanFromExtracted: dedupes to one row per application, latest terminal status", () => {
+  const plan = L.buildPlanFromExtracted(
+    [],
+    [
+      rec("1", "Acme", "Senior PM", "Applied", "2025-03-03"),
+      rec("2", "Acme", "Sr. PM", "Applied", "2025-03-01"),
+      rec("3", "ACME Inc.", "Senior PM", "Rejected", "2025-03-20"),
+      rec("4", "Globex", "PM", "Interview", "2025-03-10"),
+      rec("5", "x", "", "Ignore", "2025-03-10"),
+      rec("6", "", "", "Bogus", "2025-03-10"),
+      rec("1", "Acme", "Senior PM", "Applied", "2025-03-03"),
+    ],
+    { now: NOW }
+  );
+  assert.equal(plan.stats.duplicates, 1);
+  assert.equal(plan.stats.ignored, 1);
+  assert.equal(plan.stats.unparseable, 1);
+  assert.equal(plan.appends.length, 2);
+  const acme = plan.appends.find((a) => a.companyName !== "Globex");
+  assert.equal(acme.status, "Rejected");
+  assert.equal(acme.applied_date, "2025-03-01");
+});
+
+test("buildPlanFromExtracted: title-less ack attaches to the company's single titled row", () => {
+  const plan = L.buildPlanFromExtracted(
+    [],
+    [
+      rec("1", "Acme", "Senior PM", "Applied", "2025-03-03"),
+      rec("2", "Acme", "", "Rejected", "2025-03-20"),
+      rec("3", "Globex", "", "Applied", "2025-03-04"),
+      rec("4", "Globex", "", "Applied", "2025-03-02"),
+    ],
+    { now: NOW }
+  );
+  assert.equal(plan.appends.length, 2);
+  assert.equal(plan.appends.find((a) => a.companyName === "Acme").status, "Rejected");
+  const globex = plan.appends.find((a) => a.companyName === "Globex");
+  assert.equal(globex.title, "");
+  assert.equal(globex.applied_date, "2025-03-02");
+  assert.equal(plan.stats.companyOnlyRows, 1);
+});
+
+test("buildPlanFromExtracted: account mails count only for companies nothing else names", () => {
+  const apps = [row({ companyName: "Hooli", title: "PM", status: "Applied", key: "gh:9" })];
+  const plan = L.buildPlanFromExtracted(
+    apps,
+    [
+      rec("1", "Acme", "Senior PM", "Applied", "2025-03-03"),
+      rec("2", "Acme", "", "Account", "2025-03-02"),
+      rec("3", "Hooli", "", "Account", "2025-03-02"),
+      rec("4", "Initech", "", "Account", "2025-03-05"),
+      rec("5", "Initech", "", "Account", "2025-03-04"),
+    ],
+    { now: NOW }
+  );
+  assert.equal(plan.stats.accountIgnored, 2);
+  assert.equal(plan.stats.accountRows, 1);
+  const initech = plan.appends.find((a) => a.companyName === "Initech");
+  assert.equal(initech.status, "Applied");
+  assert.equal(initech.applied_date, "2025-03-04");
+  assert.equal(initech.apply_note, "account:2025-03-04");
+});
+
+test("buildPlanFromExtracted + applyPlan: company-only rows append and are idempotent", () => {
+  const records = [rec("1", "Globex", "", "Applied", "2025-03-04")];
+  const plan = L.buildPlanFromExtracted([], records, { now: NOW });
+  const res = L.applyPlan([], plan, { now: NOW });
+  assert.equal(res.appended, 1);
+  assert.equal(res.apps[0].title, "");
+  assert.equal(res.apps[0].status, "Applied");
+  const plan2 = L.buildPlanFromExtracted(res.apps, records, { now: NOW });
+  assert.equal(plan2.appends.length, 0);
+  assert.equal(plan2.stats.matchedRows, 1);
+});
+
+// ---------- templateExtract (deterministic templates over export records) ----------
+
+function exp(overrides = {}) {
+  return {
+    id: "abc",
+    date: "2025-03-03T10:00:00.000Z",
+    from: { name: "", address: "no-reply@us.greenhouse-mail.io" },
+    to: "candidate@example.test",
+    folder: "Notification",
+    subject: "Thank you for applying to Acme!",
+    status: "Applied",
+    calendar: false,
+    excerpt: "Hi Pat, Thanks for applying to Acme. Your application has been received.",
+    ...overrides,
+  };
+}
+
+test("templateExtract: subject template → Applied with company", () => {
+  const d = L.templateExtract(exp());
+  assert.equal(d.status, "Applied");
+  assert.equal(d.company, "Acme");
+  assert.equal(d.rule, "subject");
+});
+
+test("templateExtract: security code / workday account mails are Account signals", () => {
+  const sec = L.templateExtract(
+    exp({ subject: "Security code for your application to Initech", status: "Other" })
+  );
+  assert.deepEqual([sec.status, sec.company], ["Account", "Initech"]);
+  const wd = L.templateExtract(
+    exp({
+      folder: "Verifications",
+      subject: "Verify your candidate account",
+      status: "Other",
+      from: { name: "", address: "hooli@otp.workday.com" },
+      excerpt: "Click this link https://hooli.wd5.myworkdayjobs.com/careers/activate/x",
+    })
+  );
+  assert.deepEqual([wd.status, wd.company], ["Account", "Hooli"]);
+});
+
+test("templateExtract: filtered / LinkedIn notifications / newsletters → Ignore", () => {
+  assert.equal(L.templateExtract(exp({ status: "Filtered" })).status, "Ignore");
+  assert.equal(
+    L.templateExtract(exp({ folder: "LinkedIn", subject: "You have 1 new invitation" })).status,
+    "Ignore"
+  );
+  assert.equal(L.templateExtract(exp({ folder: "Newsletter", status: "Other" })).status, "Ignore");
+});
+
+test("templateExtract: interview claims and sent mail go to review (null)", () => {
+  assert.equal(L.templateExtract(exp({ status: "Interview" })), null);
+  assert.equal(L.templateExtract(exp({ folder: "Sent" })), null);
+});
+
+test("templateExtract: an acknowledgement's hedge is not a rejection", () => {
+  const d = L.templateExtract(
+    exp({
+      status: "Rejected",
+      excerpt:
+        "Hi Pat, Thank you for your interest in Acme. What happens next? We may not be able to respond if there is not a match for this role.",
+    })
+  );
+  assert.equal(d.status, "Applied");
+});
+
+test("templateExtract: explicit rejection / filled wording overrides the classifier", () => {
+  const rej = L.templateExtract(
+    exp({
+      excerpt:
+        "Hi Pat, Thank you for applying. We have decided to move forward with other candidates.",
+    })
+  );
+  assert.equal(rej.status, "Rejected");
+  const closed = L.templateExtract(
+    exp({ status: "Rejected", excerpt: "Hi Pat, the Senior PM position has been filled." })
+  );
+  assert.equal(closed.status, "Closed");
+});
+
+test("templateExtract: greeted name and subject filler never become the company", () => {
+  const greeted = L.templateExtract(
+    exp({
+      subject: "Pat, we have received your application",
+      from: { name: "", address: "hooli@myworkday.com" },
+      excerpt: "Hello Pat Thank you for applying for the Senior Product Owner position.",
+    })
+  );
+  assert.equal(greeted.company, "Hooli");
+  const filler = L.templateExtract(
+    exp({
+      subject: "Thanks for Applying – Stay Tuned!",
+      excerpt: "Hi Pat, Thanks for your interest!",
+    })
+  );
+  assert.equal(filler, null);
+});
+
+test("templateExtract: a recruiter's own name falls back to the sender domain", () => {
+  const d = L.templateExtract(
+    exp({
+      subject: "Regret to inform",
+      status: "Rejected",
+      folder: "Rejections",
+      from: { name: "Pat Lee", address: "plee@initech.com" },
+      excerpt: "Hi Sam, Unfortunately we decided not to move forward.",
+    })
+  );
+  assert.equal(d.company, "Initech");
+});
+
+test("templateExtract: strips the company possessive from a title", () => {
+  const d = L.templateExtract(
+    exp({
+      excerpt: "Hi Pat, Thank you for applying for Acme's Senior Product Manager, Growth role.",
+    })
+  );
+  assert.equal(d.company, "Acme");
+  assert.ok(!/Acme/.test(d.title || ""));
+});
+
+test("companyFromSubject: drops 'was received' tails and keeps lowercase-led brands", () => {
+  assert.equal(
+    L.companyFromSubject("Your application to Acme Labs was received").company,
+    "Acme Labs"
+  );
+  assert.equal(L.companyFromSubject("Thank you for applying to refurbed").company, "refurbed");
+});
+
+test("workdayTenant: activation URL, tenant sender, myworkday@ corporate sender", () => {
+  assert.equal(L.workdayTenant({ excerpt: "https://acme.wd1.myworkdayjobs.com/x" }), "acme");
+  assert.equal(L.workdayTenant({ excerpt: "", from: { address: "hooli@myworkday.com" } }), "hooli");
+  assert.equal(
+    L.workdayTenant({ excerpt: "", from: { address: "myworkday@initech.com" } }),
+    "initech"
+  );
+  assert.equal(L.workdayTenant({ excerpt: "", from: { address: "pat@example.com" } }), null);
+});
+
+test("validCompany: loose mode accepts lowercase brands but not lowercase prose", () => {
+  assert.equal(L.validCompany("refurbed", { loose: true }), "refurbed");
+  assert.equal(L.validCompany("refurbed"), null);
+  assert.equal(L.validCompany("the team", { loose: true }), null);
+});
+
+test("validTitle: strips prose wrapped around a title", () => {
+  assert.equal(L.validTitle("Acme and the Senior Product Manager"), "Senior Product Manager");
+  assert.equal(L.validTitle("Staff Product Manager role here"), "Staff Product Manager");
+  assert.equal(L.validTitle("for the Product Designer"), "Product Designer");
+  assert.equal(L.validTitle("Acme for the"), null);
+});
+
+test("summarizeEvents: same-day terminal answer wins over the invite", () => {
+  const s = L.summarizeEvents([
+    { date: "2025-03-05", event: "Closed", subject: "b" },
+    { date: "2025-03-05", event: "Interview", subject: "a" },
+    { date: "2025-03-01", event: "Applied", subject: "c" },
+  ]);
+  assert.equal(s.status, "Closed");
+  assert.equal(s.appliedDate, "2025-03-01");
+});
