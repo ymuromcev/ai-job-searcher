@@ -1,0 +1,1348 @@
+// `apply` command tests with every I/O dep faked (no browser, no network,
+// no disk). The adapter fake scripts each ATS outcome by URL.
+
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const path = require("path");
+
+const {
+  makeApplyCommand,
+  resolveFields,
+  buildFillPlan,
+  searchBank,
+  loadAnswersFile,
+  alreadyApplied,
+} = require("./apply.js");
+const { buildActiveCounts, resolveCapWindowDays } = require("./prepare.js");
+
+const ROOT = "/fake/profiles/demo";
+const CONTEXT_PATH = path.join(ROOT, ".apply-state", "apply_context.json");
+const UUID = "0f0f0f0f-1111-4222-8333-444444444444";
+
+const GH_URL = "https://job-boards.greenhouse.io/acme/jobs/111";
+const GH2_URL = "https://job-boards.greenhouse.io/beta/jobs/222";
+const LEVER_URL = `https://jobs.lever.co/gamma/${UUID}`;
+
+function profile() {
+  return {
+    id: "demo",
+    identity: {
+      name: "Test Candidate",
+      email: "candidate@example.com",
+      phone: "+1 555 010 0000",
+      location: "Springfield, IL",
+      linkedin: "linkedin.com/in/example",
+    },
+    applyDefaults: {
+      work_authorization: { authorized_us: true, requires_sponsorship: false },
+      relocation: { willing: false },
+      eeo: { policy: "decline" },
+      salary: { floor: 120000, default: 180000 },
+      how_did_you_hear_default: "Company careers page",
+    },
+    filterRules: { company_cap: { max_active: 3, window_days: 30 } },
+    notion: {
+      application_qa_db_id: "qa-db",
+      property_map: { status: { field: "Status", type: "status" } },
+    },
+    resumeVersions: { versions: { Growth: { filename: "CV_Test_Candidate_Growth.docx" } } },
+    paths: {
+      root: ROOT,
+      applicationsTsv: path.join(ROOT, "applications.tsv"),
+      resumesDir: path.join(ROOT, "resumes"),
+      jdCacheDir: path.join(ROOT, "jd_cache"),
+    },
+  };
+}
+
+function row(over) {
+  return {
+    key: over.key,
+    source: "greenhouse",
+    jobId: over.key,
+    companyName: over.companyName,
+    title: "Product Manager",
+    url: over.url,
+    status: "To Apply",
+    notion_page_id: `page-${over.key}`,
+    resume_ver: "Growth",
+    cl_path: "",
+    fit_score: "Strong",
+    applied_date: "",
+    apply_state: "",
+    apply_note: "",
+    createdAt: "2026-10-20T00:00:00Z",
+    updatedAt: "2026-10-20T00:00:00Z",
+    ...over,
+  };
+}
+
+const FORM = [
+  { id: "first_name", label: "First Name", type: "text", required: true, options: [] },
+  { id: "email", label: "Email", type: "email", required: true, options: [] },
+  { id: "resume", label: "Resume/CV", type: "file", required: true, options: [] },
+  {
+    id: "q_auth",
+    label: "Are you legally authorized to work in the United States?",
+    type: "select",
+    required: true,
+    options: ["Yes", "No"],
+  },
+  { id: "q_salary", label: "Desired salary", type: "text", required: false, options: [] },
+  { id: "q_why", label: "Why do you want to join?", type: "textarea", required: true, options: [] },
+  {
+    id: "q_years",
+    label: "How many years of SQL experience do you have?",
+    type: "text",
+    required: false,
+    options: [],
+  },
+  {
+    id: "gender",
+    label: "Gender",
+    type: "select",
+    required: false,
+    options: ["Male", "Female", "Decline To Self Identify"],
+  },
+];
+
+// Scripted fake adapter. behavior[url] = { open, submit, missing }.
+function fakeAdapter(name, behavior, log) {
+  return {
+    name,
+    detect: () => true,
+    normalizeUrl: (u) => u,
+    tenantKey: (u) => `${name}:${new URL(u).pathname.split("/")[1]}`,
+    jobRef: () => ({ slug: "acme", jobId: "111" }),
+    async open(page, url) {
+      page.url = url;
+      log.push(["open", url]);
+      const b = behavior[url] || {};
+      return b.open || { ok: true };
+    },
+    async readSchema(page) {
+      return (behavior[page.url] && behavior[page.url].form) || FORM;
+    },
+    async fill(page, values) {
+      log.push(["fill", page.url, values]);
+      return { filled: Object.keys(values), errors: [] };
+    },
+    async checkFilled(page) {
+      return { missing: (behavior[page.url] && behavior[page.url].missing) || [] };
+    },
+    async submit(page) {
+      log.push(["submit", page.url]);
+      const b = behavior[page.url] || {};
+      if (b.beforeSubmit) b.beforeSubmit();
+      return (
+        b.submit || {
+          ok: true,
+          evidence: { url: `${page.url}/confirmation`, text: "Thank you for applying" },
+        }
+      );
+    },
+  };
+}
+
+function harness({
+  apps,
+  behavior = {},
+  files = [],
+  bank = [],
+  secrets = { NOTION_TOKEN: "t" },
+  companies = [],
+  posting = {},
+  viaPage = null,
+} = {}) {
+  const log = [];
+  const store = { apps: apps.map((a) => ({ ...a })), saves: 0 };
+  const disk = new Map();
+  for (const f of files) disk.set(f, "%PDF");
+  const notionCalls = [];
+  const shots = [];
+  const adapter = (n) => fakeAdapter(n, behavior, log);
+  const deps = {
+    loadProfile: () => profile(),
+    loadSecrets: () => secrets,
+    loadApplications: () => ({ apps: store.apps.map((a) => ({ ...a })) }),
+    saveApplications: (_p, list) => {
+      store.apps = list.map((a) => ({ ...a }));
+      store.saves += 1;
+    },
+    buildActiveCounts,
+    resolveCapWindowDays,
+    fetchFn: async () => {
+      throw new Error("no network in tests");
+    },
+    resolveUrl: async (url) => {
+      log.push(["resolveUrl", url]);
+      if (url.includes("adzuna") && url.includes("gone"))
+        return { ok: false, url, reason: "dead", status: 404, hops: [url] };
+      if (url.includes("adzuna"))
+        return { ok: false, url, reason: "blocked", status: 403, hops: [url] };
+      if (url.includes("workday"))
+        return { ok: false, url, reason: "no_ats", status: 200, hops: [url] };
+      if (url.includes("gone")) return { ok: false, url, reason: "dead", status: 404, hops: [url] };
+      const ats = url.includes("lever") ? "lever" : "greenhouse";
+      return { ok: true, url, ats, status: 0, hops: [] };
+    },
+    detectAts: (url) =>
+      url.includes("lever") ? "lever" : url.includes("greenhouse") ? "greenhouse" : null,
+    loadCompanies: () => ({ rows: companies }),
+    // posting[jobId] = "open" | "closed"; default unknown.
+    checkPostingOpen: async (ref) => {
+      log.push(["posting", ref.ats, ref.slug, ref.jobId]);
+      return posting[ref.jobId] || "unknown";
+    },
+    resolveViaPage: async (_page, url) => {
+      log.push(["viaPage", url]);
+      return viaPage
+        ? viaPage(url)
+        : { ok: false, url, reason: "blocked", status: 403, hops: [url] };
+    },
+    getAdapter: (n) => (n === "greenhouse" || n === "lever" ? adapter(n) : null),
+    launchBrowser: async () => ({
+      newPage: async () => ({
+        page: {
+          url: "",
+          screenshot: async ({ path: p }) => {
+            shots.push(p);
+          },
+        },
+        close: async () => {},
+      }),
+      close: async () => {},
+    }),
+    fetchJd: async () => ({ text: (behavior.jdText && behavior.jdText) || "" }),
+    extractJDStructure: (t) => ({ salary_text: t }),
+    makeNotionClient: () => ({ fake: true }),
+    fetchAllAnswers: async () => bank,
+    updatePageStatus: async (client, pageId, status) => {
+      notionCalls.push([pageId, status]);
+    },
+    readFile: (p) => {
+      if (!disk.has(p)) throw new Error(`ENOENT ${p}`);
+      return disk.get(p);
+    },
+    writeFile: (p, data) => disk.set(p, data),
+    fileExists: (p) => disk.has(p),
+    mkdirp: () => {},
+    now: () => new Date("2026-10-21T08:00:00Z"),
+    today: () => "2026-10-21",
+  };
+  const out = [];
+  const err = [];
+  const ctx = (flags) => ({
+    profileId: "demo",
+    profilesDir: "/fake/profiles",
+    env: {},
+    flags: { phase: "", dryRun: false, limit: null, concurrency: 2, answersFile: "", ...flags },
+    stdout: (s) => out.push(s),
+    stderr: (s) => err.push(s),
+  });
+  return {
+    deps,
+    run: (flags) => makeApplyCommand(deps)(ctx(flags)),
+    store,
+    disk,
+    log,
+    notionCalls,
+    shots,
+    out,
+    err,
+  };
+}
+
+const RESUME = path.join(ROOT, "resumes", "CV_Test_Candidate_Growth.pdf");
+
+// ---------------------------------------------------------------------------
+
+test("phase is required", async () => {
+  const h = harness({ apps: [] });
+  assert.equal(await h.run({}), 1);
+  assert.match(h.err.join("\n"), /--phase <pre\|submit\|open>/);
+});
+
+test("pre: builds the context, resolves standard answers, flags manual cases", async () => {
+  const h = harness({
+    apps: [
+      row({ key: "gh1", companyName: "Acme", url: GH_URL }),
+      row({ key: "adz", companyName: "Delta", url: "https://www.adzuna.com/land/ad/1" }),
+      row({
+        key: "wd",
+        companyName: "Epsilon",
+        url: "https://epsilon.wd5.myworkdayjobs.com/job/1",
+      }),
+      row({ key: "dead", companyName: "Zeta", url: "https://grnh.se/gone" }),
+      row({ key: "weak", companyName: "Eta", url: GH2_URL, fit_score: "Weak" }),
+      row({ key: "nores", companyName: "Theta", url: GH2_URL, resume_ver: "Missing" }),
+    ],
+    files: [RESUME],
+    bank: [
+      {
+        pageId: "bank-1",
+        company: "Other Co",
+        role: "PM",
+        question: "How many years of SQL experience do you have?",
+        answer: "Five years",
+        category: "Experience",
+      },
+    ],
+    behavior: { jdText: "Pay range $150,000 - $190,000" },
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  assert.equal(ctx.jobs.length, 1);
+  const job = ctx.jobs[0];
+  assert.equal(job.key, "gh1");
+  assert.equal(job.ats, "greenhouse");
+  assert.equal(job.tenant, "greenhouse:acme");
+  assert.equal(job.resume, "resumes/CV_Test_Candidate_Growth.pdf");
+  assert.deepEqual(job.salary.published_range, { min: 150000, max: 190000 });
+  const ans = Object.fromEntries(job.answers.map((a) => [a.field_id, a]));
+  assert.equal(ans.first_name.value, "Test");
+  assert.equal(ans.first_name.source, "identity");
+  assert.equal(ans.resume.source, "file");
+  assert.equal(ans.q_auth.value, "Yes");
+  assert.equal(ans.q_salary.value, "190000");
+  assert.equal(ans.gender.value, "Decline To Self Identify");
+  assert.equal(ans.q_years.source, "bank_reuse");
+  assert.equal(ans.q_years.bank_page_id, "bank-1");
+  assert.deepEqual(
+    job.unanswered.map((u) => [u.field_id, u.required]),
+    [["q_why", true]]
+  );
+
+  const manual = Object.fromEntries(ctx.manual.map((m) => [m.key, m.reason]));
+  assert.equal(manual.adz, "unresolved_url:www.adzuna.com");
+  assert.equal(manual.wd, "unsupported_ats:epsilon.wd5.myworkdayjobs.com");
+  assert.equal(manual.nores, "resume_missing");
+  assert.equal(ctx.skipped.find((s) => s.key === "dead").reason, "url_dead");
+  assert.equal(ctx.skipped.find((s) => s.key === "weak").reason, "fit_not_strong_medium");
+
+  const byKey = Object.fromEntries(h.store.apps.map((a) => [a.key, a]));
+  assert.equal(byKey.gh1.apply_state, "queued");
+  assert.equal(byKey.adz.apply_state, "manual");
+  assert.equal(byKey.adz.apply_note, "unresolved_url:www.adzuna.com");
+  assert.equal(byKey.dead.apply_state, "", "dead links are not put on the human list");
+  assert.equal(byKey.gh1.status, "To Apply");
+});
+
+test("pre: captcha / login at open → manual; salary under floor → skipped; --dry-run writes no TSV", async () => {
+  const h = harness({
+    apps: [
+      row({ key: "cap", companyName: "Acme", url: GH_URL }),
+      row({ key: "low", companyName: "Beta", url: GH2_URL }),
+    ],
+    files: [RESUME],
+    behavior: { [GH_URL]: { open: { ok: false, reason: "captcha" } } },
+  });
+  h.deps.fetchJd = async (job) => ({ text: job.slug === "acme" ? "" : "$80,000 - $100,000" });
+  h.deps.getAdapter = (n) => {
+    const a = fakeAdapter(n, { [GH_URL]: { open: { ok: false, reason: "captcha" } } }, h.log);
+    a.jobRef = (u) => ({ slug: u === GH_URL ? "acme" : "beta", jobId: "1" });
+    return a;
+  };
+  assert.equal(await h.run({ phase: "pre", dryRun: true }), 0);
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  assert.equal(ctx.manual[0].reason, "captcha");
+  assert.equal(ctx.skipped.find((s) => s.key === "low").reason, "salary_below_floor");
+  assert.equal(h.store.saves, 0);
+});
+
+// ---- submit -----------------------------------------------------------------
+
+function contextFor(keys) {
+  return {
+    generated_at: "2026-10-21T07:00:00Z",
+    profile: "demo",
+    jobs: keys.map(([key, url, company]) => ({
+      key,
+      company,
+      title: "Product Manager",
+      url,
+      resolved_url: url,
+      form_url: url,
+      ats: url.includes("lever") ? "lever" : "greenhouse",
+      tenant: `x:${company}`,
+      resume: "resumes/CV_Test_Candidate_Growth.pdf",
+      cover_letter: null,
+      fields: FORM,
+      answers: [
+        { field_id: "first_name", label: "First Name", value: "Test", source: "identity" },
+        { field_id: "email", label: "Email", value: "candidate@example.com", source: "identity" },
+        {
+          field_id: "resume",
+          label: "Resume/CV",
+          value: "resumes/CV_Test_Candidate_Growth.pdf",
+          source: "file",
+        },
+        {
+          field_id: "q_auth",
+          label: "Are you legally authorized to work in the United States?",
+          value: "Yes",
+          source: "defaults",
+        },
+      ],
+      unanswered: [
+        {
+          field_id: "q_why",
+          label: "Why do you want to join?",
+          type: "textarea",
+          options: [],
+          required: true,
+        },
+      ],
+    })),
+  };
+}
+
+function submitHarness({ apps, keys, answers, behavior }) {
+  const h = harness({ apps, behavior, files: [RESUME] });
+  h.disk.set(CONTEXT_PATH, JSON.stringify(contextFor(keys)));
+  h.disk.set("/fake/answers.json", JSON.stringify({ answers }));
+  return h;
+}
+
+const WHY = (key) => ({
+  key,
+  label: "Why do you want to join?",
+  answer: "A sourced, truthful answer.",
+  bank_page_id: null,
+});
+
+test("submit: success marks Applied, applied_by bot, screenshot, Notion status", async () => {
+  let stateAtClick = null;
+  const h = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers: [WHY("gh1")],
+    behavior: {
+      [GH_URL]: {
+        beforeSubmit: () => {
+          const r = h.store.apps.find((a) => a.key === "gh1");
+          stateAtClick = { state: r.apply_state, note: r.apply_note };
+        },
+      },
+    },
+  });
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  assert.deepEqual(stateAtClick, { state: "queued", note: "submitting:2026-10-21T08:00:00.000Z" });
+
+  const r = h.store.apps.find((a) => a.key === "gh1");
+  assert.equal(r.status, "Applied");
+  assert.equal(r.applied_date, "2026-10-21");
+  assert.equal(r.applied_by, "bot");
+  assert.equal(r.apply_state, "submitted");
+  assert.equal(r.apply_note, path.join(".apply-state", "shots", "gh1.png"));
+  assert.deepEqual(h.notionCalls, [["page-gh1", "Applied"]]);
+  assert.deepEqual(h.shots, [path.join(ROOT, ".apply-state", "shots", "gh1.png")]);
+
+  const fill = h.log.find((l) => l[0] === "fill");
+  assert.equal(fill[2].q_why, "A sourced, truthful answer.");
+  assert.equal(fill[2].resume, RESUME, "files are attached by absolute path");
+  assert.equal(fill[2].q_auth, "Yes");
+});
+
+test("submit: a required question without an honest answer → manual, browser never opened", async () => {
+  const h = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers: [],
+  });
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  const r = h.store.apps.find((a) => a.key === "gh1");
+  assert.equal(r.apply_state, "manual");
+  assert.equal(r.apply_note, "no_honest_answer");
+  assert.equal(r.status, "To Apply");
+  assert.equal(h.log.filter((l) => l[0] === "open").length, 0);
+});
+
+test("submit: never double-applies — applied_date set since pre → skipped, no click", async () => {
+  const h = submitHarness({
+    apps: [
+      row({
+        key: "gh1",
+        companyName: "Acme",
+        url: GH_URL,
+        applied_date: "2026-10-20",
+        status: "Applied",
+      }),
+    ],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers: [WHY("gh1")],
+  });
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  assert.equal(h.log.filter((l) => l[0] === "submit").length, 0);
+  assert.equal(h.notionCalls.length, 0);
+  assert.equal(h.store.apps[0].applied_date, "2026-10-20");
+});
+
+test("submit: captcha → manual, no confirmation → failed (no retry), pre-submit gap → manual", async () => {
+  const h = submitHarness({
+    apps: [
+      row({ key: "a", companyName: "Acme", url: GH_URL }),
+      row({ key: "b", companyName: "Beta", url: GH2_URL }),
+      row({ key: "c", companyName: "Gamma", url: LEVER_URL }),
+    ],
+    keys: [
+      ["a", GH_URL, "Acme"],
+      ["b", GH2_URL, "Beta"],
+      ["c", LEVER_URL, "Gamma"],
+    ],
+    answers: [WHY("a"), WHY("b"), WHY("c")],
+    behavior: {
+      [GH_URL]: { submit: { ok: false, reason: "captcha", evidence: {} } },
+      [GH2_URL]: { submit: { ok: false, reason: "no_confirmation", evidence: {} } },
+      [LEVER_URL]: { missing: ["resume"] },
+    },
+  });
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  const by = Object.fromEntries(h.store.apps.map((a) => [a.key, a]));
+  assert.deepEqual([by.a.apply_state, by.a.apply_note], ["manual", "captcha"]);
+  assert.deepEqual([by.b.apply_state, by.b.apply_note], ["failed", "no_confirmation"]);
+  assert.deepEqual([by.c.apply_state, by.c.apply_note], ["manual", "presubmit_check"]);
+  for (const k of ["a", "b", "c"]) assert.equal(by[k].status, "To Apply");
+  assert.equal(h.log.filter((l) => l[0] === "submit" && l[1] === LEVER_URL).length, 0);
+  assert.equal(h.notionCalls.length, 0);
+});
+
+test("submit --dry-run: fills and screenshots, never clicks Submit, writes nothing", async () => {
+  const h = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers: [WHY("gh1")],
+  });
+  assert.equal(
+    await h.run({ phase: "submit", answersFile: "/fake/answers.json", dryRun: true }),
+    0
+  );
+  assert.equal(h.log.filter((l) => l[0] === "submit").length, 0);
+  assert.equal(h.log.filter((l) => l[0] === "fill").length, 1);
+  assert.equal(h.shots.length, 1);
+  assert.equal(h.store.saves, 0);
+  assert.equal(h.notionCalls.length, 0);
+  assert.match(h.out.join("\n"), /1 dry-run/);
+});
+
+test("submit: Greenhouse security code is read from the apply mailbox, typed, resubmitted", async () => {
+  const h = submitHarness({
+    apps: [
+      row({ key: "a", companyName: "Acme", url: GH_URL }),
+      row({ key: "b", companyName: "Beta", url: GH2_URL }),
+    ],
+    keys: [
+      ["a", GH_URL, "Acme"],
+      ["b", GH2_URL, "Beta"],
+    ],
+    answers: [WHY("a"), WHY("b")],
+    behavior: {},
+  });
+  const typed = [];
+  const clicks = { [GH_URL]: 0, [GH2_URL]: 0 };
+  const base = h.deps.getAdapter;
+  h.deps.getAdapter = (n) => {
+    const a = base(n);
+    return {
+      ...a,
+      async submit(page) {
+        clicks[page.url] += 1;
+        if (clicks[page.url] === 1) return { ok: false, reason: "email_verification" };
+        return { ok: true, evidence: { url: page.url, text: "Thank you for applying" } };
+      },
+      async enterSecurityCode(page, code) {
+        typed.push([page.url, code]);
+        return { ok: true };
+      },
+    };
+  };
+  const asked = [];
+  h.deps.makeCodeWaiter = () => ({
+    wait: async ({ company }) => {
+      asked.push(company);
+      return company === "Acme" ? "Ab3dE9fZ" : null;
+    },
+  });
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  const by = Object.fromEntries(h.store.apps.map((x) => [x.key, x]));
+  assert.equal(by.a.status, "Applied");
+  assert.equal(by.a.apply_state, "submitted");
+  assert.deepEqual(typed, [[GH_URL, "Ab3dE9fZ"]]);
+  assert.equal(clicks[GH_URL], 2, "Submit pressed again after the code");
+  // No code in the mailbox → the human finishes it.
+  assert.deepEqual([by.b.apply_state, by.b.apply_note], ["manual", "email_code_missing"]);
+  assert.equal(by.b.status, "To Apply");
+  assert.deepEqual(asked.sort(), ["Acme", "Beta"]);
+});
+
+test("submit: no confirmation on the page but a thank-you mail → Applied, never failed", async () => {
+  const h = submitHarness({
+    apps: [
+      row({ key: "a", companyName: "Acme", url: GH_URL }),
+      row({ key: "b", companyName: "Beta", url: GH2_URL }),
+    ],
+    keys: [
+      ["a", GH_URL, "Acme"],
+      ["b", GH2_URL, "Beta"],
+    ],
+    answers: [WHY("a"), WHY("b")],
+    behavior: {
+      [GH_URL]: { submit: { ok: false, reason: "no_confirmation" } },
+      [GH2_URL]: { submit: { ok: false, reason: "no_confirmation" } },
+    },
+  });
+  h.deps.makeCodeWaiter = () => ({
+    wait: async () => null,
+    confirmed: async ({ company }) =>
+      company === "Acme" ? { subject: "Thank you for applying to Acme" } : null,
+  });
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  const by = Object.fromEntries(h.store.apps.map((x) => [x.key, x]));
+  assert.deepEqual([by.a.status, by.a.apply_state], ["Applied", "submitted"]);
+  assert.deepEqual(
+    [by.b.status, by.b.apply_state, by.b.apply_note],
+    ["To Apply", "failed", "no_confirmation"]
+  );
+});
+
+test("submit: no apply mailbox configured → security code stays with the human", async () => {
+  const h = submitHarness({
+    apps: [row({ key: "a", companyName: "Acme", url: GH_URL })],
+    keys: [["a", GH_URL, "Acme"]],
+    answers: [WHY("a")],
+    behavior: { [GH_URL]: { submit: { ok: false, reason: "email_verification" } } },
+  });
+  h.deps.makeCodeWaiter = () => null;
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  const r = h.store.apps[0];
+  assert.deepEqual([r.apply_state, r.apply_note], ["manual", "email_verification"]);
+});
+
+test("submit: input validation", async () => {
+  const h = harness({ apps: [] });
+  assert.equal(await h.run({ phase: "submit" }), 1);
+  assert.match(h.err.join("\n"), /--answers-file/);
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 1);
+  assert.match(h.err.join("\n"), /run apply --phase pre first/);
+  h.disk.set(CONTEXT_PATH, JSON.stringify({ jobs: [] }));
+  h.disk.set("/fake/bad.json", JSON.stringify({ nope: [] }));
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/bad.json" }), 1);
+});
+
+// ---- pure helpers -----------------------------------------------------------
+
+test("searchBank: exact match first; cross-company reuse only for portable categories", () => {
+  const job = { company: "Acme", title: "PM" };
+  const field = { id: "q", label: "Why Acme?", type: "textarea", options: [] };
+  const bank = [
+    {
+      pageId: "x1",
+      company: "Acme",
+      role: "PM",
+      question: "Why Acme?",
+      answer: "Because…",
+      category: "Motivation",
+    },
+  ];
+  assert.deepEqual(searchBank(bank, job, field), {
+    source: "bank",
+    value: "Because…",
+    bank_page_id: "x1",
+  });
+  // Same question for another company, motivation → not reused.
+  const other = [{ ...bank[0], company: "Other", pageId: "x2" }];
+  assert.equal(searchBank(other, job, field), null);
+  // Experience answer that names its company → not reused.
+  const f2 = { id: "y", label: "Years of SQL?", type: "text", options: [] };
+  const named = [
+    {
+      pageId: "x3",
+      company: "Other",
+      role: "PM",
+      question: "Years of SQL?",
+      answer: "5 at Other",
+      category: "Experience",
+    },
+  ];
+  assert.equal(searchBank(named, job, f2), null);
+  // Choice field: bank text must land on an option.
+  const sel = { id: "z", label: "Q", type: "select", options: ["Yes", "No"] };
+  assert.equal(
+    searchBank([{ company: "Acme", role: "PM", question: "Q", answer: "Maybe" }], job, sel),
+    null
+  );
+});
+
+test("resolveFields: missing required cover letter / unknown required file block the job", () => {
+  const fields = [
+    { id: "cl", label: "Cover Letter", type: "file", required: true, options: [] },
+    { id: "p", label: "Portfolio", type: "file", required: false, options: [] },
+  ];
+  const r = resolveFields(fields, {
+    job: { company: "A", title: "PM" },
+    identity: {},
+    applyDefaults: null,
+    salary: null,
+    bank: [],
+    files: { resume: { rel: "r.pdf" }, cover_letter: null },
+  });
+  assert.deepEqual(r.blockers, ["cover_letter_missing"]);
+  const r2 = resolveFields(
+    [{ id: "t", label: "Transcript", type: "file", required: true, options: [] }],
+    {
+      job: {},
+      identity: {},
+      files: { resume: { rel: "r.pdf" }, cover_letter: null },
+    }
+  );
+  assert.deepEqual(r2.blockers, ["unsupported_required_file"]);
+});
+
+test("buildFillPlan: id first, then label; LLM answers mapped onto options", () => {
+  const live = [
+    { id: "new_id", label: "First Name", type: "text", required: true, options: [] },
+    {
+      id: "q2",
+      label: "Do you have 5+ years of PM experience?",
+      type: "radio",
+      required: true,
+      options: ["Yes", "No"],
+    },
+    { id: "q3", label: "Optional note", type: "textarea", required: false, options: [] },
+  ];
+  const job = {
+    answers: [{ field_id: "first_name", label: "First Name", value: "Test", source: "identity" }],
+  };
+  const llm = [{ key: "k", label: "Do you have 5+ years of PM experience?", answer: "yes" }];
+  const plan = buildFillPlan(live, job, llm, ROOT);
+  assert.deepEqual(plan.values, { new_id: "Test", q2: "Yes" });
+  assert.deepEqual(plan.missingRequired, []);
+  const plan2 = buildFillPlan(live, job, [], ROOT);
+  assert.deepEqual(plan2.missingRequired, ["q2"]);
+});
+
+test("alreadyApplied guard", () => {
+  assert.equal(alreadyApplied(null), "row_missing");
+  assert.equal(
+    alreadyApplied({ status: "To Apply", applied_date: "2026-01-01" }),
+    "already_applied"
+  );
+  assert.equal(alreadyApplied({ status: "To Apply", apply_state: "submitted" }), "already_applied");
+  assert.equal(alreadyApplied({ status: "No Response" }), "status_No_Response");
+  assert.equal(alreadyApplied({ status: "To Apply", applied_date: "" }), null);
+  // A submit run that died after the click: a re-run must not click again.
+  assert.equal(
+    alreadyApplied({
+      status: "To Apply",
+      apply_state: "queued",
+      apply_note: "submitting:2026-10-22T08:00:00.000Z",
+    }),
+    "interrupted_submit"
+  );
+});
+
+test("loadAnswersFile groups answers by job key and drops empty ones", () => {
+  const disk = new Map([
+    [
+      "/a.json",
+      JSON.stringify({
+        answers: [
+          { key: "k1", label: "Q", answer: "A" },
+          { key: "k1", label: "Q2", answer: "" },
+          { key: "k2", label: "Q", answer: "B" },
+          { label: "no key", answer: "x" },
+        ],
+      }),
+    ],
+  ]);
+  const deps = { fileExists: (p) => disk.has(p), readFile: (p) => disk.get(p) };
+  const m = loadAnswersFile("/a.json", deps);
+  assert.equal(m.get("k1").length, 1);
+  assert.equal(m.get("k2")[0].answer, "B");
+  assert.throws(() => loadAnswersFile("/missing.json", deps), /not found/);
+});
+
+// ---- canonical form URLs + closed postings (RFC 068 follow-up) -------------
+
+const COMPANIES = [
+  { name: "Samsara", source: "greenhouse", slug: "samsara" },
+  { name: "Navan", source: "greenhouse", slug: "tripactions" },
+  { name: "Navan", source: "lever", slug: "navan-lever" },
+  { name: "Gamma Inc.", source: "lever", slug: "gamma" },
+];
+
+test("pre: ATS-sourced rows use the canonical form URL, never the career page", async () => {
+  const h = harness({
+    apps: [
+      row({
+        key: "greenhouse:8017174",
+        source: "greenhouse",
+        jobId: "8017174",
+        companyName: "Samsara",
+        url: "https://www.samsara.com/company/careers/roles/8017174?gh_jid=8017174",
+      }),
+      row({
+        key: "gh:8010057",
+        source: "Greenhouse",
+        jobId: "gh:8010057",
+        companyName: "Navan",
+        url: "https://navan.com/careers/openings?gh_jid=8010057",
+      }),
+      row({ key: "lv1", source: "lever", jobId: UUID, companyName: "Gamma", url: "" }),
+    ],
+    files: [RESUME],
+    companies: COMPANIES,
+    posting: { 8017174: "open", 8010057: "closed" },
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  const byKey = Object.fromEntries(ctx.jobs.map((j) => [j.key, j]));
+  assert.equal(
+    byKey["greenhouse:8017174"].form_url,
+    "https://job-boards.greenhouse.io/embed/job_app?for=samsara&token=8017174"
+  );
+  assert.equal(byKey.lv1.form_url, `https://jobs.lever.co/gamma/${UUID}/apply`);
+  // No redirect-following for rows with a slug.
+  assert.deepEqual(
+    h.log.filter((l) => l[0] === "resolveUrl"),
+    []
+  );
+  // Navan: slug from the greenhouse row (not the lever one), posting closed.
+  assert.ok(h.log.some((l) => l[0] === "posting" && l[2] === "tripactions" && l[3] === "8010057"));
+  assert.deepEqual(
+    ctx.closed.map((c) => c.key),
+    ["gh:8010057"]
+  );
+  const navan = h.store.apps.find((a) => a.key === "gh:8010057");
+  assert.equal(navan.status, "Closed");
+  assert.equal(navan.apply_note, "job_closed");
+  assert.equal(navan.apply_state, "");
+  assert.deepEqual(h.notionCalls, [["page-gh:8010057", "Closed"]]);
+});
+
+test("pre: no URL and no ATS slug → manual no_application_url", async () => {
+  const h = harness({
+    apps: [
+      row({ key: "recruiter:x", source: "recruiter", jobId: "x", companyName: "Kappa", url: "" }),
+      row({ key: "manual:y", source: "Manual", jobId: "y", companyName: "Lambda", url: "" }),
+    ],
+    files: [RESUME],
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  assert.deepEqual(
+    ctx.manual.map((m) => [m.key, m.reason]),
+    [
+      ["recruiter:x", "no_application_url"],
+      ["manual:y", "no_application_url"],
+    ]
+  );
+});
+
+test("pre: blocked aggregator falls back to a browser page; still blocked → unresolved_url", async () => {
+  const h = harness({
+    apps: [
+      row({
+        key: "adz1",
+        source: "adzuna",
+        jobId: "1",
+        companyName: "Mu",
+        url: "https://www.adzuna.com/land/ad/1",
+      }),
+      row({
+        key: "adz2",
+        source: "adzuna",
+        jobId: "2",
+        companyName: "Nu",
+        url: "https://www.adzuna.com/land/ad/2",
+      }),
+    ],
+    files: [RESUME],
+    viaPage: (url) =>
+      url.endsWith("/1")
+        ? { ok: true, url: GH_URL, ats: "greenhouse", status: 200, hops: [url, GH_URL] }
+        : { ok: false, url, reason: "blocked", status: 403, hops: [url] },
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  assert.deepEqual(
+    ctx.jobs.map((j) => [j.key, j.resolved_url]),
+    [["adz1", GH_URL]]
+  );
+  assert.deepEqual(
+    ctx.manual.map((m) => [m.key, m.reason]),
+    [["adz2", "unresolved_url:www.adzuna.com"]]
+  );
+  // Resolved ATS URLs get the posting-API liveness check too.
+  assert.ok(h.log.some((l) => l[0] === "posting" && l[1] === "greenhouse"));
+});
+
+test("pre: a closed page in the browser marks the job Closed, not manual", async () => {
+  const h = harness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    files: [RESUME],
+    behavior: { [GH_URL]: { open: { ok: false, reason: "job_closed" } } },
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const r = h.store.apps[0];
+  assert.equal(r.status, "Closed");
+  assert.equal(r.apply_note, "job_closed");
+});
+
+test("pre: aggregator 404 from fetch is re-checked in the browser", async () => {
+  const live = "https://www.adzuna.com/land/ad/gone-live";
+  const gone = "https://www.adzuna.com/land/ad/gone-dead";
+  const blocked = "https://www.adzuna.com/land/ad/gone-blocked";
+  const h = harness({
+    apps: [
+      row({ key: "live", source: "adzuna", jobId: "1", companyName: "Xi", url: live }),
+      row({ key: "gone", source: "adzuna", jobId: "2", companyName: "Omicron", url: gone }),
+      row({ key: "blk", source: "adzuna", jobId: "3", companyName: "Pi", url: blocked }),
+    ],
+    files: [RESUME],
+    viaPage: (url) => {
+      if (url === live) {
+        const details = "https://www.adzuna.com/details/1";
+        return { ok: false, url: details, reason: "no_ats", status: 404, hops: [url, details] };
+      }
+      if (url === gone) return { ok: false, url, reason: "dead", status: 404, hops: [url] };
+      return { ok: false, url, reason: "blocked", status: 403, hops: [url] };
+    },
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  // Live ad on Adzuna without an employer link: work for the human, not dead.
+  assert.deepEqual(
+    ctx.manual.map((m) => [m.key, m.reason]),
+    [["live", "unresolved_url:www.adzuna.com"]]
+  );
+  const skipped = Object.fromEntries(ctx.skipped.map((s) => [s.key, s.reason]));
+  assert.equal(skipped.gone, "url_dead");
+  // Browser blocked: fetch's 404 stands.
+  assert.equal(skipped.blk, "url_dead");
+  assert.equal(h.log.filter((l) => l[0] === "viaPage").length, 3);
+});
+
+// ---- night run support (BL-225) ---------------------------------------------
+
+test("pre: writes a stamped apply_pre-<ts>.json with the keys it looked at", async () => {
+  const h = harness({
+    apps: [
+      row({ key: "gh1", companyName: "Acme", url: GH_URL }),
+      row({ key: "wd", companyName: "Epsilon", url: "https://epsilon.wd5.myworkdayjobs.com/j/1" }),
+      row({ key: "dead", companyName: "Zeta", url: "https://grnh.se/gone" }),
+    ],
+    files: [RESUME],
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const name = [...h.disk.keys()].find((k) => /apply_pre-.*\.json$/.test(k));
+  assert.ok(name, "stamped pre summary written");
+  assert.equal(path.dirname(name), path.join(ROOT, ".apply-state"));
+  const pre = JSON.parse(h.disk.get(name));
+  assert.equal(pre.generated_at, "2026-10-21T08:00:00.000Z");
+  assert.equal(pre.dry_run, false);
+  assert.deepEqual(pre.jobs, [{ key: "gh1" }]);
+  assert.deepEqual(pre.manual, [
+    { key: "wd", reason: "unsupported_ats:epsilon.wd5.myworkdayjobs.com" },
+  ]);
+  assert.deepEqual(pre.skipped, [{ key: "dead", reason: "url_dead" }]);
+});
+
+test("submit --deadline: no form is opened after the deadline; rows stay queued", async () => {
+  const h = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL, apply_state: "queued" })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers: [WHY("gh1")],
+  });
+  // harness clock: 2026-10-21T08:00:00Z
+  const code = await h.run({
+    phase: "submit",
+    answersFile: "/fake/answers.json",
+    deadline: "2026-10-21T07:59:00Z",
+  });
+  assert.equal(code, 0);
+  assert.equal(h.log.filter((l) => l[0] === "open").length, 0);
+  const r = h.store.apps.find((a) => a.key === "gh1");
+  assert.equal(r.apply_state, "queued");
+  assert.equal(r.apply_note, "");
+  assert.equal(r.status, "To Apply");
+  assert.match(h.out.join("\n"), /1 left for the next run: deadline/);
+  const results = [...h.disk.entries()].find(([k]) => /apply_results-/.test(k));
+  assert.equal(JSON.parse(results[1]).results[0].reason, "deadline");
+
+  // Before the deadline the job goes out as usual.
+  const h2 = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers: [WHY("gh1")],
+  });
+  await h2.run({
+    phase: "submit",
+    answersFile: "/fake/answers.json",
+    deadline: "2026-10-21T09:00:00Z",
+  });
+  assert.equal(h2.store.apps[0].status, "Applied");
+
+  const h3 = submitHarness({ apps: [], keys: [], answers: [] });
+  assert.equal(
+    await h3.run({ phase: "submit", answersFile: "/fake/answers.json", deadline: "soon" }),
+    1
+  );
+  assert.match(h3.err.join("\n"), /--deadline must be an ISO timestamp/);
+});
+
+test("submit: --answers-file may be a directory of per-job answer files", async () => {
+  const h = submitHarness({
+    apps: [
+      row({ key: "a", companyName: "Acme", url: GH_URL }),
+      row({ key: "b", companyName: "Beta", url: GH2_URL }),
+    ],
+    keys: [
+      ["a", GH_URL, "Acme"],
+      ["b", GH2_URL, "Beta"],
+    ],
+    answers: [],
+  });
+  const dir = "/fake/round/answers";
+  h.disk.set(dir, "<dir>");
+  h.disk.set(`${dir}/a.json`, JSON.stringify({ answers: [WHY("a")] }));
+  h.disk.set(`${dir}/b.json`, JSON.stringify({ answers: [WHY("b")] }));
+  h.deps.isDirectory = (p) => p === dir;
+  h.deps.listDir = () => ["b.json", "a.json", ".DS_Store", "notes.txt"];
+  assert.equal(await h.run({ phase: "submit", answersFile: dir }), 0);
+  assert.deepEqual(
+    h.store.apps.map((r) => r.status),
+    ["Applied", "Applied"]
+  );
+});
+
+test("loadAnswersFile: an empty directory is valid (deterministic answers only)", () => {
+  const deps = {
+    fileExists: () => true,
+    isDirectory: () => true,
+    listDir: () => [],
+    readFile: () => {
+      throw new Error("no files to read");
+    },
+  };
+  assert.equal(loadAnswersFile("/empty", deps).size, 0);
+});
+
+test("pre / submit: a browser that cannot start stops the run and touches no job", async () => {
+  const h = harness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    files: [RESUME],
+  });
+  h.deps.launchBrowser = async () => {
+    throw new Error("Executable doesn't exist");
+  };
+  assert.equal(await h.run({ phase: "pre" }), 1);
+  assert.match(h.err.join("\n"), /cannot start the browser — Executable doesn't exist/);
+  assert.equal(h.disk.has(CONTEXT_PATH), false);
+  assert.equal(h.store.apps[0].apply_state || "", "");
+
+  const s = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL, apply_state: "queued" })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers: [WHY("gh1")],
+  });
+  s.deps.launchBrowser = async () => {
+    throw new Error("no chromium");
+  };
+  assert.equal(await s.run({ phase: "submit", answersFile: "/fake/answers.json" }), 1);
+  assert.equal(s.store.apps[0].status, "To Apply");
+  assert.equal(s.store.apps[0].apply_state, "queued");
+});
+
+test("submit: an answer outside a partial (searchable) option list is typed, not dropped", async () => {
+  const school = (partial) => ({
+    id: "school",
+    label: "School",
+    type: "select",
+    required: true,
+    options: ["Aalto University", "Atlanta College of Arts"],
+    ...(partial ? { options_partial: true } : {}),
+  });
+  const answers = [WHY("gh1"), { key: "gh1", label: "School", answer: "Plekhanov University" }];
+  const h = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers,
+    behavior: { [GH_URL]: { form: [...FORM, school(true)] } },
+  });
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  const fill = h.log.find((l) => l[0] === "fill");
+  assert.equal(fill[2].school, "Plekhanov University");
+
+  // A complete list keeps the strict rule: no matching option → required field missing.
+  const h2 = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers,
+    behavior: { [GH_URL]: { form: [...FORM, school(false)] } },
+  });
+  await h2.run({ phase: "submit", answersFile: "/fake/answers.json" });
+  assert.equal(h2.log.filter((l) => l[0] === "fill").length, 0);
+  assert.notEqual(h2.store.apps[0].status, "Applied");
+});
+
+// ---- answer ratings from the board (BL-225 U7) -----------------------------
+
+const RATINGS_PATH = path.join(ROOT, ".answers", "ratings.json");
+const BANK_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const BANK_B = "bbbbbbbb-0000-4000-8000-000000000002";
+const BANK_C = "cccccccc-0000-4000-8000-000000000003";
+const SQL_Q = "How many years of SQL experience do you have?";
+
+function sqlAnswer(pageId, answer, over = {}) {
+  return {
+    pageId,
+    company: "Other Co",
+    role: "PM",
+    question: SQL_Q,
+    answer,
+    category: "Experience",
+    createdAt: "2026-10-01T00:00:00Z",
+    ...over,
+  };
+}
+
+function ratingsJson(map) {
+  const ratings = {};
+  for (const [id, rating] of Object.entries(map))
+    ratings[id] = { rating, rated_at: "", question_key: "" };
+  return JSON.stringify({ version: 1, ratings });
+}
+
+async function preWithRatings(bank, ratings) {
+  const h = harness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    files: [RESUME],
+    bank,
+  });
+  if (ratings !== undefined) h.disk.set(RATINGS_PATH, ratings);
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const job = JSON.parse(h.disk.get(CONTEXT_PATH)).jobs[0];
+  const ans = Object.fromEntries(job.answers.map((a) => [a.field_id, a]));
+  return { h, job, ans };
+}
+
+test("pre ratings: an answer rated 1–2 is never reused; the next match is taken", async () => {
+  const bank = [sqlAnswer(BANK_A, "Seven years"), sqlAnswer(BANK_B, "Five years")];
+  const { h, ans } = await preWithRatings(bank, ratingsJson({ [BANK_A]: 2 }));
+  assert.equal(ans.q_years.bank_page_id, BANK_B);
+  assert.equal(ans.q_years.value, "Five years");
+  assert.match(h.out.join("\n"), /1 answer\(s\) rated 1–2 — not reused/);
+});
+
+test("pre ratings: the only matching answer rated 1 → the question goes to the LLM step", async () => {
+  const { job, ans } = await preWithRatings(
+    [sqlAnswer(BANK_A, "Seven years")],
+    ratingsJson({ [BANK_A]: 1 })
+  );
+  assert.equal(ans.q_years, undefined);
+  assert.ok(job.unanswered.some((u) => u.field_id === "q_years"));
+});
+
+test("pre ratings: several matches → higher rated first, then newer; unrated counts as 3", async () => {
+  const bank = [
+    sqlAnswer(BANK_A, "Old unrated", { createdAt: "2026-09-01T00:00:00Z" }),
+    sqlAnswer(BANK_B, "New unrated", { createdAt: "2026-10-10T00:00:00Z" }),
+    sqlAnswer(BANK_C, "Rated four", { createdAt: "2026-08-01T00:00:00Z" }),
+  ];
+  const rated = await preWithRatings(bank, ratingsJson({ [BANK_C]: 4 }));
+  assert.equal(rated.ans.q_years.bank_page_id, BANK_C);
+
+  const unrated = await preWithRatings(bank, undefined);
+  assert.equal(unrated.ans.q_years.bank_page_id, BANK_B, "no ratings → newest wins");
+
+  const three = await preWithRatings(bank, ratingsJson({ [BANK_A]: 3 }));
+  assert.equal(three.ans.q_years.bank_page_id, BANK_B, "a 3 ties with unrated → newer");
+});
+
+test("pre ratings: an exact company+role+question match rated low falls back to a reusable one", async () => {
+  const bank = [
+    sqlAnswer(BANK_A, "Exact but bad", { company: "Acme", role: "Product Manager" }),
+    sqlAnswer(BANK_B, "Portable"),
+  ];
+  const before = await preWithRatings(bank, undefined);
+  assert.equal(before.ans.q_years.source, "bank");
+  const after = await preWithRatings(bank, ratingsJson({ [BANK_A]: 2 }));
+  assert.equal(after.ans.q_years.source, "bank_reuse");
+  assert.equal(after.ans.q_years.bank_page_id, BANK_B);
+});
+
+test("pre ratings: an unreadable ratings file skips the bank (fail closed)", async () => {
+  const { h, ans } = await preWithRatings([sqlAnswer(BANK_A, "Seven years")], "{not json");
+  assert.equal(ans.q_years, undefined);
+  assert.match(h.err.join("\n"), /answer ratings unreadable/);
+});
+
+test("pre: the stamped record lists which bank answers went into which form", async () => {
+  const { h } = await preWithRatings([sqlAnswer(BANK_A, "Seven years")], undefined);
+  const name = [...h.disk.keys()].find((k) => /apply_pre-.*\.json$/.test(k));
+  const pre = JSON.parse(h.disk.get(name));
+  assert.deepEqual(pre.bank_used, [{ key: "gh1", bank_page_id: BANK_A, source: "bank_reuse" }]);
+});
+
+test("pre: a To Apply row outside the profile geo is archived, never opened", async () => {
+  const h = harness({
+    apps: [
+      row({ key: "gh1", companyName: "Acme", url: GH_URL, locations: ["San Francisco, CA"] }),
+      row({ key: "waw", companyName: "Beta", url: GH2_URL, locations: ["Warsaw"] }),
+    ],
+    files: [RESUME],
+  });
+  h.deps.loadProfile = () => ({
+    ...profile(),
+    geo: { mode: "home_state_or_remote", home_state: "CA" },
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  assert.equal(h.log.filter((l) => l[0] === "open" && l[1] === GH2_URL).length, 0);
+  const waw = h.store.apps.find((a) => a.key === "waw");
+  assert.equal(waw.status, "Archived");
+  assert.equal(waw.skip_reason, "geo_not_home_state_or_remote");
+  assert.deepEqual(
+    h.notionCalls.filter((c) => c[0] === "page-waw"),
+    [["page-waw", "Archived"]]
+  );
+  assert.match(h.out.join("\n"), /1 outside your geo → archived/);
+});
+
+// --- open (human finishes one job) -----------------------------------------
+
+function openHarness({ apps, successAfter = 1, blockers = [], closeAfter = null, rounds = {} }) {
+  const h = harness({ apps, files: [RESUME] });
+  const launched = [];
+  let polls = 0;
+  const base = h.deps.getAdapter;
+  h.deps.getAdapter = (n) => {
+    const a = base(n);
+    return {
+      ...a,
+      async isSuccess() {
+        polls += 1;
+        return polls >= successAfter ? { url: "done", text: "Thank you for applying" } : null;
+      },
+      async enterSecurityCode(_page, code) {
+        h.log.push(["code", code]);
+        return { ok: true };
+      },
+    };
+  };
+  const baseLaunch = h.deps.launchBrowser;
+  h.deps.launchBrowser = async (opts) => {
+    launched.push(opts);
+    const b = await baseLaunch(opts);
+    return {
+      ...b,
+      newPage: async () => {
+        const p = await b.newPage();
+        p.page.isClosed = () => closeAfter !== null && polls >= closeAfter;
+        return p;
+      },
+    };
+  };
+  const seen = [...blockers];
+  h.deps.detectBlocker = async () => seen.shift() || null;
+  h.deps.sleep = async () => {};
+  h.deps.makeCodeWaiter = () => ({ wait: async () => "Ab3dE9fZ" });
+  // Night answer rounds: rounds[name] = [answers…] under .apply-state/rounds/<name>/answers.
+  const roundsDir = path.join(ROOT, ".apply-state", "rounds");
+  h.deps.isDirectory = (p) =>
+    p === roundsDir || Object.keys(rounds).some((r) => p === path.join(roundsDir, r, "answers"));
+  h.deps.listDir = (p) =>
+    p === roundsDir ? Object.keys(rounds) : p.endsWith("answers") ? ["job.json"] : [];
+  for (const [r, answers] of Object.entries(rounds)) {
+    h.disk.set(path.join(roundsDir, r, "answers", "job.json"), JSON.stringify({ answers }));
+  }
+  return { ...h, launched, polls: () => polls };
+}
+
+test("open: visible window, filled from the newest night answers, Applied by manual on confirmation", async () => {
+  const h = openHarness({
+    apps: [
+      row({
+        key: "gh1",
+        companyName: "Acme",
+        url: GH_URL,
+        apply_state: "manual",
+        apply_note: "captcha",
+      }),
+    ],
+    successAfter: 3,
+    rounds: {
+      "2026-10-20T00": [{ ...WHY("gh1"), answer: "Old answer." }],
+      "2026-10-21T00": [WHY("gh1")],
+    },
+  });
+  assert.equal(await h.run({ phase: "open", key: "gh1" }), 0);
+  assert.ok(
+    h.launched.some((o) => o && o.headless === false),
+    "a visible window for the human"
+  );
+  const fill = h.log.filter((l) => l[0] === "fill").pop();
+  assert.equal(fill[2].q_why, "A sourced, truthful answer.", "the newest round wins");
+  assert.equal(h.log.filter((l) => l[0] === "submit").length, 0, "the human presses Submit");
+  const r = h.store.apps[0];
+  assert.equal(r.status, "Applied");
+  assert.equal(r.applied_by, "manual");
+  assert.equal(r.apply_state, "submitted");
+  assert.deepEqual(h.notionCalls, [["page-gh1", "Applied"]]);
+});
+
+test("open: a Greenhouse security code is typed in for the human and resubmitted", async () => {
+  const h = openHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL, apply_state: "manual" })],
+    successAfter: 99,
+    blockers: ["email_verification"],
+  });
+  assert.equal(await h.run({ phase: "open", key: "gh1" }), 0);
+  assert.deepEqual(
+    h.log.filter((l) => l[0] === "code"),
+    [["code", "Ab3dE9fZ"]]
+  );
+  assert.equal(h.log.filter((l) => l[0] === "submit").length, 1);
+  assert.equal(h.store.apps[0].status, "Applied");
+});
+
+test("open: window closed without a confirmation → row untouched", async () => {
+  const h = openHarness({
+    apps: [
+      row({
+        key: "gh1",
+        companyName: "Acme",
+        url: GH_URL,
+        apply_state: "manual",
+        apply_note: "captcha",
+      }),
+    ],
+    successAfter: 99,
+    closeAfter: 2,
+  });
+  assert.equal(await h.run({ phase: "open", key: "gh1" }), 0);
+  const r = h.store.apps[0];
+  assert.deepEqual([r.status, r.apply_state, r.apply_note], ["To Apply", "manual", "captcha"]);
+  assert.equal(h.notionCalls.length, 0);
+});
+
+test("open: input validation and never on an applied job", async () => {
+  const h = openHarness({
+    apps: [
+      row({
+        key: "gh1",
+        companyName: "Acme",
+        url: GH_URL,
+        applied_date: "2026-10-20",
+        status: "Applied",
+      }),
+    ],
+  });
+  assert.equal(await h.run({ phase: "open" }), 1);
+  assert.match(h.err.join("\n"), /--key/);
+  assert.equal(await h.run({ phase: "open", key: "nope" }), 1);
+  assert.equal(await h.run({ phase: "open", key: "gh1" }), 1);
+  assert.match(h.err.join("\n"), /already_applied/);
+  assert.equal(h.launched.length, 0);
+});

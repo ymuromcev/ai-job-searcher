@@ -121,8 +121,11 @@ lives in `profiles/<id>/`.
 
 Set expectations explicitly:
 
-- **Doesn't auto-apply.** It drafts cover letters and surfaces matches
-  in Notion; you decide which ones to send.
+- **Doesn't apply everywhere.** Since RFC 068 the bot fills and submits
+  forms itself on Greenhouse, Lever and Ashby (headless browser on your
+  machine). It never creates accounts, enters passwords, solves captchas
+  or uses LinkedIn Easy Apply; anything like that goes to a manual list
+  on the local board.
 - **Doesn't auto-reply to recruiters.** Email is read-only (Gmail
   OAuth scope `gmail.readonly`). `check` reads replies to update
   Notion status; the tool never sends mail.
@@ -221,6 +224,10 @@ node engine/cli.js <command> --profile <id> [flags]
 | `retro-tailor` | Re-tailor Strong rows currently in `To Apply` whose resume predates the RFC-044 tailoring loop. |
 | `backfill-outreach-url` | One-shot: fill the LinkedIn people-search URL for existing `To Apply` / `Applied` rows that predate the RFC-059 outreach feature. Dry-run by default; `--apply` writes TSV + Notion. Idempotent. |
 | `companies-upsert` | Push relokant-sweep sweet-zone targets into the Notion Companies DB, two-way deduped (domain + name vs Notion / `data/companies.tsv` / relokant ledgers). Back-fills empty fields only; never writes `Tier`. Dry-run by default; `--apply` writes. (RFC 062) |
+| `apply` | Bot applications (RFC 068): `--phase pre` reads the forms and answers standard questions, the `job-pipeline` skill answers the rest with a truth check, `--phase submit` fills, submits and records the ATS confirmation. `--dry-run` stops before Submit. |
+| `night` | Orchestration helpers for the unattended nightly run (lock, time budget, fan-out / collect, run log) — see `skills/job-pipeline/night-apply.md`. |
+| `board` | Local registry UI on 127.0.0.1: applications, manual to-do list, week, sources / apply sites, answer bank with ratings. |
+| `report` | `--weekly` strategy review: funnel, sources, apply outcomes, nights, answer bank. |
 
 `node engine/cli.js --help` prints the same list with full flag docs.
 

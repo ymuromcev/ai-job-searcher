@@ -166,6 +166,22 @@ test("schema: geo.mode invalid value → error", () => {
   assert.equal(err.severity, "error");
 });
 
+test("schema: geo.mode home_state_or_remote with home_state is accepted (RFC 068)", () => {
+  const profile = {
+    filterRules: fr(),
+    geo: { mode: "home_state_or_remote", home_state: "CA" },
+  };
+  assert.deepEqual(runSchemaChecks(profile), []);
+});
+
+test("schema: geo.mode home_state_or_remote without home_state → error", () => {
+  const profile = { filterRules: fr(), geo: { mode: "home_state_or_remote" } };
+  const issues = runSchemaChecks(profile);
+  const err = issues.find((i) => i.field === "profile.geo.home_state");
+  assert.ok(err);
+  assert.equal(err.severity, "error");
+});
+
 test("schema: empty profile is tolerated (no issues)", () => {
   assert.deepEqual(runSchemaChecks(null), []);
   assert.deepEqual(runSchemaChecks(undefined), []);

@@ -104,6 +104,63 @@ function looksLikeBoardRoot(finalUrl, originalUrl) {
   return BOARD_ROOT_RE.some((re) => re.test(finalUrl));
 }
 
+// --- ATS posting APIs (BL-225) ---------------------------------------------
+// Ashby job pages are a SPA: a pulled posting still answers 200, so plain
+// HEAD/GET calls it alive and prepare spends a full tailoring loop on a job
+// that apply then finds closed. For the three ATSes we apply to, ask the
+// posting API instead. Only a definite "gone" answer marks the row dead;
+// network errors or odd statuses fall through to the normal check.
+
+const ASHBY_RE = /^https?:\/\/jobs\.ashbyhq\.com\/([^/?#]+)\/([0-9a-f-]{36})/i;
+const GH_RE = /^https?:\/\/(?:job-boards|boards)\.greenhouse\.io\/([^/?#]+)\/jobs\/(\d+)/i;
+const LEVER_RE = /^https?:\/\/jobs\.lever\.co\/([^/?#]+)\/([0-9a-f-]{36})/i;
+
+// → "closed" | "open" | null (unknown — use the normal check).
+async function atsPostingState(url, fetchFn, cache) {
+  const u = String(url || "");
+  let m = u.match(ASHBY_RE);
+  if (m) {
+    const org = m[1].toLowerCase();
+    const id = m[2].toLowerCase();
+    let ids = cache.get(`ashby:${org}`);
+    if (ids === undefined) {
+      ids = null;
+      try {
+        const res = await fetchFn(
+          `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(org)}`,
+          { method: "GET", timeoutMs: 15000, retries: 1 }
+        );
+        if (res && res.ok) {
+          const body = await res.json();
+          if (body && Array.isArray(body.jobs)) {
+            ids = new Set(body.jobs.map((j) => String(j.id || "").toLowerCase()));
+          }
+        }
+      } catch {
+        ids = null;
+      }
+      cache.set(`ashby:${org}`, ids);
+    }
+    if (!ids) return null;
+    return ids.has(id) ? "open" : "closed";
+  }
+  m = u.match(GH_RE) || u.match(LEVER_RE);
+  if (m) {
+    const api = GH_RE.test(u)
+      ? `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(m[1])}/jobs/${m[2]}`
+      : `https://api.lever.co/v0/postings/${encodeURIComponent(m[1])}/${m[2]}`;
+    try {
+      const res = await fetchFn(api, { method: "GET", timeoutMs: 15000, retries: 1 });
+      const st = (res && res.status) || 0;
+      if (st === 404 || st === 410) return "closed";
+      if (st >= 200 && st < 300) return "open";
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 // --- Core check logic -------------------------------------------------------
 
 async function checkOne(row, fetchFn, opts = {}) {
@@ -117,6 +174,11 @@ async function checkOne(row, fetchFn, opts = {}) {
   const safe = isSafeLivenessUrl(url);
   if (!safe.ok) {
     return { ...row, status: 0, alive: false, error: safe.reason, blocked: true };
+  }
+
+  const posting = await atsPostingState(url, fetchFn, opts.atsCache || new Map());
+  if (posting === "closed") {
+    return { ...row, status: 404, alive: false, finalUrl: url, postingClosed: true };
   }
 
   let status = 0;
@@ -167,6 +229,8 @@ async function checkOne(row, fetchFn, opts = {}) {
 async function checkAll(rows, fetchFn, opts = {}) {
   if (!Array.isArray(rows) || rows.length === 0) return [];
   const { concurrency = 12 } = opts;
+  // One posting-board fetch per Ashby org for the whole batch.
+  opts = { ...opts, atsCache: opts.atsCache || new Map() };
   const results = new Array(rows.length);
   let i = 0;
   async function worker() {
@@ -179,4 +243,4 @@ async function checkAll(rows, fetchFn, opts = {}) {
   return results;
 }
 
-module.exports = { checkOne, checkAll, isSafeLivenessUrl, SKIP_URL_CHECK_SOURCES };
+module.exports = { checkOne, checkAll, isSafeLivenessUrl, atsPostingState, SKIP_URL_CHECK_SOURCES };

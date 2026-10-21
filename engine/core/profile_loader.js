@@ -14,6 +14,9 @@
 const fs = require("fs");
 const path = require("path");
 
+const { canonicalStateCode } = require("./geo_enforcer.js");
+const { APPLY_DEFAULTS_FILE } = require("./apply_defaults.js");
+
 const ID_REGEX = /^[a-z][a-z0-9_-]*$/;
 
 // BL-126 Block D: valid resume layout density presets. The PDF renderer
@@ -124,6 +127,12 @@ function loadProfile(id, options = {}) {
   // L-4 (RFC 013): per-profile geo block. Canonical shape consumed by
   // filter.js / prepare.js / validate.js via geo_enforcer.
   result.geo = normalizeGeo(profile.geo);
+
+  // RFC 068 §4: optional standard form answers for the apply bot. Loaded
+  // verbatim (shape is checked by `validate`, see core/apply_defaults.js);
+  // null when the profile has no apply_defaults.json.
+  const applyDefaults = readJsonIfExists(path.join(root, APPLY_DEFAULTS_FILE));
+  result.applyDefaults = applyDefaults === undefined ? null : applyDefaults;
 
   // BL-126 Block D: resume layout density preset. Normalised onto
   // `result.resume.layout` so call sites pass it through as the 3rd opts
@@ -447,7 +456,9 @@ function normalizeResumeLayout(raw) {
 //
 // Schema (profile.json):
 //   "geo": {
-//     "mode": "metro" | "us-wide" | "remote-only" | "unrestricted",
+//     "mode": "metro" | "us-wide" | "remote-only" | "unrestricted"
+//             | "home_state_or_remote",
+//     "home_state": string,       // required when mode === "home_state_or_remote"
 //     "cities": [string],         // required when mode === "metro"
 //     "states": [string],         // required when mode === "metro" (per §8.1)
 //     "countries": [string],      // optional; ISO codes (informational in v1)
@@ -467,7 +478,17 @@ function normalizeResumeLayout(raw) {
 //   - mode "us-wide" without countries[] (defaults to ["US"] if missing —
 //     more permissive than metro since us-wide is meant to be loose)
 
-const VALID_GEO_MODES = new Set(["metro", "us-wide", "remote-only", "unrestricted"]);
+//   - mode "home_state_or_remote" (RFC 068 §3) without a valid `home_state`
+//     (US 2-letter code or full state name; canonicalized to the upper-case
+//     code, e.g. "california" → "CA").
+
+const VALID_GEO_MODES = new Set([
+  "metro",
+  "us-wide",
+  "remote-only",
+  "unrestricted",
+  "home_state_or_remote",
+]);
 
 function normalizeGeo(raw) {
   if (raw === undefined || raw === null) {
@@ -515,7 +536,20 @@ function normalizeGeo(raw) {
     }
   }
 
-  return { mode, cities, states, countries, remote_ok, blocklist, max_radius_miles };
+  const out = { mode, cities, states, countries, remote_ok, blocklist, max_radius_miles };
+
+  if (mode === "home_state_or_remote") {
+    const code = canonicalStateCode(raw.home_state);
+    if (!code) {
+      throw new Error(
+        `profile.geo.home_state is required when mode === "home_state_or_remote" — ` +
+          `a US state code or name (e.g. "CA"); got ${JSON.stringify(raw.home_state)}`
+      );
+    }
+    out.home_state = code;
+  }
+
+  return out;
 }
 
 module.exports = {

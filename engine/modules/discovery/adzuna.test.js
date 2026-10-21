@@ -85,6 +85,37 @@ test("adzuna: fetches and normalises jobs for each keyword", async () => {
   assert.ok(stripe.locations.includes("San Francisco, CA"));
 });
 
+test("adzuna: appends the state from location.area when display_name lacks it (RFC 068)", async () => {
+  const listing = {
+    ...LISTING,
+    id: 555,
+    location: {
+      display_name: "Santa Clara, Santa Clara County",
+      area: ["US", "California", "Santa Clara County", "Santa Clara"],
+    },
+  };
+  const fetchFn = async () => makeRes({ results: [listing] });
+  const jobs = await discover([], {
+    fetchFn,
+    secrets: SECRETS,
+    discovery: { keyword_search: { keywords: ["Product Manager"] } },
+    logger: { warn: () => {} },
+  });
+  assert.deepEqual(jobs[0].locations, ["Santa Clara, Santa Clara County, California"]);
+});
+
+test("adzuna: withAreaState leaves display_name alone when state is present or area is not a state", () => {
+  const { withAreaState } = _internals;
+  assert.equal(
+    withAreaState("New York City, New York", ["US", "New York", "New York City"]),
+    "New York City, New York"
+  );
+  assert.equal(withAreaState("US", ["US"]), "US");
+  assert.equal(withAreaState("Remote", undefined), "Remote");
+  assert.equal(withAreaState("Somewhere", ["US", "Not A State"]), "Somewhere");
+  assert.equal(withAreaState("", ["US", "Texas"]), "Texas");
+});
+
 test("adzuna: dedupes same jobId across multiple keywords", async () => {
   const fetchFn = async () => makeRes({ results: [LISTING] });
 

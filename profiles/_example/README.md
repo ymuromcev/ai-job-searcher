@@ -13,6 +13,7 @@ itself is read-only template content; don't run the CLI against
 | `resume_versions.example.json` | One master resume source; each `versions.<key>` is an archetype. Rename to `resume_versions.json`. |
 | `cover_letter_template.example.md` | Skeleton with `{{placeholders}}`. Rename to `cover_letter_template.md`. |
 | `cover_letter_versions.example.json` | One entry per cover-letter variant, keyed by `<company>_<role>_<focus>`. Rename to `cover_letter_versions.json`. |
+| `apply_defaults.example.json` | Optional. Standard answers the apply bot gives to typical form questions (work authorization, sponsorship, relocation, EEO, salary floor/default, "how did you hear"). Contract in `engine/core/apply_defaults.js` (RFC 068 §4). Rename to `apply_defaults.json`. |
 | `memory/` | Voice + canonical-experience context files read by `prepare`. Copy and fill. |
 
 ## The fast path

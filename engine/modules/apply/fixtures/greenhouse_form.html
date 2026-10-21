@@ -1,0 +1,417 @@
+<!doctype html>
+<!--
+  Synthetic Greenhouse job-boards application form (RFC 068 test fixture).
+  Mirrors the DOM shapes of the live Remix UI (ids, `<id>-label` labels,
+  react-select comboboxes that render `.select__menu [role=option]` only
+  when opened, `.file-upload` groups). No real candidate or company data.
+
+  Variants via query string:
+    ?variant=captcha  — Submit reveals a visible reCAPTCHA challenge frame
+    ?variant=verify   — Submit shows an email security-code screen
+    ?variant=reject   — Submit shows a server-side validation error
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Senior Product Manager — Acme Synthetic</title>
+    <style>
+      .select__menu {
+        border: 1px solid #999;
+      }
+      .select__option {
+        padding: 4px;
+        cursor: pointer;
+      }
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+      }
+      .helper-text--error {
+        color: red;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Senior Product Manager</h1>
+    <p>Acme Synthetic is hiring. The base pay range for this role is $150,000 — $190,000 USD.</p>
+    <!-- Invisible reCAPTCHA is always present on real forms: must NOT stop the bot. -->
+    <iframe
+      title="reCAPTCHA"
+      src="about:blank#recaptcha/enterprise/anchor?size=invisible"
+      style="width: 256px; height: 60px; position: absolute; top: -10000px"
+    ></iframe>
+    <form
+      method="get"
+      action="greenhouse_confirmation.html"
+      id="application-form"
+      class="application--form"
+    >
+      <div class="field-wrapper">
+        <label id="first_name-label" for="first_name" class="label"
+          >First Name<span aria-hidden="true">*</span></label
+        >
+        <input id="first_name" type="text" aria-required="true" />
+      </div>
+      <div class="field-wrapper">
+        <label id="last_name-label" for="last_name" class="label"
+          >Last Name<span aria-hidden="true">*</span></label
+        >
+        <input id="last_name" type="text" aria-required="true" />
+      </div>
+      <div class="field-wrapper">
+        <label id="email-label" for="email" class="label"
+          >Email<span aria-hidden="true">*</span></label
+        >
+        <input id="email" type="text" aria-required="true" />
+      </div>
+      <div class="field-wrapper select">
+        <div class="select__container">
+          <label id="country-label" for="country" class="label select__label"
+            >Country<span aria-hidden="true">*</span></label
+          >
+          <div class="select-shell">
+            <div class="select__control">
+              <div class="select__value-container">
+                <input
+                  class="select__input"
+                  id="country"
+                  role="combobox"
+                  type="text"
+                  aria-required="true"
+                  data-options="United States +1|Canada +1|Mexico +52"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="field-wrapper">
+        <label id="phone-label" for="phone" class="label"
+          >Phone<span aria-hidden="true">*</span></label
+        >
+        <input id="phone" type="tel" aria-required="true" />
+      </div>
+      <div class="field-wrapper select">
+        <div class="select__container">
+          <label id="candidate-location-label" for="candidate-location" class="label select__label"
+            >Location (City)<span aria-hidden="true">*</span></label
+          >
+          <div class="select-shell">
+            <div class="select__control">
+              <div class="select__value-container">
+                <input
+                  class="select__input"
+                  id="candidate-location"
+                  role="combobox"
+                  type="text"
+                  aria-required="true"
+                  data-async="1"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="field-wrapper">
+        <div
+          role="group"
+          aria-labelledby="upload-label-resume"
+          aria-required="true"
+          class="file-upload"
+        >
+          <div id="upload-label-resume" class="label upload-label">
+            Resume/CV<span class="required">*</span>
+          </div>
+          <button type="button">Attach</button>
+          <label class="visually-hidden" for="resume">Attach</label>
+          <input id="resume" class="visually-hidden" type="file" accept=".pdf,.doc,.docx" />
+        </div>
+      </div>
+      <div class="field-wrapper">
+        <div
+          role="group"
+          aria-labelledby="upload-label-cover_letter"
+          aria-required="false"
+          class="file-upload"
+        >
+          <div id="upload-label-cover_letter" class="label upload-label">Cover Letter</div>
+          <button type="button">Attach</button>
+          <label class="visually-hidden" for="cover_letter">Attach</label>
+          <input id="cover_letter" class="visually-hidden" type="file" accept=".pdf,.doc,.docx" />
+        </div>
+      </div>
+      <div class="field-wrapper">
+        <label id="question_1001-label" for="question_1001" class="label">LinkedIn Profile</label>
+        <input id="question_1001" type="text" aria-required="false" />
+      </div>
+      <div class="field-wrapper">
+        <label id="question_1002-label" for="question_1002" class="label"
+          >Why do you want to join Acme Synthetic?<span aria-hidden="true">*</span></label
+        >
+        <textarea id="question_1002" aria-required="true"></textarea>
+      </div>
+      <div class="field-wrapper select">
+        <label id="question_1003-label" for="question_1003" class="label select__label"
+          >Are you legally authorized to work in the United States?<span aria-hidden="true"
+            >*</span
+          ></label
+        >
+        <div class="select__control">
+          <div class="select__value-container">
+            <input
+              class="select__input"
+              id="question_1003"
+              role="combobox"
+              type="text"
+              aria-required="true"
+              data-options="Yes|No"
+            />
+          </div>
+        </div>
+      </div>
+      <div class="field-wrapper select">
+        <label id="question_1004-label" for="question_1004" class="label select__label"
+          >Will you now or in the future require visa sponsorship?<span aria-hidden="true"
+            >*</span
+          ></label
+        >
+        <div class="select__control">
+          <div class="select__value-container">
+            <input
+              class="select__input"
+              id="question_1004"
+              role="combobox"
+              type="text"
+              aria-required="true"
+              data-options="Yes|No"
+            />
+          </div>
+        </div>
+      </div>
+      <div class="field-wrapper">
+        <label id="question_1005-label" for="question_1005" class="label"
+          >What are your salary expectations?</label
+        >
+        <input id="question_1005" type="text" aria-required="false" />
+      </div>
+      <div class="field-wrapper select">
+        <label id="question_1006-label" for="question_1006" class="label select__label"
+          >How did you hear about this job?</label
+        >
+        <div class="select__control">
+          <div class="select__value-container">
+            <input
+              class="select__input"
+              id="question_1006"
+              role="combobox"
+              type="text"
+              aria-required="false"
+              data-options="LinkedIn|Company website|Employee referral|Other"
+            />
+          </div>
+        </div>
+      </div>
+      <fieldset id="question_1007">
+        <legend>Which of these tools have you used? (select all that apply)</legend>
+        <label><input type="checkbox" name="question_1007[]" value="a" />Spreadsheets</label>
+        <label><input type="checkbox" name="question_1007[]" value="b" />SQL</label>
+        <label
+          ><input type="checkbox" name="question_1007[]" value="c" />Experimentation
+          platforms</label
+        >
+      </fieldset>
+      <div class="field-wrapper select">
+        <label id="question_1008-label" for="question_1008" class="label select__label"
+          >Have you ever worked for Acme Synthetic before?<span aria-hidden="true">*</span></label
+        >
+        <div class="select__control">
+          <div class="select__value-container">
+            <input
+              class="select__input"
+              id="question_1008"
+              role="combobox"
+              type="text"
+              aria-required="true"
+              data-options="Yes|No"
+            />
+          </div>
+        </div>
+      </div>
+      <h3>Voluntary Self-Identification</h3>
+      <div class="field-wrapper select">
+        <label id="gender-label" for="gender" class="label select__label">Gender</label>
+        <div class="select__control">
+          <div class="select__value-container">
+            <input
+              class="select__input"
+              id="gender"
+              role="combobox"
+              type="text"
+              aria-required="false"
+              data-options="Male|Female|Decline To Self Identify"
+            />
+          </div>
+        </div>
+      </div>
+      <div class="field-wrapper select">
+        <label id="hispanic_ethnicity-label" for="hispanic_ethnicity" class="label select__label"
+          >Are you Hispanic/Latino?</label
+        >
+        <div class="select__control">
+          <div class="select__value-container">
+            <input
+              class="select__input"
+              id="hispanic_ethnicity"
+              role="combobox"
+              type="text"
+              aria-required="false"
+              data-options="Yes|No|Decline To Self Identify"
+            />
+          </div>
+        </div>
+      </div>
+      <div class="field-wrapper select">
+        <label id="veteran_status-label" for="veteran_status" class="label select__label"
+          >Veteran Status</label
+        >
+        <div class="select__control">
+          <div class="select__value-container">
+            <input
+              class="select__input"
+              id="veteran_status"
+              role="combobox"
+              type="text"
+              aria-required="false"
+              data-options="I am not a protected veteran|I identify as one or more of the classifications of a protected veteran|I don't wish to answer"
+            />
+          </div>
+        </div>
+      </div>
+      <div class="field-wrapper select">
+        <label id="disability_status-label" for="disability_status" class="label select__label"
+          >Disability Status</label
+        >
+        <div class="select__control">
+          <div class="select__value-container">
+            <input
+              class="select__input"
+              id="disability_status"
+              role="combobox"
+              type="text"
+              aria-required="false"
+              data-options="Yes, I have a disability (or previously had a disability)|No, I do not have a disability|I do not want to answer"
+            />
+          </div>
+        </div>
+      </div>
+      <div id="form-errors"></div>
+      <button type="submit" class="btn btn--pill">Submit application</button>
+    </form>
+    <script>
+      // Minimal react-select emulation: opening renders `.select__menu` with
+      // `[role=option]` rows; picking one renders `.select__single-value`.
+      const CITY_SUGGESTIONS = [
+        "Springfield, Illinois, United States",
+        "Springfield, Missouri, United States",
+      ];
+      function closeMenus() {
+        document.querySelectorAll(".select__menu").forEach((m) => m.remove());
+      }
+      function renderMenu(input, options) {
+        closeMenus();
+        const menu = document.createElement("div");
+        menu.className = "select__menu";
+        menu.setAttribute("role", "listbox");
+        for (const text of options) {
+          const o = document.createElement("div");
+          o.className = "select__option";
+          o.setAttribute("role", "option");
+          o.textContent = text;
+          o.addEventListener("mousedown", (e) => {
+            e.preventDefault();
+            let sv = input.parentElement.querySelector(".select__single-value");
+            if (!sv) {
+              sv = document.createElement("div");
+              sv.className = "select__single-value";
+              input.parentElement.appendChild(sv);
+            }
+            sv.textContent = text;
+            input.value = "";
+            closeMenus();
+          });
+          menu.appendChild(o);
+        }
+        input.closest(".select__control").after(menu);
+      }
+      document.querySelectorAll(".select__input").forEach((input) => {
+        if (input.dataset.async) {
+          input.addEventListener("input", () => {
+            if (input.value.trim().length >= 2)
+              setTimeout(() => renderMenu(input, CITY_SUGGESTIONS), 150);
+          });
+          return;
+        }
+        const options = input.dataset.options.split("|");
+        input.addEventListener("mousedown", () => renderMenu(input, options));
+        input.addEventListener("input", () => {
+          const q = input.value.toLowerCase();
+          renderMenu(
+            input,
+            options.filter((o) => o.toLowerCase().includes(q))
+          );
+        });
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Escape") closeMenus();
+        });
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") closeMenus();
+      });
+
+      const variant = new URLSearchParams(location.search).get("variant") || "";
+      document.getElementById("application-form").addEventListener("submit", (e) => {
+        const missing = [];
+        document.querySelectorAll('[aria-required="true"]').forEach((el) => {
+          if (el.classList.contains("select__input")) {
+            if (!el.parentElement.querySelector(".select__single-value")) missing.push(el.id);
+          } else if (el.matches('[role="group"]')) {
+            const f = el.querySelector("input[type=file]");
+            if (!f.files.length) missing.push(f.id);
+          } else if (!el.value.trim()) {
+            missing.push(el.id);
+          }
+        });
+        if (missing.length) {
+          e.preventDefault();
+          document.getElementById("form-errors").innerHTML =
+            '<p class="helper-text--error">Please complete: ' + missing.join(", ") + "</p>";
+          return;
+        }
+        if (variant === "captcha") {
+          e.preventDefault();
+          const f = document.createElement("iframe");
+          f.title = "recaptcha challenge expires in two minutes";
+          f.src = "about:blank#recaptcha/enterprise/bframe";
+          f.style.cssText = "width:400px;height:580px;display:block";
+          document.body.appendChild(f);
+          return;
+        }
+        if (variant === "verify") {
+          e.preventDefault();
+          document.body.innerHTML =
+            "<h2>Verify your email</h2><p>Enter the 8-character security code we sent to your email.</p>" +
+            '<input id="security-input-0" aria-label="Security code character 1" maxlength="1" />';
+          return;
+        }
+        if (variant === "reject") {
+          e.preventDefault();
+          document.getElementById("form-errors").innerHTML =
+            '<p class="helper-text--error">There was a problem submitting your application.</p>';
+        }
+      });
+    </script>
+  </body>
+</html>

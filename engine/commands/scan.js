@@ -19,11 +19,19 @@ const { scan } = require("../core/scan.js");
 const { filterJobs } = require("../core/filter.js");
 const adapterRegistry = require("../modules/discovery/index.js");
 const { resolveProfilesDir } = require("../core/paths.js");
+const scanHealthLog = require("../core/scan_health_log.js");
 
 function appendRejectionsLogDefault(filePath, lines) {
   // jsonl append, one rejection per line. Caller provides full lines.
   if (!lines || lines.length === 0) return;
   fs.appendFileSync(filePath, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+}
+
+// Per-source health lines for the board's sources tab (RFC 068 §8). Writes
+// only into an existing profile directory — never creates one.
+function appendScanHealthDefault(profileRoot, entries, opts) {
+  if (!profileRoot || !fs.existsSync(profileRoot)) return null;
+  return scanHealthLog.appendScanRuns(scanHealthLog.scanRunsPath(profileRoot), entries, opts);
 }
 
 const DEFAULT_DEPS = {
@@ -37,6 +45,7 @@ const DEFAULT_DEPS = {
   saveApplications: applications.save,
   appendNewApplications: applications.appendNew,
   appendRejectionsLog: appendRejectionsLogDefault,
+  appendScanHealth: appendScanHealthDefault,
   groupBySource: companies.groupBySource,
   filterJobs,
   scan,
@@ -284,6 +293,20 @@ function makeScanCommand(overrides = {}) {
       stdout(`adapter errors: ${result.errors.length}`);
     }
 
+    // Source health: one line per source so the board can tell "works",
+    // "works but finds nothing" and "broken" apart. Never fails the scan.
+    if (!flags.dryRun) {
+      try {
+        const ts = deps.now();
+        const entries = scanHealthLog.buildRunEntries(result.summary, ts, redact);
+        deps.appendScanHealth(profile.paths && profile.paths.root, entries, {
+          now: new Date(ts),
+        });
+      } catch (err) {
+        ctx.stderr(`warn: could not write scan health log: ${redact(err.message)}`);
+      }
+    }
+
     if (result.fresh.length === 0) {
       stdout("no new jobs — nothing to write");
       return 0;
@@ -318,6 +341,12 @@ function makeScanCommand(overrides = {}) {
       role: j.title,
       locations: Array.isArray(j.locations) ? j.locations.map(String) : [],
       location: Array.isArray(j.locations) && j.locations.length > 0 ? String(j.locations[0]) : "",
+      // RFC 068 §3: structured remote signals from the adapter's rawExtra
+      // (e.g. Ashby `isRemote`, Oracle `workplaceType`) for the
+      // home_state_or_remote geo mode.
+      isRemote: j.rawExtra && typeof j.rawExtra.isRemote === "boolean" ? j.rawExtra.isRemote : null,
+      workplaceType:
+        j.rawExtra && typeof j.rawExtra.workplaceType === "string" ? j.rawExtra.workplaceType : "",
     }));
     // L-4: inject profile.geo into filter rules. Default unrestricted block
     // means the geo check is a no-op for Jared (back-compat).

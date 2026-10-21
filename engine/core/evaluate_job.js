@@ -23,9 +23,13 @@
 //   3. title_blocklist          (always — word-boundary canonical)
 //   4. company_cap              (skipped in `email`)
 //   5. location_blocklist       (skipped in `email`)
-//   6. geo                      (skipped in `email`)
+//   6. salary_below_floor       (`prepare` only; RFC 068 §4a — needs
+//                                `job.published_salary` + a floor in
+//                                `profile.applyDefaults.salary.floor`)
+//   7. geo                      (skipped in `email`)
 
 const { enforceGeo, hasUsMarker } = require("./geo_enforcer.js");
+const { getSalaryFloor } = require("./apply_defaults.js");
 const { findTitleBlocklistHit } = require("./filter_helpers.js");
 const { isEngineSkipReason } = require("./skip_reasons.js");
 
@@ -51,6 +55,17 @@ function normalizeJob(raw) {
     : job.location
       ? [String(job.location)]
       : [];
+  // RFC 068 §3: structured remote signals from the adapter, when present
+  // (top-level or under the adapter's `rawExtra`). Only the
+  // "home_state_or_remote" geo mode reads them.
+  const extra = job.rawExtra && typeof job.rawExtra === "object" ? job.rawExtra : {};
+  const isRemote =
+    typeof job.isRemote === "boolean"
+      ? job.isRemote
+      : typeof extra.isRemote === "boolean"
+        ? extra.isRemote
+        : null;
+  const workplaceTypeRaw = job.workplaceType != null ? job.workplaceType : extra.workplaceType;
   return {
     company: String(job.company || ""),
     title: String(job.title || ""),
@@ -58,6 +73,13 @@ function normalizeJob(raw) {
     url: job.url ? String(job.url) : "",
     source: job.source ? String(job.source) : "",
     jd_text: job.jd_text || "",
+    isRemote,
+    workplaceType: typeof workplaceTypeRaw === "string" ? workplaceTypeRaw : "",
+    // RFC 068 §4a: employer-published salary range `{ min, max }`, or null.
+    published_salary:
+      job.published_salary && typeof job.published_salary === "object"
+        ? job.published_salary
+        : null,
   };
 }
 
@@ -134,6 +156,38 @@ function shouldRunLocationBlocklist(context) {
 
 function shouldRunGeo(context) {
   return context === "scan" || context === "prepare";
+}
+
+function shouldRunSalaryFloor(context) {
+  return context === "prepare";
+}
+
+function toAmount(v) {
+  if (v === null || v === undefined || v === "") return null;
+  const n = typeof v === "number" ? v : Number(String(v).replace(/[$,\s]/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * RFC 068 §4a salary floor. Pure.
+ *
+ * `published` is the range the EMPLOYER published (see
+ * core/published_salary.js) — never the engine's tier estimate in the TSV
+ * `salary_min` / `salary_max` columns. The range top is `max`, or `min` when
+ * only one bound was published. No published amount, or no floor → pass.
+ *
+ * @param {{min?: number|string|null, max?: number|string|null} | null} published
+ * @param {number|null} floor
+ * @returns {{ below: boolean, top: number|null, floor: number|null }}
+ */
+function checkSalaryFloor(published, floor) {
+  const f = typeof floor === "number" && Number.isFinite(floor) ? floor : null;
+  const p = published && typeof published === "object" ? published : {};
+  const max = toAmount(p.max);
+  const min = toAmount(p.min);
+  const top = max !== null ? max : min;
+  if (f === null || top === null) return { below: false, top, floor: f };
+  return { below: top < f, top, floor: f };
 }
 
 /**
@@ -247,14 +301,33 @@ function evaluateJob({ job, profile, appState, context }) {
     }
   }
 
-  // ---- 6. geo (enforceGeo; skipped in email) ----
+  // ---- 6. salary_below_floor (prepare only; RFC 068 §4a) ----
+  // No-op unless the profile has apply_defaults (salary.floor) AND the job
+  // carries a published range in `job.published_salary`.
+  if (shouldRunSalaryFloor(context)) {
+    const floor = getSalaryFloor(profile && profile.applyDefaults);
+    const res = checkSalaryFloor(norm.published_salary, floor);
+    if (res.below) {
+      return {
+        decision: "skip",
+        skipReason: "salary_below_floor",
+        matched: { rule: "salary_below_floor", top: res.top, floor: res.floor },
+      };
+    }
+  }
+
+  // ---- 7. geo (enforceGeo; skipped in email) ----
   // BL-102 cache: when geo runs (regardless of mode), the full
   // `enforceGeo` result is attached as `matched.geoResult` so callers
   // can cache it on the passing entry (`_geoResult`) without
   // recomputing downstream.
   if (shouldRunGeo(context) && profileGeo) {
     const locsForGeo = norm.locations.length > 0 ? norm.locations : [];
-    const geoResult = enforceGeo(locsForGeo, profileGeo);
+    const geoResult = enforceGeo(locsForGeo, profileGeo, {
+      isRemote: norm.isRemote,
+      workplaceType: norm.workplaceType,
+      title: norm.title,
+    });
     const mode = profileGeo.mode || "unrestricted";
     if (!geoResult.ok && mode !== "unrestricted") {
       // geoResult.reason is one of the enum values (geo_*).
@@ -290,4 +363,4 @@ function evaluateJob({ job, profile, appState, context }) {
   };
 }
 
-module.exports = { evaluateJob };
+module.exports = { evaluateJob, checkSalaryFloor };

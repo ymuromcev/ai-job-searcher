@@ -1,0 +1,393 @@
+/* global document, window -- page.evaluate callbacks run in the browser */
+// Shared browser-side helpers for the apply adapters (RFC 068 §2).
+//
+// Everything here takes a Playwright `page`. Selectors that are specific to
+// one ATS live in that adapter; this file only knows about things every
+// form shares: captcha challenges, login walls, email verification screens,
+// and the "wait for confirmation" loop.
+
+// Typed stop reasons. The command maps them onto apply_state:
+//   captcha / login_required / email_verification / unknown_page /
+//   job_closed → manual;  validation_error / no_confirmation → failed.
+const STOP_REASONS = Object.freeze({
+  CAPTCHA: "captcha",
+  LOGIN: "login_required",
+  EMAIL_VERIFICATION: "email_verification",
+  UNKNOWN_PAGE: "unknown_page",
+  JOB_CLOSED: "job_closed",
+  VALIDATION: "validation_error",
+  NO_CONFIRMATION: "no_confirmation",
+});
+
+// Runs inside the page. Returns a STOP_REASONS value or null.
+//
+// Captcha: Greenhouse / Ashby load an *invisible* reCAPTCHA Enterprise on
+// every form and Lever loads an invisible hCaptcha. Their presence is normal
+// and not a stop. A stop is a *visible* challenge: the reCAPTCHA "bframe"
+// image grid, a checkbox-style anchor (no `size=invisible`), the hCaptcha
+// challenge frame, or a Cloudflare Turnstile widget.
+/* istanbul ignore next -- executed in the browser */
+function detectBlockerInPage() {
+  const visible = (el, minSize = 30) => {
+    if (!el || !el.getBoundingClientRect) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < minSize || r.height < minSize) return false;
+    if (r.bottom < 0 || r.right < 0 || r.top > window.innerHeight * 4) return false;
+    let n = el;
+    while (n && n.nodeType === 1) {
+      const cs = window.getComputedStyle(n);
+      if (cs.display === "none" || cs.visibility === "hidden" || cs.opacity === "0") return false;
+      n = n.parentElement;
+    }
+    return true;
+  };
+  for (const f of document.querySelectorAll("iframe")) {
+    const src = String(f.getAttribute("src") || "").toLowerCase();
+    const title = String(f.getAttribute("title") || "").toLowerCase();
+    const challenge =
+      /recaptcha\/(api2|enterprise)\/bframe/.test(src) ||
+      /recaptcha challenge/.test(title) ||
+      (/hcaptcha/.test(src) && /challenge/.test(src)) ||
+      /hcaptcha challenge|content of the hcaptcha challenge/.test(title) ||
+      /challenges\.cloudflare\.com/.test(src);
+    const checkbox =
+      (/recaptcha\/(api2|enterprise)\/anchor/.test(src) && !/size=invisible/.test(src)) ||
+      (/hcaptcha/.test(src) && /checkbox/.test(src + title)) ||
+      /widget containing checkbox for hcaptcha/.test(title);
+    if ((challenge || checkbox) && visible(f)) return "captcha";
+  }
+  const turnstile = document.querySelector(".cf-turnstile");
+  if (turnstile && visible(turnstile)) return "captcha";
+
+  const text = (document.body && document.body.innerText) || "";
+  const pw = Array.from(document.querySelectorAll('input[type="password"]')).some((i) =>
+    visible(i, 1)
+  );
+  if (pw) return "login_required";
+  if (/\b(sign in|log in|login) to (apply|continue)\b|\bcreate an account to apply\b/i.test(text)) {
+    return "login_required";
+  }
+  if (
+    /\b(security code|verification code|verify your email|confirm your email)\b/i.test(text) &&
+    Array.from(document.querySelectorAll("input")).some(
+      (i) =>
+        visible(i, 1) &&
+        /code|security|verif|otp/i.test(
+          `${i.id} ${i.name} ${i.getAttribute("aria-label") || ""} ${i.getAttribute("autocomplete") || ""}`
+        )
+    )
+  ) {
+    return "email_verification";
+  }
+  return null;
+}
+
+async function detectBlocker(page) {
+  try {
+    return await page.evaluate(detectBlockerInPage);
+  } catch {
+    return null;
+  }
+}
+
+async function bodyText(page, max = 4000) {
+  try {
+    const t = await page.evaluate(() => (document.body ? document.body.innerText : ""));
+    return String(t || "").slice(0, max);
+  } catch {
+    return "";
+  }
+}
+
+// After navigation: poll until the application form shows up, a blocker
+// appears, or the page reads as a closed posting. Returns
+// { state: "form" } | { state: "blocked", reason } | { state: "closed" } |
+// { state: "unknown" }.
+async function waitForForm(page, { formSel, closedRe, timeoutMs = 15000, pollMs = 300 }) {
+  const started = Date.now();
+  for (;;) {
+    let hasForm = false;
+    try {
+      hasForm = Boolean(await page.$(formSel));
+    } catch {
+      hasForm = false; // navigation in flight
+    }
+    if (hasForm) return { state: "form" };
+    const blocker = await detectBlocker(page);
+    if (blocker) return { state: "blocked", reason: blocker };
+    const text = await bodyText(page, 3000);
+    if (closedRe && closedRe.test(text)) return { state: "closed" };
+    if (Date.now() - started >= timeoutMs) return { state: "unknown" };
+    await sleep(pollMs);
+  }
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// Poll after the submit click until one of: success evidence, a blocker,
+// a validation error (after `validationGraceMs`), or the timeout.
+//
+//   isSuccess(page)          → evidence object | null
+//   hasValidationError(page) → boolean
+//
+// Returns { ok: true, evidence } | { ok: false, reason, evidence }.
+// Invisible reCAPTCHA Enterprise (Ashby, Greenhouse) may take up to 30s to
+// hand out its token before the form POST even starts, so the confirmation
+// wait has to outlast it: 30s gave a false no_confirmation on Ashby.
+const SUBMIT_TIMEOUT_MS = 75000;
+
+async function waitForOutcome(page, opts) {
+  const {
+    isSuccess,
+    hasValidationError = async () => false,
+    timeoutMs = SUBMIT_TIMEOUT_MS,
+    pollMs = 500,
+    validationGraceMs = 2500,
+    // Blockers to look past: after a security code is typed in, its field
+    // stays on the page while Greenhouse processes the resubmit — that is not
+    // a new stop (a live run read it as one and missed a real application).
+    ignoreBlockers = [],
+  } = opts;
+  const started = Date.now();
+  for (;;) {
+    let evidence = null;
+    try {
+      evidence = await isSuccess(page);
+    } catch {
+      evidence = null; // navigation in flight
+    }
+    if (evidence) return { ok: true, evidence };
+    const blocker = await detectBlocker(page);
+    if (blocker && !ignoreBlockers.includes(blocker)) {
+      return { ok: false, reason: blocker, evidence: { url: safeUrl(page) } };
+    }
+    const elapsed = Date.now() - started;
+    if (elapsed >= validationGraceMs) {
+      let invalid = false;
+      try {
+        invalid = await hasValidationError(page);
+      } catch {
+        invalid = false;
+      }
+      if (invalid) {
+        return {
+          ok: false,
+          reason: STOP_REASONS.VALIDATION,
+          evidence: { url: safeUrl(page), text: await bodyText(page, 600) },
+        };
+      }
+    }
+    if (elapsed >= timeoutMs) {
+      return {
+        ok: false,
+        reason: STOP_REASONS.NO_CONFIRMATION,
+        evidence: { url: safeUrl(page), text: await bodyText(page, 600) },
+      };
+    }
+    await sleep(pollMs);
+  }
+}
+
+function safeUrl(page) {
+  try {
+    return page.url();
+  } catch {
+    return "";
+  }
+}
+
+// CSS attribute selector for an exact id / name (ids may start with a digit,
+// names may contain brackets — `#id` would not work for either).
+function attrSel(attr, value) {
+  return `[${attr}=${JSON.stringify(String(value))}]`;
+}
+
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function exactTextRe(text) {
+  return new RegExp(`^\\s*${escapeRegex(String(text).trim())}\\s*$`, "i");
+}
+
+// Per-page schema cache so `fill` / `checkFilled` can reuse what
+// `readSchema` learned (internal control kinds never leave the adapter).
+const schemaCache = new WeakMap();
+
+function cacheSchema(page, entries) {
+  schemaCache.set(page, entries);
+}
+
+function cachedSchema(page) {
+  return schemaCache.get(page) || null;
+}
+
+// Strip adapter-internal keys: the public field contract is
+// { id, label, type, required, options }.
+function publicField(f) {
+  return {
+    id: f.id,
+    label: f.label,
+    type: f.type,
+    required: Boolean(f.required),
+    options: Array.isArray(f.options) ? f.options : [],
+    ...(f.optionsPartial ? { options_partial: true } : {}),
+  };
+}
+
+function cleanLabel(s) {
+  return String(s || "")
+    .replace(/[✱*]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+class FillError extends Error {
+  constructor(code, fieldId) {
+    super(`${code}${fieldId ? `:${fieldId}` : ""}`);
+    this.code = code;
+    this.fieldId = fieldId || null;
+  }
+}
+
+// Pick the suggestion for a "City, ST" value: prefer a US entry naming the
+// same state (full name or code), then any US entry, then the first one.
+function pickLocationOption(texts, value) {
+  const parts = String(value)
+    .split(",")
+    .map((x) => x.trim().toLowerCase());
+  const city = parts[0] || "";
+  const st = (parts[1] || "").toUpperCase();
+  const stateName = (US_STATE_NAMES[st] || "").toLowerCase();
+  const lower = texts.map((t) => String(t).toLowerCase());
+  const isUs = (t) => /united states|\busa?\b/.test(t);
+  const sameCity = (t) => t.split(",")[0].trim() === city;
+  const sameState = (t) =>
+    (stateName && t.includes(stateName)) || (st && t.includes(`, ${st.toLowerCase()}`));
+  const order = [
+    (t) => sameCity(t) && isUs(t) && sameState(t),
+    (t) => sameCity(t) && isUs(t),
+    (t) => isUs(t),
+  ];
+  for (const ok of order) {
+    const i = lower.findIndex(ok);
+    if (i !== -1) return i;
+  }
+  return 0;
+}
+
+const US_STATE_NAMES = {
+  AL: "Alabama",
+  AK: "Alaska",
+  AZ: "Arizona",
+  AR: "Arkansas",
+  CA: "California",
+  CO: "Colorado",
+  CT: "Connecticut",
+  DE: "Delaware",
+  DC: "District of Columbia",
+  FL: "Florida",
+  GA: "Georgia",
+  HI: "Hawaii",
+  ID: "Idaho",
+  IL: "Illinois",
+  IN: "Indiana",
+  IA: "Iowa",
+  KS: "Kansas",
+  KY: "Kentucky",
+  LA: "Louisiana",
+  ME: "Maine",
+  MD: "Maryland",
+  MA: "Massachusetts",
+  MI: "Michigan",
+  MN: "Minnesota",
+  MS: "Mississippi",
+  MO: "Missouri",
+  MT: "Montana",
+  NE: "Nebraska",
+  NV: "Nevada",
+  NH: "New Hampshire",
+  NJ: "New Jersey",
+  NM: "New Mexico",
+  NY: "New York",
+  NC: "North Carolina",
+  ND: "North Dakota",
+  OH: "Ohio",
+  OK: "Oklahoma",
+  OR: "Oregon",
+  PA: "Pennsylvania",
+  RI: "Rhode Island",
+  SC: "South Carolina",
+  SD: "South Dakota",
+  TN: "Tennessee",
+  TX: "Texas",
+  UT: "Utah",
+  VT: "Vermont",
+  VA: "Virginia",
+  WA: "Washington",
+  WV: "West Virginia",
+  WI: "Wisconsin",
+  WY: "Wyoming",
+};
+
+// Type an emailed security code into the form (Greenhouse holds the
+// application until it is entered). Handles one input or one box per
+// character. Returns { ok } — false when no code field is on the page.
+async function enterSecurityCode(page, code) {
+  const n = await page.evaluate(() => {
+    const shown = (i) => {
+      const r = i.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && i.type !== "hidden";
+    };
+    const sig = (i) =>
+      `${i.id} ${i.name} ${i.getAttribute("aria-label") || ""} ${i.getAttribute("autocomplete") || ""}`;
+    const inputs = Array.from(document.querySelectorAll("input")).filter(shown);
+    // Strongest signal first. A bare "code" also matches "Postal Code" /
+    // "zip code" — those are never the security code (a live run once typed
+    // the code's first letter into the postal code).
+    const strong = inputs.filter((i) => /security|verif|otp|one-time-code/i.test(sig(i)));
+    const weak = inputs.filter(
+      (i) => /\bcode\b/i.test(sig(i)) && !/postal|zip|country|area|promo|referr/i.test(sig(i))
+    );
+    const hits = strong.length ? strong : weak;
+    document.querySelectorAll("[data-ajs-code]").forEach((i) => i.removeAttribute("data-ajs-code"));
+    hits.forEach((i, k) => i.setAttribute("data-ajs-code", String(k)));
+    return hits.length;
+  });
+  if (!n) return { ok: false };
+  // One box per character must be exactly one box per character; anything
+  // else is a field we do not understand — leave it to the human.
+  if (n > 1 && n !== String(code).length) return { ok: false };
+  if (n === 1) {
+    await page.locator('[data-ajs-code="0"]').fill(code);
+  } else {
+    const chars = String(code).split("");
+    for (let k = 0; k < Math.min(n, chars.length); k += 1) {
+      await page.locator(`[data-ajs-code="${k}"]`).fill(chars[k]);
+    }
+  }
+  return { ok: true };
+}
+
+module.exports = {
+  SUBMIT_TIMEOUT_MS,
+  enterSecurityCode,
+  pickLocationOption,
+  STOP_REASONS,
+  detectBlocker,
+  detectBlockerInPage,
+  bodyText,
+  waitForOutcome,
+  waitForForm,
+  attrSel,
+  exactTextRe,
+  escapeRegex,
+  cacheSchema,
+  cachedSchema,
+  publicField,
+  cleanLabel,
+  sleep,
+  FillError,
+};

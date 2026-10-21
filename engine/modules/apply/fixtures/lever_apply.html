@@ -1,0 +1,321 @@
+<!doctype html>
+<!--
+  Synthetic Lever application form (RFC 068 test fixture).
+  Mirrors jobs.lever.co/<slug>/<uuid>/apply: `li.application-question` rows,
+  `.application-label` + `.required` marker, native controls addressed by
+  `name` (cards[<uuid>][fieldN], eeo[...]), `#btn-submit` type=button that
+  posts and lands on …/thanks. No real candidate or company data.
+
+  Variants: ?variant=captcha — the click reveals a visible hCaptcha challenge.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Acme Synthetic — Product Manager</title>
+    <style>
+      .error-message {
+        color: red;
+      }
+      .dropdown-location {
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <form id="application-form" method="get" action="lever_thanks.html">
+      <h4>Submit your application</h4>
+      <ul>
+        <li class="application-question resume">
+          <label>
+            <div class="application-label">Resume/CV <span class="required">✱</span></div>
+            <div class="application-field">
+              <input
+                type="file"
+                name="resume"
+                id="resume-upload-input"
+                class="application-file-input invisible-resume-upload"
+              />
+            </div>
+          </label>
+        </li>
+        <li class="application-question">
+          <label
+            ><div class="application-label">Full name<span class="required">✱</span></div>
+            <div class="application-field"><input type="text" name="name" required /></div
+          ></label>
+        </li>
+        <li class="application-question">
+          <label
+            ><div class="application-label">Email<span class="required">✱</span></div>
+            <div class="application-field"><input type="email" name="email" required /></div
+          ></label>
+        </li>
+        <li class="application-question">
+          <label
+            ><div class="application-label">Phone</div>
+            <div class="application-field"><input type="text" name="phone" /></div
+          ></label>
+        </li>
+        <li class="application-question">
+          <label
+            ><div class="application-label">Current location <span class="required">✱</span></div>
+            <div class="application-field">
+              <input
+                class="location-input"
+                id="location-input"
+                type="text"
+                name="location"
+                required
+              />
+              <input id="selected-location" type="hidden" name="selectedLocation" />
+              <div class="dropdown-results"></div></div
+          ></label>
+        </li>
+        <li class="application-question">
+          <label
+            ><div class="application-label">Current company</div>
+            <div class="application-field"><input type="text" name="org" /></div
+          ></label>
+        </li>
+        <li class="application-question">
+          <label
+            ><div class="application-label">LinkedIn URL</div>
+            <div class="application-field"><input type="text" name="urls[LinkedIn]" /></div
+          ></label>
+        </li>
+      </ul>
+      <input
+        type="hidden"
+        name="cards[11111111-1111-4111-8111-111111111111][baseTemplate]"
+        value="{}"
+      />
+      <ul>
+        <li class="application-question custom-question">
+          <div>
+            <div class="application-label full-width multiple-choice">
+              <div class="text">
+                Are you legally authorized to work in the United States?<span class="required"
+                  >✱</span
+                >
+              </div>
+            </div>
+            <div class="application-field full-width required-field">
+              <ul data-qa="multiple-choice">
+                <li>
+                  <label
+                    ><input
+                      type="radio"
+                      name="cards[11111111-1111-4111-8111-111111111111][field0]"
+                      value="Yes"
+                      required
+                    /><span class="application-answer-alternative">Yes</span></label
+                  >
+                </li>
+                <li>
+                  <label
+                    ><input
+                      type="radio"
+                      name="cards[11111111-1111-4111-8111-111111111111][field0]"
+                      value="No"
+                      required
+                    /><span class="application-answer-alternative">No</span></label
+                  >
+                </li>
+              </ul>
+            </div>
+          </div>
+        </li>
+        <li class="application-question custom-question">
+          <div>
+            <div class="application-label full-width multiple-choice">
+              <div class="text">
+                Will you now or in the future require sponsorship for employment visa status (e.g.,
+                H-1B)?<span class="required">✱</span>
+              </div>
+            </div>
+            <div class="application-field full-width required-field">
+              <ul data-qa="multiple-choice">
+                <li>
+                  <label
+                    ><input
+                      type="radio"
+                      name="cards[11111111-1111-4111-8111-111111111111][field1]"
+                      value="Yes"
+                      required
+                    /><span class="application-answer-alternative">Yes</span></label
+                  >
+                </li>
+                <li>
+                  <label
+                    ><input
+                      type="radio"
+                      name="cards[11111111-1111-4111-8111-111111111111][field1]"
+                      value="No"
+                      required
+                    /><span class="application-answer-alternative">No</span></label
+                  >
+                </li>
+              </ul>
+            </div>
+          </div>
+        </li>
+        <li class="application-question custom-question">
+          <div>
+            <div class="application-label full-width dropdown">
+              <div class="text">
+                How did you hear about this opportunity?<span class="required">✱</span>
+              </div>
+            </div>
+            <div class="application-field full-width required-field">
+              <select name="cards[22222222-2222-4222-8222-222222222222][field0]" required>
+                <option value="">Select...</option>
+                <option value="Job board">Job board</option>
+                <option value="Company careers page">Company careers page</option>
+                <option value="Referral">Referral</option>
+              </select>
+            </div>
+          </div>
+        </li>
+        <li class="application-question custom-question">
+          <div>
+            <div class="application-label full-width">
+              <div class="text">
+                What draws you to Acme Synthetic?<span class="required">✱</span>
+              </div>
+            </div>
+            <div class="application-field full-width required-field">
+              <textarea
+                name="cards[33333333-3333-4333-8333-333333333333][field0]"
+                class="card-field-input"
+                required
+              ></textarea>
+            </div>
+          </div>
+        </li>
+        <li class="application-question custom-question">
+          <div>
+            <div class="application-label full-width multiple-choice">
+              <div class="text">Which time zones can you work in? (Check all that apply)</div>
+            </div>
+            <div class="application-field full-width">
+              <ul data-qa="checkboxes">
+                <li>
+                  <label
+                    ><input
+                      type="checkbox"
+                      name="cards[44444444-4444-4444-8444-444444444444][field0]"
+                      value="Pacific"
+                    /><span class="application-answer-alternative">Pacific</span></label
+                  >
+                </li>
+                <li>
+                  <label
+                    ><input
+                      type="checkbox"
+                      name="cards[44444444-4444-4444-8444-444444444444][field0]"
+                      value="Eastern"
+                    /><span class="application-answer-alternative">Eastern</span></label
+                  >
+                </li>
+              </ul>
+            </div>
+          </div>
+        </li>
+      </ul>
+      <div class="eeo-section">
+        <h4>U.S. Equal Employment Opportunity information</h4>
+        <ul>
+          <li class="application-question">
+            <label
+              ><div class="application-label">Gender</div>
+              <div class="application-field">
+                <select name="eeo[gender]">
+                  <option value="">Select ...</option>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                  <option value="Decline to self-identify">Decline to self-identify</option>
+                </select>
+              </div></label
+            >
+          </li>
+          <li class="application-question">
+            <label
+              ><div class="application-label">Race</div>
+              <div class="application-field">
+                <select name="eeo[race]">
+                  <option value="">Select ...</option>
+                  <option value="White">White</option>
+                  <option value="Asian">Asian</option>
+                  <option value="Decline to self-identify">Decline to self-identify</option>
+                </select>
+              </div></label
+            >
+          </li>
+          <li class="application-question">
+            <label
+              ><div class="application-label">Veteran status</div>
+              <div class="application-field">
+                <select name="eeo[veteran]">
+                  <option value="">Select ...</option>
+                  <option value="I am a veteran">I am a veteran</option>
+                  <option value="I am not a veteran">I am not a veteran</option>
+                  <option value="Decline to self-identify">Decline to self-identify</option>
+                </select>
+              </div></label
+            >
+          </li>
+        </ul>
+      </div>
+      <div class="application-additional">
+        <h4>Additional information</h4>
+        <textarea
+          name="comments"
+          id="additional-information"
+          placeholder="Add a cover letter or anything else you want to share."
+        ></textarea>
+      </div>
+      <input type="hidden" name="h-captcha-response" id="hcaptchaResponseInput" />
+      <div id="errors"></div>
+      <button type="button" id="btn-submit" class="postings-btn template-btn-submit">
+        Submit application
+      </button>
+    </form>
+    <script>
+      const loc = document.getElementById("location-input");
+      const results = document.querySelector(".dropdown-results");
+      loc.addEventListener("input", () => {
+        results.innerHTML = "";
+        if (loc.value.trim().length < 2) return;
+        setTimeout(() => {
+          const d = document.createElement("div");
+          d.className = "dropdown-location";
+          d.textContent = "Springfield, IL, United States";
+          d.addEventListener("click", () => {
+            loc.value = d.textContent;
+            document.getElementById("selected-location").value = '{"name":"Springfield"}';
+            results.innerHTML = "";
+          });
+          results.appendChild(d);
+        }, 150);
+      });
+      const variant = new URLSearchParams(location.search).get("variant") || "";
+      document.getElementById("btn-submit").addEventListener("click", () => {
+        const form = document.getElementById("application-form");
+        if (!form.checkValidity()) {
+          document.getElementById("errors").innerHTML =
+            '<div class="error-message">Please fill out all required fields.</div>';
+          return;
+        }
+        if (variant === "captcha") {
+          const f = document.createElement("iframe");
+          f.title = "Main content of the hCaptcha challenge";
+          f.src = "about:blank#hcaptcha-challenge";
+          f.style.cssText = "width:400px;height:600px;display:block";
+          document.body.appendChild(f);
+          return;
+        }
+        form.submit();
+      });
+    </script>
+  </body>
+</html>

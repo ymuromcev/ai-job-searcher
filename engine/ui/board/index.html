@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Отклики</title>
+    <link rel="stylesheet" href="style.css?k=__KEY__" />
+  </head>
+  <body>
+    <header>
+      <h1 id="title">Отклики</h1>
+      <p id="summary">загружаю…</p>
+      <p id="message" role="status"></p>
+    </header>
+
+    <nav id="tabs">
+      <button type="button" data-tab="responses" class="on">Отклики</button>
+      <button type="button" data-tab="todo">Доделать руками</button>
+      <button type="button" data-tab="week">Неделя</button>
+      <button type="button" data-tab="sources">Источники и сайты подачи</button>
+      <button type="button" data-tab="bank">Банк ответов</button>
+    </nav>
+
+    <section id="responses">
+      <p class="filters">
+        <label>Поиск <input type="search" id="q" placeholder="компания, роль" /></label>
+        <label
+          >Статус
+          <select id="f-status">
+            <option value="">все</option>
+          </select></label
+        >
+        <label
+          >Кто подал
+          <select id="f-by">
+            <option value="">все</option>
+          </select></label
+        >
+      </p>
+      <p id="responses-count"></p>
+      <table id="responses-table">
+        <thead>
+          <tr>
+            <th data-sort="company">Компания</th>
+            <th data-sort="title">Роль</th>
+            <th data-sort="applied_date">Дата подачи</th>
+            <th data-sort="applied_by_label">Кто подал</th>
+            <th data-sort="status_label">Статус</th>
+            <th data-sort="fit_score">Оценка</th>
+            <th>Ссылка</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="responses-empty" hidden>Пока ни одного отклика</p>
+    </section>
+
+    <section id="todo" hidden>
+      <table id="todo-table">
+        <thead>
+          <tr>
+            <th>Компания</th>
+            <th>Роль</th>
+            <th>Что случилось</th>
+            <th>Причина</th>
+            <th>Форма</th>
+            <th>Вакансия</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="todo-empty" hidden>Руками доделывать нечего</p>
+    </section>
+
+    <section id="week" hidden>
+      <div id="week-tables"><p>загружаю…</p></div>
+    </section>
+
+    <section id="sources" hidden>
+      <h2>Откуда берутся вакансии</h2>
+      <table id="sources-table">
+        <thead>
+          <tr>
+            <th>Источник</th>
+            <th>Статус</th>
+            <th>Последний запуск</th>
+            <th>Найдено за 7 дней</th>
+            <th>Последняя ошибка</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="sources-empty" hidden>Источники вакансий не подключены</p>
+
+      <h2>Куда подаём</h2>
+      <table id="sites-table">
+        <thead>
+          <tr>
+            <th>Сайт</th>
+            <th>Статус</th>
+            <th>Подано за 7 дней</th>
+            <th>Ошибок из последних 20</th>
+            <th>Частая причина</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="sites-empty" hidden>Подач пока не было</p>
+    </section>
+
+    <section id="bank" hidden>
+      <p id="bank-notice" role="status" hidden></p>
+      <p class="filters">
+        <label
+          >Показать
+          <select id="bank-filter">
+            <option value="unrated">без оценки</option>
+            <option value="bot">бот</option>
+            <option value="all" selected>все</option>
+          </select></label
+        >
+        <label
+          >Поиск <input type="search" id="bank-q" placeholder="вопрос, ответ, компания"
+        /></label>
+      </p>
+      <p id="bank-summary"></p>
+      <p class="hint">
+        Оценка 1–2 — бот больше не берёт этот ответ; при нескольких подходящих берёт ответ с оценкой
+        выше, потом более новый. Без оценки — как 3.
+      </p>
+      <table id="bank-table" class="cards">
+        <thead>
+          <tr>
+            <th>Вопрос</th>
+            <th>Ответ</th>
+            <th>Компания</th>
+            <th>Роль</th>
+            <th>Категория</th>
+            <th>Источник</th>
+            <th>Дата</th>
+            <th>Взят ботом</th>
+            <th>Оценка</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="bank-empty" hidden>В банке пока нет ответов</p>
+    </section>
+
+    <footer>
+      <button type="button" id="refresh">Обновить</button>
+      <button type="button" id="quit">Закрыть реестр</button>
+    </footer>
+    <script src="app.js?k=__KEY__"></script>
+  </body>
+</html>

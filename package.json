@@ -33,7 +33,8 @@
     "dotenv": "^17.4.2",
     "imapflow": "^1.3.3",
     "mailparser": "^3.7.4",
-    "pdfkit": "^0.18.0"
+    "pdfkit": "^0.18.0",
+    "playwright-core": "1.63.0"
   },
   "engines": {
     "node": ">=20"
