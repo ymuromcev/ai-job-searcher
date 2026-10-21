@@ -37,6 +37,7 @@ const {
   sleep,
   FillError,
   pickLocationOption,
+  SUBMIT_TIMEOUT_MS,
 } = require("./_dom.js");
 
 const { pickOption } = require("./question_match.js");
@@ -476,7 +477,7 @@ async function hasValidationError(page) {
   });
 }
 
-async function submit(page, { timeoutMs = 30000 } = {}) {
+async function submit(page, { timeoutMs = SUBMIT_TIMEOUT_MS } = {}) {
   const btn = page
     .locator(
       `${FORM_SEL.split(",")[0]} button[type=submit], button[type=submit]:has-text("Submit")`

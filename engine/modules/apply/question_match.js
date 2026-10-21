@@ -182,6 +182,19 @@ function matchWorkAuth(label, field, ctx) {
 
 function matchRelocation(label, field, ctx) {
   if (!/\b(relocat\w*)\b/.test(label)) return undefined;
+  // "Are you located in, or open to relocating to, one of our eligible
+  // states?" asks where the candidate lives first; a bare willing=false
+  // would pick "No, I am not open to relocation" for someone who already
+  // lives in an eligible state. The eligible list is not in the label, so
+  // leave it to the LLM step, which reads the posting.
+  if (
+    /\b(currently|presently)\s+(located|living|live|reside|residing|based)\b|\b(are you|do you)\s+(currently\s+)?(located|based|live|reside)\s+in\b/.test(
+      label
+    ) ||
+    /\bif you (live|reside|are located|are based)\s+outside\b/.test(label)
+  ) {
+    return null;
+  }
   const rel = ctx.applyDefaults && ctx.applyDefaults.relocation;
   if (!rel || typeof rel.willing !== "boolean") return null;
   const value = resolveValue(field, yesNo(rel.willing));
@@ -196,6 +209,9 @@ function matchHowHeard(label, field, ctx) {
   ) {
     return undefined;
   }
+  // "How did you hear about us and what compelled you to apply?" is an essay
+  // with a source question in front — the LLM step answers both halves.
+  if (/\band (what|why)\b/.test(label)) return null;
   const def = (ctx.applyDefaults && ctx.applyDefaults.how_did_you_hear_default) || "";
   if (!hasOptions(field)) return def ? { source: "defaults", value: def } : null;
   const direct = def ? pickOption(field.options, def) : null;

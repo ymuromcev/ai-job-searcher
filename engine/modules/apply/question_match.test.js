@@ -133,6 +133,34 @@ test("relocation", () => {
     source: "defaults",
     value: "No",
   });
+  // "Located in, or open to relocating to" asks where he lives first →
+  // LLM step (the eligible-state list is in the posting, not the label).
+  assert.equal(
+    m(
+      select(
+        "Are you currently located in, or open to relocating to, one BILL's remote-eligible states?",
+        [
+          "Yes, I currently reside in one of the eligible states",
+          "No, but I am open to relocating to an eligible state",
+          "No, I am not open to relocation",
+        ]
+      )
+    ),
+    null
+  );
+});
+
+test("conditional relocation and two-part how-heard questions → LLM step", () => {
+  assert.equal(
+    m(
+      select(
+        "Our team currently operates in a select number of states. If you live outside of these areas, would you be open to relocating?",
+        ["Yes", "No"]
+      )
+    ),
+    null
+  );
+  assert.equal(m(text("How did you hear about Fleetio and what compelled you to apply?")), null);
 });
 
 test("EEO questions → decline option, whatever its wording", () => {

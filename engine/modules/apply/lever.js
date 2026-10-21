@@ -28,6 +28,7 @@ const {
   sleep,
   FillError,
   pickLocationOption,
+  SUBMIT_TIMEOUT_MS,
 } = require("./_dom.js");
 
 const NAME = "lever";
@@ -366,7 +367,7 @@ async function hasValidationError(page) {
   });
 }
 
-async function submit(page, { timeoutMs = 30000 } = {}) {
+async function submit(page, { timeoutMs = SUBMIT_TIMEOUT_MS } = {}) {
   let btn = page.locator("#btn-submit");
   if ((await btn.count()) === 0) btn = page.locator('button:has-text("Submit application")');
   if ((await btn.count()) === 0)

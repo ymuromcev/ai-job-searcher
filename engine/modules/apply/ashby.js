@@ -29,6 +29,7 @@ const {
   cleanLabel,
   sleep,
   FillError,
+  SUBMIT_TIMEOUT_MS,
 } = require("./_dom.js");
 
 const NAME = "ashby";
@@ -341,7 +342,7 @@ async function hasValidationError(page) {
   });
 }
 
-async function submit(page, { timeoutMs = 30000 } = {}) {
+async function submit(page, { timeoutMs = SUBMIT_TIMEOUT_MS } = {}) {
   let btn = page.locator(".ashby-application-form-submit-button");
   if ((await btn.count()) === 0) btn = page.locator('button:has-text("Submit Application")');
   if ((await btn.count()) === 0)

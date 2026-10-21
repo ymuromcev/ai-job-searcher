@@ -133,11 +133,16 @@ function sleep(ms) {
 //   hasValidationError(page) → boolean
 //
 // Returns { ok: true, evidence } | { ok: false, reason, evidence }.
+// Invisible reCAPTCHA Enterprise (Ashby, Greenhouse) may take up to 30s to
+// hand out its token before the form POST even starts, so the confirmation
+// wait has to outlast it: 30s gave a false no_confirmation on Ashby.
+const SUBMIT_TIMEOUT_MS = 75000;
+
 async function waitForOutcome(page, opts) {
   const {
     isSuccess,
     hasValidationError = async () => false,
-    timeoutMs = 30000,
+    timeoutMs = SUBMIT_TIMEOUT_MS,
     pollMs = 500,
     validationGraceMs = 2500,
   } = opts;
@@ -324,6 +329,7 @@ const US_STATE_NAMES = {
 };
 
 module.exports = {
+  SUBMIT_TIMEOUT_MS,
   pickLocationOption,
   STOP_REASONS,
   detectBlocker,
