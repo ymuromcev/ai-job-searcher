@@ -15,6 +15,7 @@
 
 const { isApplied, parseReason, atsFromUrl, APPLIED_BY_LABELS } = require("./registry_view.js");
 const { isRemoteLoc } = require("./geo_enforcer.js");
+const { botBankStats } = require("./answer_bank.js");
 
 const RESPONSE_STATUSES = new Set(["Rejected", "Interview", "Offer"]);
 const INTERVIEW_STATUSES = new Set(["Interview", "Offer"]);
@@ -302,8 +303,18 @@ function sumNights(list) {
   return out;
 }
 
+// Local calendar day of a bank answer: a bare "YYYY-MM-DD" (local backups)
+// as is, an ISO timestamp (Notion created_time) in local time.
+function bankDay(value) {
+  const s = str(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  return localDayIso(s);
+}
+
 // opts.nights: parsed apply_runs.jsonl entries. Absent → the report has no
 // `nights` block (callers that do not read the log, older tests).
+// opts.bank: { entries, ratings } — the answer bank and the owner's ratings.
+// Absent → no `bank` block.
 function buildWeeklyReport(rows, refDate, opts = {}) {
   const list = Array.isArray(rows) ? rows : [];
   const ref = normalizeRefDate(refDate);
@@ -335,6 +346,13 @@ function buildWeeklyReport(rows, refDate, opts = {}) {
   if (opts && opts.nights !== undefined) {
     const week = nightsInWindow(opts.nights, start, end);
     report.nights = { list: week, sum: sumNights(week) };
+  }
+  if (opts && opts.bank) {
+    const { entries, ratings } = opts.bank;
+    report.bank = {
+      week: botBankStats(entries, ratings, (e) => inWeek(bankDay(e.createdAt))),
+      total: botBankStats(entries, ratings),
+    };
   }
   return report;
 }
@@ -400,6 +418,12 @@ function ruDate(iso) {
   return m ? `${m[3]}.${m[2]}.${m[1]}` : str(iso);
 }
 
+function bankCell(b) {
+  if (!b.added) return "0";
+  const avg = b.average === null ? "—" : String(b.average).replace(".", ",");
+  return `${b.added} (с оценкой ${b.rated}, без оценки ${b.unrated}, средняя ${avg})`;
+}
+
 function weeklyTables(report) {
   const w = report.week;
   const t = report.total;
@@ -418,6 +442,15 @@ function weeklyTables(report) {
       ["Отказы", String(w.rejections), String(t.rejections)],
       ["Пока без ответа", String(w.waiting), String(t.waiting)],
       ["Доля ответов", pct(w.responseRate), pct(t.responseRate)],
+      ...(report.bank
+        ? [
+            [
+              "Ответы бота, сохранённые в банк",
+              bankCell(report.bank.week),
+              bankCell(report.bank.total),
+            ],
+          ]
+        : []),
     ],
     empty: "",
   });

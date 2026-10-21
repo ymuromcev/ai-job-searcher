@@ -16,7 +16,7 @@ const {
   SERVER_NAME,
 } = require("./board.js");
 
-function request(port, urlPath, { method = "GET", headers = {}, host } = {}) {
+function request(port, urlPath, { method = "GET", headers = {}, host, body } = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
@@ -39,7 +39,7 @@ function request(port, urlPath, { method = "GET", headers = {}, host } = {}) {
       }
     );
     req.on("error", reject);
-    req.end();
+    req.end(body);
   });
 }
 
@@ -123,7 +123,13 @@ test("server: page and assets; key injected into asset URLs; unknown paths 404; 
     assert.match(page.headers["content-type"], /text\/html/);
     assert.ok(page.body.includes(`app.js?k=${token}`));
     assert.ok(!page.body.includes("__KEY__"));
-    for (const tab of ["Отклики", "Доделать руками", "Неделя", "Источники и сайты подачи"]) {
+    for (const tab of [
+      "Отклики",
+      "Доделать руками",
+      "Неделя",
+      "Источники и сайты подачи",
+      "Банк ответов",
+    ]) {
       assert.ok(page.body.includes(tab), tab);
     }
 
@@ -362,4 +368,301 @@ test("makeDataLoaders: v8 fields flow into the todo list and site health", () =>
   const src = loaders.sources();
   const lever = src.sites.find((s) => s.name === "Lever");
   assert.equal(lever.status_label, "Не работает");
+});
+
+// --- «Банк ответов» (BL-225 U7) ---------------------------------------------
+
+const BANK_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const BANK_B = "bbbbbbbb-0000-4000-8000-000000000002";
+
+function postJson(port, urlPath, obj, headers = {}) {
+  const body = typeof obj === "string" ? obj : JSON.stringify(obj);
+  return request(port, urlPath, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(body),
+      ...headers,
+    },
+    body,
+  });
+}
+
+test("server: POST /api/rating — token, JSON only, strict body, size limit", async () => {
+  const rated = [];
+  const data = {
+    ...FAKE_DATA,
+    bank: ({ fresh }) => ({ profile: "demo", fresh, rows: [] }),
+    rate: async (input) => {
+      rated.push(input);
+      return { ok: true, ...input };
+    },
+  };
+  const { port, token, server, closed } = await startBoardServer({ data });
+  try {
+    const noKey = await postJson(port, "/api/rating", { id: BANK_A, rating: 5 });
+    assert.equal(noKey.status, 403);
+
+    const badOrigin = await postJson(
+      port,
+      "/api/rating",
+      { id: BANK_A, rating: 5 },
+      { "X-Board-Token": token, Origin: "http://evil.example" }
+    );
+    assert.equal(badOrigin.status, 403);
+
+    const key = { "X-Board-Token": token };
+    const ok = await postJson(port, "/api/rating", { id: BANK_A, rating: 5 }, key);
+    assert.equal(ok.status, 200);
+    assert.deepEqual(JSON.parse(ok.body), { ok: true, id: BANK_A, rating: 5 });
+
+    const clear = await postJson(port, "/api/rating", { id: BANK_A, rating: null }, key);
+    assert.equal(clear.status, 200);
+
+    const form = await request(port, "/api/rating", {
+      method: "POST",
+      headers: { ...key, "Content-Type": "application/x-www-form-urlencoded" },
+      body: "id=x&rating=5",
+    });
+    assert.equal(form.status, 415);
+
+    assert.equal((await postJson(port, "/api/rating", "{nope", key)).status, 400);
+    for (const bad of [
+      { id: BANK_A, rating: 9 },
+      { id: BANK_A, rating: "5" },
+      { id: "../../etc", rating: 3 },
+      { id: BANK_A, rating: 3, admin: true },
+      [BANK_A, 3],
+    ]) {
+      const res = await postJson(port, "/api/rating", bad, key);
+      assert.equal(res.status, 400, JSON.stringify(bad));
+      assert.ok(JSON.parse(res.body).error);
+    }
+    const big = await postJson(
+      port,
+      "/api/rating",
+      { id: BANK_A, rating: 3, pad: "x".repeat(5000) },
+      key
+    );
+    assert.equal(big.status, 413);
+
+    assert.deepEqual(rated, [
+      { id: BANK_A, rating: 5 },
+      { id: BANK_A, rating: null },
+    ]);
+
+    const bank = await request(port, `/api/bank?k=${token}&fresh=1`);
+    assert.equal(bank.status, 200);
+    assert.equal(JSON.parse(bank.body).fresh, true);
+  } finally {
+    server.shutdown();
+    await closed;
+  }
+});
+
+test("server: without bank loaders the bank endpoints are 404", async () => {
+  const { port, token, server, closed } = await startBoardServer({ data: FAKE_DATA });
+  try {
+    assert.equal((await request(port, `/api/bank?k=${token}`)).status, 404);
+    const res = await postJson(
+      port,
+      "/api/rating",
+      { id: BANK_A, rating: 5 },
+      { "X-Board-Token": token }
+    );
+    assert.equal(res.status, 404);
+  } finally {
+    server.shutdown();
+    await closed;
+  }
+});
+
+function bankLoaders(
+  t,
+  { fetch, clock = { now: Date.parse("2026-10-21T12:00:00Z") }, secrets } = {}
+) {
+  const calls = { fetch: 0 };
+  const profile = {
+    id: "demo",
+    modules: [],
+    notion: { application_qa_db_id: "qa-db" },
+    paths: { root: t.profileDir, applicationsTsv: "x" },
+  };
+  const loaders = makeDataLoaders(
+    profile,
+    {
+      loadApplications: () => ({ apps: [] }),
+      loadSecrets: () => secrets || { NOTION_TOKEN: "t" },
+      makeNotionClient: () => ({}),
+      fetchAllAnswers: async () => {
+        calls.fetch += 1;
+        return fetch();
+      },
+      bankTtlMs: 60000,
+      today: () => "2026-10-21",
+      now: () => clock.now,
+    },
+    {}
+  );
+  return { loaders, calls, clock };
+}
+
+const NOTION_BANK = () => [
+  {
+    pageId: BANK_A,
+    question: "Why us?",
+    answer: "Old answer",
+    company: "Acme",
+    role: "PM",
+    category: "Motivation",
+    notes: "",
+    createdAt: "2026-09-01T00:00:00.000Z",
+  },
+  {
+    pageId: BANK_B,
+    question: "Years of SQL?",
+    answer: "Five",
+    company: "Beta",
+    role: "PM",
+    category: "Experience",
+    notes: "apply bot, truth-checked",
+    createdAt: "2026-10-20T00:00:00.000Z",
+  },
+];
+
+test("makeDataLoaders bank: newest first, cached, fresh refetches, ratings saved to the profile file", async () => {
+  const t = makeTempProfile();
+  const stateDir = path.join(t.profileDir, ".apply-state");
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(stateDir, "apply_pre-2026-10-21.json"),
+    JSON.stringify({ dry_run: false, bank_used: [{ key: "gh:1", bank_page_id: BANK_B }] })
+  );
+  const { loaders, calls, clock } = bankLoaders(t, { fetch: NOTION_BANK });
+
+  const view = await loaders.bank();
+  assert.equal(view.source, "notion");
+  assert.equal(view.notice, "");
+  assert.deepEqual(
+    view.rows.map((r) => [r.id, r.origin, r.uses, r.rating]),
+    [
+      [BANK_B, "bot", 1, null],
+      [BANK_A, "own", 0, null],
+    ]
+  );
+  await loaders.bank();
+  assert.equal(calls.fetch, 1, "second open within the TTL uses the cache");
+  await loaders.bank({ fresh: true });
+  assert.equal(calls.fetch, 2);
+  clock.now += 61000;
+  await loaders.bank();
+  assert.equal(calls.fetch, 3, "the cache expires");
+
+  assert.deepEqual(await loaders.rate({ id: BANK_B, rating: 2 }), {
+    ok: true,
+    id: BANK_B,
+    rating: 2,
+  });
+  const file = path.join(t.profileDir, ".answers", "ratings.json");
+  const saved = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.equal(saved.ratings[BANK_B].rating, 2);
+  assert.equal(saved.ratings[BANK_B].question_key, "beta||pm||years of sql?");
+  assert.equal(calls.fetch, 3, "rating a known answer needs no refetch");
+
+  const after = await loaders.bank();
+  assert.equal(after.rows[0].rating, 2);
+  assert.equal(after.summary.rated, 1);
+
+  await loaders.rate({ id: BANK_B, rating: null });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).ratings, {});
+
+  await assert.rejects(
+    loaders.rate({ id: "cccccccc-0000-4000-8000-000000000003", rating: 4 }),
+    (err) => err.status === 404
+  );
+  assert.equal(calls.fetch, 4, "an unknown id refreshes the bank once before refusing");
+});
+
+test("makeDataLoaders bank: Notion down → local backup with a one-line notice; week shows the bank line", async () => {
+  const t = makeTempProfile();
+  const dir = path.join(t.profileDir, "application_answers");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "Acme_pm_20261020.md"),
+    "# Acme — PM\n\n- **Date saved**: 2026-10-20T10:00:00.000Z\n- **Role**: PM\n- **Notes**: apply bot, truth-checked\n\n---\n\n## Q. Why us?\n\nBecause.\n"
+  );
+  const { loaders } = bankLoaders(t, {
+    fetch: () => {
+      throw new Error("ENOTFOUND api.notion.com");
+    },
+  });
+  const view = await loaders.bank();
+  assert.equal(view.source, "local");
+  assert.match(
+    view.notice,
+    /^Notion недоступен \(ENOTFOUND api\.notion\.com\) — показан локальный бэкап \(1\)$/
+  );
+  assert.equal(view.rows[0].id, "local:Acme_pm_20261020.md#1");
+
+  await loaders.rate({ id: "local:Acme_pm_20261020.md#1", rating: 5 });
+  const week = await loaders.week();
+  assert.deepEqual(week.report.bank.week, { added: 1, rated: 1, unrated: 0, average: 5 });
+  const line = week.tables[0].rows.find((r) => /Ответы бота/.test(r[0]));
+  assert.deepEqual(line.slice(1), [
+    "1 (с оценкой 1, без оценки 0, средняя 5)",
+    "1 (с оценкой 1, без оценки 0, средняя 5)",
+  ]);
+});
+
+test("command: the bank tab reads the temp profile's local backup, and a rating is written there only", async () => {
+  const t = makeTempProfile();
+  const dir = path.join(t.profileDir, "application_answers");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "Acme_pm_20261020.md"),
+    "# Acme — PM\n\n- **Role**: PM\n\n---\n\n## Q. Why us?\n\nBecause.\n"
+  );
+  const cmd = makeBoardCommand({
+    stateDir: () => t.stateDir,
+    openUrl: () => {},
+    today: () => "2026-10-21",
+    now: () => Date.parse("2026-10-21T12:00:00Z"),
+    onSignal: () => () => {},
+    fetchAllAnswers: async () => {
+      throw new Error("must not be called without a token");
+    },
+  });
+  const io = capture();
+  const running = cmd({
+    command: "board",
+    profileId: "demo",
+    flags: { noOpen: true, port: "" },
+    env: {},
+    profilesDir: t.profilesDir,
+    stdout: io.stdout,
+    stderr: io.stderr,
+  });
+  const lockFile = lockPath(t.stateDir, "demo");
+  await waitFor(() => fs.existsSync(lockFile));
+  const lock = JSON.parse(fs.readFileSync(lockFile, "utf8"));
+  try {
+    const bank = JSON.parse((await request(lock.port, `/api/bank?k=${lock.token}`)).body);
+    assert.equal(bank.source, "local");
+    assert.match(bank.notice, /Notion не настроен/);
+    assert.equal(bank.rows.length, 1);
+    const res = await postJson(
+      lock.port,
+      "/api/rating",
+      { id: bank.rows[0].id, rating: 4 },
+      { "X-Board-Token": lock.token }
+    );
+    assert.equal(res.status, 200);
+    const saved = JSON.parse(
+      fs.readFileSync(path.join(t.profileDir, ".answers", "ratings.json"), "utf8")
+    );
+    assert.equal(saved.ratings["local:Acme_pm_20261020.md#1"].rating, 4);
+  } finally {
+    await request(lock.port, `/api/quit?k=${lock.token}`, { method: "POST" });
+    assert.equal(await running, 0);
+  }
 });

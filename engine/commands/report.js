@@ -2,8 +2,9 @@
 //
 //   node engine/cli.js report --profile <id> --weekly [--out <dir>]
 //
-// Reads applications.tsv and .health/apply_runs.jsonl (read-only), builds the
-// weekly stats for today (nightly runs included) and
+// Reads applications.tsv and .health/apply_runs.jsonl (read-only) and the
+// answer bank + the owner's ratings (Notion or the local backup; best-effort,
+// BL-225 U7), builds the weekly stats for today (nightly runs included) and
 // writes a self-contained HTML page `weekly-<YYYY-MM-DD>.html` into <dir>.
 // Default <dir>: $AI_JOB_SEARCHER_DATA_DIR/reports, else <repo>/data/reports.
 // Prints the written path. Re-running the same day overwrites that day's page.
@@ -17,6 +18,9 @@ const { resolveProfilesDir } = require("../core/paths.js");
 const { buildWeeklyReport, renderWeeklyHtml } = require("../core/weekly_report.js");
 const { todayLocalISO } = require("../core/auto_dead_sweep.js");
 const { readNightRuns, nightRunsPath } = require("../core/night_runs_log.js");
+const { makeClient } = require("../core/notion_sync.js");
+const { fetchAllAnswers } = require("../core/qa_notion.js");
+const bankStore = require("../core/answer_bank_store.js");
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 
@@ -29,6 +33,9 @@ function defaultReportsDir(env = process.env) {
 const DEFAULT_DEPS = {
   loadProfile: profileLoader.loadProfile,
   loadApplications: applications.load,
+  loadSecrets: profileLoader.loadSecrets,
+  makeNotionClient: makeClient,
+  fetchAllAnswers,
   today: () => todayLocalISO(),
   now: () => new Date().toISOString(),
 };
@@ -49,7 +56,22 @@ function makeReportCommand(overrides = {}) {
 
     const today = deps.today();
     const nights = readNightRuns(nightRunsPath(profile.paths.root));
-    const report = buildWeeklyReport(apps, today, { nights });
+    let bank;
+    try {
+      const b = await bankStore.loadAnswerBank({
+        profile,
+        secrets: deps.loadSecrets(profile.id, env) || {},
+        deps: { makeClient: deps.makeNotionClient, fetchAllAnswers: deps.fetchAllAnswers },
+      });
+      if (b.notice) stderr(`note: ${b.notice}`);
+      bank = {
+        entries: b.entries,
+        ratings: bankStore.readRatings(bankStore.ratingsPath(profile.paths.root)),
+      };
+    } catch (err) {
+      stderr(`warn: answer bank line skipped (${err.message})`);
+    }
+    const report = buildWeeklyReport(apps, today, { nights, bank });
     const html = renderWeeklyHtml(report, { profileId: profile.id, generatedAt: deps.now() });
 
     const outDir = flags.out ? path.resolve(flags.out) : defaultReportsDir(env);
