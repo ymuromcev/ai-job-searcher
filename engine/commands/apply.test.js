@@ -150,6 +150,9 @@ function harness({
   files = [],
   bank = [],
   secrets = { NOTION_TOKEN: "t" },
+  companies = [],
+  posting = {},
+  viaPage = null,
 } = {}) {
   const log = [];
   const store = { apps: apps.map((a) => ({ ...a })), saves: 0 };
@@ -172,6 +175,9 @@ function harness({
       throw new Error("no network in tests");
     },
     resolveUrl: async (url) => {
+      log.push(["resolveUrl", url]);
+      if (url.includes("adzuna") && url.includes("gone"))
+        return { ok: false, url, reason: "dead", status: 404, hops: [url] };
       if (url.includes("adzuna"))
         return { ok: false, url, reason: "blocked", status: 403, hops: [url] };
       if (url.includes("workday"))
@@ -182,6 +188,18 @@ function harness({
     },
     detectAts: (url) =>
       url.includes("lever") ? "lever" : url.includes("greenhouse") ? "greenhouse" : null,
+    loadCompanies: () => ({ rows: companies }),
+    // posting[jobId] = "open" | "closed"; default unknown.
+    checkPostingOpen: async (ref) => {
+      log.push(["posting", ref.ats, ref.slug, ref.jobId]);
+      return posting[ref.jobId] || "unknown";
+    },
+    resolveViaPage: async (_page, url) => {
+      log.push(["viaPage", url]);
+      return viaPage
+        ? viaPage(url)
+        : { ok: false, url, reason: "blocked", status: 403, hops: [url] };
+    },
     getAdapter: (n) => (n === "greenhouse" || n === "lever" ? adapter(n) : null),
     launchBrowser: async () => ({
       newPage: async () => ({
@@ -641,4 +659,165 @@ test("loadAnswersFile groups answers by job key and drops empty ones", () => {
   assert.equal(m.get("k1").length, 1);
   assert.equal(m.get("k2")[0].answer, "B");
   assert.throws(() => loadAnswersFile("/missing.json", deps), /not found/);
+});
+
+// ---- canonical form URLs + closed postings (RFC 068 follow-up) -------------
+
+const COMPANIES = [
+  { name: "Samsara", source: "greenhouse", slug: "samsara" },
+  { name: "Navan", source: "greenhouse", slug: "tripactions" },
+  { name: "Navan", source: "lever", slug: "navan-lever" },
+  { name: "Gamma Inc.", source: "lever", slug: "gamma" },
+];
+
+test("pre: ATS-sourced rows use the canonical form URL, never the career page", async () => {
+  const h = harness({
+    apps: [
+      row({
+        key: "greenhouse:8017174",
+        source: "greenhouse",
+        jobId: "8017174",
+        companyName: "Samsara",
+        url: "https://www.samsara.com/company/careers/roles/8017174?gh_jid=8017174",
+      }),
+      row({
+        key: "gh:8010057",
+        source: "Greenhouse",
+        jobId: "gh:8010057",
+        companyName: "Navan",
+        url: "https://navan.com/careers/openings?gh_jid=8010057",
+      }),
+      row({ key: "lv1", source: "lever", jobId: UUID, companyName: "Gamma", url: "" }),
+    ],
+    files: [RESUME],
+    companies: COMPANIES,
+    posting: { 8017174: "open", 8010057: "closed" },
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  const byKey = Object.fromEntries(ctx.jobs.map((j) => [j.key, j]));
+  assert.equal(
+    byKey["greenhouse:8017174"].form_url,
+    "https://job-boards.greenhouse.io/embed/job_app?for=samsara&token=8017174"
+  );
+  assert.equal(byKey.lv1.form_url, `https://jobs.lever.co/gamma/${UUID}/apply`);
+  // No redirect-following for rows with a slug.
+  assert.deepEqual(
+    h.log.filter((l) => l[0] === "resolveUrl"),
+    []
+  );
+  // Navan: slug from the greenhouse row (not the lever one), posting closed.
+  assert.ok(h.log.some((l) => l[0] === "posting" && l[2] === "tripactions" && l[3] === "8010057"));
+  assert.deepEqual(
+    ctx.closed.map((c) => c.key),
+    ["gh:8010057"]
+  );
+  const navan = h.store.apps.find((a) => a.key === "gh:8010057");
+  assert.equal(navan.status, "Closed");
+  assert.equal(navan.apply_note, "job_closed");
+  assert.equal(navan.apply_state, "");
+  assert.deepEqual(h.notionCalls, [["page-gh:8010057", "Closed"]]);
+});
+
+test("pre: no URL and no ATS slug → manual no_application_url", async () => {
+  const h = harness({
+    apps: [
+      row({ key: "recruiter:x", source: "recruiter", jobId: "x", companyName: "Kappa", url: "" }),
+      row({ key: "manual:y", source: "Manual", jobId: "y", companyName: "Lambda", url: "" }),
+    ],
+    files: [RESUME],
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  assert.deepEqual(
+    ctx.manual.map((m) => [m.key, m.reason]),
+    [
+      ["recruiter:x", "no_application_url"],
+      ["manual:y", "no_application_url"],
+    ]
+  );
+});
+
+test("pre: blocked aggregator falls back to a browser page; still blocked → unresolved_url", async () => {
+  const h = harness({
+    apps: [
+      row({
+        key: "adz1",
+        source: "adzuna",
+        jobId: "1",
+        companyName: "Mu",
+        url: "https://www.adzuna.com/land/ad/1",
+      }),
+      row({
+        key: "adz2",
+        source: "adzuna",
+        jobId: "2",
+        companyName: "Nu",
+        url: "https://www.adzuna.com/land/ad/2",
+      }),
+    ],
+    files: [RESUME],
+    viaPage: (url) =>
+      url.endsWith("/1")
+        ? { ok: true, url: GH_URL, ats: "greenhouse", status: 200, hops: [url, GH_URL] }
+        : { ok: false, url, reason: "blocked", status: 403, hops: [url] },
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  assert.deepEqual(
+    ctx.jobs.map((j) => [j.key, j.resolved_url]),
+    [["adz1", GH_URL]]
+  );
+  assert.deepEqual(
+    ctx.manual.map((m) => [m.key, m.reason]),
+    [["adz2", "unresolved_url:www.adzuna.com"]]
+  );
+  // Resolved ATS URLs get the posting-API liveness check too.
+  assert.ok(h.log.some((l) => l[0] === "posting" && l[1] === "greenhouse"));
+});
+
+test("pre: a closed page in the browser marks the job Closed, not manual", async () => {
+  const h = harness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    files: [RESUME],
+    behavior: { [GH_URL]: { open: { ok: false, reason: "job_closed" } } },
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const r = h.store.apps[0];
+  assert.equal(r.status, "Closed");
+  assert.equal(r.apply_note, "job_closed");
+});
+
+test("pre: aggregator 404 from fetch is re-checked in the browser", async () => {
+  const live = "https://www.adzuna.com/land/ad/gone-live";
+  const gone = "https://www.adzuna.com/land/ad/gone-dead";
+  const blocked = "https://www.adzuna.com/land/ad/gone-blocked";
+  const h = harness({
+    apps: [
+      row({ key: "live", source: "adzuna", jobId: "1", companyName: "Xi", url: live }),
+      row({ key: "gone", source: "adzuna", jobId: "2", companyName: "Omicron", url: gone }),
+      row({ key: "blk", source: "adzuna", jobId: "3", companyName: "Pi", url: blocked }),
+    ],
+    files: [RESUME],
+    viaPage: (url) => {
+      if (url === live) {
+        const details = "https://www.adzuna.com/details/1";
+        return { ok: false, url: details, reason: "no_ats", status: 404, hops: [url, details] };
+      }
+      if (url === gone) return { ok: false, url, reason: "dead", status: 404, hops: [url] };
+      return { ok: false, url, reason: "blocked", status: 403, hops: [url] };
+    },
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  // Live ad on Adzuna without an employer link: work for the human, not dead.
+  assert.deepEqual(
+    ctx.manual.map((m) => [m.key, m.reason]),
+    [["live", "unresolved_url:www.adzuna.com"]]
+  );
+  const skipped = Object.fromEntries(ctx.skipped.map((s) => [s.key, s.reason]));
+  assert.equal(skipped.gone, "url_dead");
+  // Browser blocked: fetch's 404 stands.
+  assert.equal(skipped.blk, "url_dead");
+  assert.equal(h.log.filter((l) => l[0] === "viaPage").length, 3);
 });

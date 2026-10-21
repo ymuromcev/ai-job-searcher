@@ -2,9 +2,10 @@
 // Greenhouse application-form adapter (RFC 068 §2).
 //
 // Targets the current job-boards UI (job-boards.greenhouse.io, Remix +
-// react-select). Legacy boards.greenhouse.io/<slug>/jobs/<id> links redirect
-// there; the embed form (`/embed/job_app?for=<slug>&token=<id>`) renders the
-// same markup.
+// react-select). Forms are always opened through the hosted embed URL
+// (`/embed/job_app?for=<slug>&token=<id>`) — same markup, no redirect to the
+// company's careers site; a closed job bounces to
+// `embed/job_board?for=<slug>&error=true` ("no longer open").
 //
 // Structure learned from public forms (2026-10):
 //   - <form id="application-form">; text inputs carry ids (first_name,
@@ -74,14 +75,18 @@ function jobRef(url) {
   return parse(url);
 }
 
+// Always the hosted embed form. Boards with a custom careers site redirect
+// job-boards.greenhouse.io/<slug>/jobs/<id> to that site (form in an iframe
+// or not at all); the embed URL renders the form itself.
 function normalizeUrl(url) {
   const p = parse(url);
-  if (!p || p.embed) return url;
-  return `https://job-boards.greenhouse.io/${p.slug}/jobs/${p.jobId}`;
+  if (!p) return url;
+  if (p.embed) return url;
+  return `https://job-boards.greenhouse.io/embed/job_app?for=${encodeURIComponent(p.slug)}&token=${encodeURIComponent(p.jobId)}`;
 }
 
 const CLOSED_RE =
-  /no longer (accepting|available|open)|job (was )?not found|position has been filled/i;
+  /no longer (accepting|available|open)|job you are looking for is no longer|job (was )?not found|position has been filled/i;
 
 async function open(page, url, { timeoutMs = 45000, formTimeoutMs = 20000 } = {}) {
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });

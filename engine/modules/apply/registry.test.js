@@ -34,8 +34,11 @@ test("normalizeUrl points at the form, tenantKey groups by board", () => {
   const gh = getAdapter("greenhouse");
   assert.equal(
     gh.normalizeUrl("https://boards.greenhouse.io/acme/jobs/123?gh_src=x"),
-    "https://job-boards.greenhouse.io/acme/jobs/123"
+    "https://job-boards.greenhouse.io/embed/job_app?for=acme&token=123"
   );
+  const embed = "https://job-boards.greenhouse.io/embed/job_app?for=acme&token=123";
+  assert.equal(gh.normalizeUrl(embed), embed);
+  assert.equal(gh.tenantKey(embed), "greenhouse:acme");
   assert.equal(gh.tenantKey("https://boards.greenhouse.io/Acme/jobs/123"), "greenhouse:acme");
   const lv = getAdapter("lever");
   assert.equal(

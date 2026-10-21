@@ -52,6 +52,19 @@ const REASON_LABELS = {
   form_changed: "форма изменилась",
   url_dead: "вакансия больше не открывается",
   timeout: "форма не загрузилась",
+  // apply command codes (engine/commands/apply.js)
+  no_application_url: "нет ссылки на форму подачи",
+  unresolved_url: "по ссылке не нашлась форма подачи",
+  job_closed: "вакансия закрыта",
+  email_verification: "сайт просит код из письма",
+  unknown_page: "непредвиденная страница вместо формы",
+  presubmit_check: "перед отправкой осталось пустое обязательное поле",
+  schema_changed: "форма изменилась с момента чтения",
+  fill_error: "не удалось заполнить поле",
+  validation_error: "сайт отклонил отправку",
+  resume_missing: "нет PDF резюме",
+  cover_letter_missing: "форма требует cover letter, а его нет",
+  unsupported_required_file: "форма требует файл, которого у нас нет",
 };
 
 // Reasons that are about the candidate's side (an account, a human check, an
@@ -62,6 +75,9 @@ const NON_TECHNICAL_REASONS = new Set([
   "account_required",
   "no_honest_answer",
   "unsupported_ats",
+  "no_application_url",
+  "email_verification",
+  "job_closed",
 ]);
 
 function str(v) {

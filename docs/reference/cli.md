@@ -374,7 +374,7 @@ Flags:
 
 Outputs and side effects:
 
-- `--phase pre`: writes `profiles/<id>/.apply-state/apply_context.json` (per job: form schema, resolved answers, `unanswered[]`). Sets `apply_state=queued` on carried jobs and `apply_state=manual` + `apply_note=<reason>` (`unsupported_ats:<host>`, `unresolved_url:<host>`, `captcha`, `login_required`, `resume_missing`, …) on the rest.
+- `--phase pre`: writes `profiles/<id>/.apply-state/apply_context.json` (per job: form schema, resolved answers, `unanswered[]`). Sets `apply_state=queued` on carried jobs and `apply_state=manual` + `apply_note=<reason>` (`unsupported_ats:<host>`, `unresolved_url:<host>`, `no_application_url`, `captcha`, `login_required`, `resume_missing`, …) on the rest. Rows found by the Greenhouse / Lever / Ashby scanners go straight to the form built from the job id + the board slug in `data/companies.tsv` (Greenhouse: the hosted `embed/job_app?for=<slug>&token=<id>` form, which renders even when the board redirects to a custom careers site); other rows follow redirects, with a headless-browser retry for aggregators (Adzuna) that refuse plain fetch. Postings the ATS reports as gone (Greenhouse / Lever posting API 404, or a "no longer open" page) get `status=Closed` + `apply_note=job_closed` (Notion status `Closed` too) — they are not left for the human. `--dry-run` writes neither.
 - `--phase submit`: success → `status=Applied`, `applied_date`, `applied_by=bot`, `apply_state=submitted`, `apply_note=<screenshot path>`, Notion status `Applied`. No confirmation → `apply_state=failed` (never retried). Captcha / login / email code / unexpected screen → `manual`. Screenshots in `profiles/<id>/.apply-state/shots/`; run summary in `.apply-state/apply_results-<ts>.json`.
 
 Example:

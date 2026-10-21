@@ -186,6 +186,78 @@ function hasGhJidOnly(u) {
   }
 }
 
+// Browser fallback for aggregators that block plain fetch (Adzuna answers
+// 403 / a bot page to non-browser clients). Navigates in a real page, lets
+// JS redirects run, then reads the final URL or an outbound ATS link.
+// Returns the same shape as resolveUrl.
+async function resolveViaPage(
+  page,
+  url,
+  { detectAts = () => null, settleMs = 4000, timeoutMs = 30000 } = {}
+) {
+  const safe = isSafeLivenessUrl(url);
+  if (!safe.ok) return { ok: false, url, ats: null, status: 0, hops: [url], reason: "unsafe_url" };
+  let status = 0;
+  try {
+    const res = await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+    status = (res && res.status()) || 0;
+  } catch (err) {
+    return {
+      ok: false,
+      url,
+      ats: null,
+      status: 0,
+      hops: [url],
+      reason: "fetch_error",
+      error: err.message,
+    };
+  }
+  await new Promise((r) => setTimeout(r, settleMs));
+  const finalUrl = page.url();
+  const hops = finalUrl !== url ? [url, finalUrl] : [url];
+  const atsFinal = detectAts(finalUrl);
+  if (atsFinal) return { ok: true, url: finalUrl, ats: atsFinal, status, hops };
+  let html = "";
+  try {
+    html = await page.content();
+  } catch {
+    html = "";
+  }
+  // A 404/410 that stayed on the same page (or shows a not-found page) is a
+  // gone posting. Aggregators answer 404 on the land URL even for live ads
+  // and then redirect in-page (Adzuna /land/ad -> /details), so a 404 that
+  // moved to another path is not treated as dead.
+  if (GONE_CODES.has(status)) {
+    const samePath = pathOf(finalUrl) === pathOf(url);
+    const title = /<title[^>]*>([^<]*)<\/title>/i.exec(html);
+    if (samePath || /not found|no longer (available|exists)/i.test((title && title[1]) || "")) {
+      return { ok: false, url: finalUrl, ats: null, status, hops, reason: "dead" };
+    }
+  }
+  const next = findHtmlHop(finalUrl, html);
+  if (next && detectAts(next))
+    return { ok: true, url: next, ats: detectAts(next), status, hops: hops.concat(next) };
+  if (
+    BLOCKED_CODES.has(status) ||
+    /access denied|are you a robot|verify you are human/i.test(html.slice(0, 5000))
+  ) {
+    return { ok: false, url: finalUrl, ats: null, status, hops, reason: "blocked" };
+  }
+  // Landed on an employer page that is not an ATS: hand back the URL so the
+  // caller can run the fetch resolver on it (gh_jid embeds etc.).
+  return { ok: false, url: next || finalUrl, ats: null, status, hops, reason: "no_ats" };
+}
+
+const GONE_CODES = new Set([404, 410]);
+
+function pathOf(u) {
+  try {
+    return new URL(u).pathname.replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+}
+
 function hostOf(u) {
   try {
     return new URL(u).hostname.toLowerCase();
@@ -194,4 +266,4 @@ function hostOf(u) {
   }
 }
 
-module.exports = { resolveUrl, findHtmlHop, greenhouseFromEmbed, hostOf };
+module.exports = { resolveUrl, resolveViaPage, findHtmlHop, greenhouseFromEmbed, hostOf };

@@ -43,7 +43,7 @@ const fs = require("fs");
 
 const profileLoader = require("../core/profile_loader.js");
 const applicationsTsv = require("../core/applications_tsv.js");
-const { resolveProfilesDir } = require("../core/paths.js");
+const { resolveProfilesDir, resolveDataDir } = require("../core/paths.js");
 const notionSync = require("../core/notion_sync.js");
 const { fetchAllAnswers, matchAnswers } = require("../core/qa_notion.js");
 const { categorize } = require("../core/qa_categorize.js");
@@ -54,7 +54,13 @@ const { todayLocalISO } = require("../core/auto_no_response_sweep.js");
 const { buildActiveCounts, resolveCapWindowDays } = require("./prepare.js");
 
 const { detectAts, getAdapter } = require("../modules/apply/index.js");
-const { resolveUrl, hostOf } = require("../modules/apply/resolve_url.js");
+const { resolveUrl, resolveViaPage, hostOf } = require("../modules/apply/resolve_url.js");
+const {
+  buildSlugIndex,
+  canonicalFormUrl,
+  checkPostingOpen,
+} = require("../modules/apply/canonical_url.js");
+const companiesTsv = require("../core/companies.js");
 const { matchQuestion, pickOption, normalizeLabel } = require("../modules/apply/question_match.js");
 const { parsePublishedRange, computeDesiredSalary } = require("../modules/apply/salary.js");
 const { resolveResumePdf, resolveCoverLetterPdf } = require("../modules/apply/resume_path.js");
@@ -244,6 +250,9 @@ function makeDefaultDeps() {
     resolveCapWindowDays,
     fetchFn: defaultFetch,
     resolveUrl,
+    resolveViaPage,
+    checkPostingOpen,
+    loadCompanies: companiesTsv.load,
     detectAts,
     getAdapter,
     launchBrowser,
@@ -346,20 +355,80 @@ async function salaryForJob(job, ats, adapter, resolvedUrl, profile, deps, apply
   return { range, desired };
 }
 
+// Where is this job's application form? Order:
+//   1. ATS-sourced row + board slug (companies.tsv or the row URL) → the
+//      canonical form URL, after a posting-API liveness check (404 → closed).
+//   2. No URL at all → manual `no_application_url`.
+//   3. Fetch-based redirect resolver; for aggregators that block fetch
+//      (Adzuna) a real browser page is tried next.
+// Returns { res } | { closed: true } | { manual } | { skip }.
+async function resolveJobUrl(app, env) {
+  const { deps, slugIndex, browser } = env;
+  const canon = canonicalFormUrl(app, slugIndex);
+  if (canon) {
+    const state = await deps.checkPostingOpen(canon, deps.fetchFn);
+    if (state === "closed") return { closed: true };
+    return { res: { ok: true, url: canon.url, ats: canon.ats, via: "canonical" } };
+  }
+  if (!String(app.url || "").trim()) return { manual: "no_application_url" };
+
+  let res = await deps.resolveUrl(app.url, { fetchFn: deps.fetchFn, detectAts: deps.detectAts });
+  const origHost = hostOf(app.url);
+  // Aggregators (Adzuna) answer node fetch with 403/404 even for live ads, so
+  // a "dead" from fetch is re-checked in the browser before it is believed.
+  if (!res.ok && res.reason !== "unsafe_url" && aggregatorHost(origHost)) {
+    const b = await browser.get();
+    const { page, close } = await b.newPage();
+    try {
+      const viaPage = await deps.resolveViaPage(page, app.url, { detectAts: deps.detectAts });
+      if (viaPage.ok) {
+        res = viaPage;
+      } else if (viaPage.reason === "no_ats" && viaPage.url && hostOf(viaPage.url) !== origHost) {
+        // Landed on the employer's page: let the fetch resolver find the ATS.
+        res = await deps.resolveUrl(viaPage.url, {
+          fetchFn: deps.fetchFn,
+          detectAts: deps.detectAts,
+        });
+      } else if (res.reason !== "dead" || viaPage.reason === "no_ats") {
+        // A live aggregator page without an ATS link overrides a fetch 404
+        // (manual, not dead). A blocked browser does not overrule fetch's 404.
+        res = viaPage;
+      }
+    } finally {
+      await close();
+    }
+  }
+  if (!res.ok) {
+    if (res.reason === "dead") return { skip: "url_dead" };
+    const host = hostOf(res.url) || origHost;
+    if (res.reason === "no_ats" && !aggregatorHost(host)) {
+      return { manual: `unsupported_ats:${host}` };
+    }
+    return { manual: `unresolved_url:${origHost || host}` };
+  }
+  const ats = res.ats || deps.detectAts(res.url);
+  const adapter = ats ? deps.getAdapter(ats) : null;
+  const ref = adapter && adapter.jobRef ? adapter.jobRef(res.url) : null;
+  if (ref && ref.slug && ref.jobId) {
+    const state = await deps.checkPostingOpen(
+      { ats, slug: ref.slug, jobId: ref.jobId },
+      deps.fetchFn
+    );
+    if (state === "closed") return { closed: true };
+  }
+  return { res: { ...res, ats } };
+}
+
 async function preparePreJob(app, env) {
   const { profile, deps, applyDefaults, bank, browser, stderr } = env;
   const job = { key: app.key, company: app.companyName, title: app.title, url: app.url };
 
-  const res = await deps.resolveUrl(app.url, { fetchFn: deps.fetchFn, detectAts: deps.detectAts });
-  if (!res.ok) {
-    if (res.reason === "dead") return { job, skip: "url_dead" };
-    const host = hostOf(res.url) || hostOf(app.url);
-    if (res.reason === "no_ats" && !aggregatorHost(host)) {
-      return { job, manual: `unsupported_ats:${host}` };
-    }
-    return { job, manual: `unresolved_url:${hostOf(app.url) || host}` };
-  }
-  const ats = res.ats || deps.detectAts(res.url);
+  const where = await resolveJobUrl(app, env);
+  if (where.closed) return { job, closed: true };
+  if (where.manual) return { job, manual: where.manual };
+  if (where.skip) return { job, skip: where.skip };
+  const res = where.res;
+  const ats = res.ats;
   if (!ats) return { job, manual: `unsupported_ats:${hostOf(res.url)}` };
   const adapter = deps.getAdapter(ats);
   if (!adapter) return { job, manual: `unsupported_ats:${hostOf(res.url)}` };
@@ -376,6 +445,7 @@ async function preparePreJob(app, env) {
   const { page, close } = await b.newPage();
   try {
     const opened = await adapter.open(page, formUrl);
+    if (!opened.ok && opened.reason === "job_closed") return { job, closed: true };
     if (!opened.ok) return { job, manual: opened.reason };
     // No JD in the cache / API: Greenhouse renders the posting (with its
     // pay range) above the form, so read the range off the page itself.
@@ -469,15 +539,34 @@ async function runPre(ctx, deps) {
     }
   }
 
+  // Board slugs for ATS-sourced rows (canonical form URLs).
+  let slugIndex = new Map();
+  try {
+    const companiesPath = path.join(
+      resolveDataDir(ctx.env || process.env),
+      "data",
+      "companies.tsv"
+    );
+    slugIndex = buildSlugIndex(deps.loadCompanies(companiesPath).rows);
+  } catch (err) {
+    stderr(
+      `warn: data/companies.tsv unavailable (${err.message}) — falling back to URL resolution`
+    );
+  }
+
   const browser = makeBrowserHandle(deps);
-  const env = { profile, deps, applyDefaults, bank, browser, stderr };
+  const env = { profile, deps, applyDefaults, bank, browser, stderr, slugIndex };
   let results;
   try {
     results = await runPool(queue, {
       concurrency: concurrencyOf(flags),
-      // Tenant is only known after URL resolution; the raw host keeps two
-      // forms of the same board from opening at once in the common case.
-      keyOf: (app) => hostOf(app.url) + pathHead(app.url),
+      // One open form per ATS tenant: the canonical board when known,
+      // otherwise the raw host + first path segment.
+      keyOf: (app) => {
+        const c = canonicalFormUrl(app, slugIndex);
+        if (c) return `${c.ats}:${c.slug.toLowerCase()}`;
+        return app.url ? hostOf(app.url) + pathHead(app.url) : null;
+      },
       worker: (app) => preparePreJob(app, env),
     });
   } finally {
@@ -486,6 +575,7 @@ async function runPre(ctx, deps) {
 
   const jobs = [];
   const manual = [];
+  const closed = [];
   const skippedNow = [];
   for (let i = 0; i < results.length; i += 1) {
     const r = results[i] || {};
@@ -500,6 +590,7 @@ async function runPre(ctx, deps) {
       continue;
     }
     if (r.entry) jobs.push(r.entry);
+    else if (r.closed) closed.push({ ...r.job, reason: "job_closed" });
     else if (r.manual) manual.push({ ...r.job, reason: r.manual });
     else if (r.skip) skippedNow.push({ ...r.job, reason: r.skip });
   }
@@ -520,7 +611,19 @@ async function runPre(ctx, deps) {
       a.apply_state = "queued";
       a.apply_note = "";
     }
-    if (manual.length || jobs.length) deps.saveApplications(applicationsPath, apps);
+    // Closed postings are not work for anyone: the job itself is Closed.
+    const nowIso = deps.now().toISOString();
+    for (const c of closed) {
+      const a = byKey.get(c.key);
+      if (!a) continue;
+      a.status = "Closed";
+      a.apply_state = "";
+      a.apply_note = "job_closed";
+      a.updatedAt = nowIso;
+    }
+    if (manual.length || jobs.length || closed.length)
+      deps.saveApplications(applicationsPath, apps);
+    await pushClosedToNotion(closed, byKey, profile, secrets, deps, stderr);
   }
 
   const context = {
@@ -528,6 +631,7 @@ async function runPre(ctx, deps) {
     profile: profileId,
     jobs,
     manual,
+    closed,
     skipped: [...skipped, ...skippedNow],
   };
   const contextPath = path.join(stateDir(profile), CONTEXT_FILE);
@@ -536,11 +640,29 @@ async function runPre(ctx, deps) {
   const needLlm = jobs.filter((j) => j.unanswered.some((u) => u.required)).length;
   stdout(
     `apply pre: ${jobs.length} form(s) read — ${jobs.length - needLlm} fully answered, ` +
-      `${needLlm} need the LLM step; ${manual.length} manual; ${skippedNow.length} skipped`
+      `${needLlm} need the LLM step; ${manual.length} manual; ${closed.length} closed; ` +
+      `${skippedNow.length} skipped`
   );
   for (const m of manual) stdout(`  manual  ${m.company} — ${m.title}: ${m.reason}`);
   stdout(`context: ${path.relative(process.cwd(), contextPath)}`);
   return 0;
+}
+
+// Mirror Closed onto the Notion job pages through the shared status writer.
+async function pushClosedToNotion(closed, byKey, profile, secrets, deps, stderr) {
+  if (!closed.length || !secrets.NOTION_TOKEN) return;
+  const client = deps.makeNotionClient(secrets.NOTION_TOKEN);
+  const propertyMap =
+    (profile.notion && profile.notion.property_map) || notionSync.DEFAULT_PROPERTY_MAP;
+  for (const c of closed) {
+    const a = byKey.get(c.key);
+    if (!a || !a.notion_page_id) continue;
+    try {
+      await deps.updatePageStatus(client, a.notion_page_id, "Closed", propertyMap);
+    } catch (err) {
+      stderr(`warn: Notion status Closed failed for ${c.key}: ${err.message}`);
+    }
+  }
 }
 
 function pathHead(u) {

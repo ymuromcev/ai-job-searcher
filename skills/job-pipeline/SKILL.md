@@ -850,14 +850,14 @@ Summarize:
 node engine/cli.js apply --profile <id> --phase pre [--limit N] [--concurrency 4]
 ```
 
-Queue = `To Apply` rows with `fit_score` Strong/Medium, empty `applied_date`, not `submitted` / `failed` / `manual`, within the company cap, newest first. For each: resolve aggregator links to the ATS form, open it headless, read the fields, answer what is standard (identity, `apply_defaults.json`: work authorization / sponsorship / relocation / EEO → decline / how-did-you-hear / salary rule) or already in the answer bank. Unsupported ATS, captcha, login wall, missing resume → `apply_state=manual` with a reason. Writes `profiles/<id>/.apply-state/apply_context.json`:
+Queue = `To Apply` rows with `fit_score` Strong/Medium, empty `applied_date`, not `submitted` / `failed` / `manual`, within the company cap, newest first. For each: resolve aggregator links to the ATS form, open it headless, read the fields, answer what is standard (identity, `apply_defaults.json`: work authorization / sponsorship / relocation / EEO → decline / how-did-you-hear / salary rule) or already in the answer bank. Unsupported ATS, captcha, login wall, missing resume, no application link → `apply_state=manual` with a reason. Closed postings → `status=Closed`, `apply_note=job_closed` (listed in `closed[]`, not work for the human). Writes `profiles/<id>/.apply-state/apply_context.json`:
 
 ```json
 { "jobs": [ { "key": "...", "company": "...", "title": "...", "url": "...", "ats": "greenhouse",
     "fields": [ { "id": "...", "label": "...", "type": "textarea", "required": true, "options": [] } ],
     "answers": [ { "field_id": "...", "label": "...", "value": "...", "source": "identity|defaults|salary|file|bank|bank_reuse" } ],
     "unanswered": [ { "field_id": "...", "label": "...", "type": "select", "options": ["Yes","No"], "required": true } ] } ],
-  "manual": [ { "key": "...", "reason": "unsupported_ats:<host>" } ], "skipped": [ ... ] }
+  "manual": [ { "key": "...", "reason": "unsupported_ats:<host>" } ], "closed": [ ... ], "skipped": [ ... ] }
 ```
 
 #### Phase 2 — answer the open questions (Claude)
