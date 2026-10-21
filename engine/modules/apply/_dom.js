@@ -224,6 +224,7 @@ function publicField(f) {
     type: f.type,
     required: Boolean(f.required),
     options: Array.isArray(f.options) ? f.options : [],
+    ...(f.optionsPartial ? { options_partial: true } : {}),
   };
 }
 

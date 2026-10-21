@@ -961,3 +961,35 @@ test("pre / submit: a browser that cannot start stops the run and touches no job
   assert.equal(s.store.apps[0].status, "To Apply");
   assert.equal(s.store.apps[0].apply_state, "queued");
 });
+
+test("submit: an answer outside a partial (searchable) option list is typed, not dropped", async () => {
+  const school = (partial) => ({
+    id: "school",
+    label: "School",
+    type: "select",
+    required: true,
+    options: ["Aalto University", "Atlanta College of Arts"],
+    ...(partial ? { options_partial: true } : {}),
+  });
+  const answers = [WHY("gh1"), { key: "gh1", label: "School", answer: "Plekhanov University" }];
+  const h = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers,
+    behavior: { [GH_URL]: { form: [...FORM, school(true)] } },
+  });
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  const fill = h.log.find((l) => l[0] === "fill");
+  assert.equal(fill[2].school, "Plekhanov University");
+
+  // A complete list keeps the strict rule: no matching option → required field missing.
+  const h2 = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers,
+    behavior: { [GH_URL]: { form: [...FORM, school(false)] } },
+  });
+  await h2.run({ phase: "submit", answersFile: "/fake/answers.json" });
+  assert.equal(h2.log.filter((l) => l[0] === "fill").length, 0);
+  assert.notEqual(h2.store.apps[0].status, "Applied");
+});

@@ -235,6 +235,8 @@ function scanFormInPage(formSel) {
   return out;
 }
 
+const PARTIAL_MENU_AT = 100;
+
 async function readMenuOptions(page, id) {
   const input = page.locator(attrSel("id", id));
   let opts = [];
@@ -256,7 +258,12 @@ async function readSchema(page) {
   if (!raw) throw new Error("greenhouse: application form not found");
   for (const f of raw) {
     f.label = cleanLabel(f.label);
-    if (f.kind === "react-select") f.options = await readMenuOptions(page, f.id);
+    if (f.kind === "react-select") {
+      f.options = await readMenuOptions(page, f.id);
+      // react-select renders at most ~100 options; longer lists (schools,
+      // disciplines) are searchable, so the list we saw is only the head.
+      f.optionsPartial = f.options.length >= PARTIAL_MENU_AT;
+    }
   }
   cacheSchema(page, raw);
   return raw.map(publicField);

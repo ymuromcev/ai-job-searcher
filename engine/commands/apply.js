@@ -200,6 +200,7 @@ function resolveFields(fields, { job, identity, applyDefaults, salary, bank, fil
       label: field.label,
       type: field.type,
       options: field.options || [],
+      ...(field.options_partial ? { options_partial: true } : {}),
       required: Boolean(field.required),
     });
   }
@@ -230,7 +231,9 @@ function buildFillPlan(liveFields, contextJob, llmAnswers, profileRoot) {
         v = v.map((x) => pickOption(f.options, x)).filter(Boolean);
         if (!v.length) v = null;
       } else {
-        v = pickOption(f.options, v);
+        // A partial (searchable) list may not show the answer; the adapter
+        // types it to filter and fails the fill if the ATS has no match.
+        v = pickOption(f.options, v) || (f.options_partial ? v : null);
       }
     }
     if (v == null || v === "") {

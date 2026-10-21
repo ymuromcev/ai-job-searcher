@@ -899,7 +899,7 @@ Queue = `To Apply` rows with `fit_score` Strong/Medium, empty `applied_date`, no
 4. **What to answer.**
    - Required questions: always attempt.
    - Optional questions: answer only short factual ones the sources settle (current company, years of a skill, "anything else" → skip). Skip optional essays.
-   - Choice questions: the answer must be one of `options`, copied exactly.
+   - Choice questions: the answer must be one of `options`, copied exactly. Exception: `options_partial: true` means the ATS list is searchable and only its head was read (schools, disciplines) — answer with the real value (e.g. the candidate's actual university); the submit step types it to filter and sends the job to the human if the ATS has no match.
    - Facts with a yes/no ("Have you worked for X before?", "5+ years of Y?"): answer from the sources; if they don't settle it, no honest answer.
    - Privacy / data-processing consent required to submit an application: the affirmative option. Marketing / SMS consent: decline.
    - "Prove you are not a bot" questions (decode a secret, solve a puzzle, type a phrase): **never answer** → no honest answer (the job goes to the human).
