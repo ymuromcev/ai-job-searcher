@@ -36,12 +36,25 @@ function makeProfile() {
   return { profilesDir, root, tsvPath };
 }
 
+// Fake Notion: records status pushes for rows that already have a page.
+const notionCalls = [];
+const fakeNotion = {
+  makeClient: () => ({}),
+  DEFAULT_PROPERTY_MAP: {},
+  updatePageStatus: async (_client, pageId, status) => {
+    notionCalls.push({ pageId, status });
+  },
+};
+
 function quietRun(opts) {
   const lines = [];
-  return run({ now: NOW, log: (s) => lines.push(s), ...opts }).then((res) => ({
-    ...res,
-    output: lines.join("\n"),
-  }));
+  const env = { TESTPROF_NOTION_TOKEN: "fake", ...(opts.env || {}) };
+  return run({ now: NOW, log: (s) => lines.push(s), notion: fakeNotion, ...opts, env }).then(
+    (res) => ({
+      ...res,
+      output: lines.join("\n"),
+    })
+  );
 }
 
 const HAS_V8 = appsTsv.HEADER.includes("applied_by");
@@ -304,4 +317,9 @@ test("IMAP: a non-auth connect error does not try the fallback host", async () =
     /ECONNREFUSED/
   );
   assert.deepEqual(calls, ["imap.zoho.com"]);
+});
+
+test("--apply pushes the new status to Notion for matched rows with a page", () => {
+  assert.ok(notionCalls.length > 0, "expected at least one Notion status update");
+  for (const c of notionCalls) assert.ok(c.pageId && c.status);
 });

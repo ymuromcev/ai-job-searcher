@@ -34,9 +34,9 @@
 //   --apply --plan <file>
 //                 applies a previously reviewed plan file without reading mail.
 //
-// Notion is NOT touched by this script. Rows that already have a Notion page
-// are listed in the report: their Notion status needs the same change, or the
-// next `sync` pull will overwrite the TSV status.
+// Notion: with --apply, matched rows that already have a Notion page get the
+// same status pushed through notion_sync.updatePageStatus, so the pull-only
+// `sync` does not overwrite the import. Dry-run never touches Notion.
 
 const fs = require("fs");
 const path = require("path");
@@ -328,6 +328,31 @@ async function run(opts = {}) {
 
   const { apps } = appsTsv.load(tsvPath);
   const res = applyPlan(apps, plan, { now });
+  // Matched rows that already have a Notion page get the same status there;
+  // otherwise the next pull-only `sync` would overwrite the import from Notion.
+  const before = new Map(apps.map((a) => [a.key, a.status]));
+  const notionTargets = res.apps.filter(
+    (a) => a.notion_page_id && before.has(a.key) && before.get(a.key) !== a.status
+  );
+  let notionFailed = 0;
+  if (notionTargets.length) {
+    const notion = opts.notion || require("../engine/core/notion_sync.js");
+    const secrets = loadSecrets(args.profile, env) || {};
+    if (!secrets.NOTION_TOKEN) {
+      throw new Error(`missing ${secretEnvName(args.profile, "NOTION_TOKEN")} — nothing written`);
+    }
+    const client = notion.makeClient(secrets.NOTION_TOKEN);
+    const propertyMap =
+      (profile.notion && profile.notion.property_map) || notion.DEFAULT_PROPERTY_MAP;
+    for (const a of notionTargets) {
+      try {
+        await notion.updatePageStatus(client, a.notion_page_id, a.status, propertyMap);
+      } catch (err) {
+        notionFailed++;
+        log(`  notion update failed for ${a.key}: ${err.message}`);
+      }
+    }
+  }
   appsTsv.save(tsvPath, res.apps);
   plan.appliedAt = now;
   plan.applyResult = {
@@ -341,7 +366,9 @@ async function run(opts = {}) {
     `\nApplied to ${path.relative(process.cwd(), tsvPath) || tsvPath}: ` +
       `${res.updated} updated, ${res.appended} appended, ${res.unchanged} already up to date` +
       (res.missing.length ? `, ${res.missing.length} planned row(s) no longer in TSV` : "") +
-      ". Notion not touched."
+      `. Notion status updated on ${notionTargets.length - notionFailed} page(s)` +
+      (notionFailed ? `, ${notionFailed} failed (re-run sync after fixing)` : "") +
+      "."
   );
   return { plan, planPath, applied: true, result: res };
 }

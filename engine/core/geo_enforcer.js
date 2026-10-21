@@ -411,10 +411,85 @@ function canonicalStateCode(raw) {
   return US_NAME_TO_CODE[s.toLowerCase()] || null;
 }
 
+// Adzuna stores some rows as "City, <County> County" with no state. For a
+// California home state, a California county name settles it. Only CA has a
+// table: it is the one home state in use, and county names repeat across states.
+const CA_COUNTIES = [
+  "alameda",
+  "alpine",
+  "amador",
+  "butte",
+  "calaveras",
+  "colusa",
+  "contra costa",
+  "del norte",
+  "el dorado",
+  "fresno",
+  "glenn",
+  "humboldt",
+  "imperial",
+  "inyo",
+  "kern",
+  "kings",
+  "lake",
+  "lassen",
+  "los angeles",
+  "madera",
+  "marin",
+  "mariposa",
+  "mendocino",
+  "merced",
+  "modoc",
+  "mono",
+  "monterey",
+  "napa",
+  "nevada",
+  "orange",
+  "placer",
+  "plumas",
+  "riverside",
+  "sacramento",
+  "san benito",
+  "san bernardino",
+  "san diego",
+  "san francisco",
+  "san joaquin",
+  "san luis obispo",
+  "san mateo",
+  "santa barbara",
+  "santa clara",
+  "santa cruz",
+  "shasta",
+  "sierra",
+  "siskiyou",
+  "solano",
+  "sonoma",
+  "stanislaus",
+  "sutter",
+  "tehama",
+  "trinity",
+  "tulare",
+  "tuolumne",
+  "ventura",
+  "yolo",
+  "yuba",
+];
+const CA_COUNTY_RE = new RegExp(`\\b(${CA_COUNTIES.join("|")}) county\\b`, "i");
+
+function locInHomeStateCounty(locLower, homeState) {
+  if (String(homeState).toUpperCase() !== "CA") return false;
+  if (!CA_COUNTY_RE.test(locLower)) return false;
+  // "Orange County, NY" style: an explicit other state wins.
+  const otherState = [...US_STATE_CODES].some(
+    (c) => c !== "CA" && new RegExp(`,\\s*${c.toLowerCase()}\\b`).test(locLower)
+  );
+  return !otherState;
+}
+
 function locInHomeState(locLower, homeState) {
   if (!homeState) return false;
   const hit = locContainsState(locLower, [homeState]);
-  if (!hit) return false;
+  if (!hit) return locInHomeStateCounty(locLower, homeState);
   const code = String(homeState).length === 2 ? String(homeState).toUpperCase() : null;
   const name = code ? stateNameForCode(code) : String(homeState).toLowerCase();
   // Full state name present → unambiguous.

@@ -948,3 +948,8 @@ test("v8: allowed-value enums cover the RFC 068 contract", () => {
   assert.deepEqual([...apps.APPLY_STATE_VALUES], ["", "queued", "manual", "failed", "submitted"]);
   assert.deepEqual(apps.applyStateDefaults(), { applied_by: "", apply_state: "", apply_note: "" });
 });
+
+test("decodeLocations unwraps a CSV-quoted JSON cell", () => {
+  assert.deepEqual(apps.decodeLocations('"[""San Francisco, CA""]"'), ["San Francisco, CA"]);
+  assert.deepEqual(apps.decodeLocations('"[""Remote"",""Austin, TX""]"'), ["Remote", "Austin, TX"]);
+});

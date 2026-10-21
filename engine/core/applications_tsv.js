@@ -410,7 +410,9 @@ function encodeLocations(locations) {
 //   - any other non-JSON string → [cell] (defensive single-element wrap;
 //     covers hand edits that lose the brackets)
 function decodeLocations(cell) {
-  const s = String(cell || "").trim();
+  let s = String(cell || "").trim();
+  // A spreadsheet round-trip CSV-quotes the JSON: "[""San Francisco, CA""]".
+  if (s.startsWith('"[') && s.endsWith(']"')) s = s.slice(1, -1).replace(/""/g, '"');
   if (s === "" || s === "[]") return [];
   if (s.startsWith("[")) {
     try {

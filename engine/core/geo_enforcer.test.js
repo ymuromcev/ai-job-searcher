@@ -627,3 +627,13 @@ test("canonicalStateCode: code or name → upper-case code; non-states → null"
   assert.strictEqual(canonicalStateCode(""), null);
   assert.strictEqual(canonicalStateCode(undefined), null);
 });
+
+test("home_state_or_remote: Adzuna 'City, <CA county> County' passes as CA", () => {
+  assert.strictEqual(hsr(["Santa Clara, Santa Clara County"]).ok, true);
+  assert.strictEqual(hsr(["Irvine, Orange County"]).ok, true);
+});
+
+test("home_state_or_remote: CA county name with another state does not pass", () => {
+  assert.strictEqual(hsr(["Goshen, Orange County, NY"]).ok, false);
+  assert.strictEqual(hsr(["Austin, Travis County"]).ok, false);
+});
