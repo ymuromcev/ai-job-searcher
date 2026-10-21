@@ -73,6 +73,8 @@ function parseAnswerPage(page) {
     role: readRichText(p.Role),
     company: readRichText(p.Company),
     notes: readRichText(p.Notes),
+    // Page creation time — "newer first" ordering for the bot and the board.
+    createdAt: page.created_time || null,
   };
 }
 

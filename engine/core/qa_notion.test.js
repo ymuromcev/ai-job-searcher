@@ -124,6 +124,16 @@ test("parseAnswerPage extracts all fields", () => {
   assert.equal(out.role, "PM");
   assert.equal(out.company, "Linear");
   assert.equal(out.notes, "long version");
+  assert.equal(out.createdAt, null);
+});
+
+test("parseAnswerPage keeps the page creation time (newer-first ordering, BL-225 U7)", () => {
+  const out = parseAnswerPage({
+    id: "p",
+    created_time: "2026-10-20T18:00:00.000Z",
+    properties: {},
+  });
+  assert.equal(out.createdAt, "2026-10-20T18:00:00.000Z");
 });
 
 test("parseAnswerPage handles missing properties gracefully", () => {
