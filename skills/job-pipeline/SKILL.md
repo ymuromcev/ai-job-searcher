@@ -1,6 +1,6 @@
 ---
 name: job-pipeline
-description: "Multi-profile job-search pipeline — scan ATS adapters, validate the pipeline, prepare Inbox jobs (fit scoring, CL gen, Notion push), sync with Notion, check Gmail for responses, answer application Q&A questions with reuse from a Notion-backed answer bank, and analyze a responded vacancy + its company for a Go/Pass/Conditional decision. Trigger on: /job-pipeline, /job-pipeline scan, /job-pipeline validate, /job-pipeline sync, /job-pipeline prepare, /job-pipeline check, /job-pipeline answer, /job-pipeline analyze, or when user asks to scan/validate/sync/prepare/check/answer/analyze jobs for a specific profile (see the `profiles/` directory for the current list)."
+description: "Multi-profile job-search pipeline — scan ATS adapters, validate the pipeline, prepare Inbox jobs (fit scoring, CL gen, Notion push), sync with Notion, check Gmail for responses, answer application Q&A questions with reuse from a Notion-backed answer bank, auto-apply to Greenhouse / Lever / Ashby forms (the bot fills, answers and submits), and analyze a responded vacancy + its company for a Go/Pass/Conditional decision. Trigger on: /job-pipeline, /job-pipeline scan, /job-pipeline validate, /job-pipeline sync, /job-pipeline prepare, /job-pipeline check, /job-pipeline answer, /job-pipeline apply, /job-pipeline analyze, or when user asks to scan/validate/sync/prepare/check/answer/apply/analyze jobs for a specific profile (see the `profiles/` directory for the current list)."
 ---
 
 # job-pipeline — Multi-profile Job Search Pipeline
@@ -16,6 +16,7 @@ Single engine, per-profile data. All commands take `--profile <id>`. Currently s
 - **`/job-pipeline check`** — Two-phase Gmail response check: `--prepare` builds Gmail search batches for Claude MCP, `--apply` consumes Claude-written emails and updates Notion + TSV + logs.
 - **`/job-pipeline indeed-prep`** — Phase 1 of Indeed ingest. Prints scan URLs + JS extraction snippet + filter context for the Claude browser MCP session. Phase 2 (browser fetch) is manual via Chrome MCP. Phase 3 = standard `scan` (the indeed adapter ingests the file Claude wrote).
 - **`/job-pipeline answer`** — Generate or reuse application answers (Why join? / Influences? / Motivation? etc.). Three-phase: search Notion Q&A DB by dedup key → reuse if exact match else generate via Humanizer Rules → push answer back to Notion + write local `.md` backup. Per-profile DB at `profile.notion.application_qa_db_id`.
+- **`/job-pipeline apply`** — **The bot applies.** Three phases (RFC 068): CLI reads every queued Greenhouse / Lever / Ashby form and answers the standard questions → Claude answers the remaining questions from the candidate's materials, each one truth-checked by an independent subagent → CLI fills, attaches resume + cover letter, submits and marks the job `Applied`. Runs nightly; target 100 applications per night.
 - **`/job-pipeline analyze`** — **Post-response decision gate.** For a vacancy where the company has already replied (the candidate's external auto-apply bot applied cold; the conversation has started). Chat-only advisory: fetch the JD + web-research the company, score fit against the candidate's real frames (craft / comp / location / English-load / achievement overlap) and the company as a place to work, then return a **Go / Pass / Conditional** verdict with what to confirm on the call. Writes nothing — no Notion, no TSV, no files.
 
 If no mode is specified, show this help and ask which to run.
@@ -838,6 +839,69 @@ Summarize:
 - **`invalid category`** — the draft includes a category not in the canonical 8. Fix to one of: Behavioral, Technical, Culture Fit, Logistics, Salary, Other, Experience, Motivation. The categorize() helper picks a default automatically.
 - **Notion 400 on create** — usually a missing required property or a Category option that doesn't exist in the DB. Categories must already be in the DB schema; do not invent new ones.
 - **Search returns nothing for a clearly recurring question** — the question text drift may exceed the 120-char dedup window. Look at `partials` for near-matches.
+
+### apply
+
+**The bot submits applications** (RFC 068). Nightly step after `prepare`; also on explicit `/job-pipeline apply`. Three phases, same shape as `prepare`: deterministic CLI → Claude → deterministic CLI. Claude's job is phase 2 only: answer the questions the engine could not, honestly, fast, in parallel.
+
+#### Phase 1 — pre (CLI)
+
+```
+node engine/cli.js apply --profile <id> --phase pre [--limit N] [--concurrency 4]
+```
+
+Queue = `To Apply` rows with `fit_score` Strong/Medium, empty `applied_date`, not `submitted` / `failed` / `manual`, within the company cap, newest first. For each: resolve aggregator links to the ATS form, open it headless, read the fields, answer what is standard (identity, `apply_defaults.json`: work authorization / sponsorship / relocation / EEO → decline / how-did-you-hear / salary rule) or already in the answer bank. Unsupported ATS, captcha, login wall, missing resume → `apply_state=manual` with a reason. Writes `profiles/<id>/.apply-state/apply_context.json`:
+
+```json
+{ "jobs": [ { "key": "...", "company": "...", "title": "...", "url": "...", "ats": "greenhouse",
+    "fields": [ { "id": "...", "label": "...", "type": "textarea", "required": true, "options": [] } ],
+    "answers": [ { "field_id": "...", "label": "...", "value": "...", "source": "identity|defaults|salary|file|bank|bank_reuse" } ],
+    "unanswered": [ { "field_id": "...", "label": "...", "type": "select", "options": ["Yes","No"], "required": true } ] } ],
+  "manual": [ { "key": "...", "reason": "unsupported_ats:<host>" } ], "skipped": [ ... ] }
+```
+
+#### Phase 2 — answer the open questions (Claude)
+
+1. Read `apply_context.json`. Work only on `jobs[].unanswered[]`. Never touch `answers[]` (they are deterministic and already correct).
+2. **Fan out: one subagent per job, in parallel batches of 10–20** (target throughput 100 applications per night). Each job subagent gets: the job (company, title, URL), its `unanswered[]`, and the source paths below. It returns `[{label, answer, sources[]}]` or "no honest answer" per question.
+3. **Sources — the only ones allowed** (all under `profiles/<id>/`): `master_profile.md`, `fit_profile.md`, the storybank (`## Storybank` in `interview-coach-state/coaching_state.md`), the `profile.json` `memory` files, and the job posting for company facts. Style: `profile.answer.style_guidance` + [Humanizer Rules](#humanizer-rules-prepare--answer-modes). Never invent a fact to fill a field.
+4. **What to answer.**
+   - Required questions: always attempt.
+   - Optional questions: answer only short factual ones the sources settle (current company, years of a skill, "anything else" → skip). Skip optional essays.
+   - Choice questions: the answer must be one of `options`, copied exactly.
+   - Facts with a yes/no ("Have you worked for X before?", "5+ years of Y?"): answer from the sources; if they don't settle it, no honest answer.
+   - Privacy / data-processing consent required to submit an application: the affirmative option. Marketing / SMS consent: decline.
+   - "Prove you are not a bot" questions (decode a secret, solve a puzzle, type a phrase): **never answer** → no honest answer (the job goes to the human).
+   - Free text default length: the profile's answer style; a few sentences for "why us" questions.
+5. **Truth check — every answer, independent subagent.** Spawn a fresh read-only subagent with the brief in [`references/apply_truth_review.md`](references/apply_truth_review.md), the question, the draft, the job, and the source paths. It returns `PASS` (with the source quote per claim) or `FAIL` (with the exact problems). On `FAIL`: **one** rewrite that fixes every listed problem, then one more check. Second `FAIL` → give up on that question (leave it out of the answers file). A required question with no passing answer makes the job `manual` with reason `no_honest_answer` — this is the correct outcome, not a failure of the run.
+6. **Bank.** Push every passing free-text answer with the existing push phase, one draft per answer (`company`, `role` = job title, `question` = label, `answer`, `category` from `categorize`, `notes: "apply bot, truth-checked"`):
+   ```
+   node engine/cli.js answer --profile <id> --phase push --results-file profiles/<id>/.answers/draft_<ts>.json
+   ```
+   Skip the push for choice answers that are a single option ("Yes", "No") — they carry no reusable text.
+7. **Write the answers file** `profiles/<id>/.apply-state/answers-<YYYYMMDD_HHMMSS>.json`:
+   ```json
+   { "answers": [ { "key": "<job key>", "label": "<question label, verbatim>", "answer": "<text or exact option>", "bank_page_id": "<pageId from push, or null>" } ] }
+   ```
+
+#### Phase 3 — submit (CLI)
+
+```
+node engine/cli.js apply --profile <id> --phase submit --answers-file profiles/<id>/.apply-state/answers-<ts>.json [--dry-run] [--concurrency 4]
+```
+
+For each job whose required questions are all answered: fill, attach resume PDF + cover letter PDF, pre-submit check (every required field filled, files attached), re-check `applied_date`, Submit, wait for the ATS confirmation, screenshot to `.apply-state/shots/<key>.png`. Success → `status=Applied`, `applied_by=bot`, `apply_state=submitted`, Notion status Applied. No confirmation → `failed` (never retried automatically). Captcha / login / email code / unexpected screen → `manual` with reason. `--dry-run` stops before the Submit click and keeps a screenshot of the filled form.
+
+#### Report
+
+One line per outcome bucket from the submit summary (`N submitted, M manual, K failed, S skipped`), then the `manual` and `failed` rows with reasons. No per-answer dump.
+
+#### Anti-patterns (apply-specific)
+
+- Do not answer from general knowledge of "what a PM would say". Sources only.
+- Do not soften a `FAIL` by rewording until it passes a second time with the same unsupported claim.
+- Do not edit `apply_context.json` or the TSV by hand; do not click anything in a browser yourself.
+- Do not re-run `--phase submit` on a job marked `failed` or with `apply_note` starting `submitting:` — a human checks those.
 
 ---
 

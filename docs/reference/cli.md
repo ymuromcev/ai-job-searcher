@@ -25,6 +25,7 @@ Commands:
 | `indeed-prep` | Print Indeed scan playbook for a browser MCP. Phase 1 of the Indeed ingest flow. |
 | `reclassify` | Re-run the email classifier across historical `OTHER` entries in `processed_messages.json` (30-day window). Dry-run by default. |
 | `retro-tailor` | Re-tailor Strong rows already in `To Apply` whose resume predates the RFC-044 tailoring loop. Recon by default; `--apply --results-file` commits. |
+| `apply` | Three-phase auto-apply on Greenhouse / Lever / Ashby: read forms + answer standard questions, (skill answers the rest), fill + submit + mark `Applied`. (RFC 068) |
 | `companies-upsert` | Push relokant-sweep sweet-zone targets into the Notion Companies DB, two-way deduped (domain + name vs Notion / `data/companies.tsv` / relokant ledgers). Back-fills empty fields only; never writes `Tier`. Dry-run by default; `--apply` commits. (RFC 062) |
 
 The dispatcher also runs deterministic pre-command hooks (BL-151 / RFC 054). Today both `scan` and `prepare` auto-trigger `sync --apply` before their main work runs, so downstream filters / cap counters / fit-eval read fresh Notion state. The sync command itself also archives engine-tailored CV/CL files for rows whose status moved past `To Apply` (Applied / Interview / Offer / Rejected / Closed / No Response). The pre-hook is suppressed by `--no-sync`; `scan --dry-run` also suppresses it for parity with the prior dry-run-never-mutates behaviour.
@@ -353,6 +354,43 @@ Common errors:
 - `--phase push requires --results-file <path>`.
 - `profile "<id>" has no notion.application_qa_db_id configured`.
 - `notion push failed: <message>. Local backup preserved at <path>` — the markdown backup is written before the Notion call so there is always a recoverable artifact on disk.
+
+### apply
+
+Synopsis: `node engine/cli.js apply --profile <id> --phase <pre|submit> [...]`
+
+The bot fills and submits application forms (RFC 068). `--phase pre` builds the queue (`To Apply`, Strong/Medium, empty `applied_date`, not `submitted`/`failed`/`manual`, within the company cap, newest first), resolves aggregator links to the ATS form, opens each form in headless Playwright Chromium, reads its fields and answers the standard ones (identity, `apply_defaults.json`, salary rule, answer bank). The `job-pipeline` skill (mode `apply`) answers the rest and writes the answers file. `--phase submit` fills, attaches resume + cover letter, runs the pre-submit check, re-checks `applied_date`, clicks Submit and waits for the ATS confirmation.
+
+Flags:
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--profile <id>` | string | — | Required. |
+| `--phase <pre\|submit>` | string | — | Required. |
+| `--limit <N>` | integer | — | `pre`: cap the queue at N jobs after gating. |
+| `--answers-file <path>` | string | — | Required for `--phase submit`. JSON: `{"answers":[{key, label, answer, bank_page_id}]}`. |
+| `--concurrency <N>` | integer | 4 | Parallel browser contexts; at most one open form per ATS tenant. |
+| `--dry-run` | boolean | false | `pre`: no TSV writes. `submit`: everything except the Submit click; keeps a screenshot of the filled form. |
+
+Outputs and side effects:
+
+- `--phase pre`: writes `profiles/<id>/.apply-state/apply_context.json` (per job: form schema, resolved answers, `unanswered[]`). Sets `apply_state=queued` on carried jobs and `apply_state=manual` + `apply_note=<reason>` (`unsupported_ats:<host>`, `unresolved_url:<host>`, `captcha`, `login_required`, `resume_missing`, …) on the rest.
+- `--phase submit`: success → `status=Applied`, `applied_date`, `applied_by=bot`, `apply_state=submitted`, `apply_note=<screenshot path>`, Notion status `Applied`. No confirmation → `apply_state=failed` (never retried). Captcha / login / email code / unexpected screen → `manual`. Screenshots in `profiles/<id>/.apply-state/shots/`; run summary in `.apply-state/apply_results-<ts>.json`.
+
+Example:
+
+```bash
+node engine/cli.js apply --profile <id> --phase pre --limit 20
+node engine/cli.js apply --profile <id> --phase submit \
+  --answers-file profiles/<id>/.apply-state/answers-20261021_020000.json --dry-run
+```
+
+Common errors:
+
+- `--phase <pre|submit> is required for the apply command`.
+- `--phase submit requires --answers-file <path>`.
+- `apply_context.json not found — run apply --phase pre first`.
+- `Playwright Chromium not found … run: npx playwright install chromium`.
 
 ### indeed-prep
 

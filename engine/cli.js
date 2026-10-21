@@ -28,6 +28,7 @@ const KNOWN_COMMANDS = [
   "companies-upsert",
   "board",
   "report",
+  "apply",
 ];
 
 // Commands that only read profile state (RFC 068 §8 / §10). The lazy
@@ -76,6 +77,9 @@ const PARSE_OPTIONS = {
     port: { type: "string" },
     weekly: { type: "boolean", default: false },
     out: { type: "string" },
+    // `apply` (RFC 068).
+    "answers-file": { type: "string" },
+    concurrency: { type: "string" },
   },
   allowPositionals: true,
   strict: true,
@@ -141,6 +145,13 @@ Commands:
              See RFC 068.
   report     Write a report page. With --weekly: weekly application stats
              as weekly-<YYYY-MM-DD>.html. See RFC 068.
+  apply      Bot fills and submits Greenhouse / Lever / Ashby application
+             forms for To Apply rows (Strong/Medium, never applied, within
+             the company cap). Three phases: --phase pre reads the forms and
+             writes .apply-state/apply_context.json; the job-pipeline skill
+             answers the open questions; --phase submit fills, submits and
+             marks Applied. --dry-run stops before the Submit click.
+             See RFC 068.
 
 Flags:
   --profile <id>       Profile id (required for all commands). Lowercase, alphanum + - _.
@@ -212,6 +223,16 @@ retro-tailor flags:
   --since <YYYY-MM-DD>   Skip candidates older than this date (recon only).
   --dry-run              Recon-only mode without writing the context file.
 
+apply flags:
+  --phase <pre|submit>   Required.
+  --limit <N>            pre: cap the queue at N jobs (newest first).
+  --answers-file <path>  Required for --phase submit. JSON written by the skill:
+                         {"answers":[{"key","label","answer","bank_page_id"}]}.
+  --concurrency <N>      Parallel browser contexts (default 4; at most one
+                         open form per ATS tenant).
+  --dry-run              pre: no TSV writes. submit: everything except the
+                         Submit click; keeps a screenshot of the filled form.
+
 answer flags:
   --phase <search|push>  Required. "search" looks up existing Q&A by company+role+question
                          and prints a JSON match report. "push" reads --results-file and
@@ -278,6 +299,7 @@ function defaultCommands() {
     "companies-upsert": require("./commands/companies_upsert.js"),
     board: require("./commands/board.js"),
     report: require("./commands/report.js"),
+    apply: require("./commands/apply.js"),
   };
 }
 
@@ -356,6 +378,9 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
       port: parsed.values.port || "",
       weekly: Boolean(parsed.values.weekly),
       out: parsed.values.out || "",
+      // apply (RFC 068)
+      answersFile: parsed.values["answers-file"] || "",
+      concurrency: parsed.values.concurrency ? parseInt(parsed.values.concurrency, 10) : null,
     },
     env,
     stdout: writeOut,

@@ -201,6 +201,7 @@ test("KNOWN_COMMANDS lists exactly the supported commands", () => {
   assert.deepEqual([...KNOWN_COMMANDS].sort(), [
     "add",
     "answer",
+    "apply",
     "backfill-outreach-url",
     "board",
     "check",
@@ -612,4 +613,65 @@ test("runCli passes --results-file flag for prepare commit", async () => {
   const ctx = prepare.calls[0];
   assert.equal(ctx.flags.phase, "commit");
   assert.equal(ctx.flags.resultsFile, "/tmp/r.json");
+});
+
+// RFC 068: `apply` flags must be threaded into ctx.flags (same whitelist
+// trap as `add` above).
+test("apply: --phase / --answers-file / --concurrency / --limit / --dry-run reach the command", async () => {
+  const s = makeStreams();
+  const apply = spyCommand();
+  const code = await runCli({
+    argv: [
+      "apply",
+      "--profile",
+      "jared",
+      "--phase",
+      "submit",
+      "--answers-file",
+      "answers.json",
+      "--concurrency",
+      "6",
+      "--limit",
+      "25",
+      "--dry-run",
+    ],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { apply },
+  });
+  assert.equal(code, 0);
+  assert.equal(apply.calls.length, 1);
+  const f = apply.calls[0].flags;
+  assert.equal(f.phase, "submit");
+  assert.equal(f.answersFile, "answers.json");
+  assert.equal(f.concurrency, 6);
+  assert.equal(f.limit, 25);
+  assert.equal(f.dryRun, true);
+});
+
+test("apply: defaults when optional flags are absent", async () => {
+  const s = makeStreams();
+  const apply = spyCommand();
+  await runCli({
+    argv: ["apply", "--profile", "jared", "--phase", "pre"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { apply },
+  });
+  const f = apply.calls[0].flags;
+  assert.equal(f.answersFile, "");
+  assert.equal(f.concurrency, null);
+  assert.equal(f.limit, null);
+});
+
+test("apply: the real handler is registered and rejects a missing phase", async () => {
+  const s = makeStreams();
+  const code = await runCli({
+    argv: ["apply", "--profile", "jared"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { apply: require("./commands/apply.js") },
+  });
+  assert.equal(code, 1);
+  assert.match(s.err(), /--phase <pre\|submit> is required/);
 });
