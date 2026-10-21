@@ -414,6 +414,50 @@ function matchLegal(label, field, ctx) {
   return opt ? { source: "defaults", value: opt } : null;
 }
 
+// Owner rule 2026-10-21: no relatives at any company. The follow-up
+// "If yes, share their name" is left empty (optional) or "N/A" (required).
+const RELATIVES_RE =
+  /\b(relatives?|family members?|related to (anyone|someone|an? (employee|person))|immediate family)\b/;
+
+function matchRelatives(label, field, ctx) {
+  if (!RELATIVES_RE.test(label)) return undefined;
+  const has = ctx.applyDefaults && ctx.applyDefaults.relatives_at_company;
+  if (typeof has !== "boolean") return null;
+  if (/^if (yes|so)\b/.test(label)) {
+    return has || !field.required ? null : { source: "defaults", value: "N/A" };
+  }
+  if (!hasOptions(field)) {
+    if (field.type === "checkbox") return { source: "defaults", value: yesNo(has) };
+    return { source: "defaults", value: has ? "Yes" : "No" };
+  }
+  const want = has ? /^(yes)\b/ : /^(no|none|i do not|i don't)\b/;
+  const opt = field.options.find((o) => want.test(normalizeOption(o)));
+  return opt ? { source: "defaults", value: opt } : null;
+}
+
+// Owner rule 2026-10-21: start date is always N weeks after an offer.
+const START_RE =
+  /\b(when (can|could|would) you (start|begin|join)|start date|earliest (start|available|possible)|available to start|availability to start|notice period|how soon (can|could) you (start|join))\b/;
+
+function matchStartDate(label, field, ctx) {
+  if (!START_RE.test(label)) return undefined;
+  const weeks = ctx.applyDefaults && ctx.applyDefaults.start_weeks_after_offer;
+  if (!Number.isInteger(weeks)) return null;
+  if (field.type === "date") return null; // a calendar date is not "N weeks after an offer"
+  const notice = /\bnotice period\b/.test(label);
+  const text =
+    weeks === 0
+      ? "Immediately after an offer"
+      : notice
+        ? `${weeks} week${weeks === 1 ? "" : "s"}`
+        : `${weeks} week${weeks === 1 ? "" : "s"} after an offer`;
+  if (!hasOptions(field)) return { source: "defaults", value: text };
+  const num = ["zero", "one", "two", "three", "four"][weeks] || String(weeks);
+  const re = new RegExp(`\\b(${weeks}|${num})[\\s-]*weeks?\\b`);
+  const opt = field.options.find((o) => re.test(normalizeOption(o)));
+  return opt ? { source: "defaults", value: opt } : null;
+}
+
 const MATCHERS = [
   matchFile,
   matchCountry,
@@ -428,6 +472,8 @@ const MATCHERS = [
   matchCitizenship,
   matchLegal,
   matchRelocation,
+  matchRelatives,
+  matchStartDate,
   matchHowHeard,
   matchSalary,
 ];

@@ -31,6 +31,8 @@
 //   "legal_acknowledgements": "accept"   // tick truthfulness / arbitration / AI-policy / privacy consents
 //   "tailor_ship_min_coverage": 75       // Strong rows whose tailoring stalled on JD-phrase gaps
 //                                        // still go to To Apply at/above this coverage (0–100)
+//   "relatives_at_company": false        // "Do you have relatives working at X?" → No
+//   "start_weeks_after_offer": 2         // "When can you start?" → "2 weeks after an offer"
 
 const APPLY_DEFAULTS_FILE = "apply_defaults.json";
 
@@ -48,6 +50,8 @@ const TOP_LEVEL_KEYS = Object.freeze([
   "citizenship",
   "legal_acknowledgements",
   "tailor_ship_min_coverage",
+  "relatives_at_company",
+  "start_weeks_after_offer",
 ]);
 
 const ADDRESS_KEYS = Object.freeze([
@@ -181,6 +185,20 @@ function validateApplyDefaults(raw) {
     )
   ) {
     err(`${base}.tailor_ship_min_coverage`, "must be a number between 0 and 100");
+  }
+
+  if (raw.relatives_at_company !== undefined && typeof raw.relatives_at_company !== "boolean") {
+    err(`${base}.relatives_at_company`, "must be a boolean");
+  }
+  if (
+    raw.start_weeks_after_offer !== undefined &&
+    !(
+      Number.isInteger(raw.start_weeks_after_offer) &&
+      raw.start_weeks_after_offer >= 0 &&
+      raw.start_weeks_after_offer <= 26
+    )
+  ) {
+    err(`${base}.start_weeks_after_offer`, "must be an integer number of weeks, 0..26");
   }
 
   if (

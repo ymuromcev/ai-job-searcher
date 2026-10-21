@@ -360,3 +360,51 @@ test("work authorization that mentions 'citizen' stays a work-auth question", ()
   );
   assert.deepEqual(r, { source: "defaults", value: "Yes" });
 });
+
+// Owner rules 2026-10-21 (BL-225): no relatives anywhere; start = N weeks after an offer.
+test("relatives at the company → No; the 'if yes' follow-up stays empty", () => {
+  const ctx = { ...CTX, applyDefaults: { ...CTX.applyDefaults, relatives_at_company: false } };
+  const q = (f) => matchQuestion(f, ctx);
+  assert.deepEqual(
+    q(select("Do you have any relatives currently working for Airwallex?", ["Yes", "No"])),
+    { source: "defaults", value: "No" }
+  );
+  assert.deepEqual(q(text("Are you related to anyone who works at Acme?")), {
+    source: "defaults",
+    value: "No",
+  });
+  assert.equal(
+    q(text("If Yes, please share their name here", { required: false })),
+    null,
+    "optional follow-up left empty"
+  );
+  assert.deepEqual(q(text("If yes, what is your relative's name?")), {
+    source: "defaults",
+    value: "N/A",
+  });
+  // Without the setting → no guess.
+  assert.equal(m(select("Do you have relatives at Acme?", ["Yes", "No"])), null);
+});
+
+test("start date → N weeks after an offer (text, notice period, options; never a calendar date)", () => {
+  const ctx = { ...CTX, applyDefaults: { ...CTX.applyDefaults, start_weeks_after_offer: 2 } };
+  const q = (f) => matchQuestion(f, ctx);
+  assert.deepEqual(q(text("When can you start a new role?")), {
+    source: "defaults",
+    value: "2 weeks after an offer",
+  });
+  assert.deepEqual(q(text("When could you start working?")), {
+    source: "defaults",
+    value: "2 weeks after an offer",
+  });
+  assert.deepEqual(q(text("What is your notice period?")), {
+    source: "defaults",
+    value: "2 weeks",
+  });
+  assert.deepEqual(
+    q(select("Earliest start date", ["Immediately", "Within two weeks", "1 month", "2+ months"])),
+    { source: "defaults", value: "Within two weeks" }
+  );
+  assert.equal(q(text("Earliest start date", { type: "date" })), null);
+  assert.equal(m(text("When can you start a new role?")), null, "no setting → no guess");
+});

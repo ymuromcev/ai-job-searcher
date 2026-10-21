@@ -111,6 +111,18 @@ test("validateApplyDefaults: unknown top-level key is a warning, not an error", 
   assert.equal(issues[0].field, "apply_defaults.extra");
 });
 
+test("validateApplyDefaults: relatives_at_company / start_weeks_after_offer (owner rules 2026-10-21)", () => {
+  assert.deepEqual(
+    validateApplyDefaults({ ...valid(), relatives_at_company: false, start_weeks_after_offer: 2 }),
+    []
+  );
+  const bad = { ...valid(), relatives_at_company: "no", start_weeks_after_offer: 2.5 };
+  assert.deepEqual(errorFields(validateApplyDefaults(bad)).sort(), [
+    "apply_defaults.relatives_at_company",
+    "apply_defaults.start_weeks_after_offer",
+  ]);
+});
+
 test("getSalaryFloor: returns the floor or null", () => {
   assert.equal(getSalaryFloor(valid()), 100000);
   assert.equal(getSalaryFloor(null), null);
