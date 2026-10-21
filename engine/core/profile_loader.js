@@ -15,6 +15,7 @@ const fs = require("fs");
 const path = require("path");
 
 const { canonicalStateCode } = require("./geo_enforcer.js");
+const { APPLY_DEFAULTS_FILE } = require("./apply_defaults.js");
 
 const ID_REGEX = /^[a-z][a-z0-9_-]*$/;
 
@@ -126,6 +127,12 @@ function loadProfile(id, options = {}) {
   // L-4 (RFC 013): per-profile geo block. Canonical shape consumed by
   // filter.js / prepare.js / validate.js via geo_enforcer.
   result.geo = normalizeGeo(profile.geo);
+
+  // RFC 068 §4: optional standard form answers for the apply bot. Loaded
+  // verbatim (shape is checked by `validate`, see core/apply_defaults.js);
+  // null when the profile has no apply_defaults.json.
+  const applyDefaults = readJsonIfExists(path.join(root, APPLY_DEFAULTS_FILE));
+  result.applyDefaults = applyDefaults === undefined ? null : applyDefaults;
 
   // BL-126 Block D: resume layout density preset. Normalised onto
   // `result.resume.layout` so call sites pass it through as the 3rd opts
