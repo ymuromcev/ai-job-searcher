@@ -1322,8 +1322,8 @@ function formatReport(plan, { source = "", planPath = "" } = {}) {
   if (s.notionLinkedUpdates > 0) {
     lines.push(
       "",
-      `Note: ${s.notionLinkedUpdates} updated row(s) have a Notion page. This import does not touch Notion; ` +
-        "set their Notion status too, or the next `sync` pull will overwrite the TSV status."
+      `Note: ${s.notionLinkedUpdates} updated row(s) have a Notion page. With --apply, the ones whose ` +
+        "status changes get the same status in Notion (so the next `sync` pull keeps the import)."
     );
   }
   if (planPath) lines.push("", `plan: ${planPath}`);
