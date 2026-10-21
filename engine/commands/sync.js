@@ -217,6 +217,11 @@ function reconcilePull(apps, notionPages, propertyMap, now, companyNameById = {}
       applied_date:
         decideAppliedDate(page.status || "", "", typeof now === "string" ? now.slice(0, 10) : "")
           .date || "",
+      // RFC 068 (TSV v8): apply-tracking columns are TSV-internal (not in
+      // Notion), so a freshly-pulled row starts with them empty.
+      applied_by: "",
+      apply_state: "",
+      apply_note: "",
     });
   }
 

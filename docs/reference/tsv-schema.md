@@ -17,9 +17,15 @@ Both files are tab-separated with a header row first. Field separators
 inside values are normalized to a single space at write time
 (`escapeField` strips `\t \r \n`).
 
-## Schema v5 (current)
+## Schema v8 (current)
 
-`HEADER` / `HEADER_V5` constant in `engine/core/applications_tsv.js`.
+`HEADER` / `HEADER_V8` constant in `engine/core/applications_tsv.js`.
+Thirty columns: the twenty v5 columns below, then the v6–v8 columns listed
+under [Columns added in v6–v8](#columns-added-in-v6v8).
+
+## Schema v5 (base columns)
+
+`HEADER_V5` constant in `engine/core/applications_tsv.js`.
 Twenty columns. Schema rev'd from v4 → v5 on 2026-05-18 (BL-93 / RFC 038)
 to persist the full multi-element `locations[]` array from discovery,
 instead of collapsing to `locations[0]`. The on-disk column is renamed
@@ -47,6 +53,21 @@ instead of collapsing to `locations[0]`. The on-disk column is renamed
 | 18 | `fit_rationale` | string | no | Short free-text rationale (≤ ~200 chars typical). Written together with `fit_score`. |
 | 19 | `fit_evaluated_at` | ISO timestamp | no | When the SKILL run that wrote `fit_score` happened. Engine reads this to decide whether to re-evaluate (currently: never re-evaluate once written). |
 | 20 | `skip_reason` | enum | no | Engine-side persisted skip reason. Today only `duplicate` is set by the engine. `weak_fit` was previously written by the SKILL `decision="skip"` path; that path was removed in RFC 034 (BL-80) but the value may persist on historical rows. Engine-level filter skips (`company_cap`, `title_blocklist`, etc.) are recomputed each run and **not** persisted here. |
+
+## Columns added in v6–v8
+
+| # | Column | Since | Type | Description |
+|---|---|---|---|---|
+| 21 | `company_people_search_url` | v6 (RFC 059) | string | LinkedIn people-search URL, written by `prepare --phase commit`. |
+| 22 | `outreach_type` | v6 | enum | `warm` / `cold` / `""` (operator → Notion → sync). |
+| 23 | `contact_name` | v6 | string | Free text (operator → Notion → sync). |
+| 24 | `contact_linkedin` | v6 | string | URL (operator → Notion → sync). |
+| 25 | `hm_outreach_status` | v6 | enum | `To do` / `In flight` / `Replied` / `Dead`. Defaults to `To do`. |
+| 26 | `hm_outreach_date` | v6 | ISO date | Outreach anchor date. |
+| 27 | `applied_date` | v7 (BL-187) | ISO date | Date the row entered `Applied`. Drives the 14-day Applied → No Response sweep. TSV-only. |
+| 28 | `applied_by` | v8 (RFC 068) | enum | Who submitted: `bot` / `manual` / `legacy_bot` / `""`. TSV-only. |
+| 29 | `apply_state` | v8 (RFC 068) | enum | Apply bot state: `queued` / `manual` / `failed` / `submitted` / `""`. TSV-only. |
+| 30 | `apply_note` | v8 (RFC 068) | string | Reason for `manual` / `failed`, or the relative path to the confirmation screenshot. TSV-only. |
 
 ## Status values
 
@@ -90,13 +111,16 @@ profile flavor unification (Stage 8) finalized the current set.
 
 | Version | Header | Width | Reader | Writer |
 |---|---|---|---|---|
-| v5 | `HEADER_V5` (alias `HEADER`) | 20 | `rowToAppV5` (JSON-decodes `locations` cell) | `rowFor` (current; JSON-encodes `locations`) |
+| v8 | `HEADER_V8` (alias `HEADER`) | 30 | `rowToAppV8` | `rowFor` (current; JSON-encodes `locations`) |
+| v7 | `HEADER_V7` | 27 | `rowToAppV7` (seeds empty v8 apply columns) | none |
+| v6 | `HEADER_V6` | 26 | `rowToAppV6` (seeds empty `applied_date` + v8 columns) | none |
+| v5 | `HEADER_V5` | 20 | `rowToAppV5` (JSON-decodes `locations`; seeds v6–v8 defaults) | none |
 | v4 | `HEADER_V4` | 20 | `rowToAppV4` (wraps single-string `location` to `[location]`) | none |
 | v3 | `HEADER_V3` | 16 | `rowToAppV3` (wraps `location`; synthesizes empty `fit_*` + `skip_reason`) | none |
 | v2 | `HEADER_V2` | 15 | `rowToAppV2` (synthesizes empty `locations` + `fit_*` + `skip_reason`) | none |
 | v1 | `HEADER_V1` | 12 | `rowToAppV1` (synthesizes empty `locations`, `salary_min`, `salary_max`, `cl_path`, `fit_*`, `skip_reason`) | none |
 
-The reader rejects any header that does not match one of the five
+The reader rejects any header that does not match one of the eight
 constants exactly — extra or reordered columns are not tolerated.
 
 ### Recorded backups

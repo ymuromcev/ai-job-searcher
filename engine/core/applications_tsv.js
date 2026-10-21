@@ -1,8 +1,7 @@
 // Per-profile pipeline file: profiles/<id>/applications.tsv.
 //
-// Schema (header required), v7 (added 2026-06-03 for BL-187 / RFC 059 amendment
-// — append the `applied_date` anchor column for the auto-No-Response sweep). The
-// v7 column extends v6 with the moment a vacancy entered `status="Applied"`:
+// Schema (header required), v8 (added 2026-10-21 for RFC 068 auto-apply —
+// append three apply-tracking columns after `applied_date`):
 //   key <TAB> source <TAB> jobId <TAB> companyName <TAB> title <TAB> url
 //             <TAB> locations <TAB> status <TAB> notion_page_id
 //             <TAB> resume_ver <TAB> cl_key
@@ -14,6 +13,24 @@
 //             <TAB> contact_name <TAB> contact_linkedin
 //             <TAB> hm_outreach_status <TAB> hm_outreach_date
 //             <TAB> applied_date
+//             <TAB> applied_by <TAB> apply_state <TAB> apply_note
+//
+// v8 columns (RFC 068). TSV-internal; NOT Notion fields, NOT in property_map.
+// All default to "".
+//   `applied_by`  — who submitted: "" | "bot" | "manual" | "legacy_bot"
+//                   (`legacy_bot` = the pre-RFC-068 external bot, imported
+//                   from its mailbox). See APPLIED_BY_VALUES.
+//   `apply_state` — the apply bot's per-row state: "" | "queued" | "manual" |
+//                   "failed" | "submitted". "manual" = the bot stopped and a
+//                   human has to finish (captcha, login, unsupported ATS);
+//                   "failed" = submit attempted without confirmation, never
+//                   auto-retried. See APPLY_STATE_VALUES.
+//   `apply_note`  — free text: the reason for manual/failed, or the relative
+//                   path to the confirmation screenshot on success.
+//
+// v7 (added 2026-06-03 for BL-187 / RFC 059 amendment — append the
+// `applied_date` anchor column for the auto-No-Response sweep). The v7 column
+// extends v6 with the moment a vacancy entered `status="Applied"`.
 //
 // v7 column (RFC 059 amendment, BL-187):
 //   `applied_date` — ISO date (`YYYY-MM-DD`) the row entered `status="Applied"`.
@@ -90,7 +107,11 @@
 // In-memory shape: `app.locations: string[]` (the flat `app.location` accessor
 // from v3/v4 is gone — every caller now reads the array).
 //
-// Backward compat (auto-upgrade-on-save):
+// Backward compat (auto-upgrade-on-save). Every reader below v8 also seeds the
+// three v8 apply defaults (`applied_by` / `apply_state` / `apply_note` = "")
+// via `applyStateDefaults()`:
+//   v7 (27 cols, 2026-06-03 — BL-187 applied_date) → reader seeds the three v8
+//     apply defaults (empty).
 //   v6 (26 cols, 2026-06-03 — RFC 059 outreach columns) → reader seeds the v7
 //     `applied_date` default (empty).
 //   v5 (20 cols, 2026-05-18 — RFC 038 locations[]) → reader seeds the six v6
@@ -106,7 +127,7 @@
 //     `applied_date` default.
 //   v1 (12 cols, original) → empty locations + empty v2+v3+v4 fields + v6
 //     outreach defaults + v7 `applied_date` default.
-// save() always writes v7.
+// save() always writes v8.
 
 const fs = require("fs");
 const path = require("path");
@@ -127,6 +148,39 @@ function stripAtsPrefixes(id) {
     prev = m[2];
   }
 }
+
+const HEADER_V8 = [
+  "key",
+  "source",
+  "jobId",
+  "companyName",
+  "title",
+  "url",
+  "locations",
+  "status",
+  "notion_page_id",
+  "resume_ver",
+  "cl_key",
+  "salary_min",
+  "salary_max",
+  "cl_path",
+  "createdAt",
+  "updatedAt",
+  "fit_score",
+  "fit_rationale",
+  "fit_evaluated_at",
+  "skip_reason",
+  "company_people_search_url",
+  "outreach_type",
+  "contact_name",
+  "contact_linkedin",
+  "hm_outreach_status",
+  "hm_outreach_date",
+  "applied_date",
+  "applied_by",
+  "apply_state",
+  "apply_note",
+];
 
 const HEADER_V7 = [
   "key",
@@ -212,7 +266,16 @@ const HEADER_V5 = [
 
 // Current schema header. Aliased so legacy callers reading `HEADER` keep
 // working; readers expect this constant to track the latest version.
-const HEADER = HEADER_V7;
+const HEADER = HEADER_V8;
+
+// RFC 068 (auto-apply): allowed values for the v8 apply columns. Exported so
+// the apply command / registry board / validators share one definition.
+// `applied_by` — who submitted the application; "" when not applied (or
+//                applied before v8 and never back-filled).
+// `apply_state` — the bot's per-row submit state; "" when the bot has not
+//                 touched the row.
+const APPLIED_BY_VALUES = Object.freeze(["", "bot", "manual", "legacy_bot"]);
+const APPLY_STATE_VALUES = Object.freeze(["", "queued", "manual", "failed", "submitted"]);
 
 // RFC 059: default values for the six v6 outreach fields. Older rowToApp*
 // paths seed these so an old file loads cleanly; the next save() rewrites it
@@ -237,6 +300,14 @@ function outreachDefaults() {
 // the next save() rewrites it as v7. Empty until the row enters Applied.
 function appliedDateDefaults() {
   return { applied_date: "" };
+}
+
+// RFC 068 (auto-apply): default values for the three v8 apply columns. Older
+// rowToApp* paths (v7 and below) seed these so an old file loads cleanly; the
+// next save() rewrites it as v8. All empty until the apply bot (or an import /
+// manual mark) touches the row.
+function applyStateDefaults() {
+  return { applied_by: "", apply_state: "", apply_note: "" };
 }
 
 const HEADER_V4 = [
@@ -389,7 +460,28 @@ function rowFor(app) {
     escapeField(app.hm_outreach_status || ""),
     escapeField(app.hm_outreach_date || ""),
     escapeField(app.applied_date || ""),
+    escapeField(app.applied_by || ""),
+    escapeField(app.apply_state || ""),
+    escapeField(app.apply_note || ""),
   ].join("\t");
+}
+
+function rowToAppV8(parts, lineNo) {
+  if (parts.length < HEADER_V8.length) {
+    throw new Error(
+      `applications.tsv line ${lineNo}: expected ${HEADER_V8.length} cols, got ${parts.length}`
+    );
+  }
+  // v8 = v7 + three trailing apply columns. Reuse the v7 reader for the shared
+  // prefix, then overwrite the seeded defaults with the on-disk values.
+  const base = rowToAppV7(parts, lineNo);
+  const [applied_by, apply_state, apply_note] = parts.slice(HEADER_V7.length);
+  return {
+    ...base,
+    applied_by: applied_by || "",
+    apply_state: apply_state || "",
+    apply_note: apply_note || "",
+  };
 }
 
 function rowToAppV7(parts, lineNo) {
@@ -455,6 +547,7 @@ function rowToAppV7(parts, lineNo) {
     hm_outreach_status: hm_outreach_status || "",
     hm_outreach_date: hm_outreach_date || "",
     applied_date: applied_date || "",
+    ...applyStateDefaults(),
   };
 }
 
@@ -520,6 +613,7 @@ function rowToAppV6(parts, lineNo) {
     hm_outreach_status: hm_outreach_status || "",
     hm_outreach_date: hm_outreach_date || "",
     ...appliedDateDefaults(),
+    ...applyStateDefaults(),
   };
 }
 
@@ -574,6 +668,7 @@ function rowToAppV5(parts, lineNo) {
     skip_reason: skip_reason || "",
     ...outreachDefaults(),
     ...appliedDateDefaults(),
+    ...applyStateDefaults(),
   };
 }
 
@@ -628,6 +723,7 @@ function rowToAppV4(parts, lineNo) {
     skip_reason: skip_reason || "",
     ...outreachDefaults(),
     ...appliedDateDefaults(),
+    ...applyStateDefaults(),
   };
 }
 
@@ -678,6 +774,7 @@ function rowToAppV3(parts, lineNo) {
     skip_reason: "",
     ...outreachDefaults(),
     ...appliedDateDefaults(),
+    ...applyStateDefaults(),
   };
 }
 
@@ -727,6 +824,7 @@ function rowToAppV2(parts, lineNo) {
     skip_reason: "",
     ...outreachDefaults(),
     ...appliedDateDefaults(),
+    ...applyStateDefaults(),
   };
 }
 
@@ -773,6 +871,7 @@ function rowToAppV1(parts, lineNo) {
     skip_reason: "",
     ...outreachDefaults(),
     ...appliedDateDefaults(),
+    ...applyStateDefaults(),
   };
 }
 
@@ -787,25 +886,35 @@ function load(filePath) {
   if (!lines.length) return { apps: [], path: filePath };
   const headerCols = lines[0].split("\t");
 
-  const isV7 = matchHeader(headerCols, HEADER_V7);
-  const isV6 = !isV7 && matchHeader(headerCols, HEADER_V6);
-  const isV5 = !isV7 && !isV6 && matchHeader(headerCols, HEADER_V5);
-  const isV4 = !isV7 && !isV6 && !isV5 && matchHeader(headerCols, HEADER_V4);
-  const isV3 = !isV7 && !isV6 && !isV5 && !isV4 && matchHeader(headerCols, HEADER_V3);
-  const isV2 = !isV7 && !isV6 && !isV5 && !isV4 && !isV3 && matchHeader(headerCols, HEADER_V2);
+  const isV8 = matchHeader(headerCols, HEADER_V8);
+  const isV7 = !isV8 && matchHeader(headerCols, HEADER_V7);
+  const isV6 = !isV8 && !isV7 && matchHeader(headerCols, HEADER_V6);
+  const isV5 = !isV8 && !isV7 && !isV6 && matchHeader(headerCols, HEADER_V5);
+  const isV4 = !isV8 && !isV7 && !isV6 && !isV5 && matchHeader(headerCols, HEADER_V4);
+  const isV3 = !isV8 && !isV7 && !isV6 && !isV5 && !isV4 && matchHeader(headerCols, HEADER_V3);
+  const isV2 =
+    !isV8 && !isV7 && !isV6 && !isV5 && !isV4 && !isV3 && matchHeader(headerCols, HEADER_V2);
   const isV1 =
-    !isV7 && !isV6 && !isV5 && !isV4 && !isV3 && !isV2 && matchHeader(headerCols, HEADER_V1);
+    !isV8 &&
+    !isV7 &&
+    !isV6 &&
+    !isV5 &&
+    !isV4 &&
+    !isV3 &&
+    !isV2 &&
+    matchHeader(headerCols, HEADER_V1);
 
-  if (!isV7 && !isV6 && !isV5 && !isV4 && !isV3 && !isV2 && !isV1) {
+  if (!isV8 && !isV7 && !isV6 && !isV5 && !isV4 && !isV3 && !isV2 && !isV1) {
     throw new Error(
-      `applications.tsv header mismatch: expected v7 [${HEADER_V7.join(", ")}], v6 [${HEADER_V6.join(", ")}], v5 [${HEADER_V5.join(", ")}], v4 [${HEADER_V4.join(", ")}], v3 [${HEADER_V3.join(", ")}], v2 [${HEADER_V2.join(", ")}] or v1 [${HEADER_V1.join(", ")}], got [${headerCols.join(", ")}]`
+      `applications.tsv header mismatch: expected v8 [${HEADER_V8.join(", ")}], v7 [${HEADER_V7.join(", ")}], v6 [${HEADER_V6.join(", ")}], v5 [${HEADER_V5.join(", ")}], v4 [${HEADER_V4.join(", ")}], v3 [${HEADER_V3.join(", ")}], v2 [${HEADER_V2.join(", ")}] or v1 [${HEADER_V1.join(", ")}], got [${headerCols.join(", ")}]`
     );
   }
 
   const apps = [];
   for (let i = 1; i < lines.length; i += 1) {
     const parts = lines[i].split("\t");
-    if (isV7) apps.push(rowToAppV7(parts, i + 1));
+    if (isV8) apps.push(rowToAppV8(parts, i + 1));
+    else if (isV7) apps.push(rowToAppV7(parts, i + 1));
     else if (isV6) apps.push(rowToAppV6(parts, i + 1));
     else if (isV5) apps.push(rowToAppV5(parts, i + 1));
     else if (isV4) apps.push(rowToAppV4(parts, i + 1));
@@ -813,14 +922,28 @@ function load(filePath) {
     else if (isV2) apps.push(rowToAppV2(parts, i + 1));
     else apps.push(rowToAppV1(parts, i + 1));
   }
-  const schemaVersion = isV7 ? 7 : isV6 ? 6 : isV5 ? 5 : isV4 ? 4 : isV3 ? 3 : isV2 ? 2 : 1;
+  const schemaVersion = isV8
+    ? 8
+    : isV7
+      ? 7
+      : isV6
+        ? 6
+        : isV5
+          ? 5
+          : isV4
+            ? 4
+            : isV3
+              ? 3
+              : isV2
+                ? 2
+                : 1;
   return { apps, path: filePath, schemaVersion };
 }
 
 function save(filePath, apps) {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
-  const lines = [HEADER_V7.join("\t")];
+  const lines = [HEADER_V8.join("\t")];
   for (const a of apps) lines.push(rowFor(a));
   const tmp = `${filePath}.tmp.${process.pid}.${Date.now()}`;
   fs.writeFileSync(tmp, lines.join("\n") + "\n");
@@ -883,6 +1006,7 @@ function appendNew(
       skip_reason: "",
       ...outreachDefaults(),
       ...appliedDateDefaults(),
+      ...applyStateDefaults(),
     });
   }
   return { apps: existing.concat(fresh), fresh, fuzzyDuplicates };
@@ -903,4 +1027,8 @@ module.exports = {
   HEADER_V5,
   HEADER_V6,
   HEADER_V7,
+  HEADER_V8,
+  APPLIED_BY_VALUES,
+  APPLY_STATE_VALUES,
+  applyStateDefaults,
 };
