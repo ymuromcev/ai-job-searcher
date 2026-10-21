@@ -202,16 +202,76 @@ test("KNOWN_COMMANDS lists exactly the supported commands", () => {
     "add",
     "answer",
     "backfill-outreach-url",
+    "board",
     "check",
     "companies-upsert",
     "indeed-prep",
     "prepare",
     "reclassify",
+    "report",
     "retro-tailor",
     "scan",
     "sync",
     "validate",
   ]);
+});
+
+// RFC 068 §8 / §10: board + report flags reach ctx.flags (ctx is a whitelist).
+test("board: --no-open and --port reach the command through ctx.flags", async () => {
+  const s = makeStreams();
+  const board = spyCommand();
+  const code = await runCli({
+    argv: ["board", "--profile", "jared", "--no-open", "--port", "8765"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { board },
+  });
+  assert.equal(code, 0);
+  assert.equal(board.calls[0].flags.noOpen, true);
+  assert.equal(board.calls[0].flags.port, "8765");
+});
+
+test("board: defaults — browser opens, any free port", async () => {
+  const s = makeStreams();
+  const board = spyCommand();
+  await runCli({
+    argv: ["board", "--profile", "jared"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { board },
+  });
+  assert.equal(board.calls[0].flags.noOpen, false);
+  assert.equal(board.calls[0].flags.port, "");
+});
+
+test("report: --weekly and --out reach the command through ctx.flags", async () => {
+  const s = makeStreams();
+  const report = spyCommand();
+  const code = await runCli({
+    argv: ["report", "--profile", "jared", "--weekly", "--out", "/tmp/r"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { report },
+  });
+  assert.equal(code, 0);
+  assert.equal(report.calls[0].flags.weekly, true);
+  assert.equal(report.calls[0].flags.out, "/tmp/r");
+
+  const s2 = makeStreams();
+  const report2 = spyCommand();
+  await runCli({
+    argv: ["report", "--profile", "jared"],
+    stdout: s2.stdout,
+    stderr: s2.stderr,
+    commands: { report: report2 },
+  });
+  assert.equal(report2.calls[0].flags.weekly, false);
+  assert.equal(report2.calls[0].flags.out, "");
+});
+
+test("board / report are read-only: no lazy sweeps run before them", async () => {
+  const { READ_ONLY_COMMANDS } = require("./cli.js");
+  assert.deepEqual([...READ_ONLY_COMMANDS].sort(), ["board", "report"]);
 });
 
 // Regression (RFC 063): ctx.flags is an explicit whitelist, so registering a
