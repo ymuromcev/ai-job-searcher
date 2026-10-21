@@ -598,9 +598,76 @@ test("home_state_or_remote: empty locations + structured remote passes", () => {
   assert.strictEqual(hsr([], { isRemote: true }).ok, true);
 });
 
-test("home_state_or_remote: ambiguous location ('United States', 'Hybrid') fails", () => {
-  assert.strictEqual(hsr(["United States"]).reason, "geo_not_home_state_or_remote");
+test("home_state_or_remote: ambiguous non-country location ('Hybrid', '3 Locations') fails", () => {
   assert.strictEqual(hsr(["Hybrid"]).reason, "geo_not_home_state_or_remote");
+  assert.strictEqual(hsr(["3 Locations"]).reason, "geo_not_home_state_or_remote");
+});
+
+// BL-225: country-only US locations name no state — they pass as
+// "us_unspecified" and prepare's JD workplace check decides.
+test("home_state_or_remote: country-only US locations pass as us_unspecified", () => {
+  for (const loc of [
+    "US",
+    "USA",
+    "U.S.",
+    "United States",
+    "United States of America",
+    "united states",
+    "USA (Nationwide)",
+    "Multiple Locations, US",
+  ]) {
+    assert.deepStrictEqual(
+      hsr([loc]),
+      { ok: true, reason: null, matchedBy: "us_unspecified" },
+      `expected ${loc} → us_unspecified`
+    );
+  }
+  assert.strictEqual(hsr(["US", "United States"]).matchedBy, "us_unspecified");
+});
+
+test("home_state_or_remote: 'Remote - US' still passes as remote, not us_unspecified", () => {
+  assert.strictEqual(hsr(["Remote - US"]).matchedBy, "remote:location");
+  assert.strictEqual(hsr(["Remote", "United States"]).matchedBy, "remote:location");
+});
+
+test("home_state_or_remote: a named non-home state never passes as us_unspecified", () => {
+  for (const locs of [
+    ["New York City, New York"],
+    ["Austin, TX"],
+    ["North Carolina, US"],
+    ["Seattle, Washington, United States"],
+    ["New York, NY", "United States"],
+    ["US", "Boston, MA"],
+    ["United States (Hybrid)"],
+  ]) {
+    const r = hsr(locs);
+    assert.strictEqual(r.ok, false, `expected ${JSON.stringify(locs)} to fail`);
+    assert.strictEqual(r.reason, "geo_not_home_state_or_remote");
+  }
+});
+
+test("home_state_or_remote: country-only US + home-state city passes as home state", () => {
+  assert.strictEqual(hsr(["San Francisco, CA", "United States"]).matchedBy, "home_state:CA");
+});
+
+test("home_state_or_remote: structured hybrid beats a country-only US location", () => {
+  assert.strictEqual(hsr(["United States"], { workplaceType: "Hybrid" }).ok, false);
+});
+
+test("home_state_or_remote: non-US countries are not country-only US", () => {
+  assert.strictEqual(hsr(["Canada"]).ok, false);
+  assert.strictEqual(hsr(["United Kingdom"]).ok, false);
+  assert.strictEqual(hsr(["Australia"]).ok, false);
+});
+
+test("isUsCountryOnlyLoc: only US country tokens and filler words", () => {
+  const { isUsCountryOnlyLoc } = require("./geo_enforcer.js");
+  assert.strictEqual(isUsCountryOnlyLoc("us"), true);
+  assert.strictEqual(isUsCountryOnlyLoc("u.s.a."), true);
+  assert.strictEqual(isUsCountryOnlyLoc("united states of america"), true);
+  assert.strictEqual(isUsCountryOnlyLoc("austin, tx, us"), false);
+  assert.strictEqual(isUsCountryOnlyLoc("business"), false);
+  assert.strictEqual(isUsCountryOnlyLoc(""), false);
 });
 
 test("home_state_or_remote: 'CA' as Canada country code does not count as California", () => {
