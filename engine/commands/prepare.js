@@ -53,6 +53,11 @@ const { findTitleBlocklistHit } = require("../core/filter.js");
 const { evaluateJob } = require("../core/evaluate_job.js");
 const { getSalaryFloor } = require("../core/apply_defaults.js");
 const { publishedSalaryFromJd } = require("../core/published_salary.js");
+const {
+  classifyJdWorkplace,
+  jdWorkplaceVerdict,
+  needsJdWorkplaceCheck,
+} = require("../core/jd_workplace.js");
 const { ensureFresh: ensureFreshFitProfile } = require("../core/fit_profile.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 const { resolveProfilesDir } = require("../core/paths.js");
@@ -702,6 +707,48 @@ function applySalaryFloorPass(aliveResults, jdByAppKey, applyDefaults) {
   return { aliveResults: surviving, salaryFloorSkipped };
 }
 
+// BL-225 (RFC 068 §3): JD workplace pass. In geo mode "home_state_or_remote"
+// a row can pass the location check without a home-state location — a
+// country-only US location (`us_unspecified`) or a remote marker in the
+// location / title. Once the JD body is in hand, a JD that says hybrid or
+// onsite in an office outside the home state rules the row out: it goes to
+// `skipped[]` with `reason="geo_jd_not_remote"` and is archived via the same
+// RFC 035 path as the other geo drops. Remote, unknown, or a hybrid/onsite JD
+// with no named office keeps the row. Rows without JD text pass through.
+// No-op for every other geo mode.
+function applyJdWorkplacePass(aliveResults, jdByAppKey, profileGeo) {
+  if (!profileGeo || profileGeo.mode !== "home_state_or_remote") {
+    return { aliveResults, jdWorkplaceSkipped: [] };
+  }
+  const surviving = [];
+  const jdWorkplaceSkipped = [];
+  for (const urlRes of aliveResults) {
+    const geoMatchedBy = urlRes._geoResult ? urlRes._geoResult.matchedBy : null;
+    const jd = jdByAppKey[urlRes.key];
+    const jdText = jd && jd.text ? jd.text : "";
+    if (!needsJdWorkplaceCheck(geoMatchedBy) || !jdText) {
+      surviving.push(urlRes);
+      continue;
+    }
+    const workplace = classifyJdWorkplace(jdText);
+    const verdict = jdWorkplaceVerdict(workplace, profileGeo.home_state);
+    if (!verdict.drop) {
+      surviving.push(urlRes);
+      continue;
+    }
+    jdWorkplaceSkipped.push({
+      key: urlRes.key,
+      reason: verdict.reason,
+      mode: profileGeo.mode,
+      geoMatchedBy,
+      workplace: workplace.workplace,
+      offices: workplace.offices,
+      url: urlRes.url,
+    });
+  }
+  return { aliveResults: surviving, jdWorkplaceSkipped };
+}
+
 // Compute skip-reason breakdown from a flat list of skip records.
 function computeSkipReasons(skipped) {
   const skipReasons = {};
@@ -1054,6 +1101,16 @@ async function runPre(ctx, deps) {
   const jdCacheDir = profile.paths.jdCacheDir;
   const jdByAppKey = await fetchJdsByKey(aliveResults, jdCacheDir, deps);
 
+  // BL-225: JD workplace pass — a row that passed geo without a home-state
+  // location is archived when its JD says hybrid/onsite in an out-of-state
+  // office. Runs first: a role the candidate can't take at all needs no
+  // requirement / salary judgement.
+  const { aliveResults: aliveAfterJW, jdWorkplaceSkipped } = applyJdWorkplacePass(
+    aliveResults,
+    jdByAppKey,
+    profile.geo
+  );
+
   // RFC 039 / BL-89: hard-blocker pass. Runs AFTER JD-fetch and BEFORE
   // buildBatchEntry. A blocked row goes to `skipped[]` with the first code
   // in `reason` and the full list in `reasons[]` (RFC 039 §7.5); it's
@@ -1063,7 +1120,7 @@ async function runPre(ctx, deps) {
     filterRules: { ...(profile.filterRules || {}) },
   };
   const { aliveResults: aliveAfterHB, hardBlockerSkipped } = applyHardBlockers(
-    aliveResults,
+    aliveAfterJW,
     jdByAppKey,
     profileForHB
   );
@@ -1114,6 +1171,7 @@ async function runPre(ctx, deps) {
     ...alreadyEvaluatedSkips,
     ...filteredOut,
     ...deadSkipped,
+    ...jdWorkplaceSkipped,
     ...hardBlockerSkipped,
     ...requirementBlockerSkipped,
     ...salaryFloorSkipped,
@@ -1465,12 +1523,19 @@ async function runPreTopup(ctx, deps) {
   const jdCacheDir = profile.paths.jdCacheDir;
   const jdByAppKey = await fetchJdsByKey(aliveResults, jdCacheDir, deps);
 
+  // BL-225: JD workplace pass (topup mirror of runPre).
+  const { aliveResults: aliveAfterJW, jdWorkplaceSkipped } = applyJdWorkplacePass(
+    aliveResults,
+    jdByAppKey,
+    profile.geo
+  );
+
   // RFC 039 / BL-89: hard-blocker pass (topup mirror — identical contract).
   const profileForHB = {
     filterRules: { ...(profile.filterRules || {}) },
   };
   const { aliveResults: aliveAfterHB, hardBlockerSkipped } = applyHardBlockers(
-    aliveResults,
+    aliveAfterJW,
     jdByAppKey,
     profileForHB
   );
@@ -1516,6 +1581,7 @@ async function runPreTopup(ctx, deps) {
     ...filteredOut,
     ...deadSkipped,
     ...droppedFromQueue,
+    ...jdWorkplaceSkipped,
     ...hardBlockerSkipped,
     ...requirementBlockerSkipped,
     ...salaryFloorSkipped,
@@ -2784,6 +2850,7 @@ module.exports = makePrepareCommand();
 module.exports.makePrepareCommand = makePrepareCommand;
 module.exports.applyPrepareFilter = applyPrepareFilter;
 module.exports.applySalaryFloorPass = applySalaryFloorPass;
+module.exports.applyJdWorkplacePass = applyJdWorkplacePass;
 module.exports.filterAlreadyEvaluated = filterAlreadyEvaluated;
 module.exports.buildActiveCounts = buildActiveCounts;
 module.exports.resolveCapWindowDays = resolveCapWindowDays;

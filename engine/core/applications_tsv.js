@@ -90,6 +90,7 @@
 //                            `geo_metro_miss` | `geo_country_miss` |
 //                            `geo_remote_only_miss` | `geo_unknown_mode` |
 //                            `geo_not_home_state_or_remote` |
+//                            `geo_jd_not_remote` |
 //                            `salary_below_floor` (RFC 068) |
 //                            `url_dead`. Written by `prepare --phase pre`
 //                            when a filter rejects an Inbox row. First
