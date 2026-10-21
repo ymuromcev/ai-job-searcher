@@ -2080,6 +2080,11 @@ async function runCommit(ctx, deps) {
   // which keeps the escalation MD deterministic across runs.
   const tailorPlan = new Map(); // row.key -> { classification, row, tailoredDocxRel? }
   const escalations = [];
+  // RFC 068: owner policy — coverage-gap escalations at/above this ship.
+  const shipEscalatedMin =
+    profile.applyDefaults && Number.isFinite(profile.applyDefaults.tailor_ship_min_coverage)
+      ? profile.applyDefaults.tailor_ship_min_coverage
+      : null;
 
   // Light-touch validation of the 5 new SKILL fields. Returns `true` if
   // the row passes; `false` (with stderr warn) on shape mismatch — caller
@@ -2166,7 +2171,14 @@ async function runCommit(ctx, deps) {
     //   - archetype: unchanged legacy path (archetype-pick by resumeVer).
     const tailorOk = validateTailorFields(r);
     if (!tailorOk) updates.tailorMalformed++;
-    const classification = tailorOk ? classifyTailorRow(r) : "archetype";
+    const classification = tailorOk
+      ? classifyTailorRow(r, { shipEscalatedMinCoverage: shipEscalatedMin })
+      : "archetype";
+    if (classification === "tailored" && r.tailorEscalated === true) {
+      // Shipped under the owner's coverage policy — keep it visible.
+      escalations.push({ ...buildEscalationRecord(r), shipped: true });
+      updates.escalatedShipped = (updates.escalatedShipped || 0) + 1;
+    }
 
     if (classification === "escalated") {
       // Status stays "Inbox" (revertToInbox isn't needed — we never
@@ -2711,6 +2723,8 @@ async function runCommit(ctx, deps) {
     extras.push(`${updates.tailorMalformed} malformed tailor field(s)`);
   if (updates.tailored > 0) extras.push(`${updates.tailored} tailored DOCX`);
   if (updates.escalated > 0) extras.push(`${updates.escalated} escalated`);
+  if (updates.escalatedShipped > 0)
+    extras.push(`${updates.escalatedShipped} escalated but shipped (coverage policy)`);
   if (updates.carryOver > 0) extras.push(`${updates.carryOver} carry-over (RFC 049)`);
   if (tierStats.invalid > 0) extras.push(`${tierStats.invalid} invalid tier`);
   if (notionStats.pdfMissing + notionStats.notionFailed > 0) {

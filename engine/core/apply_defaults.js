@@ -29,6 +29,8 @@
 //   "address": { "street", "unit", "city", "state", "state_name", "zip", "country" }  // strings
 //   "citizenship": { "countries": ["..."], "us_permanent_resident": true }
 //   "legal_acknowledgements": "accept"   // tick truthfulness / arbitration / AI-policy / privacy consents
+//   "tailor_ship_min_coverage": 75       // Strong rows whose tailoring stalled on JD-phrase gaps
+//                                        // still go to To Apply at/above this coverage (0–100)
 
 const APPLY_DEFAULTS_FILE = "apply_defaults.json";
 
@@ -45,6 +47,7 @@ const TOP_LEVEL_KEYS = Object.freeze([
   "address",
   "citizenship",
   "legal_acknowledgements",
+  "tailor_ship_min_coverage",
 ]);
 
 const ADDRESS_KEYS = Object.freeze([
@@ -167,6 +170,17 @@ function validateApplyDefaults(raw) {
         err(`${base}.citizenship.us_permanent_resident`, "must be a boolean");
       }
     }
+  }
+
+  if (
+    raw.tailor_ship_min_coverage !== undefined &&
+    !(
+      typeof raw.tailor_ship_min_coverage === "number" &&
+      raw.tailor_ship_min_coverage >= 0 &&
+      raw.tailor_ship_min_coverage <= 100
+    )
+  ) {
+    err(`${base}.tailor_ship_min_coverage`, "must be a number between 0 and 100");
   }
 
   if (
