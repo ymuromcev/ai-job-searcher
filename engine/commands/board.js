@@ -16,7 +16,11 @@
 // U7) comes from Notion — or the local backup — through a short in-memory
 // cache. The one thing the board writes is the owner's answer ratings
 // (POST /api/rating → profiles/<id>/.answers/ratings.json); the TSV and
-// Notion are never written. Other people's text (company names, titles,
+// Notion are never written by the board itself. POST /api/open starts
+// `apply --phase open --key <key>` for one «Доделать руками» job: a separate
+// process that opens the filled form in a visible window (owner decision
+// 2026-10-21) and marks the row Applied once the human submits it. Other
+// people's text (company names, titles,
 // reasons, answers) leaves as JSON and the page renders it with textContent
 // only.
 
@@ -25,7 +29,7 @@ const os = require("os");
 const path = require("path");
 const http = require("node:http");
 const crypto = require("node:crypto");
-const { execFile } = require("child_process");
+const { execFile, spawn } = require("child_process");
 
 const profileLoader = require("../core/profile_loader.js");
 const applications = require("../core/applications_tsv.js");
@@ -56,7 +60,9 @@ const CSP =
   "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; " +
   "img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 const NO_KEY = "нужна ссылка с ключом: открой реестр командой board";
-const MAX_BODY = 2048; // POST /api/rating carries { id, rating } only
+const MAX_BODY = 2048; // POST /api/rating carries { id, rating }, /api/open { key }
+// Job keys: "<source>:<id>" (Workday ids carry slashes and dashes).
+const KEY_RE = /^[a-z][a-z0-9_]*:[A-Za-z0-9._~/-]{1,300}$/;
 const BANK_TTL_MS = 60 * 1000;
 
 // --- state dir / lock ------------------------------------------------------
@@ -221,8 +227,20 @@ function createBoardServer({ data, token, idleMs = IDLE_MS, clock = () => Date.n
     );
   }
 
-  // POST /api/rating — body exactly { id, rating }, JSON, at most MAX_BODY.
-  function handleRating(req, res) {
+  // POST /api/open — body exactly { key }: start the filled-form window for
+  // one job on the «Доделать руками» list.
+  function handleOpen(req, res) {
+    return readJson(req, res, (body) => {
+      const key = body && typeof body.key === "string" ? body.key.trim() : "";
+      if (!KEY_RE.test(key) || Object.keys(body).length !== 1) {
+        return json(res, 400, { error: "нужен { key }" });
+      }
+      return respond(res, () => data.openForm({ key }));
+    });
+  }
+
+  // JSON body of at most MAX_BODY, parsed, handed to `then`.
+  function readJson(req, res, then) {
     const type = String(req.headers["content-type"] || "")
       .split(";")[0]
       .trim()
@@ -243,12 +261,19 @@ function createBoardServer({ data, token, idleMs = IDLE_MS, clock = () => Date.n
         } catch {
           return json(res, 400, { error: "тело запроса — не JSON" });
         }
-        const v = answerBank.validateRatingInput(body);
-        if (!v.ok) return json(res, 400, { error: v.error });
-        return respond(res, () => data.rate({ id: v.id, rating: v.rating }));
+        return then(body);
       },
       (err) => json(res, err.status || 400, { error: err.message })
     );
+  }
+
+  // POST /api/rating — body exactly { id, rating }, JSON, at most MAX_BODY.
+  function handleRating(req, res) {
+    return readJson(req, res, (body) => {
+      const v = answerBank.validateRatingInput(body);
+      if (!v.ok) return json(res, 400, { error: v.error });
+      return respond(res, () => data.rate({ id: v.id, rating: v.rating }));
+    });
   }
 
   function allowed(req, url) {
@@ -277,6 +302,9 @@ function createBoardServer({ data, token, idleMs = IDLE_MS, clock = () => Date.n
     if (req.method === "POST") {
       if (url.pathname === "/api/rating" && typeof data.rate === "function") {
         return handleRating(req, res);
+      }
+      if (url.pathname === "/api/open" && typeof data.openForm === "function") {
+        return handleOpen(req, res);
       }
       req.resume(); // the other endpoints read no body
       if (url.pathname === "/api/quit") {
@@ -475,6 +503,18 @@ function makeDataLoaders(profile, deps, env = {}) {
       bankStore.writeRatings(ratingsFile, next, { now });
       return { ok: true, id, rating };
     },
+    // Only a job that is on the «Доделать руками» list right now can be opened.
+    openForm: ({ key }) => {
+      const todo = buildRegistryView(readRows()).todo;
+      const job = todo.find((t) => t.key === key);
+      if (!job) {
+        const err = new Error("этой вакансии нет в «Доделать руками»");
+        err.status = 404;
+        throw err;
+      }
+      deps.spawnOpen(profile, key);
+      return { ok: true, key, company: job.company, title: job.title };
+    },
     sources: () => ({
       profile: profile.id,
       ...buildSourceHealth({
@@ -497,6 +537,32 @@ function openInBrowser(url) {
   execFile(cmd, [url], () => {});
 }
 
+// Detached `apply --phase open` for one job; its output goes to
+// .apply-state/open.log. Fixed argv, no shell; the key was checked against
+// KEY_RE and the «Доделать руками» list.
+function spawnOpenForm(profile, key) {
+  const repo = path.join(__dirname, "..", "..");
+  const logPath = path.join(profile.paths.root, ".apply-state", "open.log");
+  fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  const out = fs.openSync(logPath, "a");
+  const child = spawn(
+    process.execPath,
+    [
+      path.join(repo, "engine", "cli.js"),
+      "apply",
+      "--profile",
+      profile.id,
+      "--phase", // cli-args-gate-ignore — argv of the child `apply`, not a board flag
+      "open",
+      "--key", // cli-args-gate-ignore — argv of the child `apply`, not a board flag
+      key,
+    ],
+    { cwd: repo, detached: true, stdio: ["ignore", out, out] }
+  );
+  child.unref();
+  fs.closeSync(out);
+}
+
 function parsePort(raw) {
   if (raw === undefined || raw === null || raw === "") return 0;
   const s = String(raw).trim();
@@ -513,6 +579,7 @@ const DEFAULT_DEPS = {
   fetchAllAnswers,
   bankTtlMs: BANK_TTL_MS,
   openUrl: openInBrowser,
+  spawnOpen: spawnOpenForm,
   now: () => Date.now(),
   today: () => todayLocalISO(),
   stateDir: (env) => defaultStateDir(env),
@@ -570,7 +637,10 @@ function makeBoardCommand(overrides = {}) {
     });
     const offSignal = deps.onSignal(() => started.server.shutdown());
     stdout(`board for ${profile.id}: ${started.url}`);
-    stdout("writes only answer ratings; closes after 30 min idle or from the page");
+    stdout(
+      "writes only answer ratings (and opens filled forms on request); " +
+        "closes after 30 min idle or from the page"
+    );
     if (!flags.noOpen) deps.openUrl(started.url);
 
     await started.closed;

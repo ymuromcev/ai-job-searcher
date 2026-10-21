@@ -15,6 +15,7 @@ const greenhouse = require("./greenhouse.js");
 const lever = require("./lever.js");
 const ashby = require("./ashby.js");
 const { matchQuestion } = require("./question_match.js");
+const { detectBlocker } = require("./_dom.js");
 
 const status = browserStatus();
 const SKIP = status.ok ? false : `Playwright Chromium unavailable: ${status.reason}`;
@@ -159,6 +160,40 @@ describe("apply adapters on synthetic fixtures", { skip: SKIP }, () => {
       assert.equal(out.ok, true, JSON.stringify(out));
       assert.match(out.evidence.url, /greenhouse_confirmation\.html/);
       assert.match(out.evidence.text, /Thank you for applying/);
+    });
+  });
+
+  test("greenhouse: the emailed security code goes into one field or one box per character", async () => {
+    await withPage(async (page) => {
+      await page.setContent(
+        "<p>Enter the security code we sent to your email</p>" +
+          '<input id="question_postal_code" aria-label="Postal Code" value="95747">' +
+          [0, 1, 2, 3, 4, 5, 6, 7]
+            .map((i) => `<input id="security-input-${i}" maxlength="1">`)
+            .join("")
+      );
+      assert.equal(await detectBlocker(page), "email_verification");
+      assert.deepEqual(await greenhouse.enterSecurityCode(page, "Ab3dE9fZ"), { ok: true });
+      const boxes = await page.evaluate(() =>
+        Array.from(document.querySelectorAll("input"))
+          .map((i) => i.value)
+          .join("")
+      );
+      assert.equal(boxes, "95747Ab3dE9fZ", "the postal code is left alone");
+
+      // Boxes that do not match the code length → nothing typed, human finishes.
+      await page.setContent(
+        "<p>Enter the security code</p>" +
+          [0, 1, 2].map((i) => `<input id="security-input-${i}" maxlength="1">`).join("")
+      );
+      assert.deepEqual(await greenhouse.enterSecurityCode(page, "Ab3dE9fZ"), { ok: false });
+
+      await page.setContent('<label>Security code <input id="security_code"></label>');
+      assert.deepEqual(await greenhouse.enterSecurityCode(page, "Ab3dE9fZ"), { ok: true });
+      assert.equal(await page.inputValue("#security_code"), "Ab3dE9fZ");
+
+      await page.setContent("<p>Thank you for applying</p>");
+      assert.deepEqual(await greenhouse.enterSecurityCode(page, "Ab3dE9fZ"), { ok: false });
     });
   });
 

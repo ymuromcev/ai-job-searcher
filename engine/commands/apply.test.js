@@ -260,7 +260,7 @@ const RESUME = path.join(ROOT, "resumes", "CV_Test_Candidate_Growth.pdf");
 test("phase is required", async () => {
   const h = harness({ apps: [] });
   assert.equal(await h.run({}), 1);
-  assert.match(h.err.join("\n"), /--phase <pre\|submit>/);
+  assert.match(h.err.join("\n"), /--phase <pre\|submit\|open>/);
 });
 
 test("pre: builds the context, resolves standard answers, flags manual cases", async () => {
@@ -524,6 +524,99 @@ test("submit --dry-run: fills and screenshots, never clicks Submit, writes nothi
   assert.equal(h.store.saves, 0);
   assert.equal(h.notionCalls.length, 0);
   assert.match(h.out.join("\n"), /1 dry-run/);
+});
+
+test("submit: Greenhouse security code is read from the apply mailbox, typed, resubmitted", async () => {
+  const h = submitHarness({
+    apps: [
+      row({ key: "a", companyName: "Acme", url: GH_URL }),
+      row({ key: "b", companyName: "Beta", url: GH2_URL }),
+    ],
+    keys: [
+      ["a", GH_URL, "Acme"],
+      ["b", GH2_URL, "Beta"],
+    ],
+    answers: [WHY("a"), WHY("b")],
+    behavior: {},
+  });
+  const typed = [];
+  const clicks = { [GH_URL]: 0, [GH2_URL]: 0 };
+  const base = h.deps.getAdapter;
+  h.deps.getAdapter = (n) => {
+    const a = base(n);
+    return {
+      ...a,
+      async submit(page) {
+        clicks[page.url] += 1;
+        if (clicks[page.url] === 1) return { ok: false, reason: "email_verification" };
+        return { ok: true, evidence: { url: page.url, text: "Thank you for applying" } };
+      },
+      async enterSecurityCode(page, code) {
+        typed.push([page.url, code]);
+        return { ok: true };
+      },
+    };
+  };
+  const asked = [];
+  h.deps.makeCodeWaiter = () => ({
+    wait: async ({ company }) => {
+      asked.push(company);
+      return company === "Acme" ? "Ab3dE9fZ" : null;
+    },
+  });
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  const by = Object.fromEntries(h.store.apps.map((x) => [x.key, x]));
+  assert.equal(by.a.status, "Applied");
+  assert.equal(by.a.apply_state, "submitted");
+  assert.deepEqual(typed, [[GH_URL, "Ab3dE9fZ"]]);
+  assert.equal(clicks[GH_URL], 2, "Submit pressed again after the code");
+  // No code in the mailbox → the human finishes it.
+  assert.deepEqual([by.b.apply_state, by.b.apply_note], ["manual", "email_code_missing"]);
+  assert.equal(by.b.status, "To Apply");
+  assert.deepEqual(asked.sort(), ["Acme", "Beta"]);
+});
+
+test("submit: no confirmation on the page but a thank-you mail → Applied, never failed", async () => {
+  const h = submitHarness({
+    apps: [
+      row({ key: "a", companyName: "Acme", url: GH_URL }),
+      row({ key: "b", companyName: "Beta", url: GH2_URL }),
+    ],
+    keys: [
+      ["a", GH_URL, "Acme"],
+      ["b", GH2_URL, "Beta"],
+    ],
+    answers: [WHY("a"), WHY("b")],
+    behavior: {
+      [GH_URL]: { submit: { ok: false, reason: "no_confirmation" } },
+      [GH2_URL]: { submit: { ok: false, reason: "no_confirmation" } },
+    },
+  });
+  h.deps.makeCodeWaiter = () => ({
+    wait: async () => null,
+    confirmed: async ({ company }) =>
+      company === "Acme" ? { subject: "Thank you for applying to Acme" } : null,
+  });
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  const by = Object.fromEntries(h.store.apps.map((x) => [x.key, x]));
+  assert.deepEqual([by.a.status, by.a.apply_state], ["Applied", "submitted"]);
+  assert.deepEqual(
+    [by.b.status, by.b.apply_state, by.b.apply_note],
+    ["To Apply", "failed", "no_confirmation"]
+  );
+});
+
+test("submit: no apply mailbox configured → security code stays with the human", async () => {
+  const h = submitHarness({
+    apps: [row({ key: "a", companyName: "Acme", url: GH_URL })],
+    keys: [["a", GH_URL, "Acme"]],
+    answers: [WHY("a")],
+    behavior: { [GH_URL]: { submit: { ok: false, reason: "email_verification" } } },
+  });
+  h.deps.makeCodeWaiter = () => null;
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  const r = h.store.apps[0];
+  assert.deepEqual([r.apply_state, r.apply_note], ["manual", "email_verification"]);
 });
 
 test("submit: input validation", async () => {
@@ -1115,4 +1208,141 @@ test("pre: a To Apply row outside the profile geo is archived, never opened", as
     [["page-waw", "Archived"]]
   );
   assert.match(h.out.join("\n"), /1 outside your geo → archived/);
+});
+
+// --- open (human finishes one job) -----------------------------------------
+
+function openHarness({ apps, successAfter = 1, blockers = [], closeAfter = null, rounds = {} }) {
+  const h = harness({ apps, files: [RESUME] });
+  const launched = [];
+  let polls = 0;
+  const base = h.deps.getAdapter;
+  h.deps.getAdapter = (n) => {
+    const a = base(n);
+    return {
+      ...a,
+      async isSuccess() {
+        polls += 1;
+        return polls >= successAfter ? { url: "done", text: "Thank you for applying" } : null;
+      },
+      async enterSecurityCode(_page, code) {
+        h.log.push(["code", code]);
+        return { ok: true };
+      },
+    };
+  };
+  const baseLaunch = h.deps.launchBrowser;
+  h.deps.launchBrowser = async (opts) => {
+    launched.push(opts);
+    const b = await baseLaunch(opts);
+    return {
+      ...b,
+      newPage: async () => {
+        const p = await b.newPage();
+        p.page.isClosed = () => closeAfter !== null && polls >= closeAfter;
+        return p;
+      },
+    };
+  };
+  const seen = [...blockers];
+  h.deps.detectBlocker = async () => seen.shift() || null;
+  h.deps.sleep = async () => {};
+  h.deps.makeCodeWaiter = () => ({ wait: async () => "Ab3dE9fZ" });
+  // Night answer rounds: rounds[name] = [answers…] under .apply-state/rounds/<name>/answers.
+  const roundsDir = path.join(ROOT, ".apply-state", "rounds");
+  h.deps.isDirectory = (p) =>
+    p === roundsDir || Object.keys(rounds).some((r) => p === path.join(roundsDir, r, "answers"));
+  h.deps.listDir = (p) =>
+    p === roundsDir ? Object.keys(rounds) : p.endsWith("answers") ? ["job.json"] : [];
+  for (const [r, answers] of Object.entries(rounds)) {
+    h.disk.set(path.join(roundsDir, r, "answers", "job.json"), JSON.stringify({ answers }));
+  }
+  return { ...h, launched, polls: () => polls };
+}
+
+test("open: visible window, filled from the newest night answers, Applied by manual on confirmation", async () => {
+  const h = openHarness({
+    apps: [
+      row({
+        key: "gh1",
+        companyName: "Acme",
+        url: GH_URL,
+        apply_state: "manual",
+        apply_note: "captcha",
+      }),
+    ],
+    successAfter: 3,
+    rounds: {
+      "2026-10-20T00": [{ ...WHY("gh1"), answer: "Old answer." }],
+      "2026-10-21T00": [WHY("gh1")],
+    },
+  });
+  assert.equal(await h.run({ phase: "open", key: "gh1" }), 0);
+  assert.ok(
+    h.launched.some((o) => o && o.headless === false),
+    "a visible window for the human"
+  );
+  const fill = h.log.filter((l) => l[0] === "fill").pop();
+  assert.equal(fill[2].q_why, "A sourced, truthful answer.", "the newest round wins");
+  assert.equal(h.log.filter((l) => l[0] === "submit").length, 0, "the human presses Submit");
+  const r = h.store.apps[0];
+  assert.equal(r.status, "Applied");
+  assert.equal(r.applied_by, "manual");
+  assert.equal(r.apply_state, "submitted");
+  assert.deepEqual(h.notionCalls, [["page-gh1", "Applied"]]);
+});
+
+test("open: a Greenhouse security code is typed in for the human and resubmitted", async () => {
+  const h = openHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL, apply_state: "manual" })],
+    successAfter: 99,
+    blockers: ["email_verification"],
+  });
+  assert.equal(await h.run({ phase: "open", key: "gh1" }), 0);
+  assert.deepEqual(
+    h.log.filter((l) => l[0] === "code"),
+    [["code", "Ab3dE9fZ"]]
+  );
+  assert.equal(h.log.filter((l) => l[0] === "submit").length, 1);
+  assert.equal(h.store.apps[0].status, "Applied");
+});
+
+test("open: window closed without a confirmation → row untouched", async () => {
+  const h = openHarness({
+    apps: [
+      row({
+        key: "gh1",
+        companyName: "Acme",
+        url: GH_URL,
+        apply_state: "manual",
+        apply_note: "captcha",
+      }),
+    ],
+    successAfter: 99,
+    closeAfter: 2,
+  });
+  assert.equal(await h.run({ phase: "open", key: "gh1" }), 0);
+  const r = h.store.apps[0];
+  assert.deepEqual([r.status, r.apply_state, r.apply_note], ["To Apply", "manual", "captcha"]);
+  assert.equal(h.notionCalls.length, 0);
+});
+
+test("open: input validation and never on an applied job", async () => {
+  const h = openHarness({
+    apps: [
+      row({
+        key: "gh1",
+        companyName: "Acme",
+        url: GH_URL,
+        applied_date: "2026-10-20",
+        status: "Applied",
+      }),
+    ],
+  });
+  assert.equal(await h.run({ phase: "open" }), 1);
+  assert.match(h.err.join("\n"), /--key/);
+  assert.equal(await h.run({ phase: "open", key: "nope" }), 1);
+  assert.equal(await h.run({ phase: "open", key: "gh1" }), 1);
+  assert.match(h.err.join("\n"), /already_applied/);
+  assert.equal(h.launched.length, 0);
 });

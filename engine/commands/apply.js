@@ -73,6 +73,8 @@ const { resolveResumePdf, resolveCoverLetterPdf } = require("../modules/apply/re
 const { buildQueue, SUBMITTING_PREFIX } = require("../modules/apply/queue.js");
 const { runPool, makeMutex } = require("../modules/apply/pool.js");
 const { launchBrowser } = require("../modules/apply/browser.js");
+const emailCode = require("../modules/apply/email_code.js");
+const { detectBlocker, sleep } = require("../modules/apply/_dom.js");
 
 const DEFAULT_CONCURRENCY = 4;
 const STATE_DIR = ".apply-state";
@@ -84,9 +86,18 @@ const MANUAL_REASONS = new Set([
   "captcha",
   "login_required",
   "email_verification",
+  // Greenhouse security code (owner rule 2026-10-21: the bot reads it from
+  // the apply mailbox) that did not arrive, had no field, or was refused.
+  "email_code_missing",
+  "email_code_field_missing",
+  "email_code_rejected",
   "unknown_page",
   "job_closed",
 ]);
+
+// Outcomes after which the application may still have gone out: before the
+// row is marked, the apply mailbox is checked for the employer's thank-you.
+const CHECK_MAIL_REASONS = new Set(["no_confirmation", "email_code_rejected"]);
 
 // Bank answers to these categories are facts about the candidate (work
 // logistics, tools, experience) and may be reused across companies when the
@@ -301,6 +312,11 @@ function makeDefaultDeps() {
     mkdirp: (dir) => fs.mkdirSync(dir, { recursive: true }),
     now: () => new Date(),
     today: () => todayLocalISO(),
+    detectBlocker,
+    makeCodeWaiter: (profileId, env) => {
+      const fetchMails = emailCode.imapCodeFetcher(profileId, env);
+      return fetchMails ? emailCode.makeCodeWaiter({ fetchMails }) : null;
+    },
   };
 }
 
@@ -546,6 +562,39 @@ async function preparePreJob(app, env) {
   }
 }
 
+// Answer bank — fetched once, matched locally per question.
+async function loadBank(profile, secrets, deps, stdout, stderr) {
+  let bank = [];
+  const dbId = profile.notion && profile.notion.application_qa_db_id;
+  if (dbId && secrets.NOTION_TOKEN) {
+    try {
+      bank = await deps.fetchAllAnswers(deps.makeNotionClient(secrets.NOTION_TOKEN), dbId);
+      stdout(`answer bank: ${bank.length} answer(s)`);
+    } catch (err) {
+      stderr(`warn: answer bank unavailable (${err.message}) — bank answers skipped`);
+    }
+  }
+  if (bank.length) bank = applyRatings(bank, profile, deps, stdout, stderr);
+  return bank;
+}
+
+// Board slugs for ATS-sourced rows (canonical form URLs).
+function loadSlugIndex(ctx, deps, stderr) {
+  try {
+    const companiesPath = path.join(
+      resolveDataDir(ctx.env || process.env),
+      "data",
+      "companies.tsv"
+    );
+    return buildSlugIndex(deps.loadCompanies(companiesPath).rows);
+  } catch (err) {
+    stderr(
+      `warn: data/companies.tsv unavailable (${err.message}) — falling back to URL resolution`
+    );
+    return new Map();
+  }
+}
+
 async function runPre(ctx, deps) {
   const { profileId, flags, stdout, stderr } = ctx;
   const profilesDir = resolveProfilesDir(ctx, ctx.env || process.env);
@@ -574,34 +623,9 @@ async function runPre(ctx, deps) {
       `${outOfArea.length ? `, ${outOfArea.length} outside your geo → archived` : ""})`
   );
 
-  // Answer bank — fetched once, matched locally per question.
-  let bank = [];
-  const dbId = profile.notion && profile.notion.application_qa_db_id;
   const secrets = deps.loadSecrets(profileId, ctx.env || {}) || {};
-  if (dbId && secrets.NOTION_TOKEN && queue.length) {
-    try {
-      bank = await deps.fetchAllAnswers(deps.makeNotionClient(secrets.NOTION_TOKEN), dbId);
-      stdout(`answer bank: ${bank.length} answer(s)`);
-    } catch (err) {
-      stderr(`warn: answer bank unavailable (${err.message}) — bank answers skipped`);
-    }
-  }
-  if (bank.length) bank = applyRatings(bank, profile, deps, stdout, stderr);
-
-  // Board slugs for ATS-sourced rows (canonical form URLs).
-  let slugIndex = new Map();
-  try {
-    const companiesPath = path.join(
-      resolveDataDir(ctx.env || process.env),
-      "data",
-      "companies.tsv"
-    );
-    slugIndex = buildSlugIndex(deps.loadCompanies(companiesPath).rows);
-  } catch (err) {
-    stderr(
-      `warn: data/companies.tsv unavailable (${err.message}) — falling back to URL resolution`
-    );
-  }
+  const bank = queue.length ? await loadBank(profile, secrets, deps, stdout, stderr) : [];
+  const slugIndex = loadSlugIndex(ctx, deps, stderr);
 
   const browser = makeBrowserHandle(deps);
   const env = { profile, deps, applyDefaults, bank, browser, stderr, slugIndex };
@@ -820,6 +844,27 @@ function alreadyApplied(row) {
   return null;
 }
 
+// Greenhouse held the application and mailed a security code to the apply
+// mailbox: read it there, type it in, press Submit again. Without a mailbox
+// (no <ID>_APPLY_GMAIL_*) or an adapter that knows the field, the job stays
+// with the human exactly as before.
+async function passEmailCode(page, adapter, job, since, env) {
+  const held = { ok: false, reason: "email_verification", evidence: null };
+  if (typeof adapter.enterSecurityCode !== "function" || !env.codeWaiter) return held;
+  env.stdout(`  waiting  ${job.company} — security code from the apply mailbox`);
+  const code = await env.codeWaiter.wait({ company: job.company, since });
+  if (!code) return { ok: false, reason: "email_code_missing", evidence: null };
+  const typed = await adapter.enterSecurityCode(page, code);
+  if (!typed.ok) return { ok: false, reason: "email_code_field_missing", evidence: null };
+  const again = await adapter.submit(page, { ignoreBlockers: ["email_verification"] });
+  if (!again.ok && (await detectBlocker(page)) === "email_verification") {
+    // Still asking for the code after the resubmit: the code was refused.
+    // Not "failed": Greenhouse holds the application until a code is accepted.
+    return { ok: false, reason: "email_code_rejected", evidence: again.evidence };
+  }
+  return again;
+}
+
 async function submitOne(job, env) {
   const { profile, deps, browser, flags, writeRow, applicationsPath, llmByKey, stdout } = env;
   const root = profile.paths.root;
@@ -886,7 +931,23 @@ async function submitOne(job, env) {
       a.apply_note = `${SUBMITTING_PREFIX}${deps.now().toISOString()}`;
     });
 
-    const result = await adapter.submit(page);
+    const clickedAt = deps.now();
+    let result = await adapter.submit(page);
+    if (!result.ok && result.reason === "email_verification") {
+      result = await passEmailCode(page, adapter, job, clickedAt, env);
+    }
+    // The page showed no confirmation, yet the application may have gone
+    // out (a live Bill.com run did, twice): the employer's thank-you mail in
+    // the apply mailbox settles it before the row is left as not applied.
+    if (
+      !result.ok &&
+      CHECK_MAIL_REASONS.has(result.reason) &&
+      env.codeWaiter &&
+      typeof env.codeWaiter.confirmed === "function"
+    ) {
+      const mail = await env.codeWaiter.confirmed({ company: job.company, since: clickedAt });
+      if (mail) result = { ok: true, evidence: { email: mail } };
+    }
     await screenshot(page, shotAbs, deps);
     if (result.ok) {
       stdout(`  applied  ${job.company} — ${job.title}`);
@@ -917,7 +978,7 @@ async function recordOutcome(r, env) {
     await writeRow(r.key, (a) => {
       a.status = "Applied";
       a.applied_date = today;
-      a.applied_by = "bot";
+      a.applied_by = r.appliedBy || "bot";
       a.apply_state = "submitted";
       a.apply_note = r.screenshot || "";
       a.updatedAt = deps.now().toISOString();
@@ -1003,6 +1064,7 @@ async function runSubmit(ctx, deps) {
     notion,
     stdout,
     deadlineMs,
+    codeWaiter: flags.dryRun ? null : deps.makeCodeWaiter(profileId, ctx.env || process.env),
   };
   if (jobs.length > 0 && !(await browserReady(browser, stderr))) return 1;
   let results;
@@ -1067,6 +1129,194 @@ async function runSubmit(ctx, deps) {
   return 0;
 }
 
+// --- Phase: open (human finishes one job) -----------------------------------
+//
+// apply --phase open --key <key>. For a job the bot left to the human
+// (captcha, a question without an honest answer): read the live form, open a
+// *visible* browser window, fill it fresh from the answers the night wrote,
+// then watch while the human solves the captcha and presses Submit. A
+// Greenhouse security code is typed in from the apply mailbox; a confirmation
+// marks the row Applied (applied_by "manual"). Nothing is kept open between
+// the night and the morning, so no session or captcha goes stale.
+
+const OPEN_WATCH_MS = 30 * 60 * 1000;
+const OPEN_POLL_MS = 2000;
+
+// Every answers file the night runs wrote, oldest round first, so the newest
+// answer to a label wins.
+function collectNightAnswers(profile, key, deps) {
+  const roundsDir = path.join(stateDir(profile), "rounds");
+  const byLabel = new Map();
+  if (!(deps.isDirectory && deps.isDirectory(roundsDir))) return [];
+  for (const round of deps.listDir(roundsDir).sort()) {
+    const dir = path.join(roundsDir, round, "answers");
+    if (!(deps.isDirectory && deps.isDirectory(dir))) continue;
+    for (const name of deps.listDir(dir).sort()) {
+      if (!name.endsWith(".json") || name.startsWith(".")) continue;
+      let list;
+      try {
+        list = readAnswersList(path.join(dir, name), deps);
+      } catch {
+        continue; // a half-written file from a crashed night
+      }
+      for (const a of list) {
+        if (a && a.key === key && typeof a.label === "string" && a.answer) byLabel.set(a.label, a);
+      }
+    }
+  }
+  return [...byLabel.values()];
+}
+
+async function runOpen(ctx, deps) {
+  const { profileId, flags, stdout, stderr } = ctx;
+  const key = String(flags.key || "").trim();
+  if (!key) {
+    stderr("error: --phase open requires --key <job key>");
+    return 1;
+  }
+  const profilesDir = resolveProfilesDir(ctx, ctx.env || process.env);
+  const profile = deps.loadProfile(profileId, { profilesDir });
+  const applicationsPath = profile.paths.applicationsTsv;
+  const app = freshRow(applicationsPath, key, deps);
+  if (!app) {
+    stderr(`error: no job with key ${key}`);
+    return 1;
+  }
+  const guard = alreadyApplied(app);
+  if (guard && guard !== "interrupted_submit") {
+    stderr(`error: ${app.companyName} — ${app.title}: ${guard}, nothing to open`);
+    return 1;
+  }
+
+  const applyDefaults = loadApplyDefaults(profile, deps);
+  const secrets = deps.loadSecrets(profileId, ctx.env || {}) || {};
+  const bank = await loadBank(profile, secrets, deps, stdout, stderr);
+  const slugIndex = loadSlugIndex(ctx, deps, stderr);
+  const writeRow = makeRowWriter(applicationsPath, deps, { dryRun: false });
+  const notion = {
+    client: secrets.NOTION_TOKEN ? deps.makeNotionClient(secrets.NOTION_TOKEN) : null,
+    propertyMap: (profile.notion && profile.notion.property_map) || notionSync.DEFAULT_PROPERTY_MAP,
+  };
+
+  // Read the live form headless (same path as pre: URL, closed check, salary).
+  const reader = makeBrowserHandle(deps);
+  let r;
+  try {
+    r = await preparePreJob(app, {
+      profile,
+      deps,
+      applyDefaults,
+      bank,
+      browser: reader,
+      stderr,
+      slugIndex,
+    });
+  } finally {
+    await reader.close();
+  }
+  if (r.closed) {
+    await writeRow(key, (a) => {
+      a.status = "Closed";
+      a.apply_state = "";
+      a.apply_note = "job_closed";
+      a.updatedAt = deps.now().toISOString();
+    });
+    await pushStatusToNotion(
+      [{ key }],
+      "Closed",
+      new Map([[key, app]]),
+      profile,
+      secrets,
+      deps,
+      stderr
+    );
+    stdout(`${app.companyName} — ${app.title}: вакансия закрыта, отмечена Closed`);
+    return 0;
+  }
+  if (!r.entry) {
+    stderr(
+      `error: ${app.companyName} — ${app.title}: ${r.manual || r.skip || "cannot read the form"}`
+    );
+    return 1;
+  }
+  const job = r.entry;
+  const adapter = deps.getAdapter(job.ats);
+  const llm = collectNightAnswers(profile, key, deps);
+
+  let headed;
+  try {
+    headed = await deps.launchBrowser({ headless: false });
+  } catch (err) {
+    stderr(`error: cannot start the browser — ${err.message}`);
+    return 1;
+  }
+  const { page } = await headed.newPage();
+  const root = profile.paths.root;
+  const shotRel = path.join(STATE_DIR, "shots", `${safeKey(key)}.png`);
+  try {
+    const opened = await adapter.open(page, job.form_url);
+    if (!opened.ok) {
+      stderr(`error: ${job.company} — ${job.title}: ${opened.reason}`);
+      return 1;
+    }
+    const live = await adapter.readSchema(page);
+    const plan = buildFillPlan(live, job, llm, root);
+    await adapter.fill(page, plan.values);
+    const left = plan.missingRequired.map((f) => f.label || f.id);
+    stdout(`opened ${job.company} — ${job.title}: the form is filled`);
+    if (left.length) stdout(`  fill in yourself: ${left.join("; ")}`);
+    stdout("  press Submit in the browser window; this command waits for the confirmation");
+
+    const codeWaiter = deps.makeCodeWaiter(profileId, ctx.env || process.env);
+    const watchMs = Number.isFinite(deps.openWatchMs) ? deps.openWatchMs : OPEN_WATCH_MS;
+    const started = deps.now().getTime();
+    let codeTried = false;
+    for (;;) {
+      if (typeof page.isClosed === "function" && page.isClosed()) {
+        stdout("  the window was closed — the job stays in «Доделать руками»");
+        return 0;
+      }
+      let evidence = null;
+      try {
+        evidence = await adapter.isSuccess(page);
+      } catch {
+        evidence = null; // navigation in flight
+      }
+      if (!evidence && !codeTried && (await deps.detectBlocker(page)) === "email_verification") {
+        codeTried = true;
+        const since = new Date(deps.now().getTime() - 2 * 60 * 1000);
+        const again = await passEmailCode(page, adapter, job, since, { codeWaiter, stdout });
+        if (again.ok) evidence = again.evidence;
+        else stdout(`  security code: ${again.reason} — enter it by hand`);
+      }
+      if (evidence) {
+        await screenshot(page, path.join(root, shotRel), deps);
+        const done = {
+          key,
+          company: job.company,
+          title: job.title,
+          outcome: "submitted",
+          appliedBy: "manual",
+          screenshot: shotRel,
+        };
+        await recordOutcome(done, { deps, writeRow, notion });
+        stdout(`  applied ${job.company} — ${job.title} (marked Applied)`);
+        return 0;
+      }
+      if (deps.now().getTime() - started >= watchMs) {
+        stdout(
+          `  no confirmation within ${Math.round(watchMs / 60000)} min — ` +
+            "the job stays in «Доделать руками»"
+        );
+        return 0;
+      }
+      await (deps.sleep || sleep)(OPEN_POLL_MS);
+    }
+  } finally {
+    await headed.close().catch(() => {});
+  }
+}
+
 // --- factory -----------------------------------------------------------------
 
 function makeApplyCommand(overrides = {}) {
@@ -1075,7 +1325,8 @@ function makeApplyCommand(overrides = {}) {
     const phase = (ctx.flags && ctx.flags.phase) || "";
     if (phase === "pre") return runPre(ctx, deps);
     if (phase === "submit") return runSubmit(ctx, deps);
-    ctx.stderr("error: --phase <pre|submit> is required for the apply command");
+    if (phase === "open") return runOpen(ctx, deps);
+    ctx.stderr("error: --phase <pre|submit|open> is required for the apply command");
     return 1;
   };
 }

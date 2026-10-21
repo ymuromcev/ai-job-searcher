@@ -367,13 +367,13 @@ async function hasValidationError(page) {
   });
 }
 
-async function submit(page, { timeoutMs = SUBMIT_TIMEOUT_MS } = {}) {
+async function submit(page, { timeoutMs = SUBMIT_TIMEOUT_MS, ignoreBlockers = [] } = {}) {
   let btn = page.locator("#btn-submit");
   if ((await btn.count()) === 0) btn = page.locator('button:has-text("Submit application")');
   if ((await btn.count()) === 0)
     return { ok: false, reason: STOP_REASONS.UNKNOWN_PAGE, evidence: null };
   await btn.first().click();
-  return waitForOutcome(page, { isSuccess, hasValidationError, timeoutMs });
+  return waitForOutcome(page, { isSuccess, hasValidationError, timeoutMs, ignoreBlockers });
 }
 
 module.exports = {

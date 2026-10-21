@@ -38,6 +38,7 @@ const {
   FillError,
   pickLocationOption,
   SUBMIT_TIMEOUT_MS,
+  enterSecurityCode,
 } = require("./_dom.js");
 
 const { pickOption } = require("./question_match.js");
@@ -477,7 +478,7 @@ async function hasValidationError(page) {
   });
 }
 
-async function submit(page, { timeoutMs = SUBMIT_TIMEOUT_MS } = {}) {
+async function submit(page, { timeoutMs = SUBMIT_TIMEOUT_MS, ignoreBlockers = [] } = {}) {
   const btn = page
     .locator(
       `${FORM_SEL.split(",")[0]} button[type=submit], button[type=submit]:has-text("Submit")`
@@ -486,7 +487,7 @@ async function submit(page, { timeoutMs = SUBMIT_TIMEOUT_MS } = {}) {
   if ((await btn.count()) === 0)
     return { ok: false, reason: STOP_REASONS.UNKNOWN_PAGE, evidence: null };
   await btn.click();
-  return waitForOutcome(page, { isSuccess, hasValidationError, timeoutMs });
+  return waitForOutcome(page, { isSuccess, hasValidationError, timeoutMs, ignoreBlockers });
 }
 
 module.exports = {
@@ -501,4 +502,7 @@ module.exports = {
   checkFilled,
   submit,
   isSuccess,
+  // Greenhouse mails a security code after Submit (owner rule 2026-10-21:
+  // the bot reads it from the apply mailbox and enters it).
+  enterSecurityCode,
 };

@@ -666,3 +666,80 @@ test("command: the bank tab reads the temp profile's local backup, and a rating 
     assert.equal(await running, 0);
   }
 });
+
+// --- «Открыть заполненной» (BL-225) ------------------------------------------
+
+test("server: POST /api/open — token, JSON only, strict { key }", async () => {
+  const opened = [];
+  const data = {
+    ...FAKE_DATA,
+    openForm: async ({ key }) => {
+      opened.push(key);
+      return { ok: true, key };
+    },
+  };
+  const { port, token, server, closed } = await startBoardServer({ data });
+  try {
+    assert.equal((await postJson(port, "/api/open", { key: "greenhouse:1" })).status, 403);
+    const key = { "X-Board-Token": token };
+    const ok = await postJson(port, "/api/open", { key: "greenhouse:6101858004" }, key);
+    assert.equal(ok.status, 200);
+    const wd = "workday:/job/San-Francisco-CA/Sr-Product-Manager_R0007415";
+    assert.equal((await postJson(port, "/api/open", { key: wd }, key)).status, 200);
+    for (const bad of [
+      { key: "" },
+      { key: "greenhouse:1; rm -rf /" },
+      { key: "--phase" },
+      { key: "greenhouse:1", extra: 1 },
+      { key: 5 },
+    ]) {
+      const res = await postJson(port, "/api/open", bad, key);
+      assert.equal(res.status, 400, JSON.stringify(bad));
+    }
+    assert.deepEqual(opened, ["greenhouse:6101858004", wd]);
+  } finally {
+    server.shutdown();
+    await closed;
+  }
+});
+
+test("makeDataLoaders.openForm: only a job on the «Доделать руками» list starts the window", () => {
+  const rows = [
+    {
+      key: "greenhouse:1",
+      companyName: "Acme",
+      title: "PM",
+      url: "https://job-boards.greenhouse.io/acme/jobs/1",
+      status: "To Apply",
+      apply_state: "manual",
+      apply_note: "captcha",
+      updatedAt: "2026-10-21T00:00:00Z",
+    },
+    {
+      key: "greenhouse:2",
+      companyName: "Beta",
+      title: "PM",
+      status: "Applied",
+      apply_state: "submitted",
+    },
+  ];
+  const t = makeTempProfile();
+  const spawned = [];
+  const loaders = makeDataLoaders(
+    { id: "demo", modules: [], paths: { root: t.profileDir, applicationsTsv: "x" } },
+    {
+      loadApplications: () => ({ apps: rows }),
+      today: () => "2026-10-21",
+      now: () => Date.parse("2026-10-21T12:00:00Z"),
+      spawnOpen: (profile, key) => spawned.push([profile.id, key]),
+    }
+  );
+  assert.deepEqual(loaders.openForm({ key: "greenhouse:1" }), {
+    ok: true,
+    key: "greenhouse:1",
+    company: "Acme",
+    title: "PM",
+  });
+  assert.throws(() => loaders.openForm({ key: "greenhouse:2" }), /Доделать руками/);
+  assert.deepEqual(spawned, [["demo", "greenhouse:1"]]);
+});

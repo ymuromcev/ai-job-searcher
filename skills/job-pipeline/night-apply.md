@@ -174,7 +174,7 @@ One short message in Russian:
 - **Git:** ok `<sha>` or `⚠️ skipped: <reason>`.
 - **Итог ночи:** the `night finished (...)` line from Step 5: подано / руками / ошибки / перенесено на завтра; почему остановилась.
 - **Нашли и подготовили:** new jobs from scan (and failed adapters, one line each); prepared Strong / Medium / Weak; how many Strong got a tailored resume and how many escalated (with reasons). A Strong row with no tailored resume and no escalation is a bug — name it.
-- **Доделать руками:** top 3 reasons from tonight's `apply_results-*.json` `manual` / `failed` rows (e.g. `captcha: 4, unsupported_ats:…: 3`). The full list is on the board, tab «Доделать руками».
+- **Доделать руками:** top 3 reasons from tonight's `apply_results-*.json` `manual` / `failed` rows (e.g. `captcha: 4, unsupported_ats:…: 3`). The full list is on the board, tab «Доделать руками»; its «Открыть заполненной» button opens each form already filled for the owner to submit.
 - **Предупреждения:** `scan_failed`, prepare/commit/apply failures with the stderr line, invalid row results from collect, a missing token (by env-var name), usage stop.
 
 If nothing was found and nothing was ready: `📭 новых вакансий нет, подавать нечего`.

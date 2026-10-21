@@ -725,5 +725,5 @@ test("apply: the real handler is registered and rejects a missing phase", async 
     commands: { apply: require("./commands/apply.js") },
   });
   assert.equal(code, 1);
-  assert.match(s.err(), /--phase <pre\|submit> is required/);
+  assert.match(s.err(), /--phase <pre\|submit\|open> is required/);
 });

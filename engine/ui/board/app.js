@@ -1,5 +1,6 @@
-// Registry board page (RFC 068 §8). Reads everything; the one write is a
-// rating on the «Банк ответов» tab (POST /api/rating).
+// Registry board page (RFC 068 §8). Reads everything; the writes are a
+// rating on the «Банк ответов» tab (POST /api/rating) and «Открыть
+// заполненной» on «Доделать руками» (POST /api/open).
 //
 // Everything that comes from the server is other people's text (company
 // names, titles, reasons, answers): it goes into the document with
@@ -190,6 +191,29 @@ function renderResponses() {
 
 // --- «Доделать руками» -----------------------------------------------------
 
+// «Открыть заполненной»: the server starts a visible browser window on this
+// Mac with the form already filled; the owner solves the captcha and presses
+// Submit there, and the job moves to Applied by itself.
+function openCell(r) {
+  const td = el("td");
+  const b = el("button", "Открыть заполненной");
+  b.type = "button";
+  b.addEventListener("click", () => {
+    b.disabled = true;
+    message("Открываю " + r.company + ": окно браузера появится примерно через полминуты");
+    api("/api/open", "POST", { key: r.key })
+      .then(() => {
+        b.textContent = "Открыто";
+      })
+      .catch((err) => {
+        b.disabled = false;
+        message("Не открылось: " + err.message);
+      });
+  });
+  td.appendChild(b);
+  return td;
+}
+
 function renderTodo() {
   const rows = state.registry.todo;
   fillBody(
@@ -199,7 +223,8 @@ function renderTodo() {
       r.title,
       r.apply_state_label,
       r.reason,
-      linkCell(r.url, "открыть форму"),
+      openCell(r),
+      linkCell(r.url, "вакансия"),
     ])
   );
   $("#todo-empty").hidden = rows.length > 0;

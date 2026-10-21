@@ -934,7 +934,7 @@ node engine/cli.js apply --profile <id> --phase submit --answers-file <answers-<
 
 `--deadline` (the night passes its own): no new form is opened after it; those jobs stay queued for the next run.
 
-For each job whose required questions are all answered: fill, attach resume PDF + cover letter PDF, pre-submit check (every required field filled, files attached), re-check `applied_date`, Submit, wait for the ATS confirmation, screenshot to `.apply-state/shots/<key>.png`. Success → `status=Applied`, `applied_by=bot`, `apply_state=submitted`, Notion status Applied. No confirmation → `failed` (never retried automatically). Captcha / login / email code / unexpected screen → `manual` with reason. `--dry-run` stops before the Submit click and keeps a screenshot of the filled form.
+For each job whose required questions are all answered: fill, attach resume PDF + cover letter PDF, pre-submit check (every required field filled, files attached), re-check `applied_date`, Submit, wait for the ATS confirmation, screenshot to `.apply-state/shots/<key>.png`. Success → `status=Applied`, `applied_by=bot`, `apply_state=submitted`, Notion status Applied. No confirmation → `failed` (never retried automatically). Greenhouse security code mailed to the apply address → the engine reads it from the apply mailbox, types it in and resubmits (owner rule 2026-10-21); no code within 5 min → `manual`. Captcha / login / unexpected screen → `manual` with reason; the owner finishes those from the board («Открыть заполненной» opens the form already filled). `--dry-run` stops before the Submit click and keeps a screenshot of the filled form.
 
 #### Report
 

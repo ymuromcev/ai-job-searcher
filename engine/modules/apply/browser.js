@@ -48,7 +48,8 @@ async function launchBrowser({ headless = true } = {}) {
     async newPage() {
       const context = await browser.newContext({
         userAgent: USER_AGENT,
-        viewport: { width: 1280, height: 1600 },
+        // A visible window (apply --phase open) follows the window size.
+        viewport: headless ? { width: 1280, height: 1600 } : null,
         locale: "en-US",
         timezoneId: "America/Los_Angeles",
       });

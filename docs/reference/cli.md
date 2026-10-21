@@ -357,16 +357,17 @@ Common errors:
 
 ### apply
 
-Synopsis: `node engine/cli.js apply --profile <id> --phase <pre|submit> [...]`
+Synopsis: `node engine/cli.js apply --profile <id> --phase <pre|submit|open> [...]`
 
-The bot fills and submits application forms (RFC 068). `--phase pre` builds the queue (`To Apply`, Strong/Medium, empty `applied_date`, not `submitted`/`failed`/`manual`, within the company cap, newest first), resolves aggregator links to the ATS form, opens each form in headless Playwright Chromium, reads its fields and answers the standard ones (identity, `apply_defaults.json`, salary rule, answer bank). The owner's ratings from the board's «Банк ответов» tab (`profiles/<id>/.answers/ratings.json`) shape the bank: an answer rated 1–2 is never reused; when several answers match, the higher rated wins, then the newer (unrated counts as 3); an unreadable ratings file skips the bank for the run. The `job-pipeline` skill (mode `apply`) answers the rest and writes the answers file. `--phase submit` fills, attaches resume + cover letter, runs the pre-submit check, re-checks `applied_date`, clicks Submit and waits for the ATS confirmation.
+The bot fills and submits application forms (RFC 068). `--phase pre` builds the queue (`To Apply`, Strong/Medium, empty `applied_date`, not `submitted`/`failed`/`manual`, within the company cap, newest first), resolves aggregator links to the ATS form, opens each form in headless Playwright Chromium, reads its fields and answers the standard ones (identity, `apply_defaults.json`, salary rule, answer bank). The owner's ratings from the board's «Банк ответов» tab (`profiles/<id>/.answers/ratings.json`) shape the bank: an answer rated 1–2 is never reused; when several answers match, the higher rated wins, then the newer (unrated counts as 3); an unreadable ratings file skips the bank for the run. The `job-pipeline` skill (mode `apply`) answers the rest and writes the answers file. `--phase submit` fills, attaches resume + cover letter, runs the pre-submit check, re-checks `applied_date`, clicks Submit and waits for the ATS confirmation. When Greenhouse holds the application for an emailed security code, the bot reads the code from the apply mailbox (`<ID>_APPLY_GMAIL_USER` / `<ID>_APPLY_GMAIL_APP_PASSWORD`, only mail from Greenhouse about this company sent after the click, up to 5 minutes), types it in and presses Submit again (owner decision 2026-10-21). `--phase open --key <key>` is for the human: it reads the live form, opens a visible browser window with it filled from the answers the night runs wrote (`.apply-state/rounds/*/answers/`, newest wins), leaves the captcha and the Submit click to the human, types an emailed security code in for them, and marks the row Applied (`applied_by=manual`) when the confirmation appears; it waits up to 30 minutes and leaves the row as it was if the window is closed first. The board's «Открыть заполненной» button runs it.
 
 Flags:
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | `--profile <id>` | string | — | Required. |
-| `--phase <pre\|submit>` | string | — | Required. |
+| `--phase <pre\|submit\|open>` | string | — | Required. |
+| `--key <key>` | string | — | Required for `--phase open`: the job key (e.g. `greenhouse:6101858004`). |
 | `--limit <N>` | integer | — | `pre`: cap the queue at N jobs after gating. |
 | `--answers-file <path>` | string | — | Required for `--phase submit`. JSON: `{"answers":[{key, label, answer, bank_page_id}]}`, or a directory of such files (one per job — the night run's `answers/` folder; an empty directory is valid). |
 | `--concurrency <N>` | integer | 4 | Parallel browser contexts; at most one open form per ATS tenant. |
@@ -376,7 +377,7 @@ Flags:
 Outputs and side effects:
 
 - `--phase pre`: writes `profiles/<id>/.apply-state/apply_context.json` (per job: form schema, resolved answers, `unanswered[]`) and a stamped `.apply-state/apply_pre-<ts>.json` (keys queued / manual / skipped by this run — read by `night`; `bank_used` lists which bank answer went into which form — the board's reuse count). Sets `apply_state=queued` on carried jobs and `apply_state=manual` + `apply_note=<reason>` (`unsupported_ats:<host>`, `unresolved_url:<host>`, `no_application_url`, `captcha`, `login_required`, `resume_missing`, …) on the rest. Rows found by the Greenhouse / Lever / Ashby scanners go straight to the form built from the job id + the board slug in `data/companies.tsv` (Greenhouse: the hosted `embed/job_app?for=<slug>&token=<id>` form, which renders even when the board redirects to a custom careers site); other rows follow redirects, with a headless-browser retry for aggregators (Adzuna) that refuse plain fetch. Postings the ATS reports as gone (Greenhouse / Lever posting API 404, or a "no longer open" page) get `status=Closed` + `apply_note=job_closed` (Notion status `Closed` too) — they are not left for the human. `--dry-run` writes neither.
-- `--phase submit`: success → `status=Applied`, `applied_date`, `applied_by=bot`, `apply_state=submitted`, `apply_note=<screenshot path>`, Notion status `Applied`. No confirmation → `apply_state=failed` (never retried). Captcha / login / email code / unexpected screen → `manual`. Screenshots in `profiles/<id>/.apply-state/shots/`; run summary in `.apply-state/apply_results-<ts>.json`.
+- `--phase submit`: success → `status=Applied`, `applied_date`, `applied_by=bot`, `apply_state=submitted`, `apply_note=<screenshot path>`, Notion status `Applied`. No confirmation → `apply_state=failed` (never retried). Captcha / login / unexpected screen → `manual`; an emailed security code that does not arrive, has no field, or is refused → `manual` with `email_code_missing` / `email_code_field_missing` / `email_code_rejected` (no apply mailbox configured → `email_verification`). Screenshots in `profiles/<id>/.apply-state/shots/`; run summary in `.apply-state/apply_results-<ts>.json`.
 
 Example:
 
@@ -388,7 +389,8 @@ node engine/cli.js apply --profile <id> --phase submit \
 
 Common errors:
 
-- `--phase <pre|submit> is required for the apply command`.
+- `--phase <pre|submit|open> is required for the apply command`.
+- `--phase open requires --key <job key>`.
 - `--phase submit requires --answers-file <path>`.
 - `apply_context.json not found — run apply --phase pre first`.
 - `Playwright Chromium not found … run: npx playwright install chromium`.
@@ -520,7 +522,7 @@ Synopsis: `node engine/cli.js board --profile <id> [--no-open] [--port <n>]`
 
 Opens the registry page (RFC 068 §8). A small `node:http` server on `127.0.0.1` serves static files from `engine/ui/board/` and JSON from `GET /api/registry`, `GET /api/week`, `GET /api/sources` and `GET /api/bank`; every request re-reads `applications.tsv` (and the scan health log and the nightly run log `.health/apply_runs.jsonl`). The page is a plain wireframe with five tabs: applications (search, filter by status and by who applied, sortable columns), rows to finish by hand (`apply_state` `manual` / `failed`, with the reason and a link to the form), the weekly numbers, job sources / application sites with a health status, and the answer bank («Банк ответов», BL-225).
 
-The answer bank tab lists every bank answer newest first: question, answer (collapsed to three lines, expandable), company, role, category, source (the apply bot's truth-checked answers vs the owner's own, from the answer's notes), date, how many jobs the bot filled with it (counted from `apply_pre-*.json`, so only from BL-225 U7 on), and a 1–5 star rating; filters "без оценки" / "бот" / "все" and a text search. The bank comes from the Notion answers DB when the profile has a token and `notion.application_qa_db_id`, else from the local backup `profiles/<id>/application_answers/*.md`; it is cached in memory for a minute («Обновить» re-reads it). When Notion fails the tab shows the local backup with a one-line notice. A click on a star is saved at once by `POST /api/rating` (JSON `{id, rating}`, rating 1–5 or `null` to clear; same token / Host / Origin checks; only ids present in the bank) into `profiles/<id>/.answers/ratings.json` (atomic write). Ratings are the only thing the board writes — the TSV and Notion are never written. `apply --phase pre` reads the same file (see `apply`).
+The answer bank tab lists every bank answer newest first: question, answer (collapsed to three lines, expandable), company, role, category, source (the apply bot's truth-checked answers vs the owner's own, from the answer's notes), date, how many jobs the bot filled with it (counted from `apply_pre-*.json`, so only from BL-225 U7 on), and a 1–5 star rating; filters "без оценки" / "бот" / "все" and a text search. The bank comes from the Notion answers DB when the profile has a token and `notion.application_qa_db_id`, else from the local backup `profiles/<id>/application_answers/*.md`; it is cached in memory for a minute («Обновить» re-reads it). When Notion fails the tab shows the local backup with a one-line notice. A click on a star is saved at once by `POST /api/rating` (JSON `{id, rating}`, rating 1–5 or `null` to clear; same token / Host / Origin checks; only ids present in the bank) into `profiles/<id>/.answers/ratings.json` (atomic write). Ratings are the only thing the board writes itself — it never writes the TSV or Notion. On «Доделать руками» each job has an «Открыть заполненной» button: `POST /api/open` (JSON `{key}`, same checks; only a key on that list) starts `apply --phase open --key <key>` as a separate process (output in `profiles/<id>/.apply-state/open.log`), which opens the filled form in a visible window and marks the job Applied once the owner submits it. `apply --phase pre` reads the same file (see `apply`).
 
 Security: random token in the URL (`?k=`, also accepted as the `X-Board-Token` header), exact `Host` / `Origin` checks against the loopback host and port, loopback-only peers, strict CSP. Page text from the TSV is rendered with `textContent` only.
 
@@ -537,7 +539,7 @@ Outputs and side effects:
 - Prints `board for <id>: http://127.0.0.1:<port>/?k=<token>` and serves until closed.
 - Writes a lock file (`pid`, `port`, `token`; mode 600) at `~/Library/Application Support/ai-job-searcher/state/<id>/board.lock` (override the state dir with `AI_JOB_SEARCHER_STATE_DIR`). A second launch finds the live server through the lock and prints / opens its URL instead of starting another one. A lock left by a dead process is removed.
 - Shuts down after 30 minutes without requests, on `POST /api/quit` (the page's close button), or on Ctrl-C; removes its lock on exit.
-- Writes `profiles/<id>/.answers/ratings.json` when the owner rates an answer; nothing else.
+- Writes `profiles/<id>/.answers/ratings.json` when the owner rates an answer; starts `apply --phase open` on «Открыть заполненной» (that process writes the TSV row and Notion status when the job is submitted).
 - The lazy auto-Dead / auto-No-Response sweeps that run before other commands are skipped for `board`.
 
 Example:

@@ -145,6 +145,10 @@ async function waitForOutcome(page, opts) {
     timeoutMs = SUBMIT_TIMEOUT_MS,
     pollMs = 500,
     validationGraceMs = 2500,
+    // Blockers to look past: after a security code is typed in, its field
+    // stays on the page while Greenhouse processes the resubmit — that is not
+    // a new stop (a live run read it as one and missed a real application).
+    ignoreBlockers = [],
   } = opts;
   const started = Date.now();
   for (;;) {
@@ -156,7 +160,7 @@ async function waitForOutcome(page, opts) {
     }
     if (evidence) return { ok: true, evidence };
     const blocker = await detectBlocker(page);
-    if (blocker) {
+    if (blocker && !ignoreBlockers.includes(blocker)) {
       return { ok: false, reason: blocker, evidence: { url: safeUrl(page) } };
     }
     const elapsed = Date.now() - started;
@@ -328,8 +332,48 @@ const US_STATE_NAMES = {
   WY: "Wyoming",
 };
 
+// Type an emailed security code into the form (Greenhouse holds the
+// application until it is entered). Handles one input or one box per
+// character. Returns { ok } — false when no code field is on the page.
+async function enterSecurityCode(page, code) {
+  const n = await page.evaluate(() => {
+    const shown = (i) => {
+      const r = i.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && i.type !== "hidden";
+    };
+    const sig = (i) =>
+      `${i.id} ${i.name} ${i.getAttribute("aria-label") || ""} ${i.getAttribute("autocomplete") || ""}`;
+    const inputs = Array.from(document.querySelectorAll("input")).filter(shown);
+    // Strongest signal first. A bare "code" also matches "Postal Code" /
+    // "zip code" — those are never the security code (a live run once typed
+    // the code's first letter into the postal code).
+    const strong = inputs.filter((i) => /security|verif|otp|one-time-code/i.test(sig(i)));
+    const weak = inputs.filter(
+      (i) => /\bcode\b/i.test(sig(i)) && !/postal|zip|country|area|promo|referr/i.test(sig(i))
+    );
+    const hits = strong.length ? strong : weak;
+    document.querySelectorAll("[data-ajs-code]").forEach((i) => i.removeAttribute("data-ajs-code"));
+    hits.forEach((i, k) => i.setAttribute("data-ajs-code", String(k)));
+    return hits.length;
+  });
+  if (!n) return { ok: false };
+  // One box per character must be exactly one box per character; anything
+  // else is a field we do not understand — leave it to the human.
+  if (n > 1 && n !== String(code).length) return { ok: false };
+  if (n === 1) {
+    await page.locator('[data-ajs-code="0"]').fill(code);
+  } else {
+    const chars = String(code).split("");
+    for (let k = 0; k < Math.min(n, chars.length); k += 1) {
+      await page.locator(`[data-ajs-code="${k}"]`).fill(chars[k]);
+    }
+  }
+  return { ok: true };
+}
+
 module.exports = {
   SUBMIT_TIMEOUT_MS,
+  enterSecurityCode,
   pickLocationOption,
   STOP_REASONS,
   detectBlocker,

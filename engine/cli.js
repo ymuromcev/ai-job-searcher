@@ -82,6 +82,7 @@ const PARSE_OPTIONS = {
     out: { type: "string" },
     // `apply` (RFC 068).
     "answers-file": { type: "string" },
+    key: { type: "string" },
     concurrency: { type: "string" },
     deadline: { type: "string" },
     // `night` (RFC 068 §9, BL-225).
@@ -160,7 +161,9 @@ Commands:
              writes .apply-state/apply_context.json; the job-pipeline skill
              answers the open questions; --phase submit fills, submits and
              marks Applied. --dry-run stops before the Submit click.
-             See RFC 068.
+             --phase open --key <key> opens one manual job in a visible
+             browser, filled, for the human to press Submit (the board's
+             «Открыть заполненной» button). See RFC 068.
   night      Rails for the unattended nightly run (skills/job-pipeline/
              night-apply.md): lock + deadline (start), what to do next
              (check), per-row / per-job fan-out files for parallel
@@ -411,6 +414,7 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
       out: parsed.values.out || "",
       // apply (RFC 068)
       answersFile: parsed.values["answers-file"] || "",
+      key: parsed.values.key || "",
       concurrency: parsed.values.concurrency ? parseInt(parsed.values.concurrency, 10) : null,
       deadline: parsed.values.deadline || "",
       // night (RFC 068 §9, BL-225)
