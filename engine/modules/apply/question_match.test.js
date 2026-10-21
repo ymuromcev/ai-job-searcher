@@ -60,6 +60,10 @@ test("identity fields", () => {
   assert.deepEqual(m(text("First Name")), { source: "identity", value: "Test" });
   assert.deepEqual(m(text("Preferred First Name")), { source: "identity", value: "Test" });
   assert.deepEqual(m(text("Last Name")), { source: "identity", value: "Candidate Example" });
+  assert.deepEqual(m(text("Preferred Last Name")), {
+    source: "identity",
+    value: "Candidate Example",
+  });
   assert.deepEqual(m(text("Full name")), { source: "identity", value: "Test Candidate Example" });
   assert.deepEqual(m(text("Legal Name")), { source: "identity", value: "Test Candidate Example" });
   assert.deepEqual(m(text("Email")), { source: "identity", value: "candidate@example.com" });
@@ -183,6 +187,11 @@ test("how did you hear: default text, exact option, or nearest bucket", () => {
       source: "defaults",
       value: "Company website",
     }
+  );
+  // Samsara's wording (live form, 2026-10).
+  assert.deepEqual(
+    m(select("Where have you learned about Acme? Select all that apply.", ["LinkedIn", "Other"])),
+    { source: "defaults", value: "Other" }
   );
   assert.deepEqual(m(select("How did you find this role?", ["Referral", "Other"])), {
     source: "defaults",

@@ -190,7 +190,7 @@ function matchRelocation(label, field, ctx) {
 
 function matchHowHeard(label, field, ctx) {
   if (
-    !/\b(how did you (hear|find|learn|come across)|where did you (hear|find|learn)|how did you discover|referral source|source of (your )?application|how were you referred)\b/.test(
+    !/\b(how did you (hear|find|learn|come across)|where (did|have) you (hear|heard|find|found|learn|learned) about|where did you (hear|find|learn)|how did you discover|referral source|source of (your )?application|how were you referred)\b/.test(
       label
     )
   ) {
@@ -252,7 +252,7 @@ const IDENTITY_RULES = [
     pick: (id) => splitName(id.name).first,
   },
   {
-    re: /^(legal )?last name$|^surname$|^family name$|^last$/,
+    re: /^(legal |preferred )?last name$|^surname$|^family name$|^last$/,
     pick: (id) => splitName(id.name).last,
   },
   { re: /^(full |legal |your )?name$|^(full )?legal name$|^name full$/, pick: (id) => id.name },
