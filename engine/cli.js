@@ -26,7 +26,14 @@ const KNOWN_COMMANDS = [
   "retro-tailor",
   "backfill-outreach-url",
   "companies-upsert",
+  "board",
+  "report",
 ];
+
+// Commands that only read profile state (RFC 068 §8 / §10). The lazy
+// auto-Dead / auto-No-Response sweeps write the TSV and Notion, so they are
+// skipped for these — opening the registry must never change data.
+const READ_ONLY_COMMANDS = new Set(["board", "report"]);
 
 const PARSE_OPTIONS = {
   options: {
@@ -64,6 +71,11 @@ const PARSE_OPTIONS = {
     "applied-date": { type: "string" },
     "resume-ver": { type: "string" },
     force: { type: "boolean", default: false },
+    // `board` / `report` (RFC 068 §8 / §10).
+    "no-open": { type: "boolean", default: false },
+    port: { type: "string" },
+    weekly: { type: "boolean", default: false },
+    out: { type: "string" },
   },
   allowPositionals: true,
   strict: true,
@@ -122,6 +134,13 @@ Commands:
              fields only; Tier is never written. Dry-run by default (prints
              "N to create, M to fill, K skip"); --apply commits. See RFC 062 /
              BL-202.
+  board      Open the read-only registry page: applications, rows to finish
+             by hand, the weekly numbers, job sources and application sites.
+             Local server on 127.0.0.1 with a token in the URL; a second
+             launch reuses the running one; closes after 30 min idle.
+             See RFC 068.
+  report     Write a report page. With --weekly: weekly application stats
+             as weekly-<YYYY-MM-DD>.html. See RFC 068.
 
 Flags:
   --profile <id>       Profile id (required for all commands). Lowercase, alphanum + - _.
@@ -203,6 +222,15 @@ answer flags:
   --results-file <path>  Required for --phase push. JSON: {company, role, question,
                          answer, category?, notes?, existingPageId?}.
 
+board flags:
+  --no-open              Print the URL without opening the browser.
+  --port <n>             Listen on this port (default: any free port).
+
+report flags:
+  --weekly               Required. Weekly stats for the 7 days ending today.
+  --out <dir>            Output directory. Default: $AI_JOB_SEARCHER_DATA_DIR/reports,
+                         else data/reports in the repo.
+
 Environment:
   Per-profile secrets are namespaced by profile id (uppercased). For example,
   with --profile jared the CLI reads JARED_NOTION_TOKEN, JARED_USAJOBS_API_KEY,
@@ -248,6 +276,8 @@ function defaultCommands() {
     "retro-tailor": require("./commands/retro_tailor.js"),
     "backfill-outreach-url": require("./commands/backfill_outreach_url.js"),
     "companies-upsert": require("./commands/companies_upsert.js"),
+    board: require("./commands/board.js"),
+    report: require("./commands/report.js"),
   };
 }
 
@@ -321,6 +351,11 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
       appliedDate: parsed.values["applied-date"] || "",
       resumeVer: parsed.values["resume-ver"] || "",
       force: Boolean(parsed.values.force),
+      // board / report (RFC 068). `port` stays a string — board validates it.
+      noOpen: Boolean(parsed.values["no-open"]),
+      port: parsed.values.port || "",
+      weekly: Boolean(parsed.values.weekly),
+      out: parsed.values.out || "",
     },
     env,
     stdout: writeOut,
@@ -395,9 +430,11 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
   const { runAutoNoResponseSweep } = require("./core/auto_no_response_sweep.js");
 
   try {
-    const todayStr = todayLocalISO();
-    await runAutoDeadSweep(ctx.profileId, ctx, { todayStr });
-    await runAutoNoResponseSweep(ctx.profileId, ctx, { todayStr });
+    if (!READ_ONLY_COMMANDS.has(ctx.command)) {
+      const todayStr = todayLocalISO();
+      await runAutoDeadSweep(ctx.profileId, ctx, { todayStr });
+      await runAutoNoResponseSweep(ctx.profileId, ctx, { todayStr });
+    }
     const preHook = PIPELINE_PRE_HOOKS[ctx.command];
     if (preHook) await preHook(ctx, handlers);
     const code = await handler(ctx);
@@ -410,7 +447,7 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
   }
 }
 
-module.exports = { runCli, KNOWN_COMMANDS, HELP_TEXT };
+module.exports = { runCli, KNOWN_COMMANDS, HELP_TEXT, READ_ONLY_COMMANDS };
 
 if (require.main === module) {
   // Load `.env` only when invoked as a CLI — tests keep hermetic env via

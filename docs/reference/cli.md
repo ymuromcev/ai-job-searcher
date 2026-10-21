@@ -65,6 +65,7 @@ Outputs and side effects:
 - Appends to `data/jobs.tsv` (shared pool).
 - Appends to `profiles/<id>/applications.tsv` (`status: Inbox` for passed rows, `Archived` for filter-rejected).
 - Appends to `profiles/<id>/filter_rejections.log` (one JSON object per line).
+- Appends one line per discovery source to `profiles/<id>/.health/scan_runs.jsonl` (`{ts, source, found, error}`; secrets redacted; lines older than 60 days dropped on write). Feeds the board's sources tab. Skipped with `--dry-run`; a write failure only warns (`warn: could not write scan health log`), never fails the scan.
 - BEFORE running, auto-triggers `sync --apply` (Notion → TSV pull + archive sweep) unless `--dry-run` or `--no-sync` (BL-151 / RFC 054).
 
 Example:
@@ -473,6 +474,71 @@ Common errors:
 - `error: --results-file <path> is required for --apply` — commit phase needs the SKILL output. Run recon first; the SKILL session reads `retro_tailor_context.json` and writes results to disk.
 - `warn: <key> status is "Applied" — skipped. Did you sync since recon?` — TSV moved between recon and commit. Re-run `sync --apply`, then re-run recon to refresh the candidate set.
 - `warn: <ID>_NOTION_TOKEN missing — Notion updates skipped` — `.env` is missing the per-profile Notion token. DOCX/PDF were generated on disk, but TSV `resume_ver` was not updated. Fix `.env` and re-run.
+
+### board
+
+Synopsis: `node engine/cli.js board --profile <id> [--no-open] [--port <n>]`
+
+Opens the read-only registry page (RFC 068 §8). A small `node:http` server on `127.0.0.1` serves static files from `engine/ui/board/` and JSON from `GET /api/registry`, `GET /api/week` and `GET /api/sources`; every request re-reads `applications.tsv` (and the scan health log). No endpoint writes data. The page is a plain wireframe with four tabs: applications (search, filter by status and by who applied, sortable columns), rows to finish by hand (`apply_state` `manual` / `failed`, with the reason and a link to the form), the weekly numbers, and job sources / application sites with a health status.
+
+Security: random token in the URL (`?k=`, also accepted as the `X-Board-Token` header), exact `Host` / `Origin` checks against the loopback host and port, loopback-only peers, strict CSP. Page text from the TSV is rendered with `textContent` only.
+
+Flags:
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--profile <id>` | string | — | Required. |
+| `--no-open` | boolean | false | Print the URL without opening the browser. Otherwise macOS `open <url>` (Linux: `xdg-open`). |
+| `--port <n>` | int | 0 | Port to listen on. `0` picks any free port. |
+
+Outputs and side effects:
+
+- Prints `board for <id>: http://127.0.0.1:<port>/?k=<token>` and serves until closed.
+- Writes a lock file (`pid`, `port`, `token`; mode 600) at `~/Library/Application Support/ai-job-searcher/state/<id>/board.lock` (override the state dir with `AI_JOB_SEARCHER_STATE_DIR`). A second launch finds the live server through the lock and prints / opens its URL instead of starting another one. A lock left by a dead process is removed.
+- Shuts down after 30 minutes without requests, on `POST /api/quit` (the page's close button), or on Ctrl-C; removes its lock on exit.
+- Read-only: the lazy auto-Dead / auto-No-Response sweeps that run before other commands are skipped for `board`.
+
+Example:
+
+```bash
+node engine/cli.js board --profile <id>
+node engine/cli.js board --profile <id> --no-open --port 8765
+```
+
+Common errors:
+
+- `error: --port must be an integer 0..65535` — fix the flag value.
+- `error: cannot listen on 127.0.0.1:<port>: EADDRINUSE` — the port is taken; omit the flag to pick a free one.
+- The page shows a load error carrying an `applications.tsv` parse message — run `validate` to see the bad row.
+
+### report
+
+Synopsis: `node engine/cli.js report --profile <id> --weekly [--out <dir>]`
+
+Writes the weekly review page (RFC 068 §10): applied / responses / interviews / rejections / response rate for the 7 days ending today and cumulative, broken down by fit score, resume archetype, source, ATS host, geo bucket (CA / remote / other), posting age at apply time (`applied_date − createdAt`: 0–3, 4–14, 15–30, 31+ days) and who applied, plus the top reasons rows are waiting for a manual application. The same numbers are on the board's weekly tab.
+
+Flags:
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--profile <id>` | string | — | Required. |
+| `--weekly` | boolean | false | Required. The only report kind so far. |
+| `--out <dir>` | string | see below | Output directory. Default: `$AI_JOB_SEARCHER_DATA_DIR/reports`, else `data/reports` in the repo. |
+
+Outputs and side effects:
+
+- Writes a self-contained HTML page `weekly-<YYYY-MM-DD>.html` (no scripts, no network) and prints its path. Re-running on the same day overwrites that day's page.
+- Read-only on `applications.tsv`; the lazy sweeps are skipped.
+
+Example:
+
+```bash
+node engine/cli.js report --profile <id> --weekly --out ~/reports
+```
+
+Common errors:
+
+- `error: report needs a kind; the only one so far is --weekly`.
 
 ## Environment variables
 
