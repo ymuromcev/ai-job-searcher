@@ -159,7 +159,10 @@ function computeSourceHash(json) {
 // ---------- clustering ----------
 
 // Apply user-defined achievement clusters to a list of deduped bullets.
-// Each cluster def: { id, name, canonical, outcome?, match_patterns: [string], match_any?: true }
+// Each cluster def: { id, name, canonical, outcome?, note?, canonical_only_note?,
+//   match_patterns: [string], match_any?: true }
+// `note` is free-form context for the tailoring subagent; `canonical_only_note`
+// annotates a cluster that has no archetype bullets yet (e.g. its storybank id).
 // Bullet matches cluster if any of its match_patterns appears (case-insensitive) in bullet.plain.
 // First-match wins. Unmatched bullets returned separately.
 function applyClusters(bullets, clusterDefs, archetypes) {
@@ -220,8 +223,10 @@ function renderCluster(c, archetypes) {
   let out = `- **${c.def.name || c.def.id}**\n`;
   if (c.def.canonical) out += `  - Canonical: ${c.def.canonical}\n`;
   if (c.def.outcome) out += `  - Outcome: ${c.def.outcome}\n`;
+  if (c.def.note) out += `  - Note: ${c.def.note}\n`;
   if (c.angles.length === 0) {
-    out += `  - _(No matching archetype bullets — canonical only.)_\n`;
+    const extra = c.def.canonical_only_note ? ` ${c.def.canonical_only_note}` : "";
+    out += `  - _(No matching archetype bullets — canonical only.${extra})_\n`;
     return out + "\n";
   }
   out += `  - Angles by archetype:\n`;

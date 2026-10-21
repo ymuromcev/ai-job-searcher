@@ -204,3 +204,22 @@ test("SKILL.md no longer routes Fit Score through user_resume_key_points as the 
     "old domain-rubric Strong rule must be gone"
   );
 });
+
+// RFC 068 — apply mode: three phases, truth check, bank push, answers file.
+test("SKILL.md documents the apply mode (bot applies)", () => {
+  const text = fs.readFileSync(SKILL_PATH, "utf8");
+  assert.match(text, /\/job-pipeline apply/, "missing /apply command doc");
+  assert.match(text, /^### apply$/m, "missing ### apply section");
+  assert.match(text, /node engine\/cli\.js apply --profile <id> --phase pre/);
+  assert.match(text, /node engine\/cli\.js apply --profile <id> --phase submit --answers-file/);
+  assert.match(text, /references\/apply_truth_review\.md/);
+  assert.match(text, /no_honest_answer/);
+  assert.match(text, /answer --profile <id> --phase push/);
+  const brief = path.resolve(__dirname, "references", "apply_truth_review.md");
+  assert.ok(fs.existsSync(brief), "truth-review brief missing");
+  const b = fs.readFileSync(brief, "utf8");
+  assert.match(b, /co-founder/i);
+  assert.match(b, /AI-native builder/i);
+  assert.match(b, /^PASS$/m);
+  assert.match(b, /^FAIL$/m);
+});

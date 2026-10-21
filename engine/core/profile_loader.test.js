@@ -591,6 +591,25 @@ test("normalizeGeo: us-wide defaults countries to ['US']", () => {
   assert.deepEqual(out.countries, ["US"]);
 });
 
+test("normalizeGeo: home_state_or_remote canonicalizes home_state (RFC 068)", () => {
+  const out = normalizeGeo({ mode: "home_state_or_remote", home_state: "california" });
+  assert.equal(out.mode, "home_state_or_remote");
+  assert.equal(out.home_state, "CA");
+  assert.equal(normalizeGeo({ mode: "home_state_or_remote", home_state: "ca" }).home_state, "CA");
+});
+
+test("normalizeGeo: home_state_or_remote requires a US home_state", () => {
+  assert.throws(() => normalizeGeo({ mode: "home_state_or_remote" }), /home_state is required/);
+  assert.throws(
+    () => normalizeGeo({ mode: "home_state_or_remote", home_state: "Ontario" }),
+    /home_state is required/
+  );
+});
+
+test("normalizeGeo: other modes do not carry home_state", () => {
+  assert.equal("home_state" in normalizeGeo({ mode: "us-wide", home_state: "CA" }), false);
+});
+
 test("normalizeGeo: unrestricted with explicit remote_ok", () => {
   const out = normalizeGeo({ mode: "unrestricted", remote_ok: true });
   assert.equal(out.mode, "unrestricted");

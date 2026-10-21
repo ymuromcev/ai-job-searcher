@@ -288,3 +288,44 @@ test("checkOne does not skip for greenhouse/lever/ashby", async () => {
   assert.equal(result.alive, true);
   assert.equal(result.skipped, undefined);
 });
+
+// --- ATS posting APIs (BL-225) ----------------------------------------------
+
+test("checkOne: Ashby posting missing from the org board → dead (SPA page answers 200)", async () => {
+  const id = "62267b66-e970-432c-8cf2-5b6bb25302a4";
+  const open = "11111111-2222-3333-4444-555555555555";
+  let boardCalls = 0;
+  const fetchFn = async (url, opts = {}) => {
+    if (url === "https://api.ashbyhq.com/posting-api/job-board/zip") {
+      boardCalls += 1;
+      return { ok: true, status: 200, json: async () => ({ jobs: [{ id: open }] }) };
+    }
+    if ((opts.method || "GET") === "HEAD") return { ok: true, status: 200, url };
+    throw new Error(`unmocked ${url}`);
+  };
+  const rows = [
+    { key: "a", url: `https://jobs.ashbyhq.com/zip/${id}` },
+    { key: "b", url: `https://jobs.ashbyhq.com/zip/${open}` },
+  ];
+  const [gone, live] = await checkAll(rows, fetchFn, { concurrency: 1 });
+  assert.equal(gone.alive, false);
+  assert.equal(gone.postingClosed, true);
+  assert.equal(live.alive, true);
+  assert.equal(boardCalls, 1, "one board fetch per org per batch");
+});
+
+test("checkOne: Greenhouse / Lever posting API 404 → dead; API error → normal check", async () => {
+  const gh = makeFetch({
+    "GET:https://boards-api.greenhouse.io/v1/boards/affirm/jobs/12345": { status: 404 },
+    [`HEAD:${JOB_URL}`]: { status: 200 },
+  });
+  assert.equal((await checkOne({ url: JOB_URL }, gh)).alive, false);
+  const lv = "https://jobs.lever.co/acme/11111111-2222-3333-4444-555555555555";
+  const lever = makeFetch({
+    "GET:https://api.lever.co/v0/postings/acme/11111111-2222-3333-4444-555555555555": {
+      throws: new Error("ECONNRESET"),
+    },
+    [`HEAD:${lv}`]: { status: 200 },
+  });
+  assert.equal((await checkOne({ url: lv }, lever)).alive, true);
+});

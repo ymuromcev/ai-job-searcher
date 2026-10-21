@@ -158,6 +158,10 @@ function buildManualRow(input, nowIso) {
     hm_outreach_status: "To do",
     hm_outreach_date: "",
     applied_date: validateDate(input.appliedDate, "--applied-date"),
+    // RFC 068 (TSV v8): apply-tracking columns start empty for manual entries.
+    applied_by: "",
+    apply_state: "",
+    apply_note: "",
   };
 }
 

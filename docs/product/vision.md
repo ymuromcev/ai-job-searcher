@@ -53,10 +53,15 @@ tracks every reply (Gmail integration with classifier and Notion
 status updates), and learns from rejections (rejection log,
 retroactive blocklist sweeps, fit-prerank tuning).
 
-The operator stays in the loop on every send. There is no auto-apply,
-no autonomous outreach, no background daemon firing applications
-while the operator sleeps. The engine prepares; the operator reviews
-and decides.
+Amended by [RFC 068](../../rfc/068-auto-apply.md) (2026-10-20): the
+operator sets the policy and the bot applies. A nightly run on the
+operator's own machine fills and submits Greenhouse / Lever / Ashby forms
+within that policy (fit, geography, salary floor, company cap, never
+re-apply), answers custom questions only from the operator's own
+material with an independent truth check, and leaves everything it
+cannot do honestly (captcha, login, unsupported ATS, no honest answer)
+on a manual list. The operator reviews outcomes weekly, not every send.
+There is still no autonomous outreach and no recruiter replies.
 
 The flagship surface is Notion — a per-profile Kanban board where
 every job is a card with all the context attached. Notion is the UI;
@@ -96,9 +101,10 @@ path with zero coupling.
   research. The engine indexes; it does not host.
 - Not a SaaS. Personal toolkit, public source. No hosted multi-tenant
   offering, no signup flow, no billing.
-- No auto-apply. The operator presses send. Every cover letter, every
-  Notion status change that affects external systems, every recruiter
-  reply is reviewed.
+- No unbounded auto-apply. The bot applies only inside the operator's
+  policy (RFC 068), never creates accounts, enters passwords, solves
+  captchas or uses LinkedIn Easy Apply. Recruiter replies are still
+  reviewed by the operator.
 - No LinkedIn automation that violates ToS. No scraped résumé
   databases, no fake profile generation, no message blasting.
 - No public roadmap or commitments. Stages land when they land; the

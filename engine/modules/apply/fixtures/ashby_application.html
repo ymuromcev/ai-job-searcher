@@ -1,0 +1,321 @@
+<!doctype html>
+<!--
+  Synthetic Ashby application form (RFC 068 test fixture).
+  Mirrors jobs.ashbyhq.com/<org>/<uuid>/application: field-entry rows with
+  `data-field-path`, question-title labels with a `_required_*` class,
+  Yes/No button pairs, a location combobox, hidden file inputs. Success
+  replaces the form in place. No real candidate or company data.
+
+  Variants: ?variant=captcha — Submit reveals a visible reCAPTCHA challenge.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Product Manager @ Acme Synthetic</title>
+    <style>
+      ._active_x {
+        background: #333;
+        color: #fff;
+      }
+      .hidden-file {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="ashby-application-form-container" id="container">
+      <div class="ashby-application-form-field-entry" data-field-path="_systemfield_name">
+        <label
+          class="_heading_a _required_b ashby-application-form-question-title"
+          for="_systemfield_name"
+          >Legal Name</label
+        >
+        <input id="_systemfield_name" name="_systemfield_name" type="text" required />
+      </div>
+      <div class="ashby-application-form-field-entry" data-field-path="_systemfield_email">
+        <label
+          class="_heading_a _required_b ashby-application-form-question-title"
+          for="_systemfield_email"
+          >Email</label
+        >
+        <input id="_systemfield_email" name="_systemfield_email" type="email" required />
+      </div>
+      <div
+        class="ashby-application-form-field-entry"
+        data-field-path="5a5a5a5a-0000-4000-8000-000000000001"
+      >
+        <label
+          class="_heading_a _required_b ashby-application-form-question-title"
+          for="5a5a5a5a-0000-4000-8000-000000000001"
+          >Phone</label
+        >
+        <input
+          id="5a5a5a5a-0000-4000-8000-000000000001"
+          name="5a5a5a5a-0000-4000-8000-000000000001"
+          type="tel"
+          required
+        />
+      </div>
+      <div class="ashby-application-form-field-entry" data-field-path="_systemfield_location">
+        <label
+          class="_heading_a _required_b ashby-application-form-question-title"
+          for="_systemfield_location"
+          >Where do you plan on working from?</label
+        >
+        <div>
+          <input placeholder="Start typing..." role="combobox" aria-autocomplete="list" />
+          <div id="loc-list" role="listbox"></div>
+        </div>
+      </div>
+      <div class="ashby-application-form-field-entry" data-field-path="_systemfield_resume">
+        <label
+          class="_heading_a _required_b ashby-application-form-question-title"
+          for="_systemfield_resume"
+          >Resume</label
+        >
+        <div role="presentation">
+          <input id="_systemfield_resume" type="file" class="hidden-file" required /><button
+            type="button"
+          >
+            Upload File
+          </button>
+        </div>
+      </div>
+      <div
+        class="ashby-application-form-field-entry"
+        data-field-path="5a5a5a5a-0000-4000-8000-000000000002"
+      >
+        <label
+          class="_heading_a ashby-application-form-question-title"
+          for="5a5a5a5a-0000-4000-8000-000000000002"
+          >Cover Letter</label
+        >
+        <div role="presentation">
+          <input id="5a5a5a5a-0000-4000-8000-000000000002" type="file" class="hidden-file" /><button
+            type="button"
+          >
+            Upload File
+          </button>
+        </div>
+      </div>
+      <div
+        class="ashby-application-form-field-entry"
+        data-field-path="5a5a5a5a-0000-4000-8000-000000000003"
+      >
+        <label
+          class="_heading_a _required_b ashby-application-form-question-title"
+          for="5a5a5a5a-0000-4000-8000-000000000003"
+          >LinkedIn Profile</label
+        >
+        <input
+          id="5a5a5a5a-0000-4000-8000-000000000003"
+          name="5a5a5a5a-0000-4000-8000-000000000003"
+          type="text"
+          required
+        />
+      </div>
+      <div
+        class="ashby-application-form-field-entry"
+        data-field-path="5a5a5a5a-0000-4000-8000-000000000004"
+      >
+        <label
+          class="_heading_a _required_b ashby-application-form-question-title"
+          for="5a5a5a5a-0000-4000-8000-000000000004"
+          >Are you authorized to work in the US?</label
+        >
+        <div class="ashby-application-form-input-yesno">
+          <button
+            type="button"
+            class="ashby-application-form-input-yesno-option"
+            aria-pressed="false"
+            data-option="yes"
+          >
+            Yes
+          </button>
+          <button
+            type="button"
+            class="ashby-application-form-input-yesno-option"
+            aria-pressed="false"
+            data-option="no"
+          >
+            No
+          </button>
+          <input
+            type="checkbox"
+            tabindex="-1"
+            name="5a5a5a5a-0000-4000-8000-000000000004"
+            style="display: none"
+          />
+        </div>
+      </div>
+      <div
+        class="ashby-application-form-field-entry"
+        data-field-path="5a5a5a5a-0000-4000-8000-000000000005"
+      >
+        <label
+          class="_heading_a _required_b ashby-application-form-question-title"
+          for="5a5a5a5a-0000-4000-8000-000000000005"
+          >Do you now or will you in the future require visa sponsorship?</label
+        >
+        <div class="ashby-application-form-input-yesno">
+          <button
+            type="button"
+            class="ashby-application-form-input-yesno-option"
+            aria-pressed="false"
+            data-option="yes"
+          >
+            Yes
+          </button>
+          <button
+            type="button"
+            class="ashby-application-form-input-yesno-option"
+            aria-pressed="false"
+            data-option="no"
+          >
+            No
+          </button>
+          <input
+            type="checkbox"
+            tabindex="-1"
+            name="5a5a5a5a-0000-4000-8000-000000000005"
+            style="display: none"
+          />
+        </div>
+      </div>
+      <div
+        class="ashby-application-form-field-entry"
+        data-field-path="5a5a5a5a-0000-4000-8000-000000000006"
+      >
+        <label
+          class="_heading_a _required_b ashby-application-form-question-title"
+          for="5a5a5a5a-0000-4000-8000-000000000006"
+          >Describe a product you shipped end to end.</label
+        >
+        <textarea
+          id="5a5a5a5a-0000-4000-8000-000000000006"
+          name="5a5a5a5a-0000-4000-8000-000000000006"
+          required
+        ></textarea>
+      </div>
+      <div
+        class="ashby-application-form-field-entry"
+        data-field-path="5a5a5a5a-0000-4000-8000-000000000007"
+      >
+        <label
+          class="_heading_a ashby-application-form-question-title"
+          for="5a5a5a5a-0000-4000-8000-000000000007"
+          >How did you hear about us?</label
+        >
+        <fieldset>
+          <label><input type="radio" name="hear" value="careers" />Company careers page</label>
+          <label><input type="radio" name="hear" value="board" />Job board</label>
+          <label><input type="radio" name="hear" value="other" />Other</label>
+        </fieldset>
+      </div>
+      <div class="ashby-application-form-field-entry" data-field-path="_systemfield_eeoc_gender">
+        <label
+          class="_heading_a ashby-application-form-question-title"
+          for="_systemfield_eeoc_gender"
+          >Gender</label
+        >
+        <fieldset>
+          <label><input type="radio" name="gender" value="m" />Male</label>
+          <label><input type="radio" name="gender" value="f" />Female</label>
+          <label><input type="radio" name="gender" value="d" />Decline to self-identify</label>
+        </fieldset>
+      </div>
+      <div
+        class="ashby-application-form-field-entry"
+        data-field-path="_systemfield_eeoc_veteran_status"
+      >
+        <label
+          class="_heading_a ashby-application-form-question-title"
+          for="_systemfield_eeoc_veteran_status"
+          >Veteran Status</label
+        >
+        <fieldset>
+          <label><input type="radio" name="veteran" value="n" />I am not a protected veteran</label>
+          <label><input type="radio" name="veteran" value="d" />I don't wish to answer</label>
+        </fieldset>
+      </div>
+      <p id="err"></p>
+      <button type="button" class="_button_x ashby-application-form-submit-button">
+        <span>Submit Application</span>
+      </button>
+    </div>
+    <script>
+      document.querySelectorAll(".ashby-application-form-input-yesno").forEach((group) => {
+        group.querySelectorAll("button").forEach((b) => {
+          b.addEventListener("click", () => {
+            group.querySelectorAll("button").forEach((x) => {
+              x.setAttribute("aria-pressed", "false");
+              x.classList.remove("_active_x");
+            });
+            b.setAttribute("aria-pressed", "true");
+            b.classList.add("_active_x");
+            group.querySelector("input").checked = b.dataset.option === "yes";
+          });
+        });
+      });
+      const combo = document.querySelector('[data-field-path="_systemfield_location"] input');
+      const list = document.getElementById("loc-list");
+      combo.addEventListener("input", () => {
+        list.innerHTML = "";
+        if (combo.value.trim().length < 2) return;
+        setTimeout(() => {
+          const o = document.createElement("div");
+          o.setAttribute("role", "option");
+          o.textContent = "Springfield, Illinois, United States";
+          o.addEventListener("click", () => {
+            combo.value = o.textContent;
+            list.innerHTML = "";
+          });
+          list.appendChild(o);
+        }, 150);
+      });
+      const variant = new URLSearchParams(location.search).get("variant") || "";
+      document
+        .querySelector(".ashby-application-form-submit-button")
+        .addEventListener("click", () => {
+          const missing = [];
+          document.querySelectorAll(".ashby-application-form-field-entry").forEach((entry) => {
+            const title = entry.querySelector(".ashby-application-form-question-title");
+            if (!/_required/.test(title.className)) return;
+            const file = entry.querySelector("input[type=file]");
+            const yes = entry.querySelectorAll("button[data-option]");
+            const ctl = entry.querySelector(
+              "textarea, input:not([type=file]):not([type=checkbox])"
+            );
+            if (file) {
+              if (!file.files.length) missing.push(entry.dataset.fieldPath);
+            } else if (yes.length) {
+              if (![...yes].some((b) => b.getAttribute("aria-pressed") === "true"))
+                missing.push(entry.dataset.fieldPath);
+            } else if (ctl && !ctl.value.trim()) {
+              missing.push(entry.dataset.fieldPath);
+            }
+          });
+          if (missing.length) {
+            document.getElementById("err").textContent =
+              "Your form needs corrections: " + missing.join(", ");
+            return;
+          }
+          if (variant === "captcha") {
+            const f = document.createElement("iframe");
+            f.src = "about:blank#recaptcha/api2/bframe";
+            f.title = "recaptcha challenge expires in two minutes";
+            f.style.cssText = "width:400px;height:580px;display:block";
+            document.body.appendChild(f);
+            return;
+          }
+          document.getElementById("container").outerHTML =
+            '<div class="ashby-application-form-success-container"><h2>Application submitted</h2>' +
+            "<p>Thank you for applying. Your application was successfully submitted.</p></div>";
+        });
+    </script>
+  </body>
+</html>

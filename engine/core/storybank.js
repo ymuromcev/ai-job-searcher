@@ -9,7 +9,8 @@
 //
 //   2. `### Story Details` with one `#### S0NN — ...` block per story. Each block
 //      holds a 2-column RU/EN STAR table (Situation/Task/Action/Result/Earned
-//      Secret) plus a `- **Deploy for.**` line.
+//      Secret) plus a `- **Deploy for.**` line. Stories already rewritten into
+//      say-aloud form have unlabelled rows and a `^say-s0nn` anchor instead.
 //
 // This module turns that markdown into a flat array of story objects. It is the
 // deterministic read-point that the fit-digest generator (RFC 060, BL-192) builds
@@ -75,8 +76,10 @@ function parseTable(sectionLines) {
   let colMap = null; // index -> key
   for (const line of sectionLines) {
     if (!line.trimStart().startsWith("|")) {
-      // A non-table line ends the table once we have started reading it.
-      if (colMap) break;
+      // A non-table line ends the table once we have started reading it. Blank
+      // lines do not: the bank is hand-edited and rows get appended after a
+      // gap, which must not silently drop every story below it.
+      if (colMap && line.trim() !== "") break;
       continue;
     }
     const cells = splitRow(line);
@@ -111,6 +114,20 @@ function cleanStarCell(text, label) {
   return t;
 }
 
+// English (right-hand) cell of the last row of a say-aloud table — the pipe row
+// directly above the `^say-s0nn` anchor. Returns null when the block has no
+// anchor or the table has no spoken rows.
+function sayAloudClosingLine(bodyLines) {
+  const anchor = bodyLines.findIndex((l) => /^\^say-s\d+\s*$/i.test(l.trim()));
+  if (anchor === -1) return null;
+  let i = anchor - 1;
+  while (i >= 0 && bodyLines[i].trim() === "") i--;
+  if (i < 0 || !bodyLines[i].trimStart().startsWith("|")) return null;
+  const cells = splitRow(bodyLines[i]);
+  if (isSeparatorRow(cells)) return null;
+  return cells[cells.length - 1] || null;
+}
+
 // Parse the `#### S0NN — ...` detail blocks into { result, deployFor } enrichment
 // keyed by story id. Best-effort: a story with no detail block is simply absent.
 function parseDetailBlocks(section) {
@@ -124,10 +141,17 @@ function parseDetailBlocks(section) {
     const enrich = {};
 
     // Result: the English (right-hand) cell of the `**Result.**` table row.
-    const resultLine = body.split(/\r?\n/).find((l) => /\|\s*\*\*Result/.test(l));
+    const bodyLines = body.split(/\r?\n/);
+    const resultLine = bodyLines.find((l) => /\|\s*\*\*Result/.test(l));
     if (resultLine) {
       const cells = splitRow(resultLine);
       const en = cells[cells.length - 1];
+      if (en) enrich.result = cleanStarCell(en, "Result");
+    } else {
+      // Say-aloud form: the STAR labels are gone and the table is closed by a
+      // `^say-s0nn` block anchor. The story ends on its outcome, so the last
+      // spoken line stands in for the Result row.
+      const en = sayAloudClosingLine(bodyLines);
       if (en) enrich.result = cleanStarCell(en, "Result");
     }
 

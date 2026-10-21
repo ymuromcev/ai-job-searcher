@@ -330,6 +330,34 @@ test("renderCluster emits canonical + outcome + sorted angles", () => {
   assert.ok(md.includes("used_in: [all]"));
 });
 
+test("renderCluster emits optional note and canonical-only note", () => {
+  const withAngles = renderCluster(
+    {
+      def: { id: "x", name: "X", canonical: "C.", outcome: "O.", note: "Context." },
+      angles: [{ md: "Angle.", used_in: ["ArchA"] }],
+    },
+    ["ArchA"]
+  );
+  assert.ok(withAngles.includes("  - Outcome: O.\n  - Note: Context.\n  - Angles by archetype:"));
+
+  const canonicalOnly = renderCluster(
+    {
+      def: { id: "y", name: "Y", canonical: "C.", canonical_only_note: "Storybank: S001." },
+      angles: [],
+    },
+    ["ArchA"]
+  );
+  assert.ok(
+    canonicalOnly.includes("_(No matching archetype bullets — canonical only. Storybank: S001.)_")
+  );
+
+  const plain = renderCluster({ def: { id: "z", name: "Z", canonical: "C." }, angles: [] }, [
+    "ArchA",
+  ]);
+  assert.ok(plain.includes("_(No matching archetype bullets — canonical only.)_"));
+  assert.ok(!plain.includes("Note:"));
+});
+
 // ---------- new field rendering ----------
 
 test("renderMaster uses rv.career_narrative when provided", () => {

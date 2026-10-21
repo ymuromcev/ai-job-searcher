@@ -44,12 +44,33 @@ const path = require("path");
  * @param {object} row — entry from results.json `results[]`
  * @returns {"tailored" | "escalated" | "archetype"}
  */
-function classifyRow(row) {
+function classifyRow(row, opts = {}) {
   if (!row || typeof row !== "object") return "archetype";
 
   // Escalation wins even if a tailoredResume was also provided — the
   // SKILL contract is that escalated rows skip the auto-ship path.
-  if (row.tailorEscalated === true) return "escalated";
+  // Exception (RFC 068 auto-apply, owner policy `tailor_ship_min_coverage`):
+  // a coverage-gap escalation (no growth / iteration cap — the resume only
+  // lacks JD phrases the candidate has no basis for) at or above that
+  // coverage ships as tailored; it still lands in the escalation report.
+  // `uncertain_about_fact` never ships: a fact needs the owner.
+  if (row.tailorEscalated === true) {
+    const min = opts.shipEscalatedMinCoverage;
+    const gapOnly =
+      row.tailorEscalationReason === "no_growth_below_threshold" ||
+      row.tailorEscalationReason === "iteration_cap_below_threshold";
+    if (
+      Number.isFinite(min) &&
+      gapOnly &&
+      Number.isFinite(row.tailorCoverage) &&
+      row.tailorCoverage >= min &&
+      row.tailoredResume &&
+      typeof row.tailoredResume === "object"
+    ) {
+      return "tailored";
+    }
+    return "escalated";
+  }
 
   if (row.tailoredResume && typeof row.tailoredResume === "object") {
     return "tailored";

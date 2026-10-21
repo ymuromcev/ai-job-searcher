@@ -201,17 +201,130 @@ test("KNOWN_COMMANDS lists exactly the supported commands", () => {
   assert.deepEqual([...KNOWN_COMMANDS].sort(), [
     "add",
     "answer",
+    "apply",
     "backfill-outreach-url",
+    "board",
     "check",
     "companies-upsert",
     "indeed-prep",
+    "night",
     "prepare",
     "reclassify",
+    "report",
     "retro-tailor",
     "scan",
     "sync",
     "validate",
   ]);
+});
+
+// RFC 068 §8 / §10: board + report flags reach ctx.flags (ctx is a whitelist).
+test("board: --no-open and --port reach the command through ctx.flags", async () => {
+  const s = makeStreams();
+  const board = spyCommand();
+  const code = await runCli({
+    argv: ["board", "--profile", "jared", "--no-open", "--port", "8765"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { board },
+  });
+  assert.equal(code, 0);
+  assert.equal(board.calls[0].flags.noOpen, true);
+  assert.equal(board.calls[0].flags.port, "8765");
+});
+
+test("board: defaults — browser opens, any free port", async () => {
+  const s = makeStreams();
+  const board = spyCommand();
+  await runCli({
+    argv: ["board", "--profile", "jared"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { board },
+  });
+  assert.equal(board.calls[0].flags.noOpen, false);
+  assert.equal(board.calls[0].flags.port, "");
+});
+
+test("report: --weekly and --out reach the command through ctx.flags", async () => {
+  const s = makeStreams();
+  const report = spyCommand();
+  const code = await runCli({
+    argv: ["report", "--profile", "jared", "--weekly", "--out", "/tmp/r"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { report },
+  });
+  assert.equal(code, 0);
+  assert.equal(report.calls[0].flags.weekly, true);
+  assert.equal(report.calls[0].flags.out, "/tmp/r");
+
+  const s2 = makeStreams();
+  const report2 = spyCommand();
+  await runCli({
+    argv: ["report", "--profile", "jared"],
+    stdout: s2.stdout,
+    stderr: s2.stderr,
+    commands: { report: report2 },
+  });
+  assert.equal(report2.calls[0].flags.weekly, false);
+  assert.equal(report2.calls[0].flags.out, "");
+});
+
+test("board / report / night are read-only: no lazy sweeps run before them", async () => {
+  const { READ_ONLY_COMMANDS } = require("./cli.js");
+  assert.deepEqual([...READ_ONLY_COMMANDS].sort(), ["board", "night", "report"]);
+});
+
+// RFC 068 §9 / BL-225: night + apply --deadline flags reach ctx.flags.
+test("night: --target / --stop-at / --max-hours / --stop-reason reach ctx.flags", async () => {
+  const s = makeStreams();
+  const night = spyCommand();
+  const code = await runCli({
+    argv: [
+      "night",
+      "--profile",
+      "jared",
+      "--phase",
+      "start",
+      "--target",
+      "120",
+      "--stop-at",
+      "05:45",
+      "--max-hours",
+      "8.5",
+      "--stop-reason",
+      "deadline",
+    ],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { night },
+  });
+  assert.equal(code, 0);
+  const f = night.calls[0].flags;
+  assert.equal(f.phase, "start");
+  assert.equal(f.target, 120);
+  assert.equal(f.stopAt, "05:45");
+  assert.equal(f.maxHours, 8.5);
+  assert.equal(f.stopReason, "deadline");
+
+  const s2 = makeStreams();
+  const apply = spyCommand();
+  await runCli({
+    argv: [
+      "apply",
+      "--profile",
+      "jared",
+      "--phase",
+      "submit",
+      "--deadline",
+      "2026-10-22T13:30:00Z",
+    ],
+    stdout: s2.stdout,
+    stderr: s2.stderr,
+    commands: { apply },
+  });
+  assert.equal(apply.calls[0].flags.deadline, "2026-10-22T13:30:00Z");
 });
 
 // Regression (RFC 063): ctx.flags is an explicit whitelist, so registering a
@@ -552,4 +665,65 @@ test("runCli passes --results-file flag for prepare commit", async () => {
   const ctx = prepare.calls[0];
   assert.equal(ctx.flags.phase, "commit");
   assert.equal(ctx.flags.resultsFile, "/tmp/r.json");
+});
+
+// RFC 068: `apply` flags must be threaded into ctx.flags (same whitelist
+// trap as `add` above).
+test("apply: --phase / --answers-file / --concurrency / --limit / --dry-run reach the command", async () => {
+  const s = makeStreams();
+  const apply = spyCommand();
+  const code = await runCli({
+    argv: [
+      "apply",
+      "--profile",
+      "jared",
+      "--phase",
+      "submit",
+      "--answers-file",
+      "answers.json",
+      "--concurrency",
+      "6",
+      "--limit",
+      "25",
+      "--dry-run",
+    ],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { apply },
+  });
+  assert.equal(code, 0);
+  assert.equal(apply.calls.length, 1);
+  const f = apply.calls[0].flags;
+  assert.equal(f.phase, "submit");
+  assert.equal(f.answersFile, "answers.json");
+  assert.equal(f.concurrency, 6);
+  assert.equal(f.limit, 25);
+  assert.equal(f.dryRun, true);
+});
+
+test("apply: defaults when optional flags are absent", async () => {
+  const s = makeStreams();
+  const apply = spyCommand();
+  await runCli({
+    argv: ["apply", "--profile", "jared", "--phase", "pre"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { apply },
+  });
+  const f = apply.calls[0].flags;
+  assert.equal(f.answersFile, "");
+  assert.equal(f.concurrency, null);
+  assert.equal(f.limit, null);
+});
+
+test("apply: the real handler is registered and rejects a missing phase", async () => {
+  const s = makeStreams();
+  const code = await runCli({
+    argv: ["apply", "--profile", "jared"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { apply: require("./commands/apply.js") },
+  });
+  assert.equal(code, 1);
+  assert.match(s.err(), /--phase <pre\|submit\|open> is required/);
 });

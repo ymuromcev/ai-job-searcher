@@ -175,3 +175,37 @@ test("tailoredResumePathPdf: profile id does not leak into the path", () => {
   const p = tailoredResumePathPdf("anyone", "brex", "head-of-product", "20260101");
   assert.equal(p, "resumes/tailored/brex_head-of-product_20260101.pdf");
 });
+
+test("classifyRow: coverage-gap escalation ships at/above the owner's threshold", () => {
+  const base = {
+    tailorEscalated: true,
+    tailorEscalationReason: "no_growth_below_threshold",
+    tailorCoverage: 78,
+    tailoredResume: { contact: {} },
+  };
+  assert.equal(classifyRow(base), "escalated", "no policy → unchanged");
+  assert.equal(classifyRow(base, { shipEscalatedMinCoverage: 75 }), "tailored");
+  assert.equal(
+    classifyRow({ ...base, tailorCoverage: 70 }, { shipEscalatedMinCoverage: 75 }),
+    "escalated"
+  );
+  assert.equal(
+    classifyRow(
+      { ...base, tailorEscalationReason: "iteration_cap_below_threshold" },
+      { shipEscalatedMinCoverage: 75 }
+    ),
+    "tailored"
+  );
+  assert.equal(
+    classifyRow(
+      { ...base, tailorEscalationReason: "uncertain_about_fact" },
+      { shipEscalatedMinCoverage: 75 }
+    ),
+    "escalated",
+    "a fact question always waits for the owner"
+  );
+  assert.equal(
+    classifyRow({ ...base, tailoredResume: null }, { shipEscalatedMinCoverage: 75 }),
+    "escalated"
+  );
+});

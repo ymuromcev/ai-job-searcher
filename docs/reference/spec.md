@@ -367,7 +367,7 @@ re-enters `--phase pre`.
 
 Skipped rows carry `reason ∈ {"company_blocklist", "title_requirelist",
 "title_blocklist", "company_cap", "url_dead", "geo_title_excluded",
-"hard_blocker:*"}` plus reason-specific extras. Sources with no real URL
+"geo_jd_not_remote", "hard_blocker:*"}` plus reason-specific extras. Sources with no real URL
 (`linkedin`, `indeed`, `custom`) skip URL check via
 `SKIP_URL_CHECK_SOURCES` — they pass with `{alive: true, skipped: true}`.
 
@@ -375,6 +375,13 @@ Skipped rows carry `reason ∈ {"company_blocklist", "title_requirelist",
 an exclusive non-US geo marker (e.g. `"Senior PM (UK/EU/India)"`,
 `"Lead PM — EMEA only"`) without a US / accept-country marker. The check
 runs inside `applyPrepareFilter` before the URL-check budget is spent.
+`geo_jd_not_remote` (BL-225, geo mode `home_state_or_remote`) fires after
+the JD fetch for a row that passed geo without a home-state location — a
+country-only US location (`matchedBy: "us_unspecified"`) or a remote marker
+in the location / title — when `engine/core/jd_workplace.js` reads the JD as
+hybrid or onsite and every office it names is outside the home state. A
+remote JD, an unclear JD, or a hybrid JD with no named office keeps the row.
+The skip record carries `geoMatchedBy`, `workplace` and `offices[]`.
 `hard_blocker:*` (RFC 039 §3.2) is a wildcard family: codes like
 `hard_blocker:required_skill_excluded:Python`,
 `hard_blocker:years_required_max_exceeded:20`,

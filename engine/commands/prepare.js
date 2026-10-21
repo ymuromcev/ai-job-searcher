@@ -51,6 +51,13 @@ const {
 } = require("../core/requirement_blockers.js");
 const { findTitleBlocklistHit } = require("../core/filter.js");
 const { evaluateJob } = require("../core/evaluate_job.js");
+const { getSalaryFloor } = require("../core/apply_defaults.js");
+const { publishedSalaryFromJd } = require("../core/published_salary.js");
+const {
+  classifyJdWorkplace,
+  jdWorkplaceVerdict,
+  needsJdWorkplaceCheck,
+} = require("../core/jd_workplace.js");
 const { ensureFresh: ensureFreshFitProfile } = require("../core/fit_profile.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 const { resolveProfilesDir } = require("../core/paths.js");
@@ -652,6 +659,96 @@ function applyRequirementBlockersPass(aliveResults, jdByAppKey, compiledPatterns
   return { aliveResults: surviving, requirementBlockerSkipped };
 }
 
+// RFC 068 §4a: salary-floor pass. Runs after the blocker passes, once the JD
+// body is available — the employer-published range lives in the JD, not in
+// the TSV (TSV salary_min/max are the engine's tier ESTIMATE, written later
+// at commit). The rule itself is evaluateJob's `salary_below_floor` step; this
+// pass only extracts the published range and feeds it in. No-op when the
+// profile has no apply_defaults (or no floor). Rows without a JD body or
+// without a published range pass through.
+function applySalaryFloorPass(aliveResults, jdByAppKey, applyDefaults) {
+  if (getSalaryFloor(applyDefaults) === null) {
+    return { aliveResults, salaryFloorSkipped: [] };
+  }
+  const surviving = [];
+  const salaryFloorSkipped = [];
+  for (const urlRes of aliveResults) {
+    const jd = jdByAppKey[urlRes.key];
+    const jdText = jd && jd.text ? jd.text : "";
+    const published = jdText ? publishedSalaryFromJd(jdText) : null;
+    if (!published) {
+      surviving.push(urlRes);
+      continue;
+    }
+    const r = evaluateJob({
+      job: {
+        company: urlRes.companyName,
+        title: urlRes.title,
+        locations: [],
+        published_salary: published,
+      },
+      profile: { filter_rules: {}, applyDefaults },
+      appState: { companyCounts: {} },
+      context: "prepare",
+    });
+    if (r.decision === "skip" && r.skipReason === "salary_below_floor") {
+      salaryFloorSkipped.push({
+        key: urlRes.key,
+        reason: "salary_below_floor",
+        publishedMin: published.min,
+        publishedMax: published.max,
+        floor: r.matched.floor,
+        url: urlRes.url,
+      });
+      continue;
+    }
+    surviving.push(urlRes);
+  }
+  return { aliveResults: surviving, salaryFloorSkipped };
+}
+
+// BL-225 (RFC 068 §3): JD workplace pass. In geo mode "home_state_or_remote"
+// a row can pass the location check without a home-state location — a
+// country-only US location (`us_unspecified`) or a remote marker in the
+// location / title. Once the JD body is in hand, a JD that says hybrid or
+// onsite in an office outside the home state rules the row out: it goes to
+// `skipped[]` with `reason="geo_jd_not_remote"` and is archived via the same
+// RFC 035 path as the other geo drops. Remote, unknown, or a hybrid/onsite JD
+// with no named office keeps the row. Rows without JD text pass through.
+// No-op for every other geo mode.
+function applyJdWorkplacePass(aliveResults, jdByAppKey, profileGeo) {
+  if (!profileGeo || profileGeo.mode !== "home_state_or_remote") {
+    return { aliveResults, jdWorkplaceSkipped: [] };
+  }
+  const surviving = [];
+  const jdWorkplaceSkipped = [];
+  for (const urlRes of aliveResults) {
+    const geoMatchedBy = urlRes._geoResult ? urlRes._geoResult.matchedBy : null;
+    const jd = jdByAppKey[urlRes.key];
+    const jdText = jd && jd.text ? jd.text : "";
+    if (!needsJdWorkplaceCheck(geoMatchedBy) || !jdText) {
+      surviving.push(urlRes);
+      continue;
+    }
+    const workplace = classifyJdWorkplace(jdText);
+    const verdict = jdWorkplaceVerdict(workplace, profileGeo.home_state);
+    if (!verdict.drop) {
+      surviving.push(urlRes);
+      continue;
+    }
+    jdWorkplaceSkipped.push({
+      key: urlRes.key,
+      reason: verdict.reason,
+      mode: profileGeo.mode,
+      geoMatchedBy,
+      workplace: workplace.workplace,
+      offices: workplace.offices,
+      url: urlRes.url,
+    });
+  }
+  return { aliveResults: surviving, jdWorkplaceSkipped };
+}
+
 // Compute skip-reason breakdown from a flat list of skip records.
 function computeSkipReasons(skipped) {
   const skipReasons = {};
@@ -1004,6 +1101,16 @@ async function runPre(ctx, deps) {
   const jdCacheDir = profile.paths.jdCacheDir;
   const jdByAppKey = await fetchJdsByKey(aliveResults, jdCacheDir, deps);
 
+  // BL-225: JD workplace pass — a row that passed geo without a home-state
+  // location is archived when its JD says hybrid/onsite in an out-of-state
+  // office. Runs first: a role the candidate can't take at all needs no
+  // requirement / salary judgement.
+  const { aliveResults: aliveAfterJW, jdWorkplaceSkipped } = applyJdWorkplacePass(
+    aliveResults,
+    jdByAppKey,
+    profile.geo
+  );
+
   // RFC 039 / BL-89: hard-blocker pass. Runs AFTER JD-fetch and BEFORE
   // buildBatchEntry. A blocked row goes to `skipped[]` with the first code
   // in `reason` and the full list in `reasons[]` (RFC 039 §7.5); it's
@@ -1013,7 +1120,7 @@ async function runPre(ctx, deps) {
     filterRules: { ...(profile.filterRules || {}) },
   };
   const { aliveResults: aliveAfterHB, hardBlockerSkipped } = applyHardBlockers(
-    aliveResults,
+    aliveAfterJW,
     jdByAppKey,
     profileForHB
   );
@@ -1027,11 +1134,19 @@ async function runPre(ctx, deps) {
     compiledRequirementPatterns
   );
 
+  // RFC 068 §4a: published salary range below apply_defaults salary.floor →
+  // archive as salary_below_floor before spending SKILL tokens on it.
+  const { aliveResults: aliveAfterSF, salaryFloorSkipped } = applySalaryFloorPass(
+    aliveAfterRB,
+    jdByAppKey,
+    profile.applyDefaults
+  );
+
   // Assemble batch entries. Track unique companies in batch whose tier is
   // unknown — SKILL Step 5.7 will assign them and pass back via results
   // (G-11/G-15: "Claude должен выставлять тиры самостоятельно").
   const unknownTierSet = new Set();
-  const batchOut = aliveAfterRB.map((urlRes) =>
+  const batchOut = aliveAfterSF.map((urlRes) =>
     buildBatchEntry(
       urlRes,
       jdByAppKey[urlRes.key],
@@ -1056,8 +1171,10 @@ async function runPre(ctx, deps) {
     ...alreadyEvaluatedSkips,
     ...filteredOut,
     ...deadSkipped,
+    ...jdWorkplaceSkipped,
     ...hardBlockerSkipped,
     ...requirementBlockerSkipped,
+    ...salaryFloorSkipped,
   ];
   // G-12: skip-reason breakdown so the user sees WHY 12 jobs got skipped
   // (company_cap: 5, title_blocklist: 2, url_dead: 1, …) instead of just
@@ -1406,12 +1523,19 @@ async function runPreTopup(ctx, deps) {
   const jdCacheDir = profile.paths.jdCacheDir;
   const jdByAppKey = await fetchJdsByKey(aliveResults, jdCacheDir, deps);
 
+  // BL-225: JD workplace pass (topup mirror of runPre).
+  const { aliveResults: aliveAfterJW, jdWorkplaceSkipped } = applyJdWorkplacePass(
+    aliveResults,
+    jdByAppKey,
+    profile.geo
+  );
+
   // RFC 039 / BL-89: hard-blocker pass (topup mirror — identical contract).
   const profileForHB = {
     filterRules: { ...(profile.filterRules || {}) },
   };
   const { aliveResults: aliveAfterHB, hardBlockerSkipped } = applyHardBlockers(
-    aliveResults,
+    aliveAfterJW,
     jdByAppKey,
     profileForHB
   );
@@ -1424,8 +1548,15 @@ async function runPreTopup(ctx, deps) {
     compiledRequirementPatterns
   );
 
+  // RFC 068 §4a: salary-floor pass (topup mirror of runPre).
+  const { aliveResults: aliveAfterSF, salaryFloorSkipped } = applySalaryFloorPass(
+    aliveAfterRB,
+    jdByAppKey,
+    profile.applyDefaults
+  );
+
   const unknownTierSet = new Set(prevUnknownTiers);
-  const newEntries = aliveAfterRB.map((urlRes) =>
+  const newEntries = aliveAfterSF.map((urlRes) =>
     buildBatchEntry(
       urlRes,
       jdByAppKey[urlRes.key],
@@ -1450,8 +1581,10 @@ async function runPreTopup(ctx, deps) {
     ...filteredOut,
     ...deadSkipped,
     ...droppedFromQueue,
+    ...jdWorkplaceSkipped,
     ...hardBlockerSkipped,
     ...requirementBlockerSkipped,
+    ...salaryFloorSkipped,
   ];
 
   // Remaining queue: apps that were eligible but not URL-checked yet, plus any
@@ -1947,6 +2080,11 @@ async function runCommit(ctx, deps) {
   // which keeps the escalation MD deterministic across runs.
   const tailorPlan = new Map(); // row.key -> { classification, row, tailoredDocxRel? }
   const escalations = [];
+  // RFC 068: owner policy — coverage-gap escalations at/above this ship.
+  const shipEscalatedMin =
+    profile.applyDefaults && Number.isFinite(profile.applyDefaults.tailor_ship_min_coverage)
+      ? profile.applyDefaults.tailor_ship_min_coverage
+      : null;
 
   // Light-touch validation of the 5 new SKILL fields. Returns `true` if
   // the row passes; `false` (with stderr warn) on shape mismatch — caller
@@ -2033,7 +2171,14 @@ async function runCommit(ctx, deps) {
     //   - archetype: unchanged legacy path (archetype-pick by resumeVer).
     const tailorOk = validateTailorFields(r);
     if (!tailorOk) updates.tailorMalformed++;
-    const classification = tailorOk ? classifyTailorRow(r) : "archetype";
+    const classification = tailorOk
+      ? classifyTailorRow(r, { shipEscalatedMinCoverage: shipEscalatedMin })
+      : "archetype";
+    if (classification === "tailored" && r.tailorEscalated === true) {
+      // Shipped under the owner's coverage policy — keep it visible.
+      escalations.push({ ...buildEscalationRecord(r), shipped: true });
+      updates.escalatedShipped = (updates.escalatedShipped || 0) + 1;
+    }
 
     if (classification === "escalated") {
       // Status stays "Inbox" (revertToInbox isn't needed — we never
@@ -2578,6 +2723,8 @@ async function runCommit(ctx, deps) {
     extras.push(`${updates.tailorMalformed} malformed tailor field(s)`);
   if (updates.tailored > 0) extras.push(`${updates.tailored} tailored DOCX`);
   if (updates.escalated > 0) extras.push(`${updates.escalated} escalated`);
+  if (updates.escalatedShipped > 0)
+    extras.push(`${updates.escalatedShipped} escalated but shipped (coverage policy)`);
   if (updates.carryOver > 0) extras.push(`${updates.carryOver} carry-over (RFC 049)`);
   if (tierStats.invalid > 0) extras.push(`${tierStats.invalid} invalid tier`);
   if (notionStats.pdfMissing + notionStats.notionFailed > 0) {
@@ -2716,6 +2863,8 @@ function makePrepareCommand(overrides = {}) {
 module.exports = makePrepareCommand();
 module.exports.makePrepareCommand = makePrepareCommand;
 module.exports.applyPrepareFilter = applyPrepareFilter;
+module.exports.applySalaryFloorPass = applySalaryFloorPass;
+module.exports.applyJdWorkplacePass = applyJdWorkplacePass;
 module.exports.filterAlreadyEvaluated = filterAlreadyEvaluated;
 module.exports.buildActiveCounts = buildActiveCounts;
 module.exports.resolveCapWindowDays = resolveCapWindowDays;

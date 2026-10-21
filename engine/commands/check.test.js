@@ -868,6 +868,85 @@ test("check --auto: makeGmailClient receives loaded credentials", async () => {
   assert.equal(calls.makeGmailClient[0].appPassword, "abcd efgh ijkl mnop");
 });
 
+// ---------- RFC 068 §5: second (apply) mailbox ----------
+
+const APPLY_ENV = {
+  JARED_APPLY_GMAIL_USER: "apply@example.com",
+  JARED_APPLY_GMAIL_APP_PASSWORD: "wxyz wxyz wxyz wxyz",
+};
+
+function rejectionEmail(overrides = {}) {
+  return {
+    messageId: "m1",
+    threadId: "t1",
+    from: "no-reply@affirm.com",
+    subject: "An update on your application with Affirm",
+    body: "Unfortunately, we will not be proceeding.",
+    date: "2026-04-30T10:00:00Z",
+    ...overrides,
+  };
+}
+
+test("check --auto: no apply mailbox env → single fetch (unchanged behaviour)", async () => {
+  const { deps, calls } = makeAutoDeps();
+  const { ctx, out } = makeCtx({ auto: true });
+  await makeCheckCommand(deps)(ctx);
+  assert.equal(calls.makeGmailClient.length, 1);
+  assert.equal(calls.fetchGmailEmails.length, 1);
+  assert.doesNotMatch(out.errs.join("\n"), /APPLY_GMAIL/);
+});
+
+test("check --auto: apply mailbox configured → fetches both, merges, dedupes by Message-ID", async () => {
+  const { deps, calls } = makeAutoDeps({
+    makeGmailClient: (creds) => {
+      calls.makeGmailClient.push(creds);
+      return { mailbox: creds.user };
+    },
+    fetchGmailEmails: async (gmail, batches, opts) => {
+      calls.fetchGmailEmails.push({ gmail, batches, opts });
+      if (gmail.mailbox === "jared@example.com") {
+        return [rejectionEmail({ messageId: "a1", rfcMessageId: "<shared@mail>" })];
+      }
+      return [
+        // Same email delivered to both mailboxes (different Gmail id) → dropped.
+        rejectionEmail({ messageId: "b1", rfcMessageId: "<SHARED@mail>" }),
+        // Bot-application mail only in the apply mailbox → kept.
+        rejectionEmail({
+          messageId: "b2",
+          rfcMessageId: "<only-apply@mail>",
+          subject: "Thanks for applying to Affirm",
+          body: "We received your application.",
+        }),
+      ];
+    },
+  });
+  const { ctx, out } = makeCtx({ auto: true });
+  ctx.env = { ...APPLY_ENV };
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(calls.makeGmailClient.length, 2);
+  assert.equal(calls.makeGmailClient[1].user, "apply@example.com");
+  assert.equal(calls.makeGmailClient[1].appPassword, "wxyz wxyz wxyz wxyz");
+  assert.equal(calls.fetchGmailEmails.length, 2);
+  // Both mailboxes are searched with the same batch queries.
+  assert.deepEqual(calls.fetchGmailEmails[1].batches, calls.fetchGmailEmails[0].batches);
+  const plan = JSON.parse(out.lines[0]);
+  assert.equal(plan.emailsFound, 2);
+});
+
+test("check --auto: half-configured apply mailbox → warn, single fetch", async () => {
+  const { deps, calls } = makeAutoDeps();
+  const { ctx, out } = makeCtx({ auto: true });
+  ctx.env = { JARED_APPLY_GMAIL_USER: "apply@example.com" };
+  const code = await makeCheckCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(calls.fetchGmailEmails.length, 1);
+  assert.match(
+    out.errs.join("\n"),
+    /JARED_APPLY_GMAIL_APP_PASSWORD is set — apply mailbox skipped/
+  );
+});
+
 // ---------- RFC 056: --reprocess-since ----------
 
 test("check --auto --reprocess-since: re-includes already-processed mail (bypasses dedup) → recovers rejection", async () => {

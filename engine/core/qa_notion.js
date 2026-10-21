@@ -73,6 +73,8 @@ function parseAnswerPage(page) {
     role: readRichText(p.Role),
     company: readRichText(p.Company),
     notes: readRichText(p.Notes),
+    // Page creation time — "newer first" ordering for the bot and the board.
+    createdAt: page.created_time || null,
   };
 }
 
@@ -95,12 +97,13 @@ async function fetchAllAnswers(client, databaseId) {
   return out;
 }
 
-// Returns { exact, partials } where:
+// Pure matcher over an already-fetched answer list. Returns { exact, partials }:
 //   exact = single answer matching dedup key, or null
 //   partials = answers for same (company, role) but different question, or
 //              same question but different (company, role) — deduplicated.
-async function searchAnswers(client, databaseId, { company, role, question }) {
-  const all = await fetchAllAnswers(client, databaseId);
+// Exported so batch callers (`apply --phase pre`) can fetch the bank once
+// and match many questions without re-querying Notion per question.
+function matchAnswers(all, { company, role, question }) {
   const targetKey = dedupKey({ company, role, question });
   const targetCo = String(company || "")
     .trim()
@@ -114,7 +117,7 @@ async function searchAnswers(client, databaseId, { company, role, question }) {
 
   let exact = null;
   const partials = [];
-  for (const a of all) {
+  for (const a of all || []) {
     const aKey = dedupKey({ company: a.company, role: a.role, question: a.question });
     if (aKey === targetKey) {
       // Exact match — first wins (DB shouldn't have duplicates anyway).
@@ -137,6 +140,11 @@ async function searchAnswers(client, databaseId, { company, role, question }) {
     }
   }
   return { exact, partials };
+}
+
+async function searchAnswers(client, databaseId, { company, role, question }) {
+  const all = await fetchAllAnswers(client, databaseId);
+  return matchAnswers(all, { company, role, question });
 }
 
 async function createAnswerPage(client, databaseId, fields) {
@@ -163,6 +171,7 @@ module.exports = {
   parseAnswerPage,
   // API ops
   fetchAllAnswers,
+  matchAnswers,
   searchAnswers,
   createAnswerPage,
   updateAnswerPage,

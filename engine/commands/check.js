@@ -95,6 +95,8 @@ const DEFAULT_DEPS = {
   addPageComment: notion.addPageComment,
   // Gmail (used only by runAuto). Tests inject a fake.
   loadGmailCredentials: gmailImap.loadCredentials,
+  // RFC 068 §5: optional second (apply) mailbox.
+  loadApplyGmailCredentials: gmailImap.loadApplyCredentials,
   assertGmailCredentials: gmailImap.assertCredentials,
   makeGmailClient: gmailImap.makeGmailClient,
   fetchGmailEmails: gmailImap.fetchEmailsForBatches,
@@ -970,14 +972,36 @@ async function runAutoBody(ctx, deps, profile, paths) {
 
   // Fetch via Gmail IMAP (RFC 021) — uncaught throws bubble to runAuto's try/catch
   // which notifies + logs.
-  const gmail = deps.makeGmailClient(gmailCreds);
-  const rawEmails = await deps.fetchGmailEmails(gmail, batches, {
-    onProgress: ({ phase, batchIndex, total, count }) => {
+  const progressFor =
+    (label) =>
+    ({ phase, batchIndex, total, count }) => {
       if (flags.verbose && phase === "ids") {
-        stderr(`  batch ${batchIndex + 1}/${total}: ${count} matches`);
+        stderr(`  ${label}batch ${batchIndex + 1}/${total}: ${count} matches`);
       }
-    },
+    };
+  const gmail = deps.makeGmailClient(gmailCreds);
+  let rawEmails = await deps.fetchGmailEmails(gmail, batches, {
+    onProgress: progressFor(""),
   });
+
+  // RFC 068 §5: when the apply mailbox (<ID>_APPLY_GMAIL_*) is configured,
+  // fetch it with the same queries and merge (dedupe by RFC Message-ID).
+  // Not configured → exactly the single-mailbox behaviour above.
+  const loadApplyCreds = deps.loadApplyGmailCredentials || (() => ({ source: null }));
+  const applyCreds = loadApplyCreds(profileId, { env }) || { source: null };
+  if (applyCreds.source === "env") {
+    const applyGmail = deps.makeGmailClient(applyCreds);
+    const applyEmails = await deps.fetchGmailEmails(applyGmail, batches, {
+      onProgress: progressFor("apply mailbox "),
+    });
+    rawEmails = gmailImap.mergeRawEmails(rawEmails, applyEmails);
+  } else if (applyCreds.partial) {
+    const upper = String(profileId).toUpperCase();
+    stderr(
+      `warn: only one of ${upper}_APPLY_GMAIL_USER / ${upper}_APPLY_GMAIL_APP_PASSWORD is set — ` +
+        `apply mailbox skipped`
+    );
+  }
 
   const processedSet = new Set((saved.processed || []).map((e) => e.id));
   // RFC 056: --reprocess-since re-includes already-processed mail in the

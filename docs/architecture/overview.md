@@ -72,6 +72,8 @@ Three invariants follow:
 | `email_logs.js` | Append-only writers for `rejection_log.md`, `recruiter_leads.md`, `email_check_log.md`. | `commands/check.js` |
 | `qa_categorize.js`, `qa_dedup.js`, `qa_notion.js` | Application-answers categorization, dedup, and Notion bank sync. | `commands/answer.js` |
 | `scan.js` | Orchestrates discovery adapters: enabled-set, parallel fetch, normalize, filter, dedup. | `commands/scan.js` |
+| `night_plan.js` | Pure rails of the nightly run (RFC 068 §9 / §11): deadline (next local stop time, max hours), next-step decision (prepare / apply / stop), per-row and per-job fan-out payloads, validation of row results against the `prepare --phase commit` contract, tonight's counts from the TSV and `.apply-state` files. | `commands/night.js` |
+| `night_runs_log.js` | `profiles/<id>/.health/apply_runs.jsonl` — one line per night (same pattern as `scan_health_log.js`). | `commands/night.js`, `commands/board.js`, `commands/report.js` |
 
 ## 2. CLI commands
 
@@ -157,6 +159,21 @@ fields only (Website, Careers URL, Why Interested, Notes, Outbound Status);
 the Notion-write invariant ([RFC 022](../../rfc/022-prepare-commit-atomic-notion.md)):
 the relokant-sweep skill never writes Notion directly, it invokes this
 command.
+
+**`night`**. Deterministic rails for the unattended nightly run
+(RFC 068 §9 / §11, BL-225; runbook `skills/job-pipeline/night-apply.md`).
+`start` takes a per-profile lock and fixes the deadline (06:30 local by
+default); `check` reads the TSV, tonight's `.apply-state` files and
+`prepare_context.json` and says what to do next (prepare a batch of N,
+apply, or stop — deadline / target reached / queue empty);
+`prepare-fanout` / `apply-fanout` split the context files into one small
+input file per row / job so the orchestrating Claude session hands work to
+parallel subagents by path; `prepare-collect` validates the row results
+and writes the `prepare_results_<ts>.json` that `prepare --phase commit`
+consumes; `finish` appends one line to `.health/apply_runs.jsonl`
+(recomputed from disk) and releases the lock. Never writes the TSV or
+Notion — every state change still goes through `prepare --phase commit`
+and `apply --phase submit`.
 
 ## 3. Discovery adapters
 

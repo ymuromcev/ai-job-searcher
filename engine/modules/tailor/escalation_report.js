@@ -66,7 +66,9 @@ function jobLabelOf(rec) {
  * @returns {string}
  */
 function escapeTableCell(s) {
-  return String(s).replace(/\r\n|\r|\n/g, " ").replace(/\|/g, "\\|");
+  return String(s)
+    .replace(/\r\n|\r|\n/g, " ")
+    .replace(/\|/g, "\\|");
 }
 
 /**

@@ -558,3 +558,101 @@ test("fetchMessagesByGmailIds: empty input → no work, lifecycle still runs", a
   assert.equal(calls.connect, 1);
   assert.equal(calls.logout, 1);
 });
+
+// ---------- RFC 068 §5: apply mailbox ----------
+
+test("loadApplyCredentials: reads <UPPER>_APPLY_GMAIL_USER + _APPLY_GMAIL_APP_PASSWORD", () => {
+  const env = {
+    JARED_GMAIL_USER: "main@example.com",
+    JARED_GMAIL_APP_PASSWORD: "main main main main",
+    JARED_APPLY_GMAIL_USER: "apply@example.com",
+    JARED_APPLY_GMAIL_APP_PASSWORD: "abcd efgh ijkl mnop",
+  };
+  const creds = imap.loadApplyCredentials("jared", { env });
+  assert.equal(creds.user, "apply@example.com");
+  assert.equal(creds.appPassword, "abcd efgh ijkl mnop");
+  assert.equal(creds.source, "env");
+  assert.equal(creds.partial, false);
+});
+
+test("loadApplyCredentials: absent pair → source null, not partial", () => {
+  const creds = imap.loadApplyCredentials("jared", { env: { JARED_GMAIL_USER: "x" } });
+  assert.equal(creds.source, null);
+  assert.equal(creds.partial, false);
+});
+
+test("loadApplyCredentials: half pair → source null, partial", () => {
+  const creds = imap.loadApplyCredentials("jared", {
+    env: { JARED_APPLY_GMAIL_APP_PASSWORD: "abcd" },
+  });
+  assert.equal(creds.source, null);
+  assert.equal(creds.partial, true);
+});
+
+test("messageToRaw: carries the RFC Message-ID header as rfcMessageId", async () => {
+  const raw = await imap.messageToRaw(
+    {
+      emailId: "100",
+      envelope: { subject: "S", messageId: "<abc@mail.example>", from: [] },
+      internalDate: new Date("2026-05-01T00:00:00Z"),
+    },
+    { parseMessage: async () => ({ text: "" }) }
+  );
+  assert.equal(raw.rfcMessageId, "<abc@mail.example>");
+  const noHeader = await imap.messageToRaw({ emailId: "101", envelope: {} });
+  assert.equal(noHeader.rfcMessageId, null);
+});
+
+test("mergeRawEmails: keeps order, dedupes by RFC Message-ID (case/brackets), else Gmail id", () => {
+  const a = [
+    { messageId: "a1", rfcMessageId: "<Shared@Mail>" },
+    { messageId: "a2", rfcMessageId: null },
+  ];
+  const b = [
+    { messageId: "b1", rfcMessageId: "shared@mail" }, // same email, other mailbox
+    { messageId: "a2", rfcMessageId: null }, // same Gmail id, no header
+    { messageId: "b3", rfcMessageId: "<only-b@mail>" },
+  ];
+  const out = imap.mergeRawEmails(a, b);
+  assert.deepEqual(
+    out.map((e) => e.messageId),
+    ["a1", "a2", "b3"]
+  );
+  assert.deepEqual(imap.mergeRawEmails(a, null, undefined), a);
+});
+
+test("two mailboxes via fake IMAP clients: fetch each, merge, cross-mailbox duplicate dropped", async () => {
+  const fakeParse = async () => ({ text: "body", html: "" });
+  const mk = (emailId, rfc, subject) => ({
+    uid: Number(emailId),
+    emailId,
+    threadId: "9",
+    envelope: { subject, messageId: rfc, from: [{ address: "no-reply@ats.example" }] },
+    internalDate: new Date("2026-05-01T00:00:00Z"),
+    source: Buffer.from("x"),
+  });
+  const main = makeMockClient({
+    searchByQuery: { "from:acme": [1] },
+    fetchByUid: { 1: mk("1", "<dup@x>", "Update from Acme") },
+  });
+  const apply = makeMockClient({
+    searchByQuery: { "from:acme": [7, 8] },
+    fetchByUid: {
+      7: mk("7", "<dup@x>", "Update from Acme"),
+      8: mk("8", "<new@x>", "Thanks for applying to Acme"),
+    },
+  });
+  const first = await imap.fetchEmailsForBatches(main.client, ["from:acme"], {
+    parseMessage: fakeParse,
+  });
+  const second = await imap.fetchEmailsForBatches(apply.client, ["from:acme"], {
+    parseMessage: fakeParse,
+  });
+  const merged = imap.mergeRawEmails(first, second);
+  assert.deepEqual(
+    merged.map((e) => e.subject),
+    ["Update from Acme", "Thanks for applying to Acme"]
+  );
+  assert.equal(main.calls.logout, 1);
+  assert.equal(apply.calls.logout, 1);
+});

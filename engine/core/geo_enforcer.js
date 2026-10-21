@@ -14,6 +14,21 @@
 //                      lets remote postings through.
 //   - "remote-only":   job.locations must contain "Remote" / "Anywhere" /
 //                      "Work from home". Cities/states ignored.
+//   - "home_state_or_remote" (RFC 068 §3): any location in `home_state`
+//                      (2-letter code or full name, any work format) passes;
+//                      outside the home state the job passes ONLY when it is
+//                      remote. Remote evidence, strongest first: a structured
+//                      flag from the adapter (`isRemote` / `workplaceType`),
+//                      else a "Remote" marker in a location string (US-wide
+//                      or unqualified — "Remote - UK" does not count), else a
+//                      "Remote" word in the title. A structured non-remote
+//                      `workplaceType` (hybrid / onsite) overrides string
+//                      markers. Country-only US locations ("US", "United
+//                      States") pass as "us_unspecified" — the state is
+//                      unknown, so prepare's JD workplace check decides
+//                      (BL-225). Misses → "geo_not_home_state_or_remote";
+//                      empty locations (and no structured remote flag) →
+//                      "geo_no_location".
 //
 // Multi-location semantic (resolved §8.7): job passes if ANY element of
 // locations[] satisfies the policy. Important for multi-city postings like
@@ -315,6 +330,308 @@ function checkOneLocation(locLower, profileGeo) {
   return { ok: false, matchedBy: null, blockedBy: null };
 }
 
+// --- home_state_or_remote (RFC 068 §3) --------------------------------------
+
+// Words that may sit next to a remote marker without narrowing it to a
+// non-US region ("Remote - US", "Fully remote", "Remote (North America)",
+// "Remote / Hybrid"). Anything else left over after stripping these (and the
+// remote markers) is treated as a geographic qualifier we can't vouch for —
+// e.g. "Remote - UK", "Remote, Canada", "Remote (EMEA)" — so the location
+// does not count as US-remote.
+const REMOTE_FILLER_WORDS = new Set([
+  "hybrid",
+  "or",
+  "and",
+  "only",
+  "first",
+  "friendly",
+  "based",
+  "fully",
+  "full",
+  "100%",
+  "flexible",
+  "optional",
+  "possible",
+  "eligible",
+  "position",
+  "role",
+  "job",
+  "work",
+  "from",
+  "home",
+  "in",
+  "the",
+  "within",
+  "across",
+  "distributed",
+  "worldwide",
+  "global",
+  "globally",
+  "north",
+  "america",
+  "americas",
+  "time",
+  "zone",
+  "zones",
+  "timezone",
+  "timezones",
+  "pt",
+  "pst",
+  "pdt",
+  "et",
+  "est",
+  "edt",
+  "ct",
+  "cst",
+  "mt",
+  "mst",
+  "us",
+  "u.s",
+  "usa",
+]);
+
+// Structured `workplaceType` values that explicitly say "not remote". When
+// the adapter is that specific, a string marker elsewhere is not trusted.
+const NON_REMOTE_WORKPLACE_RE = /^(hybrid|on-?site|in[- ]?office|office)$/i;
+const REMOTE_WORKPLACE_RE = /remote/i;
+
+// A 2-letter "CA" also stands for Canada in some ATS feeds ("Toronto, ON,
+// CA"). Reject a code-only home-state hit when the location carries a
+// Canadian province marker or the country name.
+const CANADA_GUARD_RE =
+  /\bcanada\b|\b(ontario|quebec|british columbia|alberta|manitoba|saskatchewan|nova scotia|new brunswick|newfoundland)\b|,\s*(on|bc|qc|ab|mb|sk|ns|nb|nl|pe)\s*,\s*ca\b/i;
+
+function stateNameForCode(code) {
+  return US_CODE_TO_NAME[String(code || "").toUpperCase()] || null;
+}
+
+// Canonicalize a US state given as a 2-letter code or full name to the
+// upper-case code ("ca" / "California" → "CA"). null when not a US state.
+function canonicalStateCode(raw) {
+  const s = String(raw == null ? "" : raw).trim();
+  if (!s) return null;
+  if (s.length === 2 && US_CODE_TO_NAME[s.toUpperCase()]) return s.toUpperCase();
+  return US_NAME_TO_CODE[s.toLowerCase()] || null;
+}
+
+// Adzuna stores some rows as "City, <County> County" with no state. For a
+// California home state, a California county name settles it. Only CA has a
+// table: it is the one home state in use, and county names repeat across states.
+const CA_COUNTIES = [
+  "alameda",
+  "alpine",
+  "amador",
+  "butte",
+  "calaveras",
+  "colusa",
+  "contra costa",
+  "del norte",
+  "el dorado",
+  "fresno",
+  "glenn",
+  "humboldt",
+  "imperial",
+  "inyo",
+  "kern",
+  "kings",
+  "lake",
+  "lassen",
+  "los angeles",
+  "madera",
+  "marin",
+  "mariposa",
+  "mendocino",
+  "merced",
+  "modoc",
+  "mono",
+  "monterey",
+  "napa",
+  "nevada",
+  "orange",
+  "placer",
+  "plumas",
+  "riverside",
+  "sacramento",
+  "san benito",
+  "san bernardino",
+  "san diego",
+  "san francisco",
+  "san joaquin",
+  "san luis obispo",
+  "san mateo",
+  "santa barbara",
+  "santa clara",
+  "santa cruz",
+  "shasta",
+  "sierra",
+  "siskiyou",
+  "solano",
+  "sonoma",
+  "stanislaus",
+  "sutter",
+  "tehama",
+  "trinity",
+  "tulare",
+  "tuolumne",
+  "ventura",
+  "yolo",
+  "yuba",
+];
+const CA_COUNTY_RE = new RegExp(`\\b(${CA_COUNTIES.join("|")}) county\\b`, "i");
+
+function locInHomeStateCounty(locLower, homeState) {
+  if (String(homeState).toUpperCase() !== "CA") return false;
+  if (!CA_COUNTY_RE.test(locLower)) return false;
+  // "Orange County, NY" style: an explicit other state wins.
+  const otherState = [...US_STATE_CODES].some(
+    (c) => c !== "CA" && new RegExp(`,\\s*${c.toLowerCase()}\\b`).test(locLower)
+  );
+  return !otherState;
+}
+
+function locInHomeState(locLower, homeState) {
+  if (!homeState) return false;
+  const hit = locContainsState(locLower, [homeState]);
+  if (!hit) return locInHomeStateCounty(locLower, homeState);
+  const code = String(homeState).length === 2 ? String(homeState).toUpperCase() : null;
+  const name = code ? stateNameForCode(code) : String(homeState).toLowerCase();
+  // Full state name present → unambiguous.
+  if (name && locLower.includes(name)) return true;
+  // Code-only hit: guard the Canada collision for "CA".
+  if (code === "CA" && CANADA_GUARD_RE.test(locLower)) return false;
+  return true;
+}
+
+// Is this (lowercased) location a remote posting that is US-wide or
+// unqualified? "remote", "remote - us", "fully remote (usa)", "anywhere",
+// "remote (new york)" → true. "remote - uk", "remote, canada" → false.
+function isUsCompatibleRemoteLoc(locLower) {
+  if (!isRemoteLoc(locLower)) return false;
+  if (hasUsMarker(locLower)) return true;
+  let rest = locLower;
+  for (const m of REMOTE_MARKERS) rest = rest.split(m).join(" ");
+  const leftover = rest
+    .split(/[\s,;/|()[\]\-–—:.]+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .filter((t) => !REMOTE_FILLER_WORDS.has(t));
+  return leftover.length === 0;
+}
+
+// Location string that clearly names a place outside the US (no US marker,
+// not a remote marker) — used to keep a remote TITLE from overriding a
+// foreign-only location list.
+function isForeignOnlyLoc(locLower) {
+  if (hasUsMarker(locLower)) return false;
+  if (isRemoteLoc(locLower)) return !isUsCompatibleRemoteLoc(locLower);
+  return true;
+}
+
+const TITLE_REMOTE_RE = /\bremote\b/i;
+
+// Country-only US location: "US", "USA", "United States", "United States of
+// America", "U.S.", "Multiple Locations, US". It names no state, so the home
+// state can't be told from the location alone — the JD workplace check in
+// prepare settles it (BL-225). Any leftover word that is not filler (a city,
+// a state, "Hybrid", a foreign country) disqualifies the string.
+const US_COUNTRY_TOKEN_RE =
+  /(?<![a-z])(united states of america|united states|u\.s\.a\.?|u\.s\.?|usa|us)(?![a-z])/g;
+const US_COUNTRY_FILLER_WORDS = new Set([
+  "nationwide",
+  "countrywide",
+  "only",
+  "the",
+  "in",
+  "of",
+  "based",
+  "any",
+  "all",
+  "multiple",
+  "various",
+  "location",
+  "locations",
+]);
+
+function isUsCountryOnlyLoc(locLower) {
+  const replaced = String(locLower || "").replace(US_COUNTRY_TOKEN_RE, " ");
+  if (replaced === locLower) return false; // no country token at all
+  const leftover = replaced
+    .split(/[\s,;/|()[\]\-–—:.]+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .filter((t) => !US_COUNTRY_FILLER_WORDS.has(t));
+  return leftover.length === 0;
+}
+
+function enforceHomeStateOrRemote(locs, profileGeo, jobMeta) {
+  const meta = jobMeta || {};
+  const homeState = profileGeo.home_state ? String(profileGeo.home_state) : "";
+  const workplaceType =
+    typeof meta.workplaceType === "string" ? meta.workplaceType.trim().toLowerCase() : "";
+  const structuredRemote =
+    meta.isRemote === true || (workplaceType !== "" && REMOTE_WORKPLACE_RE.test(workplaceType));
+  const structuredNonRemote =
+    !structuredRemote && workplaceType !== "" && NON_REMOTE_WORKPLACE_RE.test(workplaceType);
+
+  // Blocklisted locations contribute nothing (same semantic as other modes).
+  const usable = locs.filter((l) => !locInBlocklist(l, profileGeo.blocklist));
+  if (locs.length > 0 && usable.length === 0) {
+    return { ok: false, reason: "geo_blocklist", matchedBy: null };
+  }
+
+  // 1. Any location in the home state → pass, regardless of work format.
+  for (const loc of usable) {
+    if (locInHomeState(loc, homeState)) {
+      return { ok: true, reason: null, matchedBy: `home_state:${homeState.toUpperCase()}` };
+    }
+  }
+
+  // 2. Structured remote flag from the adapter is authoritative.
+  if (structuredRemote) {
+    return { ok: true, reason: null, matchedBy: "remote:structured" };
+  }
+
+  if (usable.length === 0) {
+    return { ok: false, reason: "geo_no_location", matchedBy: null };
+  }
+
+  // A structured hybrid/onsite outside the home state cannot be rescued by a
+  // string marker.
+  if (structuredNonRemote) {
+    return { ok: false, reason: "geo_not_home_state_or_remote", matchedBy: null };
+  }
+
+  // 3. Remote marker in a location string (US-wide or unqualified).
+  for (const loc of usable) {
+    if (isUsCompatibleRemoteLoc(loc)) {
+      return { ok: true, reason: null, matchedBy: "remote:location" };
+    }
+  }
+
+  // 4. Remote word in the title — only when no location pins the job to a
+  // place outside the US and the title itself isn't region-exclusive
+  // ("Senior PM - Remote (EMEA)").
+  const title = String(meta.title || "");
+  if (
+    TITLE_REMOTE_RE.test(title) &&
+    !extractTitleGeo(title).excluded &&
+    !usable.some(isForeignOnlyLoc)
+  ) {
+    return { ok: true, reason: null, matchedBy: "remote:title" };
+  }
+
+  // 5. Country-only US locations ("US", "United States") name no state. Pass
+  // them as "us_unspecified" and let the JD workplace check in prepare decide
+  // (BL-225). Every location must be country-only: a list that also names a
+  // specific out-of-state place ("New York, NY", "United States") does not
+  // qualify.
+  if (usable.every(isUsCountryOnlyLoc)) {
+    return { ok: true, reason: null, matchedBy: "us_unspecified" };
+  }
+
+  return { ok: false, reason: "geo_not_home_state_or_remote", matchedBy: null };
+}
+
 /**
  * Apply profile geo policy to a job's locations.
  *
@@ -322,16 +639,22 @@ function checkOneLocation(locLower, profileGeo) {
  *                                 Single-element string also accepted as legacy fallback.
  * @param {object}   profileGeo    Canonical block from profile.geo (post-normalizeGeo).
  *                                 Required shape: { mode, cities?, states?, countries?,
- *                                 remote_ok?, blocklist?, max_radius_miles? }.
+ *                                 remote_ok?, blocklist?, max_radius_miles?, home_state? }.
+ * @param {object}   [jobMeta]     Optional extra job signals, used only by
+ *                                 "home_state_or_remote": { isRemote?: boolean,
+ *                                 workplaceType?: string, title?: string }.
  * @returns {{ ok: boolean, reason: string | null, matchedBy: string | null }}
  *   - ok=true:  reason=null, matchedBy describes which clause matched
- *               ("city:Sacramento" / "remote" / "country:US" / "unrestricted").
+ *               ("city:Sacramento" / "remote" / "country:US" / "unrestricted" /
+ *               "home_state:CA" / "remote:structured" / "remote:location" /
+ *               "remote:title" / "us_unspecified").
  *   - ok=false: reason ∈ { "geo_metro_miss", "geo_country_miss",
  *                          "geo_remote_only_miss", "geo_blocklist",
- *                          "geo_no_location", "geo_unknown_mode" }.
+ *                          "geo_no_location", "geo_unknown_mode",
+ *                          "geo_not_home_state_or_remote" }.
  *               matchedBy=null.
  */
-function enforceGeo(jobLocations, profileGeo) {
+function enforceGeo(jobLocations, profileGeo, jobMeta) {
   if (!profileGeo || typeof profileGeo !== "object") {
     // Defensive: no geo block → unrestricted.
     return { ok: true, reason: null, matchedBy: "unrestricted" };
@@ -342,6 +665,12 @@ function enforceGeo(jobLocations, profileGeo) {
   // Normalize input: accept array (canonical) or single string (legacy).
   const locsRaw = Array.isArray(jobLocations) ? jobLocations : jobLocations ? [jobLocations] : [];
   const locs = locsRaw.map(normalizeLocStr).filter(Boolean);
+
+  // RFC 068 §3: this mode weighs locations together with structured remote
+  // flags and the title, so it has its own evaluator (handles empty locs).
+  if (mode === "home_state_or_remote") {
+    return enforceHomeStateOrRemote(locs, profileGeo, jobMeta);
+  }
 
   if (locs.length === 0) {
     if (mode === "unrestricted") {
@@ -500,4 +829,8 @@ module.exports = {
   US_STATE_NAMES,
   isRemoteLoc,
   hasUsMarker,
+  isUsCompatibleRemoteLoc,
+  isUsCountryOnlyLoc,
+  canonicalStateCode,
+  US_CODE_TO_NAME,
 };

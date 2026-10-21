@@ -8,9 +8,18 @@
 //
 // See RFC 037 §3.1 for the full check list and severity matrix.
 
+const { canonicalStateCode } = require("../../geo_enforcer.js");
+const { validateApplyDefaults } = require("../../apply_defaults.js");
+
 const UUID_RE = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
 const VALID_FIT_TREATMENTS = new Set(["primary", "bridge"]);
-const VALID_GEO_MODES = new Set(["metro", "us-wide", "remote-only", "unrestricted"]);
+const VALID_GEO_MODES = new Set([
+  "metro",
+  "us-wide",
+  "remote-only",
+  "unrestricted",
+  "home_state_or_remote",
+]);
 const REGEX_ANCHOR_CHARS = /[\^$]|\\b/;
 
 function issue(severity, field, message) {
@@ -168,6 +177,16 @@ function checkGeoMode(profile, issues) {
       )
     );
   }
+  // RFC 068 §3: home_state_or_remote needs a US home state.
+  if (g.mode === "home_state_or_remote" && !canonicalStateCode(g.home_state)) {
+    issues.push(
+      issue(
+        "error",
+        "profile.geo.home_state",
+        `required for mode "home_state_or_remote" — a US state code or name (e.g. "CA"), got ${JSON.stringify(g.home_state)}`
+      )
+    );
+  }
 }
 
 function checkNotion(profile, issues) {
@@ -199,6 +218,16 @@ function checkNotion(profile, issues) {
   }
 }
 
+// RFC 068 §4: apply_defaults.json is optional; when present (loader puts it
+// on `profile.applyDefaults`), its shape must match the contract.
+function checkApplyDefaults(profile, issues) {
+  const ad = profile && profile.applyDefaults;
+  if (ad === null || ad === undefined) return;
+  for (const i of validateApplyDefaults(ad)) {
+    issues.push(issue(i.severity, i.field, i.message));
+  }
+}
+
 // Public entry point. Runs all schema checks against a normalized profile.
 function runSchemaChecks(profile) {
   const issues = [];
@@ -209,6 +238,7 @@ function runSchemaChecks(profile) {
   checkCompanyCap(profile, issues);
   checkGeoMode(profile, issues);
   checkNotion(profile, issues);
+  checkApplyDefaults(profile, issues);
   return issues;
 }
 

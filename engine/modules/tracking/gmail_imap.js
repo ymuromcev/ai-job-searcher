@@ -42,6 +42,27 @@ function loadCredentials(profileId, opts = {}) {
   };
 }
 
+// RFC 068 §5: optional second mailbox — the address the apply bot puts on
+// applications. Read from `<ID>_APPLY_GMAIL_USER` +
+// `<ID>_APPLY_GMAIL_APP_PASSWORD`. `source` is "env" only when BOTH are set;
+// `partial` flags a half-configured pair so the caller can warn (and then
+// behave exactly as if the second mailbox were absent).
+function loadApplyCredentials(profileId, opts = {}) {
+  if (!profileId || typeof profileId !== "string") {
+    throw new Error("loadApplyCredentials: profileId required");
+  }
+  const env = opts.env || process.env;
+  const upper = profileId.toUpperCase();
+  const user = env[`${upper}_APPLY_GMAIL_USER`] || null;
+  const appPassword = env[`${upper}_APPLY_GMAIL_APP_PASSWORD`] || null;
+  return {
+    user,
+    appPassword,
+    source: user && appPassword ? "env" : null,
+    partial: Boolean(user) !== Boolean(appPassword),
+  };
+}
+
 function assertCredentials(creds, profileId) {
   const upper = String(profileId).toUpperCase();
   if (!creds.user) {
@@ -164,7 +185,43 @@ async function messageToRaw(msg, opts = {}) {
     body,
     snippet,
     date,
+    // RFC 5322 Message-ID header. Unlike `messageId` (Gmail's per-account
+    // X-GM-MSGID), it is the same in every mailbox that received the mail —
+    // used to dedupe across mailboxes (RFC 068 §5).
+    rfcMessageId: envelope.messageId ? String(envelope.messageId) : null,
   };
+}
+
+// ---------- Multi-mailbox merge (RFC 068 §5) ----------
+
+function normalizeRfcMessageId(id) {
+  if (!id) return "";
+  return String(id).trim().replace(/^<|>$/g, "").toLowerCase();
+}
+
+// Merge raw-email lists fetched from several mailboxes, in order, dropping
+// duplicates. Dedupe key: the RFC Message-ID header when present (the same
+// email delivered to both mailboxes), else the Gmail message id. Pure.
+function mergeRawEmails(...lists) {
+  const seenRfc = new Set();
+  const seenGmail = new Set();
+  const out = [];
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const e of list) {
+      if (!e) continue;
+      const rfc = normalizeRfcMessageId(e.rfcMessageId);
+      if (rfc) {
+        if (seenRfc.has(rfc)) continue;
+        seenRfc.add(rfc);
+      } else if (e.messageId) {
+        if (seenGmail.has(e.messageId)) continue;
+      }
+      if (e.messageId) seenGmail.add(e.messageId);
+      out.push(e);
+    }
+  }
+  return out;
 }
 
 function stripHtmlTags(html) {
@@ -435,7 +492,9 @@ module.exports = {
   ALL_MAIL_FALLBACK,
   resolveAllMailMailbox,
   loadCredentials,
+  loadApplyCredentials,
   assertCredentials,
+  mergeRawEmails,
   makeGmailClient,
   gmailIdToHex,
   hexToGmailId,

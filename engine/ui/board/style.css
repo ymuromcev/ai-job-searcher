@@ -1,0 +1,155 @@
+/* Wireframe on purpose (RFC 068 §8): plain until the owner approves the
+   layout. White, black, system font, bordered tables — no colours, images
+   or animation. */
+html,
+body {
+  background: #fff;
+  color: #000;
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  margin: 16px;
+}
+h1 {
+  font-size: 20px;
+  margin: 0 0 4px;
+}
+h2 {
+  font-size: 16px;
+  margin: 20px 0 4px;
+}
+[hidden] {
+  display: none !important;
+}
+nav {
+  margin: 12px 0;
+}
+nav button {
+  font: inherit;
+  background: #fff;
+  color: #000;
+  border: 1px solid #000;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+nav button.on {
+  font-weight: bold;
+  text-decoration: underline;
+}
+table {
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+th,
+td {
+  border: 1px solid #000;
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+th[data-sort] {
+  cursor: pointer;
+}
+a {
+  color: #000;
+}
+.filters label {
+  margin-right: 12px;
+}
+input,
+select,
+footer button {
+  font: inherit;
+}
+footer {
+  margin-top: 24px;
+}
+.hint {
+  margin: 4px 0;
+}
+
+/* «Банк ответов» */
+#bank-table .answer {
+  white-space: pre-wrap;
+  max-width: 48em;
+}
+#bank-table .answer.clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+#bank-table button {
+  font: inherit;
+  background: #fff;
+  color: #000;
+  border: 0;
+  cursor: pointer;
+}
+#bank-table .more {
+  padding: 0;
+  text-decoration: underline;
+}
+#bank-table .stars {
+  white-space: nowrap;
+}
+#bank-table .stars button {
+  padding: 0 2px;
+  font-size: 18px;
+  line-height: 1;
+}
+#bank-table .stars button.clear {
+  font-size: 14px;
+  text-decoration: underline;
+  margin-left: 4px;
+}
+#bank-table .stars button:disabled {
+  cursor: default;
+}
+#bank-table .note {
+  display: block;
+}
+
+/* Phone width: the bank table becomes cards, the column name before each value. */
+@media (max-width: 700px) {
+  table.cards,
+  table.cards tbody,
+  table.cards tr,
+  table.cards td {
+    display: block;
+  }
+  table.cards thead {
+    display: none;
+  }
+  table.cards tr {
+    border: 1px solid #000;
+    margin: 0 0 8px;
+  }
+  table.cards td {
+    border: 0;
+    border-bottom: 1px solid #000;
+  }
+  table.cards td:last-child {
+    border-bottom: 0;
+  }
+  table.cards td[data-label]::before {
+    content: attr(data-label) ": ";
+    font-weight: bold;
+  }
+  #bank-table .answer {
+    max-width: none;
+  }
+  #bank-table .stars button {
+    font-size: 24px;
+    padding: 0 4px;
+  }
+  .filters label {
+    display: block;
+    margin: 0 0 8px;
+  }
+  nav button {
+    margin: 0 4px 4px 0;
+  }
+}

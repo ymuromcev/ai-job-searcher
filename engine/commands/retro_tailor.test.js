@@ -499,7 +499,10 @@ test("commit: escalation report renders tailorIterationHistory as a table", asyn
       { n: 2, coverage_pct: 58 },
     ],
   });
-  assert.match(md, /- Iterations:\n\n {2}\| Iter \| Coverage \|\n {2}\|---\|---\|\n {2}\| 1 \| 58% \|\n {2}\| 2 \| 58% \|/);
+  assert.match(
+    md,
+    /- Iterations:\n\n {2}\| Iter \| Coverage \|\n {2}\|---\|---\|\n {2}\| 1 \| 58% \|\n {2}\| 2 \| 58% \|/
+  );
   assert.doesNotMatch(md, /history not provided/);
   assert.doesNotMatch(md, /no iterations/);
 });
@@ -514,7 +517,10 @@ test("commit: escalation history falls back to tailorEscalationDetail.iterations
       uncertain_facts: [],
     },
   });
-  assert.match(md, /\| Iter \| Coverage \|\n {2}\|---\|---\|\n {2}\| 1 \| 50% \|\n {2}\| 2 \| 61% \|/);
+  assert.match(
+    md,
+    /\| Iter \| Coverage \|\n {2}\|---\|---\|\n {2}\| 1 \| 50% \|\n {2}\| 2 \| 61% \|/
+  );
   assert.doesNotMatch(md, /history not provided/);
 });
 

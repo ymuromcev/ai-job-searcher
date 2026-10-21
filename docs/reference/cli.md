@@ -25,6 +25,7 @@ Commands:
 | `indeed-prep` | Print Indeed scan playbook for a browser MCP. Phase 1 of the Indeed ingest flow. |
 | `reclassify` | Re-run the email classifier across historical `OTHER` entries in `processed_messages.json` (30-day window). Dry-run by default. |
 | `retro-tailor` | Re-tailor Strong rows already in `To Apply` whose resume predates the RFC-044 tailoring loop. Recon by default; `--apply --results-file` commits. |
+| `apply` | Three-phase auto-apply on Greenhouse / Lever / Ashby: read forms + answer standard questions, (skill answers the rest), fill + submit + mark `Applied`. (RFC 068) |
 | `companies-upsert` | Push relokant-sweep sweet-zone targets into the Notion Companies DB, two-way deduped (domain + name vs Notion / `data/companies.tsv` / relokant ledgers). Back-fills empty fields only; never writes `Tier`. Dry-run by default; `--apply` commits. (RFC 062) |
 
 The dispatcher also runs deterministic pre-command hooks (BL-151 / RFC 054). Today both `scan` and `prepare` auto-trigger `sync --apply` before their main work runs, so downstream filters / cap counters / fit-eval read fresh Notion state. The sync command itself also archives engine-tailored CV/CL files for rows whose status moved past `To Apply` (Applied / Interview / Offer / Rejected / Closed / No Response). The pre-hook is suppressed by `--no-sync`; `scan --dry-run` also suppresses it for parity with the prior dry-run-never-mutates behaviour.
@@ -65,6 +66,7 @@ Outputs and side effects:
 - Appends to `data/jobs.tsv` (shared pool).
 - Appends to `profiles/<id>/applications.tsv` (`status: Inbox` for passed rows, `Archived` for filter-rejected).
 - Appends to `profiles/<id>/filter_rejections.log` (one JSON object per line).
+- Appends one line per discovery source to `profiles/<id>/.health/scan_runs.jsonl` (`{ts, source, found, error}`; secrets redacted; lines older than 60 days dropped on write). Feeds the board's sources tab. Skipped with `--dry-run`; a write failure only warns (`warn: could not write scan health log`), never fails the scan.
 - BEFORE running, auto-triggers `sync --apply` (Notion → TSV pull + archive sweep) unless `--dry-run` or `--no-sync` (BL-151 / RFC 054).
 
 Example:
@@ -353,6 +355,46 @@ Common errors:
 - `profile "<id>" has no notion.application_qa_db_id configured`.
 - `notion push failed: <message>. Local backup preserved at <path>` — the markdown backup is written before the Notion call so there is always a recoverable artifact on disk.
 
+### apply
+
+Synopsis: `node engine/cli.js apply --profile <id> --phase <pre|submit|open> [...]`
+
+The bot fills and submits application forms (RFC 068). `--phase pre` builds the queue (`To Apply`, Strong/Medium, empty `applied_date`, not `submitted`/`failed`/`manual`, within the company cap, newest first), resolves aggregator links to the ATS form, opens each form in headless Playwright Chromium, reads its fields and answers the standard ones (identity, `apply_defaults.json`, salary rule, answer bank). The owner's ratings from the board's «Банк ответов» tab (`profiles/<id>/.answers/ratings.json`) shape the bank: an answer rated 1–2 is never reused; when several answers match, the higher rated wins, then the newer (unrated counts as 3); an unreadable ratings file skips the bank for the run. The `job-pipeline` skill (mode `apply`) answers the rest and writes the answers file. `--phase submit` fills, attaches resume + cover letter, runs the pre-submit check, re-checks `applied_date`, clicks Submit and waits for the ATS confirmation. When Greenhouse holds the application for an emailed security code, the bot reads the code from the apply mailbox (`<ID>_APPLY_GMAIL_USER` / `<ID>_APPLY_GMAIL_APP_PASSWORD`, only mail from Greenhouse about this company sent after the click, up to 5 minutes), types it in and presses Submit again (owner decision 2026-10-21). `--phase open --key <key>` is for the human: it reads the live form, opens a visible browser window with it filled from the answers the night runs wrote (`.apply-state/rounds/*/answers/`, newest wins), leaves the captcha and the Submit click to the human, types an emailed security code in for them, and marks the row Applied (`applied_by=manual`) when the confirmation appears; it waits up to 30 minutes and leaves the row as it was if the window is closed first. The board's «Открыть заполненной» button runs it.
+
+Flags:
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--profile <id>` | string | — | Required. |
+| `--phase <pre\|submit\|open>` | string | — | Required. |
+| `--key <key>` | string | — | Required for `--phase open`: the job key (e.g. `greenhouse:6101858004`). |
+| `--limit <N>` | integer | — | `pre`: cap the queue at N jobs after gating. |
+| `--answers-file <path>` | string | — | Required for `--phase submit`. JSON: `{"answers":[{key, label, answer, bank_page_id}]}`, or a directory of such files (one per job — the night run's `answers/` folder; an empty directory is valid). |
+| `--concurrency <N>` | integer | 4 | Parallel browser contexts; at most one open form per ATS tenant. |
+| `--deadline <ISO>` | string | — | `submit`: open no new form after this time. Jobs not started stay `queued` for the next run (outcome `skipped`, reason `deadline`). |
+| `--dry-run` | boolean | false | `pre`: no TSV writes. `submit`: everything except the Submit click; keeps a screenshot of the filled form. |
+
+Outputs and side effects:
+
+- `--phase pre`: writes `profiles/<id>/.apply-state/apply_context.json` (per job: form schema, resolved answers, `unanswered[]`) and a stamped `.apply-state/apply_pre-<ts>.json` (keys queued / manual / skipped by this run — read by `night`; `bank_used` lists which bank answer went into which form — the board's reuse count). Sets `apply_state=queued` on carried jobs and `apply_state=manual` + `apply_note=<reason>` (`unsupported_ats:<host>`, `unresolved_url:<host>`, `no_application_url`, `captcha`, `login_required`, `resume_missing`, …) on the rest. Rows found by the Greenhouse / Lever / Ashby scanners go straight to the form built from the job id + the board slug in `data/companies.tsv` (Greenhouse: the hosted `embed/job_app?for=<slug>&token=<id>` form, which renders even when the board redirects to a custom careers site); other rows follow redirects, with a headless-browser retry for aggregators (Adzuna) that refuse plain fetch. Postings the ATS reports as gone (Greenhouse / Lever posting API 404, or a "no longer open" page) get `status=Closed` + `apply_note=job_closed` (Notion status `Closed` too) — they are not left for the human. `--dry-run` writes neither.
+- `--phase submit`: success → `status=Applied`, `applied_date`, `applied_by=bot`, `apply_state=submitted`, `apply_note=<screenshot path>`, Notion status `Applied`. No confirmation → `apply_state=failed` (never retried). Captcha / login / unexpected screen → `manual`; an emailed security code that does not arrive, has no field, or is refused → `manual` with `email_code_missing` / `email_code_field_missing` / `email_code_rejected` (no apply mailbox configured → `email_verification`). Screenshots in `profiles/<id>/.apply-state/shots/`; run summary in `.apply-state/apply_results-<ts>.json`.
+
+Example:
+
+```bash
+node engine/cli.js apply --profile <id> --phase pre --limit 20
+node engine/cli.js apply --profile <id> --phase submit \
+  --answers-file profiles/<id>/.apply-state/answers-20261021_020000.json --dry-run
+```
+
+Common errors:
+
+- `--phase <pre|submit|open> is required for the apply command`.
+- `--phase open requires --key <job key>`.
+- `--phase submit requires --answers-file <path>`.
+- `apply_context.json not found — run apply --phase pre first`.
+- `Playwright Chromium not found … run: npx playwright install chromium`.
+
 ### indeed-prep
 
 Synopsis: `node engine/cli.js indeed-prep --profile <id> [--dry-run]`
@@ -474,6 +516,119 @@ Common errors:
 - `warn: <key> status is "Applied" — skipped. Did you sync since recon?` — TSV moved between recon and commit. Re-run `sync --apply`, then re-run recon to refresh the candidate set.
 - `warn: <ID>_NOTION_TOKEN missing — Notion updates skipped` — `.env` is missing the per-profile Notion token. DOCX/PDF were generated on disk, but TSV `resume_ver` was not updated. Fix `.env` and re-run.
 
+### board
+
+Synopsis: `node engine/cli.js board --profile <id> [--no-open] [--port <n>]`
+
+Opens the registry page (RFC 068 §8). A small `node:http` server on `127.0.0.1` serves static files from `engine/ui/board/` and JSON from `GET /api/registry`, `GET /api/week`, `GET /api/sources` and `GET /api/bank`; every request re-reads `applications.tsv` (and the scan health log and the nightly run log `.health/apply_runs.jsonl`). The page is a plain wireframe with five tabs: applications (search, filter by status and by who applied, sortable columns), rows to finish by hand (`apply_state` `manual` / `failed`, with the reason and a link to the form), the weekly numbers, job sources / application sites with a health status, and the answer bank («Банк ответов», BL-225).
+
+The answer bank tab lists every bank answer newest first: question, answer (collapsed to three lines, expandable), company, role, category, source (the apply bot's truth-checked answers vs the owner's own, from the answer's notes), date, how many jobs the bot filled with it (counted from `apply_pre-*.json`, so only from BL-225 U7 on), and a 1–5 star rating; filters "без оценки" / "бот" / "все" and a text search. The bank comes from the Notion answers DB when the profile has a token and `notion.application_qa_db_id`, else from the local backup `profiles/<id>/application_answers/*.md`; it is cached in memory for a minute («Обновить» re-reads it). When Notion fails the tab shows the local backup with a one-line notice. A click on a star is saved at once by `POST /api/rating` (JSON `{id, rating}`, rating 1–5 or `null` to clear; same token / Host / Origin checks; only ids present in the bank) into `profiles/<id>/.answers/ratings.json` (atomic write). Ratings are the only thing the board writes itself — it never writes the TSV or Notion. On «Доделать руками» each job has an «Открыть заполненной» button: `POST /api/open` (JSON `{key}`, same checks; only a key on that list) starts `apply --phase open --key <key>` as a separate process (output in `profiles/<id>/.apply-state/open.log`), which opens the filled form in a visible window and marks the job Applied once the owner submits it. `apply --phase pre` reads the same file (see `apply`).
+
+Security: random token in the URL (`?k=`, also accepted as the `X-Board-Token` header), exact `Host` / `Origin` checks against the loopback host and port, loopback-only peers, strict CSP. Page text from the TSV is rendered with `textContent` only.
+
+Flags:
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--profile <id>` | string | — | Required. |
+| `--no-open` | boolean | false | Print the URL without opening the browser. Otherwise macOS `open <url>` (Linux: `xdg-open`). |
+| `--port <n>` | int | 0 | Port to listen on. `0` picks any free port. |
+
+Outputs and side effects:
+
+- Prints `board for <id>: http://127.0.0.1:<port>/?k=<token>` and serves until closed.
+- Writes a lock file (`pid`, `port`, `token`; mode 600) at `~/Library/Application Support/ai-job-searcher/state/<id>/board.lock` (override the state dir with `AI_JOB_SEARCHER_STATE_DIR`). A second launch finds the live server through the lock and prints / opens its URL instead of starting another one. A lock left by a dead process is removed.
+- Shuts down after 30 minutes without requests, on `POST /api/quit` (the page's close button), or on Ctrl-C; removes its lock on exit.
+- Writes `profiles/<id>/.answers/ratings.json` when the owner rates an answer; starts `apply --phase open` on «Открыть заполненной» (that process writes the TSV row and Notion status when the job is submitted).
+- The lazy auto-Dead / auto-No-Response sweeps that run before other commands are skipped for `board`.
+
+Example:
+
+```bash
+node engine/cli.js board --profile <id>
+node engine/cli.js board --profile <id> --no-open --port 8765
+```
+
+Common errors:
+
+- `error: --port must be an integer 0..65535` — fix the flag value.
+- `error: cannot listen on 127.0.0.1:<port>: EADDRINUSE` — the port is taken; omit the flag to pick a free one.
+- The page shows a load error carrying an `applications.tsv` parse message — run `validate` to see the bad row.
+
+### report
+
+Synopsis: `node engine/cli.js report --profile <id> --weekly [--out <dir>]`
+
+Writes the weekly review page (RFC 068 §10): applied / responses / interviews / rejections / response rate for the 7 days ending today and cumulative, broken down by fit score, resume archetype, source, ATS host, geo bucket (CA / remote / other), posting age at apply time (`applied_date − createdAt`: 0–3, 4–14, 15–30, 31+ days) and who applied, plus the top reasons rows are waiting for a manual application, and one row per nightly run of the week from `.health/apply_runs.jsonl` (see `night`). The summary table also has one line for the apply bot's answers saved to the bank — added this week and in total, with how many are rated / unrated and the average rating (bank from Notion or the local backup, best-effort; ratings from `profiles/<id>/.answers/ratings.json`). The same numbers are on the board's weekly tab.
+
+Flags:
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--profile <id>` | string | — | Required. |
+| `--weekly` | boolean | false | Required. The only report kind so far. |
+| `--out <dir>` | string | see below | Output directory. Default: `$AI_JOB_SEARCHER_DATA_DIR/reports`, else `data/reports` in the repo. |
+
+Outputs and side effects:
+
+- Writes a self-contained HTML page `weekly-<YYYY-MM-DD>.html` (no scripts, no network) and prints its path. Re-running on the same day overwrites that day's page.
+- Read-only on `applications.tsv`; the lazy sweeps are skipped.
+
+Example:
+
+```bash
+node engine/cli.js report --profile <id> --weekly --out ~/reports
+```
+
+Common errors:
+
+- `error: report needs a kind; the only one so far is --weekly`.
+
+### night
+
+Synopsis: `node engine/cli.js night --profile <id> --phase <start|check|prepare-fanout|prepare-collect|apply-fanout|finish> [...]`
+
+The deterministic rails of the unattended nightly run (RFC 068 §9 / §11, BL-225). The runbook `skills/job-pipeline/night-apply.md` calls it between the `scan` / `prepare` / `apply` steps; Claude does the LLM work in between. `night` writes only its own files — never `applications.tsv`, never Notion — so the lazy sweeps are skipped for it.
+
+Phases:
+
+- `start` — takes the per-profile lock, stamps the start time, computes the deadline (next local `--stop-at`, at most `--max-hours` away), prints the apply-ready backlog and one JSON line (`started_at`, `deadline`, `target`, `apply_ready`). Another live night → exit 3, nothing touched. A lock left by a night that died (older than its deadline + 1 h) is closed as `abandoned` in the run log and replaced.
+- `check` — one JSON line: `step` (`prepare` with `prepare_batch`, `apply`, or `stop` with `reason`: `deadline`, `target_reached`, `queue_empty`), `minutes_left`, `submitted_tonight`, `need`, `apply_ready`, `apply_fresh` (rows no apply pre has looked at tonight), `prepare_target`, `inbox_exhausted`. Exit 0 for prepare / apply, 2 for stop.
+- `prepare-fanout` — splits `prepare_context.json` into `profiles/<id>/.prepare-state/rows/`: `memory.md` (shared memory blob), `jd/<row>.md` (JD body), `payloads/<row>.json` (one row's subagent input, pipeline-fit-evaluator contract plus tailoring paths, `result_path` and `tailor_dir`). One rolling folder: a topup keeps the rows already judged; files of rows no longer in the batch are pruned. Prints a JSON header and one `<payload path>\t<company> — <title>` line per row that has no result yet.
+- `prepare-collect` — reads `results/<row>.json`, validates each against what `prepare --phase commit` accepts (fit score, rationale, 4 cover-letter paragraphs + `clKey` + a known `resumeVer` for Strong/Medium, `tailoredResume` or an escalation reason for Strong, tier letter), writes `profiles/<id>/prepare_results_<YYYYMMDD_HHMMSS>.json` with `companyTiers`, and lists missing / invalid rows (they stay in Inbox; an invalid result file is removed so the next fan-out re-issues the row). Exit 2 when nothing is committable.
+- `apply-fanout` — splits `.apply-state/apply_context.json` into `.apply-state/rounds/<stamp>/jobs/<job>.json` for jobs with open questions (each names its `draft_path`, `review_path`, `answers_path`, `bank_dir`) and creates the `answers/` directory that `apply --phase submit --answers-file` reads.
+- `finish` — appends one JSON line to `profiles/<id>/.health/apply_runs.jsonl` (`started_at`, `finished_at`, `target`, `scanned`, `prepared`, `strong`, `medium`, `weak`, `queued`, `submitted`, `manual`, `failed`, `deferred`, `apply_rounds`, `stop_reason`) and releases the lock. Counts are recomputed from the TSV and the `.apply-state` files written since the start, never passed in. The weekly report and the board's weekly tab show these lines as «Ночные запуски».
+
+Flags:
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--profile <id>` | string | — | Required. |
+| `--phase <...>` | string | — | Required. One of the phases above. |
+| `--target <N>` | integer | 100 | `start`: applications to aim for tonight. |
+| `--stop-at <HH:MM>` | string | 06:30 | `start`: local time after which no new work starts. |
+| `--max-hours <N>` | number | 10 | `start`: hard cap on the run length. |
+| `--stop-reason <text>` | string | `unspecified` | `finish`: why the night ended (`deadline`, `target_reached`, `queue_empty`, `usage_budget`, `scan_failed`, `prepare_failed`, `apply_failed`, …). |
+
+Outputs and side effects:
+
+- Lock: `~/Library/Application Support/ai-job-searcher/state/<id>/night.lock` (override the state dir with `AI_JOB_SEARCHER_STATE_DIR`).
+- Run log: `profiles/<id>/.health/apply_runs.jsonl`, lines older than 180 days dropped on write.
+
+Example:
+
+```bash
+node engine/cli.js night --profile <id> --phase start --target 100 --stop-at 06:30
+node engine/cli.js night --profile <id> --phase check
+node engine/cli.js night --profile <id> --phase finish --stop-reason deadline
+```
+
+Common errors:
+
+- `night already running for <id> since … — this run stops here` (exit 3).
+- `no night in progress for <id> — run night --phase start first`.
+- `prepare_context.json missing or has no batch — run prepare --phase pre first`.
+
 ## Environment variables
 
 Secrets are loaded by `engine/core/profile_loader.loadSecrets(profileId, env)`. Per-profile namespacing: each variable is prefixed by the uppercased profile id followed by `_`. Other profiles' secrets are never read by the running command.
@@ -496,7 +651,8 @@ The CLI loads `.env` via `dotenv` only when invoked as a binary; tests inject `e
 | --- | --- |
 | 0 | Success. |
 | 1 | Generic error. Examples: missing required flag, profile load failure, adapter failure, retro-sweep matches without `--apply`, Notion mutation error. |
-| 2 | Configuration / schema error. Reserved; today the CLI primarily uses 0 / 1. |
+| 2 | Configuration / schema error. Reserved; today the CLI primarily uses 0 / 1. `night` uses 2 for "stop" (`check`) and "nothing to commit" (`prepare-collect`). |
+| 3 | `night --phase start`: another night holds the lock. |
 
 `--verbose` causes uncaught errors to print their stack trace alongside the message.
 

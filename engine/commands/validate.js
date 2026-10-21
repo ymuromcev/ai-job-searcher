@@ -621,6 +621,8 @@ function formatReason(reason) {
   if (reason.kind === "geo_country_miss")
     return `geo_country_miss (mode: ${reason.mode || "us-wide"})`;
   if (reason.kind === "geo_remote_only_miss") return `geo_remote_only_miss`;
+  if (reason.kind === "geo_not_home_state_or_remote")
+    return `geo_not_home_state_or_remote (mode: ${reason.mode || "home_state_or_remote"})`;
   if (reason.kind === "geo_blocklist") return `geo_blocklist`;
   if (reason.kind === "geo_no_location")
     return `geo_no_location (TSV row missing location field — backfill?)`;

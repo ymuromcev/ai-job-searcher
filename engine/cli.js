@@ -26,7 +26,18 @@ const KNOWN_COMMANDS = [
   "retro-tailor",
   "backfill-outreach-url",
   "companies-upsert",
+  "board",
+  "report",
+  "apply",
+  "night",
 ];
+
+// Commands that never write applications.tsv / Notion (RFC 068 §8 / §10). The
+// lazy auto-Dead / auto-No-Response sweeps write the TSV and Notion, so they
+// are skipped for these — opening the registry must never change data, and
+// `night` (only its own lock / log / fan-out files) is polled many times a
+// night, where a sweep on every call would only add Notion traffic.
+const READ_ONLY_COMMANDS = new Set(["board", "report", "night"]);
 
 const PARSE_OPTIONS = {
   options: {
@@ -64,6 +75,21 @@ const PARSE_OPTIONS = {
     "applied-date": { type: "string" },
     "resume-ver": { type: "string" },
     force: { type: "boolean", default: false },
+    // `board` / `report` (RFC 068 §8 / §10).
+    "no-open": { type: "boolean", default: false },
+    port: { type: "string" },
+    weekly: { type: "boolean", default: false },
+    out: { type: "string" },
+    // `apply` (RFC 068).
+    "answers-file": { type: "string" },
+    key: { type: "string" },
+    concurrency: { type: "string" },
+    deadline: { type: "string" },
+    // `night` (RFC 068 §9, BL-225).
+    target: { type: "string" },
+    "stop-at": { type: "string" },
+    "max-hours": { type: "string" },
+    "stop-reason": { type: "string" },
   },
   allowPositionals: true,
   strict: true,
@@ -122,6 +148,28 @@ Commands:
              fields only; Tier is never written. Dry-run by default (prints
              "N to create, M to fill, K skip"); --apply commits. See RFC 062 /
              BL-202.
+  board      Open the read-only registry page: applications, rows to finish
+             by hand, the weekly numbers, job sources and application sites.
+             Local server on 127.0.0.1 with a token in the URL; a second
+             launch reuses the running one; closes after 30 min idle.
+             See RFC 068.
+  report     Write a report page. With --weekly: weekly application stats
+             as weekly-<YYYY-MM-DD>.html. See RFC 068.
+  apply      Bot fills and submits Greenhouse / Lever / Ashby application
+             forms for To Apply rows (Strong/Medium, never applied, within
+             the company cap). Three phases: --phase pre reads the forms and
+             writes .apply-state/apply_context.json; the job-pipeline skill
+             answers the open questions; --phase submit fills, submits and
+             marks Applied. --dry-run stops before the Submit click.
+             --phase open --key <key> opens one manual job in a visible
+             browser, filled, for the human to press Submit (the board's
+             «Открыть заполненной» button). See RFC 068.
+  night      Rails for the unattended nightly run (skills/job-pipeline/
+             night-apply.md): lock + deadline (start), what to do next
+             (check), per-row / per-job fan-out files for parallel
+             subagents (prepare-fanout, prepare-collect, apply-fanout), and
+             one line per night in .health/apply_runs.jsonl (finish).
+             Never writes applications.tsv or Notion. See RFC 068 §9 / §11.
 
 Flags:
   --profile <id>       Profile id (required for all commands). Lowercase, alphanum + - _.
@@ -193,6 +241,31 @@ retro-tailor flags:
   --since <YYYY-MM-DD>   Skip candidates older than this date (recon only).
   --dry-run              Recon-only mode without writing the context file.
 
+apply flags:
+  --phase <pre|submit>   Required.
+  --limit <N>            pre: cap the queue at N jobs (newest first).
+  --answers-file <path>  Required for --phase submit. JSON written by the skill:
+                         {"answers":[{"key","label","answer","bank_page_id"}]},
+                         or a directory of such files (one per job — the
+                         night run's answers/ folder; may be empty).
+  --concurrency <N>      Parallel browser contexts (default 4; at most one
+                         open form per ATS tenant).
+  --deadline <ISO>       submit: start no new form after this time; the rest
+                         stay queued for the next run (outcome "deadline").
+  --dry-run              pre: no TSV writes. submit: everything except the
+                         Submit click; keeps a screenshot of the filled form.
+
+night flags:
+  --phase <start|check|prepare-fanout|prepare-collect|apply-fanout|finish>
+                         Required. check exits 2 when the night must stop;
+                         start exits 3 when another night holds the lock.
+  --target <N>           start: applications to aim for tonight (default 100).
+  --stop-at <HH:MM>      start: local time to stop starting new work
+                         (default 06:30).
+  --max-hours <N>        start: hard cap on the run length (default 10).
+  --stop-reason <text>   finish: why the night ended (deadline, target_reached,
+                         queue_empty, usage_budget, scan_failed, …).
+
 answer flags:
   --phase <search|push>  Required. "search" looks up existing Q&A by company+role+question
                          and prints a JSON match report. "push" reads --results-file and
@@ -202,6 +275,15 @@ answer flags:
   --question <text>      Required for --phase search. Question text (one line).
   --results-file <path>  Required for --phase push. JSON: {company, role, question,
                          answer, category?, notes?, existingPageId?}.
+
+board flags:
+  --no-open              Print the URL without opening the browser.
+  --port <n>             Listen on this port (default: any free port).
+
+report flags:
+  --weekly               Required. Weekly stats for the 7 days ending today.
+  --out <dir>            Output directory. Default: $AI_JOB_SEARCHER_DATA_DIR/reports,
+                         else data/reports in the repo.
 
 Environment:
   Per-profile secrets are namespaced by profile id (uppercased). For example,
@@ -248,6 +330,10 @@ function defaultCommands() {
     "retro-tailor": require("./commands/retro_tailor.js"),
     "backfill-outreach-url": require("./commands/backfill_outreach_url.js"),
     "companies-upsert": require("./commands/companies_upsert.js"),
+    board: require("./commands/board.js"),
+    report: require("./commands/report.js"),
+    apply: require("./commands/apply.js"),
+    night: require("./commands/night.js"),
   };
 }
 
@@ -321,6 +407,21 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
       appliedDate: parsed.values["applied-date"] || "",
       resumeVer: parsed.values["resume-ver"] || "",
       force: Boolean(parsed.values.force),
+      // board / report (RFC 068). `port` stays a string — board validates it.
+      noOpen: Boolean(parsed.values["no-open"]),
+      port: parsed.values.port || "",
+      weekly: Boolean(parsed.values.weekly),
+      out: parsed.values.out || "",
+      // apply (RFC 068)
+      answersFile: parsed.values["answers-file"] || "",
+      key: parsed.values.key || "",
+      concurrency: parsed.values.concurrency ? parseInt(parsed.values.concurrency, 10) : null,
+      deadline: parsed.values.deadline || "",
+      // night (RFC 068 §9, BL-225)
+      target: parsed.values.target ? parseInt(parsed.values.target, 10) : null,
+      stopAt: parsed.values["stop-at"] || "",
+      maxHours: parsed.values["max-hours"] ? Number(parsed.values["max-hours"]) : null,
+      stopReason: parsed.values["stop-reason"] || "",
     },
     env,
     stdout: writeOut,
@@ -395,9 +496,11 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
   const { runAutoNoResponseSweep } = require("./core/auto_no_response_sweep.js");
 
   try {
-    const todayStr = todayLocalISO();
-    await runAutoDeadSweep(ctx.profileId, ctx, { todayStr });
-    await runAutoNoResponseSweep(ctx.profileId, ctx, { todayStr });
+    if (!READ_ONLY_COMMANDS.has(ctx.command)) {
+      const todayStr = todayLocalISO();
+      await runAutoDeadSweep(ctx.profileId, ctx, { todayStr });
+      await runAutoNoResponseSweep(ctx.profileId, ctx, { todayStr });
+    }
     const preHook = PIPELINE_PRE_HOOKS[ctx.command];
     if (preHook) await preHook(ctx, handlers);
     const code = await handler(ctx);
@@ -410,7 +513,7 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
   }
 }
 
-module.exports = { runCli, KNOWN_COMMANDS, HELP_TEXT };
+module.exports = { runCli, KNOWN_COMMANDS, HELP_TEXT, READ_ONLY_COMMANDS };
 
 if (require.main === module) {
   // Load `.env` only when invoked as a CLI — tests keep hermetic env via

@@ -744,3 +744,85 @@ test("scan filter: company_cap does NOT fire at scan stage (apply-time only)", a
   const capRejects = allRejects.filter((l) => l.kind === "company_cap");
   assert.equal(capRejects.length, 0, "company_cap rejections must not be emitted by scan");
 });
+
+// --- RFC 068 §8: per-source scan health log -------------------------------
+
+test("scan appends one health line per source after discovery", async () => {
+  const healthCalls = [];
+  const { deps } = makeDeps({
+    loadSecrets: () => ({ NOTION_TOKEN: "supersecret-token-value" }),
+    appendScanHealth: (root, entries, opts) => healthCalls.push({ root, entries, opts }),
+    scan: async () => ({
+      fresh: [],
+      pool: [],
+      summary: {
+        greenhouse: { total: 4, error: null },
+        lever: { total: 0, error: "401 for supersecret-token-value" },
+      },
+      errors: [{ source: "lever", message: "401" }],
+    }),
+  });
+  const { ctx } = makeCtx();
+  const code = await makeScanCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(healthCalls.length, 1);
+  assert.equal(healthCalls[0].root, "/tmp/profiles/jared");
+  assert.deepEqual(healthCalls[0].entries, [
+    { ts: "2026-04-20T00:00:00Z", source: "greenhouse", found: 4, error: null },
+    { ts: "2026-04-20T00:00:00Z", source: "lever", found: 0, error: "401 for ***" },
+  ]);
+});
+
+test("scan --dry-run does not write the health log", async () => {
+  const healthCalls = [];
+  const { deps } = makeDeps({ appendScanHealth: (...a) => healthCalls.push(a) });
+  const { ctx } = makeCtx({ flags: { dryRun: true, apply: false, verbose: false } });
+  const code = await makeScanCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(healthCalls.length, 0);
+});
+
+test("scan health log failure never fails the scan", async () => {
+  const { deps, calls } = makeDeps({
+    appendScanHealth: () => {
+      throw new Error("disk full");
+    },
+  });
+  const { ctx, out } = makeCtx();
+  const code = await makeScanCommand(deps)(ctx);
+  assert.equal(code, 0);
+  assert.equal(calls.saveApplications.length, 1);
+  assert.match(out.all(), /could not write scan health log: disk full/);
+});
+
+test("scan default health writer: writes into an existing profile dir, skips a missing one", async () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aijs-scan-health-"));
+  const { deps } = makeDeps();
+  delete deps.appendScanHealth; // fall through to the real default writer
+  deps.loadProfile = (id) => ({
+    id,
+    modules: ["discovery:greenhouse", "discovery:lever"],
+    discovery: {},
+    paths: { root: tmpRoot },
+  });
+  assert.equal(await makeScanCommand(deps)(makeCtx().ctx), 0);
+  const file = path.join(tmpRoot, ".health", "scan_runs.jsonl");
+  const lines = fs.readFileSync(file, "utf8").trim().split("\n").map(JSON.parse);
+  assert.deepEqual(
+    lines.map((l) => [l.source, l.found, l.error]),
+    [
+      ["greenhouse", 1, null],
+      ["lever", 1, null],
+    ]
+  );
+
+  const missing = path.join(tmpRoot, "does-not-exist");
+  deps.loadProfile = (id) => ({
+    id,
+    modules: ["discovery:greenhouse"],
+    discovery: {},
+    paths: { root: missing },
+  });
+  assert.equal(await makeScanCommand(deps)(makeCtx().ctx), 0);
+  assert.equal(fs.existsSync(missing), false);
+});
