@@ -96,7 +96,11 @@ test("phase is required", async () => {
 
 test("start: takes the lock, sets the deadline; a second night exits 3 without touching it", async () => {
   const t = setup({ apps: [row({ key: "1" }), row({ key: "2", fit_score: "Weak" })] });
-  const r = await t.run({ phase: "start", target: 50, stopAt: "06:30", maxHours: 2 });
+  // Stop time 5 h after START in the runner's own time zone, so the 2 h cap
+  // wins on any machine (CI runs in UTC, the owner's Mac in Pacific).
+  const later = new Date(START.getTime() + 5 * 3600 * 1000);
+  const stopAt = `${String(later.getHours()).padStart(2, "0")}:${String(later.getMinutes()).padStart(2, "0")}`;
+  const r = await t.run({ phase: "start", target: 50, stopAt, maxHours: 2 });
   assert.equal(r.code, 0);
   assert.equal(r.json.started_at, START.toISOString());
   assert.equal(r.json.deadline, "2026-10-22T07:00:00.000Z", "capped at 2h");
