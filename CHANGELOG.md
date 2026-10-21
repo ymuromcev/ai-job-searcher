@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+- **Legacy-bot mailbox import (RFC 068 §7, unit U2).** `node scripts/import_zoho_applications.js --profile <id> [--since YYYY-MM-DD] [--mbox <path>] [--apply] [--plan <file>]` reads the previous application bot's Zoho mailbox (read-only IMAP via `<ID>_ZOHO_USER` / `<ID>_ZOHO_APP_PASSWORD`, `imap.zoho.com` with `imappro.zoho.com` fallback) or a local mbox / `.eml` directory, classifies each message with the existing `check` classifier, extracts company + job title from Greenhouse / Lever / Ashby / Workday / iCIMS / SmartRecruiters emails, and folds the result into `applications.tsv`: matched rows get `status` / `applied_date` / `applied_by=legacy_bot` / `apply_state=submitted` (Interview / Offer never downgraded), unmatched applications become `source=legacy_bot` rows via `appendNew`. Dry-run by default; the plan is written to `profiles/<id>/.legacy-import/plan-<ts>.json` and `--apply` applies exactly that plan. Notion is not touched. Pure helpers in `engine/core/legacy_import.js`.
+
 ### Changed
 
 - **Adzuna adapter gains an optional `distance` (radius km) param (BL-70, 2026-05-30).** `engine/modules/discovery/adzuna.js` now reads `discovery.keyword_search.distance` and, when it is a finite number > 0, sends Adzuna's `distance=<km>` query param alongside `where`. Adzuna's `where` field accepts only one location, so a profile that needs metro-wide coverage (e.g. Lilia's Sacramento/Roseville radius) sets a single center city plus a radius instead of one municipality. Absent / `0` / non-numeric `distance` is omitted entirely, so existing profiles (jared) keep exact-match behaviour unchanged. Precise per-city gating still happens downstream via `geo.cities` / `geo.blocklist` — the radius only widens what Adzuna returns. Added 3 unit tests (omitted-by-default, sent-when-set, zero/invalid-ignored); adapter suite 19/19, full suite 1978/1978, prettier clean.
