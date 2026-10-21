@@ -409,20 +409,54 @@ function encodeLocations(locations) {
 //   - valid JSON array → array (non-string entries coerced)
 //   - any other non-JSON string → [cell] (defensive single-element wrap;
 //     covers hand edits that lose the brackets)
-function decodeLocations(cell) {
-  let s = String(cell || "").trim();
+//   - a whole cell or a single ELEMENT that is itself an encoded array —
+//     CSV-quoted ('"[""San Francisco, CA""]"') or plain JSON ('["US"]') —
+//     is unwrapped into its strings (BL-225: spreadsheet round-trips left
+//     rows like ['"[""US""]"']). Nesting is unwrapped at most
+//     MAX_LOCATION_UNWRAP_DEPTH levels deep.
+const MAX_LOCATION_UNWRAP_DEPTH = 3;
+
+function unwrapCsvQuoted(s) {
   // A spreadsheet round-trip CSV-quotes the JSON: "[""San Francisco, CA""]".
-  if (s.startsWith('"[') && s.endsWith(']"')) s = s.slice(1, -1).replace(/""/g, '"');
+  if (s.length >= 4 && s.startsWith('"[') && s.endsWith(']"')) {
+    return s.slice(1, -1).replace(/""/g, '"');
+  }
+  return s;
+}
+
+function looksLikeEncodedArray(s) {
+  return (s.startsWith('"[') && s.endsWith(']"')) || (s.startsWith("[") && s.endsWith("]"));
+}
+
+function decodeLocationsAt(cell, depth) {
+  const s = unwrapCsvQuoted(String(cell || "").trim());
   if (s === "" || s === "[]") return [];
   if (s.startsWith("[")) {
+    let parsed = null;
     try {
-      const parsed = JSON.parse(s);
-      if (Array.isArray(parsed)) return parsed.map((v) => String(v));
+      parsed = JSON.parse(s);
     } catch {
       // fall through to single-element wrap
     }
+    if (Array.isArray(parsed)) {
+      const out = [];
+      for (const v of parsed) {
+        const str = String(v);
+        const trimmed = str.trim();
+        if (depth < MAX_LOCATION_UNWRAP_DEPTH && looksLikeEncodedArray(trimmed)) {
+          out.push(...decodeLocationsAt(trimmed, depth + 1));
+        } else {
+          out.push(str);
+        }
+      }
+      return out;
+    }
   }
   return [s];
+}
+
+function decodeLocations(cell) {
+  return decodeLocationsAt(cell, 0);
 }
 
 // BL-12 (2026-05-06): idempotent — strip any leading ATS prefixes from `jobId`
