@@ -4694,6 +4694,7 @@ test("ENGINE_SKIP_REASONS exposes the documented set (regression guard)", () => 
     "geo_remote_only_miss",
     "geo_unknown_mode",
     "geo_title_excluded",
+    "geo_jd_not_remote",
     "url_dead",
   ]) {
     assert.ok(ENGINE_SKIP_REASONS.has(r), `ENGINE_SKIP_REASONS missing "${r}"`);
@@ -4858,6 +4859,128 @@ test("prepare --phase pre (RFC 068): no apply_defaults → salary floor is a no-
   await cmd(makeCtx());
   const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
   assert.equal(result.batch.length, 1);
+});
+
+// --- BL-225: JD workplace check (geo mode home_state_or_remote) -------------
+
+const HOME_CA_GEO = { mode: "home_state_or_remote", home_state: "CA", blocklist: [] };
+
+test("prepare --phase pre (BL-225): hybrid out-of-state JD → archived geo_jd_not_remote", async () => {
+  const apps = [
+    makeInboxApp({ key: "gh:1", companyName: "Acme" }), // US only, JD hybrid Austin → drop
+    makeInboxApp({ key: "gh:2", companyName: "Beta" }), // Remote, JD hybrid SF → keep
+    makeInboxApp({ key: "gh:3", companyName: "Gamma" }), // US only, JD silent → keep
+    makeInboxApp({ key: "gh:4", companyName: "Delta" }), // CA location → no JD check
+    makeInboxApp({ key: "gh:5", companyName: "Omega" }), // Remote, JD remote → keep
+  ];
+  apps[0].locations = ["United States"];
+  apps[1].locations = ["Remote"];
+  apps[2].locations = ["US"];
+  apps[3].locations = ["San Francisco, CA"];
+  apps[4].locations = ["Remote"];
+  const jds = {
+    "gh:1": "Senior PM\nHybrid in Austin, TX.\nRequirements:\n- 5+ years PM\n",
+    "gh:2": "Senior PM\nHybrid, 3 days/week in our San Francisco office.\n",
+    "gh:3": "Senior PM\nRequirements:\n- 5+ years PM\n",
+    "gh:4": "Senior PM\nThis role is hybrid, 3 days a week in our New York office.\n",
+    "gh:5": "Senior PM\nRemote (US) — candidates in CA, WA, NY.\n",
+  };
+  const deps = makePrepDepsWithGeo(apps, HOME_CA_GEO, {
+    fetchJds: async (inputs) =>
+      inputs.map((i) => ({ key: i.key, status: "fetched", text: jds[i.key] })),
+  });
+  const cmd = makePrepareCommand(deps);
+  await cmd(makeCtx());
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.deepEqual(result.batch.map((b) => b.key).sort(), ["gh:2", "gh:3", "gh:4", "gh:5"]);
+  const skipped = result.skipped.find((s) => s.key === "gh:1");
+  assert.ok(skipped, "out-of-state hybrid row must be in skipped[]");
+  assert.equal(skipped.reason, "geo_jd_not_remote");
+  assert.equal(skipped.geoMatchedBy, "us_unspecified");
+  assert.equal(skipped.workplace, "hybrid");
+  assert.deepEqual(skipped.offices, ["TX"]);
+  assert.equal(result.stats.skipReasons.geo_jd_not_remote, 1);
+  const row = apps.find((a) => a.key === "gh:1");
+  assert.equal(row.status, "Archived");
+  assert.equal(row.skip_reason, "geo_jd_not_remote");
+  for (const k of ["gh:2", "gh:3", "gh:4", "gh:5"]) {
+    assert.notEqual(apps.find((a) => a.key === k).status, "Archived", k);
+  }
+  // The country-only row reaches the SKILL with its geo clause surfaced.
+  assert.equal(result.batch.find((b) => b.key === "gh:3").geo_matched_by, "us_unspecified");
+});
+
+test("prepare --phase pre (BL-225): JD workplace check is a no-op outside home_state_or_remote", async () => {
+  const apps = [makeInboxApp({ key: "gh:1", companyName: "Acme" })];
+  apps[0].locations = ["Remote"];
+  const deps = makePrepDepsWithGeo(
+    apps,
+    { mode: "us-wide", remote_ok: true },
+    {
+      fetchJds: async () => [{ key: "gh:1", status: "fetched", text: "Hybrid in Austin, TX." }],
+    }
+  );
+  const cmd = makePrepareCommand(deps);
+  await cmd(makeCtx());
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 1);
+});
+
+test("prepare --phase pre topup (BL-225): JD workplace check also runs on topup rows", async () => {
+  const apps = [
+    makeInboxApp({ key: "gh:2", jobId: "2", companyName: "Acme" }),
+    makeInboxApp({ key: "gh:3", jobId: "3", companyName: "Beta" }),
+  ];
+  apps[0].locations = ["US"];
+  apps[1].locations = ["US"];
+  const prevContext = {
+    version: 1,
+    profileId: "testuser",
+    mode: "fresh",
+    batchSize: 2,
+    batch: [],
+    skipped: [],
+    deferredQueue: ["gh:2", "gh:3"],
+    unknownTierCompanies: [],
+    stats: { urlChecked: 0, urlAlive: 0, urlDead: 0, deferred: 2, skipReasons: {} },
+  };
+  const jds = {
+    "gh:2": "This role is based in our Chicago office. We do not offer remote roles.",
+    "gh:3": "This is a fully remote role.",
+  };
+  const deps = makePrepDepsWithGeo(apps, HOME_CA_GEO, {
+    readFile: () => JSON.stringify(prevContext),
+    fetchJds: async (inputs) =>
+      inputs.map((i) => ({ key: i.key, status: "fetched", text: jds[i.key] })),
+  });
+  const cmd = makePrepareCommand(deps);
+  const ctx = makeCtx({ flags: { phase: "pre", mode: "topup", need: 2, batch: 2, dryRun: false } });
+  assert.equal(await cmd(ctx), 0);
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.deepEqual(
+    result.batch.map((b) => b.key),
+    ["gh:3"]
+  );
+  assert.equal(result.skipped.find((s) => s.key === "gh:2").reason, "geo_jd_not_remote");
+  assert.equal(apps[0].status, "Archived");
+  assert.equal(apps[0].skip_reason, "geo_jd_not_remote");
+});
+
+test("applyJdWorkplacePass: rows without JD text or with a home-state match pass through", () => {
+  const { applyJdWorkplacePass } = require("./prepare.js");
+  const alive = [
+    { key: "a", url: "u", _geoResult: { ok: true, matchedBy: "us_unspecified" } },
+    { key: "b", url: "u", _geoResult: { ok: true, matchedBy: "home_state:CA" } },
+    { key: "c", url: "u" },
+  ];
+  const jds = {
+    a: { status: "not_found", text: null },
+    b: { status: "fetched", text: "Hybrid in Austin, TX." },
+    c: { status: "fetched", text: "Hybrid in Austin, TX." },
+  };
+  const r = applyJdWorkplacePass(alive, jds, HOME_CA_GEO);
+  assert.equal(r.aliveResults.length, 3);
+  assert.equal(r.jdWorkplaceSkipped.length, 0);
 });
 
 test("applySalaryFloorPass: rows without JD text pass through", () => {

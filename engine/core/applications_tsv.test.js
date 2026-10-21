@@ -953,3 +953,45 @@ test("decodeLocations unwraps a CSV-quoted JSON cell", () => {
   assert.deepEqual(apps.decodeLocations('"[""San Francisco, CA""]"'), ["San Francisco, CA"]);
   assert.deepEqual(apps.decodeLocations('"[""Remote"",""Austin, TX""]"'), ["Remote", "Austin, TX"]);
 });
+
+// BL-225: a spreadsheet round-trip left CSV-quoted JSON *inside* an already
+// parsed array — the element itself is the encoded array.
+test("decodeLocations unwraps CSV-quoted JSON elements inside the array", () => {
+  assert.deepEqual(apps.decodeLocations(JSON.stringify(['"[""San Francisco, CA""]"'])), [
+    "San Francisco, CA",
+  ]);
+  assert.deepEqual(apps.decodeLocations(JSON.stringify(['"[""US""]"'])), ["US"]);
+  assert.deepEqual(
+    apps.decodeLocations(JSON.stringify(['"[""Remote"",""United States""]"', "Austin, TX"])),
+    ["Remote", "United States", "Austin, TX"]
+  );
+  // Plain JSON array as an element.
+  assert.deepEqual(apps.decodeLocations(JSON.stringify(['["Boston, MA"]'])), ["Boston, MA"]);
+  // Empty encoded element contributes nothing.
+  assert.deepEqual(apps.decodeLocations(JSON.stringify(['"[]"', "Remote"])), ["Remote"]);
+});
+
+test("decodeLocations unwraps nested encodings recursively, bounded", () => {
+  const level1 = JSON.stringify(["Seattle, WA"]);
+  const level2 = JSON.stringify([level1]);
+  const level3 = JSON.stringify([level2]);
+  assert.deepEqual(apps.decodeLocations(JSON.stringify([level3])), ["Seattle, WA"]);
+  // Past the depth bound the remaining encoding is kept verbatim (no throw).
+  const level4 = JSON.stringify([level3]);
+  const out = apps.decodeLocations(JSON.stringify([level4]));
+  assert.equal(out.length, 1);
+  assert.ok(out[0].startsWith("["));
+});
+
+test("decodeLocations leaves bracket-looking non-JSON elements alone", () => {
+  assert.deepEqual(apps.decodeLocations(JSON.stringify(["[Remote", "3 Locations"])), [
+    "[Remote",
+    "3 Locations",
+  ]);
+  assert.deepEqual(apps.decodeLocations(JSON.stringify(["[not json]"])), ["[not json]"]);
+});
+
+test("decodeLocations: CSV-quoted elements round-trip clean through encode", () => {
+  const decoded = apps.decodeLocations(JSON.stringify(['"[""San Francisco, CA""]"']));
+  assert.equal(apps.encodeLocations(decoded), '["San Francisco, CA"]');
+});

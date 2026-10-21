@@ -51,6 +51,10 @@ const ENGINE_SKIP_REASONS = Object.freeze(
     // RFC 068 §3: geo mode "home_state_or_remote" — outside the home state and
     // not remote (or ambiguous).
     "geo_not_home_state_or_remote",
+    // BL-225 (RFC 068 §3): the row passed geo without a home-state location
+    // (country-only US / remote marker), but its JD says hybrid or onsite in
+    // an office outside the home state (jd_workplace.js).
+    "geo_jd_not_remote",
     // RFC 068 §4a: the published salary range tops out below
     // `apply_defaults.json` salary.floor.
     "salary_below_floor",
