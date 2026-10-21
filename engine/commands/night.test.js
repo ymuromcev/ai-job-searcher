@@ -175,6 +175,21 @@ test("check: needs a running night; apply when fresh rows wait; stop at the dead
   assert.equal(r3.code, EXIT_STOP);
   assert.equal(r3.json.reason, "queue_empty");
 
+  // A round tonight that found nothing to judge counts as exhausted too.
+  writeJson(path.join(t.profileDir, "prepare_context.json"), {
+    generatedAt: "2026-10-22T06:40:00.000Z",
+    batch: [],
+    stats: { inboxExhausted: false },
+  });
+  assert.equal((await t.run({ phase: "check" })).json.inbox_exhausted, true);
+  // …but a context from before tonight's start is ignored.
+  writeJson(path.join(t.profileDir, "prepare_context.json"), {
+    generatedAt: "2026-10-21T06:40:00.000Z",
+    batch: [],
+    stats: { inboxExhausted: true },
+  });
+  assert.equal((await t.run({ phase: "check" })).json.step, "prepare");
+
   t.clock.now = new Date("2026-10-22T20:00:00.000Z");
   const late = await t.run({ phase: "check" });
   assert.equal(late.code, EXIT_STOP);

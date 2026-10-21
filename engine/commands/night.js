@@ -143,7 +143,13 @@ function progress(profile, lock, deps) {
   const applyFresh = queue.filter((a) => !seen.has(a.key)).length;
   const ctx = readJson(path.join(profile.paths.root, "prepare_context.json"), deps);
   const ctxTonight = ctx && Date.parse(ctx.generatedAt) >= Date.parse(lock.started_at) ? ctx : null;
-  const inboxExhausted = Boolean(ctxTonight && ctxTonight.stats && ctxTonight.stats.inboxExhausted);
+  // A prepare round tonight that found nothing to judge also means "stop
+  // preparing" — otherwise check would send the night to prepare forever.
+  const inboxExhausted = Boolean(
+    ctxTonight &&
+    ((ctxTonight.stats && ctxTonight.stats.inboxExhausted) ||
+      (Array.isArray(ctxTonight.batch) && ctxTonight.batch.length === 0))
+  );
   return {
     now,
     apps,

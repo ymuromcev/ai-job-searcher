@@ -632,6 +632,10 @@ function alreadyApplied(row) {
   if (!row) return "row_missing";
   if (String(row.applied_date || "").trim()) return "already_applied";
   if (row.apply_state === "submitted") return "already_applied";
+  // A previous submit run died between the Submit click and the result
+  // write: the application may have gone out. Re-running submit on the same
+  // context must never click again — a human checks it (BL-225).
+  if (String(row.apply_note || "").startsWith(SUBMITTING_PREFIX)) return "interrupted_submit";
   if (row.status !== "To Apply") return `status_${String(row.status || "").replace(/\s+/g, "_")}`;
   return null;
 }

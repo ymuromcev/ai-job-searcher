@@ -620,6 +620,15 @@ test("alreadyApplied guard", () => {
   assert.equal(alreadyApplied({ status: "To Apply", apply_state: "submitted" }), "already_applied");
   assert.equal(alreadyApplied({ status: "No Response" }), "status_No_Response");
   assert.equal(alreadyApplied({ status: "To Apply", applied_date: "" }), null);
+  // A submit run that died after the click: a re-run must not click again.
+  assert.equal(
+    alreadyApplied({
+      status: "To Apply",
+      apply_state: "queued",
+      apply_note: "submitting:2026-10-22T08:00:00.000Z",
+    }),
+    "interrupted_submit"
+  );
 });
 
 test("loadAnswersFile groups answers by job key and drops empty ones", () => {
