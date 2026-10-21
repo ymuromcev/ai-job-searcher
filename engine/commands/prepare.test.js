@@ -4795,6 +4795,83 @@ Requirements:
   assert.equal(row.skip_reason, "hard_blocker:required_skill_excluded:Python");
 });
 
+// --- RFC 068 §4a: salary floor ---------------------------------------------
+
+function salaryFloorProfile(applyDefaults) {
+  return () => ({
+    id: "testuser",
+    filterRules: {},
+    company_tiers: { Stripe: "S", Acme: "S", Beta: "S" },
+    applyDefaults,
+    paths: {
+      root: "/fake/profiles/testuser",
+      applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+      jdCacheDir: "/fake/profiles/testuser/jd_cache",
+    },
+  });
+}
+
+const FLOOR_DEFAULTS = { salary: { floor: 120000, default: 180000, currency: "USD" } };
+
+test("prepare --phase pre (RFC 068): published range top below floor → archived salary_below_floor", async () => {
+  const apps = [
+    makeInboxApp({ key: "gh:1", companyName: "Acme" }),
+    makeInboxApp({ key: "gh:2", companyName: "Beta" }),
+    makeInboxApp({ key: "gh:3", companyName: "Stripe" }),
+  ];
+  const jds = {
+    "gh:1": "Senior PM\nCompensation\nThe base pay range is $90,000 - $110,000 per year.\n",
+    "gh:2": "Senior PM\nThe salary range for this role is $130,000 - $160,000.\n",
+    "gh:3": "Senior PM\nRequirements:\n- 5+ years PM\n",
+  };
+  const deps = makePrepDeps(apps, {
+    fetchJds: async (inputs) =>
+      inputs.map((i) => ({ key: i.key, status: "fetched", text: jds[i.key] })),
+    loadProfile: salaryFloorProfile(FLOOR_DEFAULTS),
+  });
+  const cmd = makePrepareCommand(deps);
+  await cmd(makeCtx());
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.deepEqual(result.batch.map((b) => b.key).sort(), ["gh:2", "gh:3"]);
+  const skipped = result.skipped.find((s) => s.key === "gh:1");
+  assert.ok(skipped, "below-floor row must be in skipped[]");
+  assert.equal(skipped.reason, "salary_below_floor");
+  assert.equal(skipped.publishedMax, 110000);
+  assert.equal(skipped.floor, 120000);
+  const row = apps.find((a) => a.key === "gh:1");
+  assert.equal(row.status, "Archived");
+  assert.equal(row.skip_reason, "salary_below_floor");
+  // No published range → passes; range above floor → passes.
+  assert.notEqual(apps.find((a) => a.key === "gh:2").status, "Archived");
+  assert.notEqual(apps.find((a) => a.key === "gh:3").status, "Archived");
+});
+
+test("prepare --phase pre (RFC 068): no apply_defaults → salary floor is a no-op", async () => {
+  const apps = [makeInboxApp({ key: "gh:1", companyName: "Acme" })];
+  const deps = makePrepDeps(apps, {
+    fetchJds: async () => [
+      { key: "gh:1", status: "fetched", text: "Pay: $50,000 - $60,000 per year" },
+    ],
+    loadProfile: salaryFloorProfile(null),
+  });
+  const cmd = makePrepareCommand(deps);
+  await cmd(makeCtx());
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.equal(result.batch.length, 1);
+});
+
+test("applySalaryFloorPass: rows without JD text pass through", () => {
+  const { applySalaryFloorPass } = require("./prepare.js");
+  const alive = [{ key: "gh:1", companyName: "Acme", title: "PM", url: "u" }];
+  const r = applySalaryFloorPass(
+    alive,
+    { "gh:1": { status: "not_found", text: null } },
+    FLOOR_DEFAULTS
+  );
+  assert.equal(r.aliveResults.length, 1);
+  assert.equal(r.salaryFloorSkipped.length, 0);
+});
+
 test("prepare --phase pre (RFC 039): hard-blocker rows never reach SKILL — critical invariant", async () => {
   // Two rows: one with Python-required (blocked), one clean (passes).
   const apps = [
