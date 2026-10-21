@@ -310,6 +310,20 @@ function makeBrowserHandle(deps) {
   };
 }
 
+// Launch the browser before touching any job. A browser that cannot start
+// (missing playwright-core, no Chromium) must stop the run, not mark every
+// job manual / unknown_page — at night that would bury a whole queue.
+async function browserReady(browser, stderr) {
+  try {
+    await browser.get();
+    return true;
+  } catch (err) {
+    stderr(`error: cannot start the browser — ${err.message}. No job was touched.`);
+    await browser.close();
+    return false;
+  }
+}
+
 // Read-modify-write one TSV row under the mutex. `mutate(app)` edits in place.
 function makeRowWriter(applicationsPath, deps, { dryRun }) {
   const withLock = makeMutex();
@@ -562,6 +576,7 @@ async function runPre(ctx, deps) {
 
   const browser = makeBrowserHandle(deps);
   const env = { profile, deps, applyDefaults, bank, browser, stderr, slugIndex };
+  if (queue.length > 0 && !(await browserReady(browser, stderr))) return 1;
   let results;
   try {
     results = await runPool(queue, {
@@ -946,6 +961,7 @@ async function runSubmit(ctx, deps) {
     stdout,
     deadlineMs,
   };
+  if (jobs.length > 0 && !(await browserReady(browser, stderr))) return 1;
   let results;
   try {
     results = await runPool(jobs, {

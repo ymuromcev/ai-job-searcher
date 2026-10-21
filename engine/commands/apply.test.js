@@ -935,3 +935,29 @@ test("loadAnswersFile: an empty directory is valid (deterministic answers only)"
   };
   assert.equal(loadAnswersFile("/empty", deps).size, 0);
 });
+
+test("pre / submit: a browser that cannot start stops the run and touches no job", async () => {
+  const h = harness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    files: [RESUME],
+  });
+  h.deps.launchBrowser = async () => {
+    throw new Error("Executable doesn't exist");
+  };
+  assert.equal(await h.run({ phase: "pre" }), 1);
+  assert.match(h.err.join("\n"), /cannot start the browser — Executable doesn't exist/);
+  assert.equal(h.disk.has(CONTEXT_PATH), false);
+  assert.equal(h.store.apps[0].apply_state || "", "");
+
+  const s = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL, apply_state: "queued" })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers: [WHY("gh1")],
+  });
+  s.deps.launchBrowser = async () => {
+    throw new Error("no chromium");
+  };
+  assert.equal(await s.run({ phase: "submit", answersFile: "/fake/answers.json" }), 1);
+  assert.equal(s.store.apps[0].status, "To Apply");
+  assert.equal(s.store.apps[0].apply_state, "queued");
+});
