@@ -1092,3 +1092,27 @@ test("pre: the stamped record lists which bank answers went into which form", as
   const pre = JSON.parse(h.disk.get(name));
   assert.deepEqual(pre.bank_used, [{ key: "gh1", bank_page_id: BANK_A, source: "bank_reuse" }]);
 });
+
+test("pre: a To Apply row outside the profile geo is archived, never opened", async () => {
+  const h = harness({
+    apps: [
+      row({ key: "gh1", companyName: "Acme", url: GH_URL, locations: ["San Francisco, CA"] }),
+      row({ key: "waw", companyName: "Beta", url: GH2_URL, locations: ["Warsaw"] }),
+    ],
+    files: [RESUME],
+  });
+  h.deps.loadProfile = () => ({
+    ...profile(),
+    geo: { mode: "home_state_or_remote", home_state: "CA" },
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  assert.equal(h.log.filter((l) => l[0] === "open" && l[1] === GH2_URL).length, 0);
+  const waw = h.store.apps.find((a) => a.key === "waw");
+  assert.equal(waw.status, "Archived");
+  assert.equal(waw.skip_reason, "geo_not_home_state_or_remote");
+  assert.deepEqual(
+    h.notionCalls.filter((c) => c[0] === "page-waw"),
+    [["page-waw", "Archived"]]
+  );
+  assert.match(h.out.join("\n"), /1 outside your geo → archived/);
+});

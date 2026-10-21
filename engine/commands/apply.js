@@ -566,8 +566,13 @@ async function runPre(ctx, deps) {
     windowDays: deps.resolveCapWindowDays(filterRules),
     now: deps.now(),
     limit: Number.isFinite(flags.limit) && flags.limit > 0 ? flags.limit : null,
+    profileGeo: profile.geo || null,
   });
-  stdout(`apply queue: ${queue.length} job(s) (${skipped.length} gated out)`);
+  const outOfArea = skipped.filter((x) => x.archive);
+  stdout(
+    `apply queue: ${queue.length} job(s) (${skipped.length} gated out` +
+      `${outOfArea.length ? `, ${outOfArea.length} outside your geo → archived` : ""})`
+  );
 
   // Answer bank — fetched once, matched locally per question.
   let bank = [];
@@ -666,9 +671,21 @@ async function runPre(ctx, deps) {
       a.apply_note = "job_closed";
       a.updatedAt = nowIso;
     }
-    if (manual.length || jobs.length || closed.length)
+    // Outside the profile's geo (safety net for rows that predate the rule):
+    // archived with the engine geo reason, never applied to.
+    for (const g of outOfArea) {
+      const a = byKey.get(g.key);
+      if (!a) continue;
+      a.status = "Archived";
+      if (!String(a.skip_reason || "").trim()) a.skip_reason = g.reason;
+      a.apply_state = "";
+      a.apply_note = "";
+      a.updatedAt = nowIso;
+    }
+    if (manual.length || jobs.length || closed.length || outOfArea.length)
       deps.saveApplications(applicationsPath, apps);
-    await pushClosedToNotion(closed, byKey, profile, secrets, deps, stderr);
+    await pushStatusToNotion(closed, "Closed", byKey, profile, secrets, deps, stderr);
+    await pushStatusToNotion(outOfArea, "Archived", byKey, profile, secrets, deps, stderr);
   }
 
   const context = {
@@ -716,18 +733,18 @@ async function runPre(ctx, deps) {
 }
 
 // Mirror Closed onto the Notion job pages through the shared status writer.
-async function pushClosedToNotion(closed, byKey, profile, secrets, deps, stderr) {
-  if (!closed.length || !secrets.NOTION_TOKEN) return;
+async function pushStatusToNotion(rows, status, byKey, profile, secrets, deps, stderr) {
+  if (!rows.length || !secrets.NOTION_TOKEN) return;
   const client = deps.makeNotionClient(secrets.NOTION_TOKEN);
   const propertyMap =
     (profile.notion && profile.notion.property_map) || notionSync.DEFAULT_PROPERTY_MAP;
-  for (const c of closed) {
+  for (const c of rows) {
     const a = byKey.get(c.key);
     if (!a || !a.notion_page_id) continue;
     try {
-      await deps.updatePageStatus(client, a.notion_page_id, "Closed", propertyMap);
+      await deps.updatePageStatus(client, a.notion_page_id, status, propertyMap);
     } catch (err) {
-      stderr(`warn: Notion status Closed failed for ${c.key}: ${err.message}`);
+      stderr(`warn: Notion status ${status} failed for ${c.key}: ${err.message}`);
     }
   }
 }

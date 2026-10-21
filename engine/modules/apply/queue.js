@@ -17,12 +17,16 @@
 //      queued tonight increments its company's count, so one night never
 //      pushes a company over the cap.
 //
-// Geo is enforced upstream in `prepare` (RFC 068 §3); the queue trusts
-// status + fit_score.
+//   4b. geo (RFC 068 §3, profile.geo): enforced upstream in `prepare`, and
+//      again here as a safety net — rows that reached To Apply before the
+//      geo rule (or with an unparsed location) must never be applied to.
+//      A miss is skipped with `archive: true` and the engine's geo reason;
+//      `apply --phase pre` archives the row.
 //
 // Order: newest `createdAt` first. `limit` truncates after gating.
 
 const { evaluateJob } = require("../../core/evaluate_job.js");
+const { enforceGeo } = require("../../core/geo_enforcer.js");
 
 const FIT_OK = new Set(["Strong", "Medium"]);
 const STATES_DONE = new Set(["submitted", "failed", "manual"]);
@@ -55,7 +59,14 @@ function createdMs(app) {
 // apps: TSV rows. opts: { filterRules, buildActiveCounts, windowDays, now, limit }.
 // Returns { queue: app[], skipped: [{ key, company, title, reason, detail? }] }.
 function buildQueue(apps, opts = {}) {
-  const { filterRules = {}, buildActiveCounts, windowDays = null, now, limit = null } = opts;
+  const {
+    filterRules = {},
+    buildActiveCounts,
+    windowDays = null,
+    now,
+    limit = null,
+    profileGeo = null,
+  } = opts;
   if (typeof buildActiveCounts !== "function") {
     throw new Error("buildQueue: buildActiveCounts is required");
   }
@@ -80,6 +91,16 @@ function buildQueue(apps, opts = {}) {
     if (!FIT_OK.has(app.fit_score)) {
       skipped.push({ ...base, reason: "fit_not_strong_medium" });
       continue;
+    }
+    if (profileGeo) {
+      const geo = enforceGeo(app.locations || [], profileGeo, {
+        title: app.title,
+        workplaceType: app.workplaceType || "",
+      });
+      if (!geo.ok) {
+        skipped.push({ ...base, reason: geo.reason, archive: true });
+        continue;
+      }
     }
     candidates.push(app);
   }

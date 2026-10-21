@@ -270,3 +270,22 @@ test("makeMutex serializes critical sections", async () => {
   );
   assert.deepEqual(log, ["in1", "out1", "in2", "out2", "in3", "out3"]);
 });
+
+test("queue: geo safety net — out-of-area rows are skipped for archiving", () => {
+  const geo = { mode: "home_state_or_remote", home_state: "CA" };
+  const apps = [
+    row({ key: "warsaw", companyName: "W1", locations: ["Warsaw"] }),
+    row({ key: "nyc", companyName: "N1", locations: ["New York, NY"] }),
+    row({ key: "sf", companyName: "S1", locations: ["San Francisco, CA"] }),
+    row({ key: "remote", companyName: "R1", locations: ["Remote - US"] }),
+  ];
+  const { queue, skipped } = q(apps, { profileGeo: geo });
+  assert.deepEqual(queue.map((a) => a.key).sort(), ["remote", "sf"]);
+  const out = skipped.filter((s) => s.archive).map((s) => [s.key, s.reason]);
+  assert.deepEqual(out.sort(), [
+    ["nyc", "geo_not_home_state_or_remote"],
+    ["warsaw", "geo_not_home_state_or_remote"],
+  ]);
+  // Without a profile geo the queue does not judge location.
+  assert.equal(q(apps).queue.length, 4);
+});
