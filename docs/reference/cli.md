@@ -368,13 +368,14 @@ Flags:
 | `--profile <id>` | string | — | Required. |
 | `--phase <pre\|submit>` | string | — | Required. |
 | `--limit <N>` | integer | — | `pre`: cap the queue at N jobs after gating. |
-| `--answers-file <path>` | string | — | Required for `--phase submit`. JSON: `{"answers":[{key, label, answer, bank_page_id}]}`. |
+| `--answers-file <path>` | string | — | Required for `--phase submit`. JSON: `{"answers":[{key, label, answer, bank_page_id}]}`, or a directory of such files (one per job — the night run's `answers/` folder; an empty directory is valid). |
 | `--concurrency <N>` | integer | 4 | Parallel browser contexts; at most one open form per ATS tenant. |
+| `--deadline <ISO>` | string | — | `submit`: open no new form after this time. Jobs not started stay `queued` for the next run (outcome `skipped`, reason `deadline`). |
 | `--dry-run` | boolean | false | `pre`: no TSV writes. `submit`: everything except the Submit click; keeps a screenshot of the filled form. |
 
 Outputs and side effects:
 
-- `--phase pre`: writes `profiles/<id>/.apply-state/apply_context.json` (per job: form schema, resolved answers, `unanswered[]`). Sets `apply_state=queued` on carried jobs and `apply_state=manual` + `apply_note=<reason>` (`unsupported_ats:<host>`, `unresolved_url:<host>`, `captcha`, `login_required`, `resume_missing`, …) on the rest.
+- `--phase pre`: writes `profiles/<id>/.apply-state/apply_context.json` (per job: form schema, resolved answers, `unanswered[]`) and a stamped `.apply-state/apply_pre-<ts>.json` (keys queued / manual / skipped by this run — read by `night`). Sets `apply_state=queued` on carried jobs and `apply_state=manual` + `apply_note=<reason>` (`unsupported_ats:<host>`, `unresolved_url:<host>`, `captcha`, `login_required`, `resume_missing`, …) on the rest.
 - `--phase submit`: success → `status=Applied`, `applied_date`, `applied_by=bot`, `apply_state=submitted`, `apply_note=<screenshot path>`, Notion status `Applied`. No confirmation → `apply_state=failed` (never retried). Captcha / login / email code / unexpected screen → `manual`. Screenshots in `profiles/<id>/.apply-state/shots/`; run summary in `.apply-state/apply_results-<ts>.json`.
 
 Example:
@@ -517,7 +518,7 @@ Common errors:
 
 Synopsis: `node engine/cli.js board --profile <id> [--no-open] [--port <n>]`
 
-Opens the read-only registry page (RFC 068 §8). A small `node:http` server on `127.0.0.1` serves static files from `engine/ui/board/` and JSON from `GET /api/registry`, `GET /api/week` and `GET /api/sources`; every request re-reads `applications.tsv` (and the scan health log). No endpoint writes data. The page is a plain wireframe with four tabs: applications (search, filter by status and by who applied, sortable columns), rows to finish by hand (`apply_state` `manual` / `failed`, with the reason and a link to the form), the weekly numbers, and job sources / application sites with a health status.
+Opens the read-only registry page (RFC 068 §8). A small `node:http` server on `127.0.0.1` serves static files from `engine/ui/board/` and JSON from `GET /api/registry`, `GET /api/week` and `GET /api/sources`; every request re-reads `applications.tsv` (and the scan health log and the nightly run log `.health/apply_runs.jsonl`). No endpoint writes data. The page is a plain wireframe with four tabs: applications (search, filter by status and by who applied, sortable columns), rows to finish by hand (`apply_state` `manual` / `failed`, with the reason and a link to the form), the weekly numbers, and job sources / application sites with a health status.
 
 Security: random token in the URL (`?k=`, also accepted as the `X-Board-Token` header), exact `Host` / `Origin` checks against the loopback host and port, loopback-only peers, strict CSP. Page text from the TSV is rendered with `textContent` only.
 
@@ -553,7 +554,7 @@ Common errors:
 
 Synopsis: `node engine/cli.js report --profile <id> --weekly [--out <dir>]`
 
-Writes the weekly review page (RFC 068 §10): applied / responses / interviews / rejections / response rate for the 7 days ending today and cumulative, broken down by fit score, resume archetype, source, ATS host, geo bucket (CA / remote / other), posting age at apply time (`applied_date − createdAt`: 0–3, 4–14, 15–30, 31+ days) and who applied, plus the top reasons rows are waiting for a manual application. The same numbers are on the board's weekly tab.
+Writes the weekly review page (RFC 068 §10): applied / responses / interviews / rejections / response rate for the 7 days ending today and cumulative, broken down by fit score, resume archetype, source, ATS host, geo bucket (CA / remote / other), posting age at apply time (`applied_date − createdAt`: 0–3, 4–14, 15–30, 31+ days) and who applied, plus the top reasons rows are waiting for a manual application, and one row per nightly run of the week from `.health/apply_runs.jsonl` (see `night`). The same numbers are on the board's weekly tab.
 
 Flags:
 
@@ -578,6 +579,51 @@ Common errors:
 
 - `error: report needs a kind; the only one so far is --weekly`.
 
+### night
+
+Synopsis: `node engine/cli.js night --profile <id> --phase <start|check|prepare-fanout|prepare-collect|apply-fanout|finish> [...]`
+
+The deterministic rails of the unattended nightly run (RFC 068 §9 / §11, BL-225). The runbook `skills/job-pipeline/night-apply.md` calls it between the `scan` / `prepare` / `apply` steps; Claude does the LLM work in between. `night` writes only its own files — never `applications.tsv`, never Notion — so the lazy sweeps are skipped for it.
+
+Phases:
+
+- `start` — takes the per-profile lock, stamps the start time, computes the deadline (next local `--stop-at`, at most `--max-hours` away), prints the apply-ready backlog and one JSON line (`started_at`, `deadline`, `target`, `apply_ready`). Another live night → exit 3, nothing touched. A lock left by a night that died (older than its deadline + 1 h) is closed as `abandoned` in the run log and replaced.
+- `check` — one JSON line: `step` (`prepare` with `prepare_batch`, `apply`, or `stop` with `reason`: `deadline`, `target_reached`, `queue_empty`), `minutes_left`, `submitted_tonight`, `need`, `apply_ready`, `apply_fresh` (rows no apply pre has looked at tonight), `prepare_target`, `inbox_exhausted`. Exit 0 for prepare / apply, 2 for stop.
+- `prepare-fanout` — splits `prepare_context.json` into `profiles/<id>/.prepare-state/rounds/<stamp>/`: `memory.md` (shared memory blob), `jd/<row>.md` (JD body), `payloads/<row>.json` (one row's subagent input, pipeline-fit-evaluator contract plus tailoring paths and `result_path`). Prints a JSON header and one `<payload path>\t<company> — <title>` line per row that has no result yet.
+- `prepare-collect` — reads `results/<row>.json`, validates each against what `prepare --phase commit` accepts (fit score, rationale, 4 cover-letter paragraphs + `clKey` + a known `resumeVer` for Strong/Medium, `tailoredResume` or an escalation reason for Strong, tier letter), writes `profiles/<id>/prepare_results_<YYYYMMDD_HHMMSS>.json` with `companyTiers`, and lists missing / invalid rows (they stay in Inbox). Exit 2 when nothing is committable.
+- `apply-fanout` — splits `.apply-state/apply_context.json` into `.apply-state/rounds/<stamp>/jobs/<job>.json` for jobs with open questions (each names its `draft_path`, `review_path`, `answers_path`, `bank_dir`) and creates the `answers/` directory that `apply --phase submit --answers-file` reads.
+- `finish` — appends one JSON line to `profiles/<id>/.health/apply_runs.jsonl` (`started_at`, `finished_at`, `target`, `scanned`, `prepared`, `strong`, `medium`, `weak`, `queued`, `submitted`, `manual`, `failed`, `deferred`, `apply_rounds`, `stop_reason`) and releases the lock. Counts are recomputed from the TSV and the `.apply-state` files written since the start, never passed in. The weekly report and the board's weekly tab show these lines as «Ночные запуски».
+
+Flags:
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--profile <id>` | string | — | Required. |
+| `--phase <...>` | string | — | Required. One of the phases above. |
+| `--target <N>` | integer | 100 | `start`: applications to aim for tonight. |
+| `--stop-at <HH:MM>` | string | 06:30 | `start`: local time after which no new work starts. |
+| `--max-hours <N>` | number | 10 | `start`: hard cap on the run length. |
+| `--stop-reason <text>` | string | `unspecified` | `finish`: why the night ended (`deadline`, `target_reached`, `queue_empty`, `usage_budget`, `scan_failed`, `prepare_failed`, `apply_failed`, …). |
+
+Outputs and side effects:
+
+- Lock: `~/Library/Application Support/ai-job-searcher/state/<id>/night.lock` (override the state dir with `AI_JOB_SEARCHER_STATE_DIR`).
+- Run log: `profiles/<id>/.health/apply_runs.jsonl`, lines older than 180 days dropped on write.
+
+Example:
+
+```bash
+node engine/cli.js night --profile <id> --phase start --target 100 --stop-at 06:30
+node engine/cli.js night --profile <id> --phase check
+node engine/cli.js night --profile <id> --phase finish --stop-reason deadline
+```
+
+Common errors:
+
+- `night already running for <id> since … — this run stops here` (exit 3).
+- `no night in progress for <id> — run night --phase start first`.
+- `prepare_context.json missing or has no batch — run prepare --phase pre first`.
+
 ## Environment variables
 
 Secrets are loaded by `engine/core/profile_loader.loadSecrets(profileId, env)`. Per-profile namespacing: each variable is prefixed by the uppercased profile id followed by `_`. Other profiles' secrets are never read by the running command.
@@ -600,7 +646,8 @@ The CLI loads `.env` via `dotenv` only when invoked as a binary; tests inject `e
 | --- | --- |
 | 0 | Success. |
 | 1 | Generic error. Examples: missing required flag, profile load failure, adapter failure, retro-sweep matches without `--apply`, Notion mutation error. |
-| 2 | Configuration / schema error. Reserved; today the CLI primarily uses 0 / 1. |
+| 2 | Configuration / schema error. Reserved; today the CLI primarily uses 0 / 1. `night` uses 2 for "stop" (`check`) and "nothing to commit" (`prepare-collect`). |
+| 3 | `night --phase start`: another night holds the lock. |
 
 `--verbose` causes uncaught errors to print their stack trace alongside the message.
 

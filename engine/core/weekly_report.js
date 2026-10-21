@@ -257,7 +257,54 @@ function topReasons(rows, limit = 10) {
     .slice(0, limit);
 }
 
-function buildWeeklyReport(rows, refDate) {
+// --- nightly runs (BL-225) -------------------------------------------------
+
+const STOP_REASON_LABELS = {
+  deadline: "время вышло",
+  target_reached: "цель достигнута",
+  queue_empty: "подавать больше нечего",
+  usage_budget: "лимит подписки",
+  abandoned: "оборвалась",
+  scan_failed: "скан упал",
+  prepare_failed: "подготовка упала",
+  apply_failed: "подача упала",
+  locked: "уже шла другая ночь",
+};
+
+function localDayIso(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return normalizeRefDate(d);
+}
+
+function localClock(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+// Night entries (night_runs_log.parseNightLines) whose start falls in the
+// week, by the local calendar day the night started on.
+function nightsInWindow(nights, start, end) {
+  return (Array.isArray(nights) ? nights : [])
+    .filter((n) => {
+      const day = dayNumber(localDayIso(n.started_at));
+      return !Number.isNaN(day) && day >= start && day <= end;
+    })
+    .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
+}
+
+function sumNights(list) {
+  const keys = ["scanned", "prepared", "strong", "medium", "queued", "submitted"];
+  const more = ["manual", "failed", "deferred"];
+  const out = { nights: list.length };
+  for (const k of keys.concat(more)) out[k] = list.reduce((s, n) => s + (Number(n[k]) || 0), 0);
+  return out;
+}
+
+// opts.nights: parsed apply_runs.jsonl entries. Absent → the report has no
+// `nights` block (callers that do not read the log, older tests).
+function buildWeeklyReport(rows, refDate, opts = {}) {
   const list = Array.isArray(rows) ? rows : [];
   const ref = normalizeRefDate(refDate);
   const end = dayNumber(ref);
@@ -275,7 +322,7 @@ function buildWeeklyReport(rows, refDate) {
     return s === "manual" || s === "failed";
   });
 
-  return {
+  const report = {
     refDate: ref,
     weekStart: isoFromDayNumber(start),
     week: periodStats(appliedThisWeek),
@@ -284,6 +331,61 @@ function buildWeeklyReport(rows, refDate) {
       open: topReasons(todo),
       week: topReasons(todo.filter((r) => inWeek(r.updatedAt))),
     },
+  };
+  if (opts && opts.nights !== undefined) {
+    const week = nightsInWindow(opts.nights, start, end);
+    report.nights = { list: week, sum: sumNights(week) };
+  }
+  return report;
+}
+
+function nightsTable(nights) {
+  const rows = nights.list.map((n) => [
+    ruDate(localDayIso(n.started_at)),
+    `${localClock(n.started_at)}–${n.finished_at ? localClock(n.finished_at) : "—"}`,
+    String(n.scanned),
+    `${n.prepared} (${n.strong} / ${n.medium})`,
+    String(n.queued),
+    `${n.submitted} из ${n.target}`,
+    String(n.manual),
+    String(n.failed),
+    String(n.deferred),
+    STOP_REASON_LABELS[n.stop_reason] || n.stop_reason,
+  ]);
+  const s = nights.sum;
+  if (nights.list.length > 1) {
+    rows.push([
+      "Итого",
+      `${s.nights} ноч.`,
+      String(s.scanned),
+      `${s.prepared} (${s.strong} / ${s.medium})`,
+      String(s.queued),
+      String(s.submitted),
+      String(s.manual),
+      String(s.failed),
+      String(s.deferred),
+      "",
+    ]);
+  }
+  return {
+    title: "Ночные запуски",
+    note:
+      "Одна строка — одна ночь. Подготовлено: все оценённые (из них Strong / Medium). " +
+      "В очереди — сколько анкет бот открыл; перенесено — не успел до утра, подаст следующей ночью.",
+    columns: [
+      "Ночь",
+      "Время",
+      "Найдено",
+      "Подготовлено",
+      "В очереди",
+      "Подано",
+      "Руками",
+      "Ошибки",
+      "Перенесено",
+      "Остановилась",
+    ],
+    rows,
+    empty: "За неделю ночных запусков не было",
   };
 }
 
@@ -319,6 +421,8 @@ function weeklyTables(report) {
     ],
     empty: "",
   });
+
+  if (report.nights) tables.push(nightsTable(report.nights));
 
   for (const dim of DIMENSIONS) {
     const weekBy = new Map(w.by[dim.id].map((e) => [e.key, e]));

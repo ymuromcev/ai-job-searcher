@@ -12,7 +12,7 @@
 //   - idle shutdown after 30 minutes, POST /api/quit to close it from the page.
 //
 // Read-only: every data endpoint re-reads applications.tsv (and the scan
-// health log) per request; no endpoint writes anything. Other people's text
+// health log / the nightly run log) per request; no endpoint writes anything. Other people's text
 // (company names, titles, reasons) leaves as JSON and the page renders it
 // with textContent only.
 
@@ -30,6 +30,7 @@ const { buildRegistryView } = require("../core/registry_view.js");
 const { buildWeeklyReport, weeklyTables } = require("../core/weekly_report.js");
 const { buildSourceHealth } = require("../core/source_health.js");
 const scanHealthLog = require("../core/scan_health_log.js");
+const nightRunsLog = require("../core/night_runs_log.js");
 const { todayLocalISO } = require("../core/auto_dead_sweep.js");
 
 const HOST = "127.0.0.1";
@@ -303,7 +304,8 @@ function makeDataLoaders(profile, deps) {
       ...buildRegistryView(readRows()),
     }),
     week: () => {
-      const report = buildWeeklyReport(readRows(), deps.today());
+      const nights = nightRunsLog.readNightRuns(nightRunsLog.nightRunsPath(profile.paths.root));
+      const report = buildWeeklyReport(readRows(), deps.today(), { nights });
       return { profile: profile.id, report, tables: weeklyTables(report) };
     },
     sources: () => ({

@@ -15,8 +15,12 @@
 //     questions from the candidate's materials, truth-checks them, pushes
 //     them to the bank and writes the answers file.
 //
-//   apply --profile <id> --phase submit --answers-file <f> [--dry-run] [--concurrency N]
-//     Deterministic. For every job whose required questions are all
+//   apply --profile <id> --phase submit --answers-file <f|dir> [--dry-run] [--concurrency N]
+//         [--deadline <ISO>]
+//     Deterministic. `--answers-file` is one answers JSON or a directory of
+//     them (the night run writes one file per job). `--deadline`: no new form
+//     is started after that time; the rest stay queued (outcome "skipped",
+//     reason "deadline") for the next run. For every job whose required questions are all
 //     answered: fill, attach resume + cover letter, pre-submit check,
 //     re-check applied_date, Submit, wait for the adapter's confirmation,
 //     screenshot. Success → status Applied / applied_by bot / apply_state
@@ -260,6 +264,8 @@ function makeDefaultDeps() {
       fs.renameSync(tmp, p);
     },
     fileExists: (p) => fs.existsSync(p),
+    isDirectory: (p) => fs.existsSync(p) && fs.statSync(p).isDirectory(),
+    listDir: (p) => fs.readdirSync(p),
     mkdirp: (dir) => fs.mkdirSync(dir, { recursive: true }),
     now: () => new Date(),
     today: () => todayLocalISO(),
@@ -532,6 +538,26 @@ async function runPre(ctx, deps) {
   };
   const contextPath = path.join(stateDir(profile), CONTEXT_FILE);
   deps.writeFile(contextPath, JSON.stringify(context, null, 2));
+  // Small stamped record of this pre run, next to apply_results-*.json: the
+  // nightly run log (`night --phase finish`) counts rounds / queued / manual
+  // from these, and `night --phase check` uses the keys to tell rows already
+  // looked at tonight from fresh ones (apply_context.json is overwritten).
+  const preStamp = context.generated_at.replace(/[:.]/g, "-");
+  const keyOf = (x) => ({ key: x.key, reason: x.reason });
+  deps.writeFile(
+    path.join(stateDir(profile), `apply_pre-${preStamp}.json`),
+    JSON.stringify(
+      {
+        generated_at: context.generated_at,
+        dry_run: Boolean(flags.dryRun),
+        jobs: jobs.map((j) => ({ key: j.key })),
+        manual: manual.map(keyOf),
+        skipped: skippedNow.map(keyOf),
+      },
+      null,
+      2
+    )
+  );
 
   const needLlm = jobs.filter((j) => j.unanswered.some((u) => u.required)).length;
   stdout(
@@ -553,12 +579,30 @@ function pathHead(u) {
 
 // --- Phase: submit -----------------------------------------------------------
 
-function loadAnswersFile(file, deps) {
-  const abs = path.isAbsolute(file) ? file : path.resolve(process.cwd(), file);
-  if (!deps.fileExists(abs)) throw new Error(`answers file not found: ${abs}`);
+function readAnswersList(abs, deps) {
   const parsed = JSON.parse(deps.readFile(abs));
   const list = Array.isArray(parsed && parsed.answers) ? parsed.answers : null;
   if (!list) throw new Error(`answers file must be {"answers": [...]}: ${abs}`);
+  return list;
+}
+
+// One answers JSON, or a directory of them (*.json, one per job — the night
+// run's answers/ folder). An empty directory is valid: every job is then
+// submitted on its deterministic answers alone.
+function loadAnswersFile(file, deps) {
+  const abs = path.isAbsolute(file) ? file : path.resolve(process.cwd(), file);
+  if (!deps.fileExists(abs)) throw new Error(`answers file not found: ${abs}`);
+  let list;
+  if (deps.isDirectory && deps.isDirectory(abs)) {
+    list = [];
+    const names = deps
+      .listDir(abs)
+      .filter((n) => n.endsWith(".json") && !n.startsWith("."))
+      .sort();
+    for (const name of names) list.push(...readAnswersList(path.join(abs, name), deps));
+  } else {
+    list = readAnswersList(abs, deps);
+  }
   const byKey = new Map();
   for (const a of list) {
     if (!a || typeof a.key !== "string" || typeof a.label !== "string") continue;
@@ -598,6 +642,13 @@ async function submitOne(job, env) {
   const shotRel = path.join(STATE_DIR, "shots", `${safeKey(job.key)}.png`);
   const shotAbs = path.join(root, shotRel);
   const out = { key: job.key, company: job.company, title: job.title, ats: job.ats };
+
+  // Night wall-clock budget: past the deadline no new form is opened. The
+  // row keeps apply_state "queued" (no "submitting:" mark), so the next run
+  // picks it up again.
+  if (env.deadlineMs !== null && deps.now().getTime() >= env.deadlineMs) {
+    return { ...out, outcome: "skipped", reason: "deadline" };
+  }
 
   // Required questions answered (context + LLM)? Checked before the browser.
   const pre = buildFillPlan(job.fields || [], job, llmByKey.get(job.key) || [], root);
@@ -727,6 +778,15 @@ async function runSubmit(ctx, deps) {
     return 1;
   }
 
+  let deadlineMs = null;
+  if (flags.deadline) {
+    deadlineMs = Date.parse(String(flags.deadline));
+    if (!Number.isFinite(deadlineMs)) {
+      stderr(`error: --deadline must be an ISO timestamp, got "${flags.deadline}"`);
+      return 1;
+    }
+  }
+
   const applicationsPath = profile.paths.applicationsTsv;
   const writeRow = makeRowWriter(applicationsPath, deps, { dryRun: flags.dryRun });
 
@@ -758,6 +818,7 @@ async function runSubmit(ctx, deps) {
     llmByKey,
     notion,
     stdout,
+    deadlineMs,
   };
   let results;
   try {
@@ -804,9 +865,13 @@ async function runSubmit(ctx, deps) {
       2
     )
   );
+  const deferred = normalized.filter(
+    (r) => r && r.outcome === "skipped" && r.reason === "deadline"
+  ).length;
   stdout(
     `apply submit: ${count("submitted")} submitted, ${count("dry_run")} dry-run, ` +
-      `${count("manual")} manual, ${count("failed")} failed, ${count("skipped")} skipped`
+      `${count("manual")} manual, ${count("failed")} failed, ${count("skipped")} skipped` +
+      (deferred ? ` (${deferred} left for the next run: deadline)` : "")
   );
   for (const r of normalized) {
     if (r && (r.outcome === "manual" || r.outcome === "failed" || r.outcome === "error")) {

@@ -71,6 +71,25 @@ test("report --weekly writes weekly-<date>.html into --out and prints the path",
   assert.deepEqual(fs.readdirSync(outDir), ["weekly-2026-10-14.html"]);
 });
 
+test("report --weekly includes the nightly runs from .health/apply_runs.jsonl", async () => {
+  const t = makeTempProfile();
+  const outDir = path.join(t.root, "out");
+  fs.mkdirSync(path.join(t.profileDir, ".health"), { recursive: true });
+  const started = new Date(2026, 9, 13, 22, 0, 0).toISOString();
+  fs.writeFileSync(
+    path.join(t.profileDir, ".health", "apply_runs.jsonl"),
+    JSON.stringify({ started_at: started, submitted: 41, target: 100, stop_reason: "deadline" }) +
+      "\n"
+  );
+  const io = capture();
+  const cmd = makeReportCommand({ today: () => "2026-10-14", now: () => "2026-10-14T09:00:00Z" });
+  assert.equal(await cmd(ctxFor(t, { weekly: true, out: outDir }, io)), 0);
+  const html = fs.readFileSync(path.join(outDir, "weekly-2026-10-14.html"), "utf8");
+  assert.match(html, /<h2>Ночные запуски<\/h2>/);
+  assert.match(html, /<td>41 из 100<\/td>/);
+  assert.match(html, /<td>время вышло<\/td>/);
+});
+
 test("report without --weekly is an error", async () => {
   const t = makeTempProfile();
   const io = capture();

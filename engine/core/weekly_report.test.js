@@ -233,6 +233,65 @@ test("weeklyTables on empty data: dimension tables are empty with a Russian empt
   }
 });
 
+// BL-225: nightly runs from .health/apply_runs.jsonl.
+function night(startLocal, over = {}) {
+  const started = new Date(...startLocal);
+  return {
+    started_at: started.toISOString(),
+    finished_at: new Date(started.getTime() + 8 * 3600 * 1000).toISOString(),
+    target: 100,
+    scanned: 200,
+    prepared: 60,
+    strong: 10,
+    medium: 30,
+    weak: 20,
+    queued: 45,
+    submitted: 40,
+    manual: 4,
+    failed: 1,
+    deferred: 0,
+    apply_rounds: 3,
+    stop_reason: "deadline",
+    ...over,
+  };
+}
+
+test("nights: only the week's nights (by local start day), one row each + a total", () => {
+  const nights = [
+    night([2026, 9, 14, 22, 0]), // Oct 14 — before the week
+    night([2026, 9, 15, 22, 30], { submitted: 52, stop_reason: "target_reached" }),
+    night([2026, 9, 20, 22, 0], { submitted: 38, deferred: 3, stop_reason: "abandoned" }),
+  ];
+  const report = buildWeeklyReport(fixture(), REF, { nights });
+  assert.equal(report.nights.list.length, 2);
+  assert.equal(report.nights.sum.submitted, 90);
+  const tables = weeklyTables(report);
+  assert.equal(tables[1].title, "Ночные запуски");
+  const rows = tables[1].rows;
+  assert.equal(rows.length, 3);
+  assert.equal(rows[0][0], "15.10.2026");
+  assert.equal(rows[0][1], "22:30–06:30");
+  assert.deepEqual(rows[0].slice(2), [
+    "200",
+    "60 (10 / 30)",
+    "45",
+    "52 из 100",
+    "4",
+    "1",
+    "0",
+    "цель достигнута",
+  ]);
+  assert.equal(rows[1][9], "оборвалась");
+  assert.deepEqual(rows[2].slice(0, 6), ["Итого", "2 ноч.", "400", "120 (20 / 60)", "90", "90"]);
+  assert.equal(rows[2][8], "3");
+
+  // No nights this week → empty state; no `nights` option → no table at all.
+  const empty = weeklyTables(buildWeeklyReport([], REF, { nights: [nights[0]] }));
+  assert.equal(empty[1].rows.length, 0);
+  assert.match(empty[1].empty, /не было/);
+  assert.ok(!weeklyTables(buildWeeklyReport([], REF)).some((t) => t.title === "Ночные запуски"));
+});
+
 test("renderWeeklyHtml: self-contained, escaped, no scripts", () => {
   const rows = [row({ resume_ver: "<script>alert(1)</script>" })];
   const html = renderWeeklyHtml(buildWeeklyReport(rows, REF), {
