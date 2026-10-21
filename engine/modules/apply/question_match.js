@@ -287,10 +287,124 @@ function matchIdentity(label, field, ctx) {
   return undefined;
 }
 
+// --- address / citizenship / legal acknowledgements (owner decisions 2026-10-21)
+
+const ADDRESS_RULES = [
+  { re: /\b(zip|zip code|zipcode|postal code|postcode)\b/, pick: (a) => a.zip },
+  {
+    re: /^(street address|address|address line 1|street|home address|mailing address|residential address)$/,
+    pick: (a) => [a.street, a.unit].filter(Boolean).join(", "),
+  },
+  { re: /^(address line 2|apt|apartment|unit|suite|apt suite)$/, pick: (a) => a.unit },
+  { re: /^(city|town|city of residence)$/, pick: (a) => a.city },
+  {
+    re: /^(state|state province|state or province|province|state of residence)$/,
+    pick: (a) => a.state,
+  },
+];
+
+function matchAddress(label, field, ctx) {
+  const a = (ctx.applyDefaults && ctx.applyDefaults.address) || null;
+  for (const rule of ADDRESS_RULES) {
+    if (!rule.re.test(label)) continue;
+    const v = a ? rule.pick(a) : "";
+    if (!v) return null;
+    if (isChoice(field)) {
+      const opt = hasOptions(field) ? pickOption(field.options, v) : null;
+      // Full state name for state selects ("CA" → "California").
+      const alt = !opt && a.state_name ? pickOption(field.options, a.state_name) : null;
+      return opt || alt ? { source: "defaults", value: opt || alt } : null;
+    }
+    return { source: "defaults", value: String(v) };
+  }
+  return undefined;
+}
+
+const EMBARGOED_RE = /\b(cuba|iran|north korea|syria|crimea|donetsk|luhansk)\b/;
+
+function matchCitizenship(label, field, ctx) {
+  if (!/\b(citizen|citizenship|nationality|national of)\b/.test(label)) return undefined;
+  const c = (ctx.applyDefaults && ctx.applyDefaults.citizenship) || null;
+  if (!c || !Array.isArray(c.countries)) return null;
+  const mine = c.countries.map((x) => String(x).toLowerCase());
+  // Export-control screen: "citizen of Cuba, Iran, North Korea, Syria, Crimea?"
+  if (EMBARGOED_RE.test(label)) {
+    const listed = mine.some((x) => new RegExp(`\\b${x}\\b`).test(label));
+    return choiceOrText(field, yesNo(listed));
+  }
+  // "US citizen or permanent resident?" → yes for a green card holder.
+  if (
+    /\b(permanent resident|green card|lawful permanent)\b/.test(label) &&
+    /\bu ?s\b|united states/.test(label)
+  ) {
+    return choiceOrText(
+      field,
+      yesNo(Boolean(c.us_permanent_resident) || mine.includes("united states"))
+    );
+  }
+  if (/\b(u ?s|united states|american) citizen\b/.test(label)) {
+    return choiceOrText(field, yesNo(mine.includes("united states")));
+  }
+  // Free text "Citizenship" / "Country of citizenship".
+  if (
+    !isChoice(field) &&
+    /^(citizenship|country of citizenship|nationality|citizenships?)$/.test(label)
+  ) {
+    return { source: "defaults", value: c.countries.join(", ") };
+  }
+  return null;
+}
+
+function choiceOrText(field, value) {
+  const v = resolveValue(field, value);
+  return v ? { source: "defaults", value: v } : null;
+}
+
+// Legal acknowledgements the owner accepts on every application: truthfulness
+// certification, arbitration agreements, AI-in-interview policies, privacy /
+// data-processing consent. Marketing / SMS opt-ins are not legal — declined.
+// An acknowledgement about the job itself (office days, schedule, travel) is
+// not covered: it goes to the LLM step with the geo rule.
+const LEGAL_RE =
+  /\b(certify|attest|arbitration|ai policy|use of ai|artificial intelligence|processing of personal data|personal data|privacy (policy|notice|statement)|data protection|gdpr|ccpa|terms (and|&) conditions|true(,)? (and )?(complete|correct|accurate)|complete(,)? (and )?(true|accurate|correct)|misrepresentation|falsification)\b/;
+const MARKETING_RE =
+  /\b(sms|text message|marketing|newsletter|job alerts?|promotional|talent community)\b/;
+const JOB_TERMS_RE =
+  /\b(office|on ?site|hybrid|in person|relocat\w*|days (a|per) week|schedule|travel|shift|commute)\b/;
+const AFFIRM_RE =
+  /^(yes|i agree|agree|i acknowledge|acknowledge|i confirm|confirm|i accept|accept|i certify|i understand|i have read|acknowledged|agreed|accepted|confirmed)\b|\b(acknowledge|confirm|agree|accept)\b/;
+
+function matchLegal(label, field, ctx) {
+  if (!LEGAL_RE.test(label) && !MARKETING_RE.test(label)) return undefined;
+  if (JOB_TERMS_RE.test(label)) return undefined;
+  const policy = (ctx.applyDefaults && ctx.applyDefaults.legal_acknowledgements) || "";
+  if (MARKETING_RE.test(label) && !LEGAL_RE.test(label)) {
+    if (!hasOptions(field))
+      return field.type === "checkbox" ? { source: "defaults", value: "No" } : undefined;
+    const no = field.options.find((o) =>
+      /^(no|decline|i do not|don't|do not)\b/.test(normalizeOption(o))
+    );
+    return no ? { source: "defaults", value: no } : null;
+  }
+  if (policy !== "accept") return undefined;
+  if (!hasOptions(field)) {
+    return field.type === "checkbox" ? { source: "defaults", value: "Yes" } : undefined;
+  }
+  const opt = field.options.find(
+    (o) =>
+      AFFIRM_RE.test(normalizeOption(o)) &&
+      !/\b(not|don't|do not|decline)\b/.test(normalizeOption(o))
+  );
+  return opt ? { source: "defaults", value: opt } : null;
+}
+
 const MATCHERS = [
   matchFile,
   matchCountry,
+  matchAddress,
   matchIdentity,
+  matchCitizenship,
+  matchLegal,
   matchEeo,
   matchPronouns,
   matchSponsorship,

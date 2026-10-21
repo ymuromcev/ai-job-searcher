@@ -247,3 +247,75 @@ test("pickOption / pickDeclineOption", () => {
   assert.equal(pickDeclineOption(["A", "I choose not to disclose"]), "I choose not to disclose");
   assert.equal(pickDeclineOption(["A", "B"]), null);
 });
+
+// ---- address / citizenship / legal acknowledgements (owner decisions 2026-10-21)
+
+const OWNER = {
+  address: {
+    street: "100 Example St",
+    unit: "Apt 1",
+    city: "Springfield",
+    state: "IL",
+    state_name: "Illinois",
+    zip: "62701",
+    country: "United States",
+  },
+  citizenship: { countries: ["Freedonia"], us_permanent_resident: true },
+  legal_acknowledgements: "accept",
+};
+const ask = (label, type = "text", options = [], applyDefaults = OWNER) =>
+  matchQuestion(
+    { label, type, options },
+    { applyDefaults, identity: { location: "Springfield, IL" } }
+  );
+
+test("address: zip, street, city and a state select come from apply_defaults.address", () => {
+  assert.equal(ask("What is the zip code of your primary residence?").value, "62701");
+  assert.equal(ask("Postal Code").value, "62701");
+  assert.equal(ask("Street address").value, "100 Example St, Apt 1");
+  assert.equal(ask("City").value, "Springfield");
+  assert.equal(ask("State", "select", ["Idaho", "Illinois"]).value, "Illinois");
+  assert.equal(ask("Zip code", "text", [], {}), null, "no address on file → no guess");
+});
+
+test("citizenship: export-control screen, US citizen vs permanent resident", () => {
+  const exportQ =
+    "Are you a citizen or legal permanent resident of Cuba, Iran, North Korea, Syria or Ukraine (Crimea region)?";
+  assert.equal(ask(exportQ, "select", ["Yes", "No"]).value, "No");
+  assert.equal(
+    ask(exportQ, "select", ["Yes", "No"], { citizenship: { countries: ["Cuba"] } }).value,
+    "Yes"
+  );
+  assert.equal(
+    ask("Are you a U.S. citizen or permanent resident?", "select", ["Yes", "No"]).value,
+    "Yes"
+  );
+  assert.equal(ask("Are you a US citizen?", "select", ["Yes", "No"]).value, "No");
+  assert.equal(ask("Citizenship").value, "Freedonia");
+});
+
+test("legal: truthfulness, arbitration, AI policy, privacy → affirmative; marketing → no", () => {
+  const yn = ["Yes", "No"];
+  assert.equal(
+    ask(
+      "I confirm that all the information provided in my application is complete, true and correct",
+      "select",
+      yn
+    ).value,
+    "Yes"
+  );
+  assert.equal(ask("By agreeing here I accept binding arbitration", "select", yn).value, "Yes");
+  assert.equal(ask("AI Policy for Interviewers", "select", yn).value, "Yes");
+  assert.equal(
+    ask("Processing of Personal Data", "select", ["Acknowledge/Confirm"]).value,
+    "Acknowledge/Confirm"
+  );
+  assert.equal(ask("Send me SMS text messages about new roles", "select", yn).value, "No");
+  // Job terms are not legal boilerplate — left for the LLM step / geo rule.
+  assert.equal(
+    ask("I acknowledge this role requires in-office work 3 days a week in Warsaw", "select", yn),
+    null
+  );
+  // Without the owner's policy the legal questions are not auto-answered.
+  assert.equal(ask("AI Policy for Interviewers", "select", yn, {}), null);
+});

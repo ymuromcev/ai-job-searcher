@@ -24,6 +24,11 @@
 //     },
 //     "how_did_you_hear_default": "Company careers page"  // non-empty string
 //   }
+//
+// Optional keys (owner decisions, 2026-10-21):
+//   "address": { "street", "unit", "city", "state", "state_name", "zip", "country" }  // strings
+//   "citizenship": { "countries": ["..."], "us_permanent_resident": true }
+//   "legal_acknowledgements": "accept"   // tick truthfulness / arbitration / AI-policy / privacy consents
 
 const APPLY_DEFAULTS_FILE = "apply_defaults.json";
 
@@ -37,7 +42,21 @@ const TOP_LEVEL_KEYS = Object.freeze([
   "eeo",
   "salary",
   "how_did_you_hear_default",
+  "address",
+  "citizenship",
+  "legal_acknowledgements",
 ]);
+
+const ADDRESS_KEYS = Object.freeze([
+  "street",
+  "unit",
+  "city",
+  "state",
+  "state_name",
+  "zip",
+  "country",
+]);
+const VALID_LEGAL_POLICIES = Object.freeze(["accept", "manual"]);
 
 const CURRENCY_RE = /^[A-Z]{3}$/;
 
@@ -125,6 +144,39 @@ function validateApplyDefaults(raw) {
 
   if (!isNonEmptyString(raw.how_did_you_hear_default)) {
     err(`${base}.how_did_you_hear_default`, "must be a non-empty string");
+  }
+
+  if (raw.address !== undefined) {
+    if (!isPlainObject(raw.address)) err(`${base}.address`, "must be an object");
+    else {
+      for (const [k, v] of Object.entries(raw.address)) {
+        if (!ADDRESS_KEYS.includes(k)) warn(`${base}.address.${k}`, "unknown key (ignored)");
+        else if (typeof v !== "string") err(`${base}.address.${k}`, "must be a string");
+      }
+    }
+  }
+
+  if (raw.citizenship !== undefined) {
+    const c = raw.citizenship;
+    if (!isPlainObject(c)) err(`${base}.citizenship`, "must be an object");
+    else {
+      if (!Array.isArray(c.countries) || !c.countries.every(isNonEmptyString)) {
+        err(`${base}.citizenship.countries`, "must be an array of non-empty strings");
+      }
+      if (c.us_permanent_resident !== undefined && typeof c.us_permanent_resident !== "boolean") {
+        err(`${base}.citizenship.us_permanent_resident`, "must be a boolean");
+      }
+    }
+  }
+
+  if (
+    raw.legal_acknowledgements !== undefined &&
+    !VALID_LEGAL_POLICIES.includes(raw.legal_acknowledgements)
+  ) {
+    err(
+      `${base}.legal_acknowledgements`,
+      `must be one of [${VALID_LEGAL_POLICIES.join(", ")}], got ${JSON.stringify(raw.legal_acknowledgements)}`
+    );
   }
 
   return issues;

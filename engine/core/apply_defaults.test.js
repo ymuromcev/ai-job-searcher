@@ -170,3 +170,27 @@ test("schema checks: invalid applyDefaults surfaces schema errors", () => {
   assert.equal(err.severity, "error");
   assert.equal(err.category, "schema");
 });
+
+test("validateApplyDefaults: optional address / citizenship / legal_acknowledgements", () => {
+  const ok = {
+    ...valid(),
+    address: { street: "1 Main St", city: "Springfield", state: "IL", zip: "62701" },
+    citizenship: { countries: ["Freedonia"], us_permanent_resident: true },
+    legal_acknowledgements: "accept",
+  };
+  assert.deepEqual(validateApplyDefaults(ok), []);
+  const bad = {
+    ...valid(),
+    address: { zip: 62701 },
+    citizenship: { countries: "Freedonia" },
+    legal_acknowledgements: "always",
+  };
+  const fields = validateApplyDefaults(bad)
+    .filter((i) => i.severity === "error")
+    .map((i) => i.field);
+  assert.deepEqual(fields.sort(), [
+    "apply_defaults.address.zip",
+    "apply_defaults.citizenship.countries",
+    "apply_defaults.legal_acknowledgements",
+  ]);
+});

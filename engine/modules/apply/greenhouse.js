@@ -305,6 +305,86 @@ async function chooseMenuOption(page, field, value) {
   await page.locator(MENU_OPTION_SEL).nth(texts.indexOf(pick)).click();
 }
 
+// Pick the suggestion for a "City, ST" value: prefer a US entry naming the
+// same state (full name or code), then any US entry, then the first one.
+function pickLocationOption(texts, value) {
+  const parts = String(value)
+    .split(",")
+    .map((x) => x.trim().toLowerCase());
+  const city = parts[0] || "";
+  const st = (parts[1] || "").toUpperCase();
+  const stateName = (US_STATE_NAMES[st] || "").toLowerCase();
+  const lower = texts.map((t) => String(t).toLowerCase());
+  const isUs = (t) => /united states|\busa?\b/.test(t);
+  const sameCity = (t) => t.split(",")[0].trim() === city;
+  const sameState = (t) =>
+    (stateName && t.includes(stateName)) || (st && t.includes(`, ${st.toLowerCase()}`));
+  const order = [
+    (t) => sameCity(t) && isUs(t) && sameState(t),
+    (t) => sameCity(t) && isUs(t),
+    (t) => isUs(t),
+  ];
+  for (const ok of order) {
+    const i = lower.findIndex(ok);
+    if (i !== -1) return i;
+  }
+  return 0;
+}
+
+const US_STATE_NAMES = {
+  AL: "Alabama",
+  AK: "Alaska",
+  AZ: "Arizona",
+  AR: "Arkansas",
+  CA: "California",
+  CO: "Colorado",
+  CT: "Connecticut",
+  DE: "Delaware",
+  DC: "District of Columbia",
+  FL: "Florida",
+  GA: "Georgia",
+  HI: "Hawaii",
+  ID: "Idaho",
+  IL: "Illinois",
+  IN: "Indiana",
+  IA: "Iowa",
+  KS: "Kansas",
+  KY: "Kentucky",
+  LA: "Louisiana",
+  ME: "Maine",
+  MD: "Maryland",
+  MA: "Massachusetts",
+  MI: "Michigan",
+  MN: "Minnesota",
+  MS: "Mississippi",
+  MO: "Missouri",
+  MT: "Montana",
+  NE: "Nebraska",
+  NV: "Nevada",
+  NH: "New Hampshire",
+  NJ: "New Jersey",
+  NM: "New Mexico",
+  NY: "New York",
+  NC: "North Carolina",
+  ND: "North Dakota",
+  OH: "Ohio",
+  OK: "Oklahoma",
+  OR: "Oregon",
+  PA: "Pennsylvania",
+  RI: "Rhode Island",
+  SC: "South Carolina",
+  SD: "South Dakota",
+  TN: "Tennessee",
+  TX: "Texas",
+  UT: "Utah",
+  VT: "Vermont",
+  VA: "Virginia",
+  WA: "Washington",
+  WV: "West Virginia",
+  WI: "Wisconsin",
+  WY: "Wyoming",
+};
+
 async function fillOne(page, field, value) {
   const sel = attrSel("id", field.id);
   switch (field.kind) {
@@ -315,15 +395,31 @@ async function fillOne(page, field, value) {
       await chooseMenuOption(page, field, value);
       return;
     case "async-select": {
+      // The location search only reacts to real keystrokes (fill() sets the
+      // value silently and no suggestions load). Try the full value, then the
+      // city alone ("Sacramento, CA" → "Sacramento").
       const input = page.locator(sel);
-      await input.fill(String(value));
-      try {
-        await page.locator(MENU_OPTION_SEL).first().waitFor({ state: "visible", timeout: 6000 });
-        await page.locator(MENU_OPTION_SEL).first().click();
-      } catch {
-        throw new FillError("location_no_suggestion", field.id);
+      const tries = [String(value), String(value).split(",")[0].trim()].filter(
+        (t, i, all) => t && all.indexOf(t) === i
+      );
+      for (const text of tries) {
+        await input.fill("");
+        await input.pressSequentially(text, { delay: 40 });
+        let texts = [];
+        try {
+          await page.locator(MENU_OPTION_SEL).first().waitFor({ state: "visible", timeout: 6000 });
+          // Suggestions re-render per keystroke (debounced); let the list for
+          // the full text settle before reading and clicking it.
+          await sleep(600);
+          texts = await visibleMenuTexts(page);
+        } catch {
+          continue;
+        }
+        const idx = pickLocationOption(texts, String(value));
+        await page.locator(MENU_OPTION_SEL).nth(idx).click();
+        return;
       }
-      return;
+      throw new FillError("location_no_suggestion", field.id);
     }
     case "native-select":
       await page.locator(sel).selectOption({ label: String(value) });
@@ -455,6 +551,7 @@ async function submit(page, { timeoutMs = 30000 } = {}) {
 }
 
 module.exports = {
+  pickLocationOption,
   name: NAME,
   detect,
   tenantKey,

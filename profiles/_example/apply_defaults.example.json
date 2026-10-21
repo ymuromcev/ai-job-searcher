@@ -15,5 +15,21 @@
     "default": 150000,
     "currency": "USD"
   },
-  "how_did_you_hear_default": "Company careers page"
+  "how_did_you_hear_default": "Company careers page",
+  "address": {
+    "street": "100 Example St",
+    "unit": "Apt 1",
+    "city": "Springfield",
+    "state": "IL",
+    "state_name": "Illinois",
+    "zip": "62701",
+    "country": "United States"
+  },
+  "citizenship": {
+    "countries": [
+      "United States"
+    ],
+    "us_permanent_resident": false
+  },
+  "legal_acknowledgements": "accept"
 }

@@ -345,3 +345,26 @@ describe("apply adapters on synthetic fixtures", { skip: SKIP }, () => {
     });
   });
 });
+
+test("greenhouse pickLocationOption: same city + state in the US wins", () => {
+  const { pickLocationOption } = require("./greenhouse.js");
+  const opts = [
+    "West Sacramento, California, United States",
+    "Colonia del Sacramento, Colonia, Uruguay",
+    "Sacramento, California, United States",
+    "Sacramento, Minas Gerais, Brazil",
+  ];
+  assert.equal(pickLocationOption(opts, "Sacramento, CA"), 2);
+  assert.equal(pickLocationOption(["Paris, France", "Paris, Texas, United States"], "Paris"), 1);
+  assert.equal(pickLocationOption(["Somewhere, Spain"], "Sacramento, CA"), 0);
+});
+
+test("lever filesFirst: the resume is uploaded before any typed field", () => {
+  const { filesFirst } = require("./lever.js");
+  const order = filesFirst([
+    { id: "name", kind: "text" },
+    { id: "location", kind: "location" },
+    { id: "resume", kind: "file" },
+  ]).map((f) => f.id);
+  assert.deepEqual(order, ["resume", "name", "location"]);
+});

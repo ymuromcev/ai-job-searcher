@@ -266,11 +266,37 @@ async function fillOne(page, field, value) {
   }
 }
 
+// Lever parses an uploaded resume ("Analyzing resume…") and then rewrites
+// name / email / phone / location from it — clearing what was typed before.
+// Upload files first, wait for the parser, then fill everything else.
+async function waitResumeParsed(page) {
+  try {
+    await page.waitForFunction(
+      () => !/Analyzing resume/i.test(document.body.innerText || ""),
+      null,
+      {
+        timeout: 25000,
+      }
+    );
+  } catch {
+    // Parser hung — fill anyway; the pre-submit check catches a cleared field.
+  }
+}
+
+function filesFirst(schema) {
+  return [...schema.filter((f) => f.kind === "file"), ...schema.filter((f) => f.kind !== "file")];
+}
+
 async function fill(page, values) {
-  const schema = await schemaFor(page);
+  const schema = filesFirst(await schemaFor(page));
   const filled = [];
   const errors = [];
+  let parsedWaited = false;
   for (const field of schema) {
+    if (!parsedWaited && field.kind !== "file") {
+      parsedWaited = true;
+      if (filled.length) await waitResumeParsed(page);
+    }
     if (!Object.prototype.hasOwnProperty.call(values, field.id)) continue;
     const v = values[field.id];
     if (v == null || v === "" || (Array.isArray(v) && v.length === 0)) continue;
@@ -338,6 +364,7 @@ async function submit(page, { timeoutMs = 30000 } = {}) {
 }
 
 module.exports = {
+  filesFirst,
   name: NAME,
   detect,
   tenantKey,
