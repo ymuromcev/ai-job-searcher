@@ -347,6 +347,18 @@ async function fillOne(page, field, value) {
       return;
     case "file":
       await page.locator(sel).setInputFiles(String(value));
+      // The upload runs in the background (progress bar, then a filename
+      // chip). Wait for the chip so the pre-submit check sees the file.
+      await page
+        .waitForFunction(
+          (id) => {
+            const g = document.querySelector(`[aria-labelledby="upload-label-${CSS.escape(id)}"]`);
+            return Boolean(g && /\.(pdf|docx?|txt|rtf)\b/i.test(g.innerText || ""));
+          },
+          field.id,
+          { timeout: 30000 }
+        )
+        .catch(() => {});
       return;
     case "checkbox-single":
       if (value === true || /^(yes|true|checked|1)$/i.test(String(value))) {
