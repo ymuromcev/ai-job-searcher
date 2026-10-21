@@ -243,7 +243,88 @@ class FillError extends Error {
   }
 }
 
+// Pick the suggestion for a "City, ST" value: prefer a US entry naming the
+// same state (full name or code), then any US entry, then the first one.
+function pickLocationOption(texts, value) {
+  const parts = String(value)
+    .split(",")
+    .map((x) => x.trim().toLowerCase());
+  const city = parts[0] || "";
+  const st = (parts[1] || "").toUpperCase();
+  const stateName = (US_STATE_NAMES[st] || "").toLowerCase();
+  const lower = texts.map((t) => String(t).toLowerCase());
+  const isUs = (t) => /united states|\busa?\b/.test(t);
+  const sameCity = (t) => t.split(",")[0].trim() === city;
+  const sameState = (t) =>
+    (stateName && t.includes(stateName)) || (st && t.includes(`, ${st.toLowerCase()}`));
+  const order = [
+    (t) => sameCity(t) && isUs(t) && sameState(t),
+    (t) => sameCity(t) && isUs(t),
+    (t) => isUs(t),
+  ];
+  for (const ok of order) {
+    const i = lower.findIndex(ok);
+    if (i !== -1) return i;
+  }
+  return 0;
+}
+
+const US_STATE_NAMES = {
+  AL: "Alabama",
+  AK: "Alaska",
+  AZ: "Arizona",
+  AR: "Arkansas",
+  CA: "California",
+  CO: "Colorado",
+  CT: "Connecticut",
+  DE: "Delaware",
+  DC: "District of Columbia",
+  FL: "Florida",
+  GA: "Georgia",
+  HI: "Hawaii",
+  ID: "Idaho",
+  IL: "Illinois",
+  IN: "Indiana",
+  IA: "Iowa",
+  KS: "Kansas",
+  KY: "Kentucky",
+  LA: "Louisiana",
+  ME: "Maine",
+  MD: "Maryland",
+  MA: "Massachusetts",
+  MI: "Michigan",
+  MN: "Minnesota",
+  MS: "Mississippi",
+  MO: "Missouri",
+  MT: "Montana",
+  NE: "Nebraska",
+  NV: "Nevada",
+  NH: "New Hampshire",
+  NJ: "New Jersey",
+  NM: "New Mexico",
+  NY: "New York",
+  NC: "North Carolina",
+  ND: "North Dakota",
+  OH: "Ohio",
+  OK: "Oklahoma",
+  OR: "Oregon",
+  PA: "Pennsylvania",
+  RI: "Rhode Island",
+  SC: "South Carolina",
+  SD: "South Dakota",
+  TN: "Tennessee",
+  TX: "Texas",
+  UT: "Utah",
+  VT: "Vermont",
+  VA: "Virginia",
+  WA: "Washington",
+  WV: "West Virginia",
+  WI: "Wisconsin",
+  WY: "Wyoming",
+};
+
 module.exports = {
+  pickLocationOption,
   STOP_REASONS,
   detectBlocker,
   detectBlockerInPage,

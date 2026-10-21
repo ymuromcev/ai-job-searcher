@@ -161,6 +161,23 @@ describe("apply adapters on synthetic fixtures", { skip: SKIP }, () => {
     });
   });
 
+  test("greenhouse: an uploaded file still counts after the input becomes a filename chip", async () => {
+    await withPage(async (page) => {
+      await greenhouse.open(page, fixtureUrl("greenhouse_form.html"));
+      const fields = await greenhouse.readSchema(page);
+      await greenhouse.fill(page, planValues(fields, GH_CUSTOM));
+      // Live Greenhouse replaces <input id="resume"> with the file name once uploaded.
+      await page.evaluate(() => {
+        const input = document.getElementById("resume");
+        const chip = document.createElement("span");
+        chip.textContent = "CV_Example.pdf";
+        input.replaceWith(chip);
+      });
+      const check = await greenhouse.checkFilled(page);
+      assert.equal(check.missing.includes("resume"), false);
+    });
+  });
+
   test("greenhouse: pre-submit check reports an unanswered required question", async () => {
     await withPage(async (page) => {
       await greenhouse.open(page, fixtureUrl("greenhouse_form.html"));
@@ -346,8 +363,15 @@ describe("apply adapters on synthetic fixtures", { skip: SKIP }, () => {
   });
 });
 
-test("greenhouse pickLocationOption: same city + state in the US wins", () => {
-  const { pickLocationOption } = require("./greenhouse.js");
+test("pickLocationOption: same city + state in the US wins (Greenhouse and Lever formats)", () => {
+  const { pickLocationOption } = require("./_dom.js");
+  assert.equal(
+    pickLocationOption(
+      ["Sacramento, Minas Gerais, BRA", "Sacramento, IL, USA", "Sacramento, CA, USA"],
+      "Sacramento, CA"
+    ),
+    2
+  );
   const opts = [
     "West Sacramento, California, United States",
     "Colonia del Sacramento, Colonia, Uruguay",

@@ -27,6 +27,7 @@ const {
   cleanLabel,
   sleep,
   FillError,
+  pickLocationOption,
 } = require("./_dom.js");
 
 const NAME = "lever";
@@ -227,18 +228,29 @@ async function fillOne(page, field, value) {
       await page.locator(sel).first().fill(String(value));
       return;
     case "location": {
+      // The location search reacts only to real keystrokes; a value not picked
+      // from the list is dropped on submit. Try "City, ST", then the city alone.
       const input = page.locator(sel).first();
-      await input.fill(String(value));
       const sugg = page.locator(
         ".dropdown-location, .location-dropdown [role=option], .dropdown-results li"
       );
-      try {
-        await sugg.first().waitFor({ state: "visible", timeout: 4000 });
-        await sugg.first().click();
-      } catch {
-        // No suggestion offered — Lever keeps the typed text.
+      const tries = [String(value), String(value).split(",")[0].trim()].filter(
+        (t, i, all) => t && all.indexOf(t) === i
+      );
+      for (const text of tries) {
+        await input.fill("");
+        await input.pressSequentially(text, { delay: 40 });
+        try {
+          await sugg.first().waitFor({ state: "visible", timeout: 5000 });
+        } catch {
+          continue;
+        }
+        await sleep(600);
+        const texts = await sugg.allInnerTexts();
+        await sugg.nth(pickLocationOption(texts, String(value))).click();
+        return;
       }
-      return;
+      throw new FillError("location_no_suggestion", field.id);
     }
     case "select":
       await page
