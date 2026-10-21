@@ -26,6 +26,7 @@ const KNOWN_COMMANDS = [
   "retro-tailor",
   "backfill-outreach-url",
   "companies-upsert",
+  "apply",
 ];
 
 const PARSE_OPTIONS = {
@@ -64,6 +65,9 @@ const PARSE_OPTIONS = {
     "applied-date": { type: "string" },
     "resume-ver": { type: "string" },
     force: { type: "boolean", default: false },
+    // `apply` (RFC 068).
+    "answers-file": { type: "string" },
+    concurrency: { type: "string" },
   },
   allowPositionals: true,
   strict: true,
@@ -122,6 +126,13 @@ Commands:
              fields only; Tier is never written. Dry-run by default (prints
              "N to create, M to fill, K skip"); --apply commits. See RFC 062 /
              BL-202.
+  apply      Bot fills and submits Greenhouse / Lever / Ashby application
+             forms for To Apply rows (Strong/Medium, never applied, within
+             the company cap). Three phases: --phase pre reads the forms and
+             writes .apply-state/apply_context.json; the job-pipeline skill
+             answers the open questions; --phase submit fills, submits and
+             marks Applied. --dry-run stops before the Submit click.
+             See RFC 068.
 
 Flags:
   --profile <id>       Profile id (required for all commands). Lowercase, alphanum + - _.
@@ -193,6 +204,16 @@ retro-tailor flags:
   --since <YYYY-MM-DD>   Skip candidates older than this date (recon only).
   --dry-run              Recon-only mode without writing the context file.
 
+apply flags:
+  --phase <pre|submit>   Required.
+  --limit <N>            pre: cap the queue at N jobs (newest first).
+  --answers-file <path>  Required for --phase submit. JSON written by the skill:
+                         {"answers":[{"key","label","answer","bank_page_id"}]}.
+  --concurrency <N>      Parallel browser contexts (default 4; at most one
+                         open form per ATS tenant).
+  --dry-run              pre: no TSV writes. submit: everything except the
+                         Submit click; keeps a screenshot of the filled form.
+
 answer flags:
   --phase <search|push>  Required. "search" looks up existing Q&A by company+role+question
                          and prints a JSON match report. "push" reads --results-file and
@@ -248,6 +269,7 @@ function defaultCommands() {
     "retro-tailor": require("./commands/retro_tailor.js"),
     "backfill-outreach-url": require("./commands/backfill_outreach_url.js"),
     "companies-upsert": require("./commands/companies_upsert.js"),
+    apply: require("./commands/apply.js"),
   };
 }
 
@@ -321,6 +343,9 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
       appliedDate: parsed.values["applied-date"] || "",
       resumeVer: parsed.values["resume-ver"] || "",
       force: Boolean(parsed.values.force),
+      // apply (RFC 068)
+      answersFile: parsed.values["answers-file"] || "",
+      concurrency: parsed.values.concurrency ? parseInt(parsed.values.concurrency, 10) : null,
     },
     env,
     stdout: writeOut,
