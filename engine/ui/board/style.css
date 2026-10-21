@@ -65,3 +65,91 @@ footer button {
 footer {
   margin-top: 24px;
 }
+.hint {
+  margin: 4px 0;
+}
+
+/* «Банк ответов» */
+#bank-table .answer {
+  white-space: pre-wrap;
+  max-width: 48em;
+}
+#bank-table .answer.clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+#bank-table button {
+  font: inherit;
+  background: #fff;
+  color: #000;
+  border: 0;
+  cursor: pointer;
+}
+#bank-table .more {
+  padding: 0;
+  text-decoration: underline;
+}
+#bank-table .stars {
+  white-space: nowrap;
+}
+#bank-table .stars button {
+  padding: 0 2px;
+  font-size: 18px;
+  line-height: 1;
+}
+#bank-table .stars button.clear {
+  font-size: 14px;
+  text-decoration: underline;
+  margin-left: 4px;
+}
+#bank-table .stars button:disabled {
+  cursor: default;
+}
+#bank-table .note {
+  display: block;
+}
+
+/* Phone width: the bank table becomes cards, the column name before each value. */
+@media (max-width: 700px) {
+  table.cards,
+  table.cards tbody,
+  table.cards tr,
+  table.cards td {
+    display: block;
+  }
+  table.cards thead {
+    display: none;
+  }
+  table.cards tr {
+    border: 1px solid #000;
+    margin: 0 0 8px;
+  }
+  table.cards td {
+    border: 0;
+    border-bottom: 1px solid #000;
+  }
+  table.cards td:last-child {
+    border-bottom: 0;
+  }
+  table.cards td[data-label]::before {
+    content: attr(data-label) ": ";
+    font-weight: bold;
+  }
+  #bank-table .answer {
+    max-width: none;
+  }
+  #bank-table .stars button {
+    font-size: 24px;
+    padding: 0 4px;
+  }
+  .filters label {
+    display: block;
+    margin: 0 0 8px;
+  }
+  nav button {
+    margin: 0 4px 4px 0;
+  }
+}

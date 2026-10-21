@@ -50,6 +50,8 @@ const applicationsTsv = require("../core/applications_tsv.js");
 const { resolveProfilesDir, resolveDataDir } = require("../core/paths.js");
 const notionSync = require("../core/notion_sync.js");
 const { fetchAllAnswers, matchAnswers } = require("../core/qa_notion.js");
+const { rankBank, bankUsesFromJobs } = require("../core/answer_bank.js");
+const { ratingsPath, parseRatingsFile } = require("../core/answer_bank_store.js");
 const { categorize } = require("../core/qa_categorize.js");
 const { fetchJd } = require("../core/jd_cache.js");
 const { extractJDStructure } = require("../core/jd_extract.js");
@@ -159,6 +161,24 @@ function searchBank(bank, job, field) {
     if (v) return { source: "bank_reuse", value: v, bank_page_id: p.pageId || null };
   }
   return null;
+}
+
+// The owner's ratings from the board (profiles/<id>/.answers/ratings.json):
+// answers rated 1–2 are dropped, the rest ordered best-rated first, then
+// newest — `searchBank` takes the first match. An unreadable ratings file
+// skips the bank rather than risk reusing an answer the owner rejected.
+function applyRatings(bank, profile, deps, stdout, stderr) {
+  const file = ratingsPath(profile.paths.root);
+  let ratings = {};
+  try {
+    if (deps.fileExists(file)) ratings = parseRatingsFile(deps.readFile(file));
+  } catch (err) {
+    stderr(`warn: answer ratings unreadable (${err.message}) — bank answers skipped`);
+    return [];
+  }
+  const ranked = rankBank(bank, ratings);
+  if (ranked.hidden) stdout(`answer bank: ${ranked.hidden} answer(s) rated 1–2 — not reused`);
+  return ranked.bank;
 }
 
 function escapeRe(s) {
@@ -561,6 +581,7 @@ async function runPre(ctx, deps) {
       stderr(`warn: answer bank unavailable (${err.message}) — bank answers skipped`);
     }
   }
+  if (bank.length) bank = applyRatings(bank, profile, deps, stdout, stderr);
 
   // Board slugs for ATS-sourced rows (canonical form URLs).
   let slugIndex = new Map();
@@ -675,6 +696,8 @@ async function runPre(ctx, deps) {
         jobs: jobs.map((j) => ({ key: j.key })),
         manual: manual.map(keyOf),
         skipped: skippedNow.map(keyOf),
+        // Which bank answers went into which forms — the board's reuse count.
+        bank_used: bankUsesFromJobs(jobs),
       },
       null,
       2

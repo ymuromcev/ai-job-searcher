@@ -993,3 +993,102 @@ test("submit: an answer outside a partial (searchable) option list is typed, not
   assert.equal(h2.log.filter((l) => l[0] === "fill").length, 0);
   assert.notEqual(h2.store.apps[0].status, "Applied");
 });
+
+// ---- answer ratings from the board (BL-225 U7) -----------------------------
+
+const RATINGS_PATH = path.join(ROOT, ".answers", "ratings.json");
+const BANK_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const BANK_B = "bbbbbbbb-0000-4000-8000-000000000002";
+const BANK_C = "cccccccc-0000-4000-8000-000000000003";
+const SQL_Q = "How many years of SQL experience do you have?";
+
+function sqlAnswer(pageId, answer, over = {}) {
+  return {
+    pageId,
+    company: "Other Co",
+    role: "PM",
+    question: SQL_Q,
+    answer,
+    category: "Experience",
+    createdAt: "2026-10-01T00:00:00Z",
+    ...over,
+  };
+}
+
+function ratingsJson(map) {
+  const ratings = {};
+  for (const [id, rating] of Object.entries(map))
+    ratings[id] = { rating, rated_at: "", question_key: "" };
+  return JSON.stringify({ version: 1, ratings });
+}
+
+async function preWithRatings(bank, ratings) {
+  const h = harness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    files: [RESUME],
+    bank,
+  });
+  if (ratings !== undefined) h.disk.set(RATINGS_PATH, ratings);
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const job = JSON.parse(h.disk.get(CONTEXT_PATH)).jobs[0];
+  const ans = Object.fromEntries(job.answers.map((a) => [a.field_id, a]));
+  return { h, job, ans };
+}
+
+test("pre ratings: an answer rated 1–2 is never reused; the next match is taken", async () => {
+  const bank = [sqlAnswer(BANK_A, "Seven years"), sqlAnswer(BANK_B, "Five years")];
+  const { h, ans } = await preWithRatings(bank, ratingsJson({ [BANK_A]: 2 }));
+  assert.equal(ans.q_years.bank_page_id, BANK_B);
+  assert.equal(ans.q_years.value, "Five years");
+  assert.match(h.out.join("\n"), /1 answer\(s\) rated 1–2 — not reused/);
+});
+
+test("pre ratings: the only matching answer rated 1 → the question goes to the LLM step", async () => {
+  const { job, ans } = await preWithRatings(
+    [sqlAnswer(BANK_A, "Seven years")],
+    ratingsJson({ [BANK_A]: 1 })
+  );
+  assert.equal(ans.q_years, undefined);
+  assert.ok(job.unanswered.some((u) => u.field_id === "q_years"));
+});
+
+test("pre ratings: several matches → higher rated first, then newer; unrated counts as 3", async () => {
+  const bank = [
+    sqlAnswer(BANK_A, "Old unrated", { createdAt: "2026-09-01T00:00:00Z" }),
+    sqlAnswer(BANK_B, "New unrated", { createdAt: "2026-10-10T00:00:00Z" }),
+    sqlAnswer(BANK_C, "Rated four", { createdAt: "2026-08-01T00:00:00Z" }),
+  ];
+  const rated = await preWithRatings(bank, ratingsJson({ [BANK_C]: 4 }));
+  assert.equal(rated.ans.q_years.bank_page_id, BANK_C);
+
+  const unrated = await preWithRatings(bank, undefined);
+  assert.equal(unrated.ans.q_years.bank_page_id, BANK_B, "no ratings → newest wins");
+
+  const three = await preWithRatings(bank, ratingsJson({ [BANK_A]: 3 }));
+  assert.equal(three.ans.q_years.bank_page_id, BANK_B, "a 3 ties with unrated → newer");
+});
+
+test("pre ratings: an exact company+role+question match rated low falls back to a reusable one", async () => {
+  const bank = [
+    sqlAnswer(BANK_A, "Exact but bad", { company: "Acme", role: "Product Manager" }),
+    sqlAnswer(BANK_B, "Portable"),
+  ];
+  const before = await preWithRatings(bank, undefined);
+  assert.equal(before.ans.q_years.source, "bank");
+  const after = await preWithRatings(bank, ratingsJson({ [BANK_A]: 2 }));
+  assert.equal(after.ans.q_years.source, "bank_reuse");
+  assert.equal(after.ans.q_years.bank_page_id, BANK_B);
+});
+
+test("pre ratings: an unreadable ratings file skips the bank (fail closed)", async () => {
+  const { h, ans } = await preWithRatings([sqlAnswer(BANK_A, "Seven years")], "{not json");
+  assert.equal(ans.q_years, undefined);
+  assert.match(h.err.join("\n"), /answer ratings unreadable/);
+});
+
+test("pre: the stamped record lists which bank answers went into which form", async () => {
+  const { h } = await preWithRatings([sqlAnswer(BANK_A, "Seven years")], undefined);
+  const name = [...h.disk.keys()].find((k) => /apply_pre-.*\.json$/.test(k));
+  const pre = JSON.parse(h.disk.get(name));
+  assert.deepEqual(pre.bank_used, [{ key: "gh1", bank_page_id: BANK_A, source: "bank_reuse" }]);
+});

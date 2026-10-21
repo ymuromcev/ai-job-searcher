@@ -18,6 +18,7 @@
       <button type="button" data-tab="todo">Доделать руками</button>
       <button type="button" data-tab="week">Неделя</button>
       <button type="button" data-tab="sources">Источники и сайты подачи</button>
+      <button type="button" data-tab="bank">Банк ответов</button>
     </nav>
 
     <section id="responses">
@@ -104,6 +105,45 @@
         <tbody></tbody>
       </table>
       <p id="sites-empty" hidden>Подач пока не было</p>
+    </section>
+
+    <section id="bank" hidden>
+      <p id="bank-notice" role="status" hidden></p>
+      <p class="filters">
+        <label
+          >Показать
+          <select id="bank-filter">
+            <option value="unrated">без оценки</option>
+            <option value="bot">бот</option>
+            <option value="all" selected>все</option>
+          </select></label
+        >
+        <label
+          >Поиск <input type="search" id="bank-q" placeholder="вопрос, ответ, компания"
+        /></label>
+      </p>
+      <p id="bank-summary"></p>
+      <p class="hint">
+        Оценка 1–2 — бот больше не берёт этот ответ; при нескольких подходящих берёт ответ с оценкой
+        выше, потом более новый. Без оценки — как 3.
+      </p>
+      <table id="bank-table" class="cards">
+        <thead>
+          <tr>
+            <th>Вопрос</th>
+            <th>Ответ</th>
+            <th>Компания</th>
+            <th>Роль</th>
+            <th>Категория</th>
+            <th>Источник</th>
+            <th>Дата</th>
+            <th>Взят ботом</th>
+            <th>Оценка</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="bank-empty" hidden>В банке пока нет ответов</p>
     </section>
 
     <footer>

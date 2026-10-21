@@ -1,4 +1,4 @@
-// `board` command (RFC 068 §8): a local, read-only registry page.
+// `board` command (RFC 068 §8): a local registry page.
 //
 //   node engine/cli.js board --profile <id> [--no-open] [--port N]
 //
@@ -11,10 +11,14 @@
 //     so a second launch reuses the running server instead of starting another;
 //   - idle shutdown after 30 minutes, POST /api/quit to close it from the page.
 //
-// Read-only: every data endpoint re-reads applications.tsv (and the scan
-// health log / the nightly run log) per request; no endpoint writes anything. Other people's text
-// (company names, titles, reasons) leaves as JSON and the page renders it
-// with textContent only.
+// Every data endpoint re-reads applications.tsv (and the scan health log /
+// the nightly run log) per request. The answer bank («Банк ответов», BL-225
+// U7) comes from Notion — or the local backup — through a short in-memory
+// cache. The one thing the board writes is the owner's answer ratings
+// (POST /api/rating → profiles/<id>/.answers/ratings.json); the TSV and
+// Notion are never written. Other people's text (company names, titles,
+// reasons, answers) leaves as JSON and the page renders it with textContent
+// only.
 
 const fs = require("fs");
 const os = require("os");
@@ -32,6 +36,10 @@ const { buildSourceHealth } = require("../core/source_health.js");
 const scanHealthLog = require("../core/scan_health_log.js");
 const nightRunsLog = require("../core/night_runs_log.js");
 const { todayLocalISO } = require("../core/auto_dead_sweep.js");
+const { makeClient } = require("../core/notion_sync.js");
+const { fetchAllAnswers } = require("../core/qa_notion.js");
+const answerBank = require("../core/answer_bank.js");
+const bankStore = require("../core/answer_bank_store.js");
 
 const HOST = "127.0.0.1";
 const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
@@ -48,6 +56,8 @@ const CSP =
   "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; " +
   "img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 const NO_KEY = "нужна ссылка с ключом: открой реестр командой board";
+const MAX_BODY = 2048; // POST /api/rating carries { id, rating } only
+const BANK_TTL_MS = 60 * 1000;
 
 // --- state dir / lock ------------------------------------------------------
 
@@ -165,8 +175,9 @@ function readAsset(name) {
   return fs.readFileSync(path.join(UI_DIR, name));
 }
 
-// `data` = { registry(), week(), sources() } → plain JSON objects. Injected so
-// tests can run the server against a temp TSV.
+// `data` = { registry(), week(), sources(), bank?({ fresh }), rate?({ id, rating }) }
+// → plain JSON objects or promises of them. Injected so tests can run the
+// server against a temp TSV.
 function createBoardServer({ data, token, idleMs = IDLE_MS, clock = () => Date.now() }) {
   if (!data) throw new Error("createBoardServer: data loaders are required");
   const state = {
@@ -195,6 +206,51 @@ function createBoardServer({ data, token, idleMs = IDLE_MS, clock = () => Date.n
   const json = (res, code, obj) =>
     send(res, code, JSON.stringify(obj), "application/json; charset=utf-8");
 
+  // Run a data loader (sync or async) and answer with its JSON; an error is a
+  // JSON 500 (or the error's own `status`).
+  function respond(res, fn) {
+    let out;
+    try {
+      out = fn();
+    } catch (err) {
+      return json(res, err.status || 500, { error: err.message });
+    }
+    return Promise.resolve(out).then(
+      (value) => json(res, 200, value),
+      (err) => json(res, err.status || 500, { error: err.message })
+    );
+  }
+
+  // POST /api/rating — body exactly { id, rating }, JSON, at most MAX_BODY.
+  function handleRating(req, res) {
+    const type = String(req.headers["content-type"] || "")
+      .split(";")[0]
+      .trim()
+      .toLowerCase();
+    if (type !== "application/json") {
+      req.resume();
+      return json(res, 415, { error: "нужен JSON" });
+    }
+    if (Number(req.headers["content-length"] || 0) > MAX_BODY) {
+      req.resume();
+      return json(res, 413, { error: "слишком большой запрос" });
+    }
+    return readBody(req, MAX_BODY).then(
+      (buf) => {
+        let body;
+        try {
+          body = JSON.parse(buf.toString("utf8"));
+        } catch {
+          return json(res, 400, { error: "тело запроса — не JSON" });
+        }
+        const v = answerBank.validateRatingInput(body);
+        if (!v.ok) return json(res, 400, { error: v.error });
+        return respond(res, () => data.rate({ id: v.id, rating: v.rating }));
+      },
+      (err) => json(res, err.status || 400, { error: err.message })
+    );
+  }
+
   function allowed(req, url) {
     if (!LOOPBACK.has(req.socket.remoteAddress)) return false;
     if (!state.hosts.has(String(req.headers.host || "").trim())) return false;
@@ -219,7 +275,10 @@ function createBoardServer({ data, token, idleMs = IDLE_MS, clock = () => Date.n
     state.touched = clock();
 
     if (req.method === "POST") {
-      req.resume(); // no endpoint reads a body
+      if (url.pathname === "/api/rating" && typeof data.rate === "function") {
+        return handleRating(req, res);
+      }
+      req.resume(); // the other endpoints read no body
       if (url.pathname === "/api/quit") {
         json(res, 200, { ok: true });
         setImmediate(() => server.shutdown());
@@ -243,9 +302,13 @@ function createBoardServer({ data, token, idleMs = IDLE_MS, clock = () => Date.n
       if (Object.prototype.hasOwnProperty.call(ASSETS, name)) {
         return send(res, 200, readAsset(name), ASSETS[name]);
       }
-      if (p === "/api/registry") return json(res, 200, data.registry());
-      if (p === "/api/week") return json(res, 200, data.week());
-      if (p === "/api/sources") return json(res, 200, data.sources());
+      if (p === "/api/registry") return respond(res, () => data.registry());
+      if (p === "/api/week") return respond(res, () => data.week());
+      if (p === "/api/sources") return respond(res, () => data.sources());
+      if (p === "/api/bank" && typeof data.bank === "function") {
+        const fresh = url.searchParams.get("fresh") === "1";
+        return respond(res, () => data.bank({ fresh }));
+      }
     } catch (err) {
       return json(res, 500, { error: err.message });
     }
@@ -277,6 +340,37 @@ function createBoardServer({ data, token, idleMs = IDLE_MS, clock = () => Date.n
   return server;
 }
 
+function readBody(req, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    let done = false;
+    req.on("data", (chunk) => {
+      if (done) return;
+      size += chunk.length;
+      if (size > limit) {
+        done = true;
+        const err = new Error("слишком большой запрос");
+        err.status = 413;
+        req.resume();
+        reject(err);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      if (done) return;
+      done = true;
+      resolve(Buffer.concat(chunks));
+    });
+    req.on("error", (err) => {
+      if (done) return;
+      done = true;
+      reject(err);
+    });
+  });
+}
+
 // Listen on 127.0.0.1:<port> (0 = any free port). Resolves once listening.
 function startBoardServer({ data, port = 0, token, idleMs, clock } = {}) {
   const server = createBoardServer({ data, token, idleMs, clock });
@@ -294,19 +388,92 @@ function startBoardServer({ data, port = 0, token, idleMs, clock } = {}) {
 
 // --- data ------------------------------------------------------------------
 
-function makeDataLoaders(profile, deps) {
+// The answer bank, fetched at most once per `bankTtlMs` (Notion is slow; the
+// tab should open fast). Concurrent callers share one fetch; `fresh` skips
+// the cache (the «Обновить» button). → { entries, source, notice, uses }
+function makeBankLoader(profile, deps, env) {
+  const ttl = Number.isFinite(deps.bankTtlMs) ? deps.bankTtlMs : BANK_TTL_MS;
+  let cache = null;
+  let inflight = null;
+  async function load() {
+    const secrets = (deps.loadSecrets && deps.loadSecrets(profile.id, env)) || {};
+    const bank = await bankStore.loadAnswerBank({
+      profile,
+      secrets,
+      deps: { makeClient: deps.makeNotionClient, fetchAllAnswers: deps.fetchAllAnswers },
+    });
+    const preRecords = bankStore.readPreRecords(path.join(profile.paths.root, ".apply-state"));
+    return { ...bank, uses: answerBank.countBankUses(preRecords) };
+  }
+  return function getBank({ fresh = false } = {}) {
+    if (!fresh && cache && deps.now() - cache.at < ttl) return Promise.resolve(cache.value);
+    if (inflight) return inflight;
+    inflight = load()
+      .then((value) => {
+        cache = { at: deps.now(), value };
+        return value;
+      })
+      .finally(() => {
+        inflight = null;
+      });
+    return inflight;
+  };
+}
+
+function makeDataLoaders(profile, deps, env = {}) {
   const tsvPath = profile.paths.applicationsTsv;
   const readRows = () => deps.loadApplications(tsvPath).apps;
+  const ratingsFile = bankStore.ratingsPath(profile.paths.root);
+  const getBank = makeBankLoader(profile, deps, env);
   return {
     registry: () => ({
       profile: profile.id,
       generatedAt: new Date(deps.now()).toISOString(),
       ...buildRegistryView(readRows()),
     }),
-    week: () => {
+    week: async () => {
+      const rows = readRows();
       const nights = nightRunsLog.readNightRuns(nightRunsLog.nightRunsPath(profile.paths.root));
-      const report = buildWeeklyReport(readRows(), deps.today(), { nights });
+      let bank;
+      try {
+        const b = await getBank();
+        bank = { entries: b.entries, ratings: bankStore.readRatings(ratingsFile) };
+      } catch {
+        bank = undefined; // the bank line is optional; the rest of the week still shows
+      }
+      const report = buildWeeklyReport(rows, deps.today(), { nights, bank });
       return { profile: profile.id, report, tables: weeklyTables(report) };
+    },
+    bank: async ({ fresh = false } = {}) => {
+      const b = await getBank({ fresh });
+      const ratings = bankStore.readRatings(ratingsFile);
+      return {
+        profile: profile.id,
+        source: b.source,
+        notice: b.notice,
+        ...answerBank.buildBankView(b.entries, ratings, { uses: b.uses }),
+      };
+    },
+    // Only ids present in the bank can be rated; an unknown id refreshes the
+    // bank once (a new answer may have been pushed since the last fetch).
+    rate: async ({ id, rating }) => {
+      const find = (b) => b.entries.find((e) => e.pageId === id);
+      let entry = find(await getBank());
+      if (!entry) entry = find(await getBank({ fresh: true }));
+      if (!entry) {
+        const err = new Error("нет такого ответа в банке");
+        err.status = 404;
+        throw err;
+      }
+      const now = new Date(deps.now());
+      const next = answerBank.setRating(bankStore.readRatings(ratingsFile), {
+        id,
+        rating,
+        questionKey: answerBank.questionKey(entry),
+        now,
+      });
+      bankStore.writeRatings(ratingsFile, next, { now });
+      return { ok: true, id, rating };
     },
     sources: () => ({
       profile: profile.id,
@@ -341,6 +508,10 @@ function parsePort(raw) {
 const DEFAULT_DEPS = {
   loadProfile: profileLoader.loadProfile,
   loadApplications: applications.load,
+  loadSecrets: profileLoader.loadSecrets,
+  makeNotionClient: makeClient,
+  fetchAllAnswers,
+  bankTtlMs: BANK_TTL_MS,
   openUrl: openInBrowser,
   now: () => Date.now(),
   today: () => todayLocalISO(),
@@ -382,7 +553,7 @@ function makeBoardCommand(overrides = {}) {
     let started;
     try {
       started = await startBoardServer({
-        data: makeDataLoaders(profile, deps),
+        data: makeDataLoaders(profile, deps, env),
         port,
         idleMs: deps.idleMs,
       });
@@ -399,7 +570,7 @@ function makeBoardCommand(overrides = {}) {
     });
     const offSignal = deps.onSignal(() => started.server.shutdown());
     stdout(`board for ${profile.id}: ${started.url}`);
-    stdout("read-only; closes after 30 min idle or from the page");
+    stdout("writes only answer ratings; closes after 30 min idle or from the page");
     if (!flags.noOpen) deps.openUrl(started.url);
 
     await started.closed;

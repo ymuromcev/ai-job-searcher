@@ -304,3 +304,31 @@ test("renderWeeklyHtml: self-contained, escaped, no scripts", () => {
   assert.doesNotMatch(html, /<script/);
   assert.doesNotMatch(html, /https?:\/\//); // nothing loaded from the network
 });
+
+test("bank line: bot answers saved this week vs all, rated / unrated / average (BL-225 U7)", () => {
+  const bot = "apply bot, truth-checked";
+  const id = (n) => `aaaaaaaa-0000-4000-8000-00000000000${n}`;
+  const entries = [
+    { pageId: id(1), notes: bot, createdAt: "2026-10-20T18:00:00.000Z" },
+    { pageId: id(2), notes: bot, createdAt: "2026-10-15" }, // local backup date, first day
+    { pageId: id(3), notes: bot, createdAt: "2026-10-14" }, // the day before the week
+    { pageId: id(4), notes: "", createdAt: "2026-10-20" }, // the owner's own answer
+  ];
+  const ratings = {
+    [id(1)]: { rating: 4, rated_at: "", question_key: "" },
+    [id(3)]: { rating: 1, rated_at: "", question_key: "" },
+  };
+  const report = buildWeeklyReport([], REF, { bank: { entries, ratings } });
+  assert.deepEqual(report.bank.week, { added: 2, rated: 1, unrated: 1, average: 4 });
+  assert.deepEqual(report.bank.total, { added: 3, rated: 2, unrated: 1, average: 2.5 });
+  const line = weeklyTables(report)[0].rows.at(-1);
+  assert.deepEqual(line, [
+    "Ответы бота, сохранённые в банк",
+    "2 (с оценкой 1, без оценки 1, средняя 4)",
+    "3 (с оценкой 2, без оценки 1, средняя 2,5)",
+  ]);
+
+  const none = buildWeeklyReport([], REF, {});
+  assert.equal(none.bank, undefined);
+  assert.ok(!weeklyTables(none)[0].rows.some((r) => /Ответы бота/.test(r[0])));
+});
