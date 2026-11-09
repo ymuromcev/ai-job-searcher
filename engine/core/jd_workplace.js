@@ -34,6 +34,7 @@ const {
   US_CODE_TO_NAME,
   canonicalStateCode,
   isUsCompatibleRemoteLoc,
+  CA_CITY_NAMES,
 } = require("./geo_enforcer.js");
 
 // Rows that passed geo by a non-home-state clause and therefore need the JD
@@ -154,46 +155,8 @@ const REMOTE_WEAK_RE = /\bremote\b/;
 
 // City → state code (or "INTL"). Lowercase; longest phrases are matched first.
 const CITY_TO_STATE = {
-  // California
-  "san francisco": "CA",
-  "south san francisco": "CA",
-  "bay area": "CA",
-  "silicon valley": "CA",
-  "los angeles": "CA",
-  "san diego": "CA",
-  "san jose": "CA",
-  "palo alto": "CA",
-  "mountain view": "CA",
-  sunnyvale: "CA",
-  "menlo park": "CA",
-  "redwood city": "CA",
-  "san mateo": "CA",
-  "foster city": "CA",
-  "san carlos": "CA",
-  burlingame: "CA",
-  oakland: "CA",
-  berkeley: "CA",
-  emeryville: "CA",
-  cupertino: "CA",
-  "santa clara": "CA",
-  "santa monica": "CA",
-  "culver city": "CA",
-  "playa vista": "CA",
-  "el segundo": "CA",
-  irvine: "CA",
-  "costa mesa": "CA",
-  "newport beach": "CA",
-  pasadena: "CA",
-  burbank: "CA",
-  sacramento: "CA",
-  roseville: "CA",
-  fremont: "CA",
-  "long beach": "CA",
-  "walnut creek": "CA",
-  pleasanton: "CA",
-  "los gatos": "CA",
-  milpitas: "CA",
-  "santa barbara": "CA",
+  // California — one list, shared with the scan geo filter.
+  ...Object.fromEntries(CA_CITY_NAMES.map((c) => [c, "CA"])),
   // New York
   "new york city": "NY",
   nyc: "NY",

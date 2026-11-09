@@ -704,3 +704,21 @@ test("home_state_or_remote: CA county name with another state does not pass", ()
   assert.strictEqual(hsr(["Goshen, Orange County, NY"]).ok, false);
   assert.strictEqual(hsr(["Austin, Travis County"]).ok, false);
 });
+
+test("home_state_or_remote: CA city named without the state passes (2026-11-09)", () => {
+  assert.strictEqual(hsr(["San Francisco"]).ok, true);
+  assert.strictEqual(hsr(["Hybrid - San Francisco"]).ok, true);
+  assert.strictEqual(hsr(["Seattle, New-York, San Francisco"]).ok, true);
+  assert.strictEqual(hsr(["San Francisco Or New York"]).ok, true);
+  assert.strictEqual(hsr(["Mountain View, US"]).ok, true);
+  assert.strictEqual(hsr(["San Francisco Bay Area"]).ok, true);
+  assert.strictEqual(hsr(["Menlo Park, CA; New York, NY"]).ok, true);
+});
+
+test("home_state_or_remote: same city name elsewhere does not pass", () => {
+  assert.strictEqual(hsr(["San Jose, Costa Rica"]).ok, false);
+  assert.strictEqual(hsr(["Pasadena, TX"]).ok, false);
+  assert.strictEqual(hsr(["Long Beach, NY"]).ok, false);
+  assert.strictEqual(hsr(["Seattle, WA"]).ok, false);
+  assert.strictEqual(hsr(["New York"]).ok, false);
+});
