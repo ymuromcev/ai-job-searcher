@@ -600,6 +600,16 @@ async function submit(page, { timeoutMs = SUBMIT_TIMEOUT_MS, ignoreBlockers = []
     ignoreBlockers,
   });
   if (typeof page.off === "function") page.off("response", onResponse);
+  // No submit request at all after the click: Ashby's invisible bot check
+  // held it back. Nothing was sent, so this is a bot_check skip, not an
+  // application that may have gone out.
+  if (
+    !out.ok &&
+    out.reason === STOP_REASONS.NO_CONFIRMATION &&
+    !calls.some((c) => /submit/i.test(c.path))
+  ) {
+    out.reason = "bot_check";
+  }
   if (!out.ok && out.evidence) {
     out.evidence = { ...out.evidence, api: calls.slice(-6), alerts: await alertsText(page) };
   }

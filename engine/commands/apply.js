@@ -104,6 +104,8 @@ const NOT_SENT_AFTER_CLICK = new Set([
   "email_code_field_missing",
   "email_code_rejected",
   "job_closed",
+  // Ashby: the click sent no submit request (its invisible bot check).
+  "bot_check",
 ]);
 
 // Hosts a form may live on at submit time (RFC 069 review M1): the context
@@ -340,8 +342,17 @@ function buildFillPlan(liveFields, contextJob, llmAnswers, profileRoot, allowedF
 
 // --- deps --------------------------------------------------------------------
 
+// ATS whose bot check the bot cannot pass honestly. Ashby runs an invisible
+// reCAPTCHA before its submit request: in 17 of 17 live attempts (October
+// and 09.11.2026, headless and headed) the click sent no submit request at
+// all. Getting past it would mean defeating a bot check, which the bot never
+// does — so these rows are skipped as bot_check at pre time, before any
+// answers are drafted for them, and the night fills the target elsewhere.
+const NO_SUBMIT_ATS = Object.freeze(["ashby"]);
+
 function makeDefaultDeps() {
   return {
+    noSubmitAts: new Set(NO_SUBMIT_ATS),
     loadProfile: profileLoader.loadProfile,
     loadSecrets: profileLoader.loadSecrets,
     loadApplications: applicationsTsv.load,
@@ -568,6 +579,9 @@ async function preparePreJob(app, env) {
   if (where.skip) return { job, skip: where.skip };
   const res = where.res;
   const ats = res.ats;
+  if (ats && deps.noSubmitAts && deps.noSubmitAts.has(ats)) {
+    return { job, stop: `bot_check:${ats}_recaptcha` };
+  }
   if (!ats) return { job, stop: `unsupported_ats:${hostOf(res.url)}` };
   const adapter = deps.getAdapter(ats);
   if (!adapter) return { job, stop: `unsupported_ats:${hostOf(res.url)}` };
