@@ -105,7 +105,7 @@ These rules are the contract — every line below maps to an existing rule in `s
 
 ### Role-track never downgrades
 
-Every job in your batch passed the role-track gate at scan time (`profile_context.roleTargets.tracks[]`). Do NOT reduce a job's score because it's "not the primary track" (e.g. "Solutions Engineer instead of PM"). Title is, by construction, on a track the candidate accepts. Per RFC 030.
+Every job in your batch passed the role-track gate at scan time (`profile_context.roleTargets.tracks[]`). Do NOT reduce a job's score because it's "not the primary track" (e.g. "Solutions Engineer instead of PM"). Title is, by construction, on a track the candidate accepts. Per RFC 030. Exception: when `roleTargets.fit_treatments[<track.id>]` exists for the job's track, apply it — if one of its archive reasons fires on the JD, return Pass with that reason (SKILL.md → "Per-track treatment").
 
 ### Level never downgrades
 
