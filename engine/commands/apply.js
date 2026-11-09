@@ -237,7 +237,7 @@ function resolveFields(fields, { job, identity, applyDefaults, salary, bank, fil
   const unanswered = [];
   const blockers = [];
   for (const field of fields) {
-    const m = matchQuestion(field, { identity, applyDefaults, salary });
+    const m = matchQuestion(field, { identity, applyDefaults, salary, job });
     if (m && m.source === "file") {
       const f = files[m.value];
       if (f) {
@@ -571,7 +571,13 @@ async function resolveJobUrl(app, env) {
 
 async function preparePreJob(app, env) {
   const { profile, deps, applyDefaults, bank, browser, stderr } = env;
-  const job = { key: app.key, company: app.companyName, title: app.title, url: app.url };
+  const job = {
+    key: app.key,
+    company: app.companyName,
+    title: app.title,
+    url: app.url,
+    locations: app.locations,
+  };
 
   const where = await resolveJobUrl(app, env);
   if (where.closed) return { job, closed: true };

@@ -37,6 +37,7 @@
 // Consent / acknowledgement checkboxes keep their own rules (matchLegal).
 
 const { salaryAnswer } = require("./salary.js");
+const { locInHomeState, isRemoteLoc } = require("../../core/geo_enforcer.js");
 
 function normalizeLabel(label) {
   return String(label || "")
@@ -252,8 +253,30 @@ function matchRelocation(label, field, ctx) {
   }
   const rel = ctx.applyDefaults && ctx.applyDefaults.relocation;
   if (!rel || typeof rel.willing !== "boolean") return null;
-  const value = resolveValue(field, yesNo(rel.willing));
+  const willing = relocationWilling(rel, label, ctx.job);
+  if (willing === null) return null;
+  const value = resolveValue(field, yesNo(willing));
   return value ? { source: "defaults", value } : null;
+}
+
+// `relocation.within_states` (owner rule 2026-11-09: within California —
+// Bay Area, LA, San Diego, any CA office — he would relocate; outside it,
+// remote only): willing when the question or the job's office is in one of
+// those states, not willing when every office location is elsewhere, and
+// unknown (→ LLM step, which reads the posting) when neither says.
+function relocationWilling(rel, label, job) {
+  const states = Array.isArray(rel.within_states) ? rel.within_states.map(String) : [];
+  if (!states.length) return rel.willing;
+  const inStates = (s) => states.some((st) => locInHomeState(String(s).toLowerCase(), st));
+  if (inStates(label)) return true;
+  const raw = job && job.locations;
+  const locs = (Array.isArray(raw) ? raw : raw ? [raw] : [])
+    .map((l) => String(l || "").trim())
+    .filter(Boolean);
+  const offices = locs.filter((l) => !isRemoteLoc(l.toLowerCase()));
+  if (offices.some(inStates)) return true;
+  if (offices.length) return false;
+  return null;
 }
 
 function matchHowHeard(label, field, ctx) {
