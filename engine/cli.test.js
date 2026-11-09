@@ -205,12 +205,14 @@ test("KNOWN_COMMANDS lists exactly the supported commands", () => {
     "backfill-outreach-url",
     "board",
     "check",
+    "companies",
     "companies-upsert",
     "indeed-prep",
     "night",
     "prepare",
     "reclassify",
     "report",
+    "requeue",
     "retro-tailor",
     "scan",
     "sync",
@@ -271,9 +273,85 @@ test("report: --weekly and --out reach the command through ctx.flags", async () 
   assert.equal(report2.calls[0].flags.out, "");
 });
 
-test("board / report / night are read-only: no lazy sweeps run before them", async () => {
+test("board / report / night / companies are read-only: no lazy sweeps run before them", async () => {
   const { READ_ONLY_COMMANDS } = require("./cli.js");
-  assert.deepEqual([...READ_ONLY_COMMANDS].sort(), ["board", "night", "report"]);
+  assert.deepEqual([...READ_ONLY_COMMANDS].sort(), ["board", "companies", "night", "report"]);
+});
+
+// RFC 069 §6 / §8: companies add + requeue reach their handlers.
+test("companies add: subcommand + --ats / --slug / --name reach ctx", async () => {
+  const s = makeStreams();
+  const companies = spyCommand();
+  const code = await runCli({
+    argv: [
+      "companies",
+      "add",
+      "--profile",
+      "jared",
+      "--ats",
+      "lever",
+      "--slug",
+      "acme-synthetic",
+      "--name",
+      "Acme Synthetic",
+    ],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { companies },
+  });
+  assert.equal(code, 0);
+  const ctx = companies.calls[0];
+  assert.equal(ctx.subcommand, "add");
+  assert.equal(ctx.flags.ats, "lever");
+  assert.equal(ctx.flags.slug, "acme-synthetic");
+  assert.equal(ctx.flags.name, "Acme Synthetic");
+});
+
+test("companies: missing or unknown subcommand is a usage error", async () => {
+  for (const argv of [
+    ["companies", "--profile", "jared"],
+    ["companies", "remove", "--profile", "jared"],
+    ["companies", "add", "extra", "--profile", "jared"],
+  ]) {
+    const s = makeStreams();
+    const companies = spyCommand();
+    const code = await runCli({
+      argv,
+      stdout: s.stdout,
+      stderr: s.stderr,
+      commands: { companies },
+    });
+    assert.equal(code, 1);
+    assert.equal(companies.calls.length, 0);
+  }
+});
+
+test("other commands still reject a second positional", async () => {
+  const s = makeStreams();
+  const code = await runCli({
+    argv: ["board", "add", "--profile", "jared"],
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { board: spyCommand() },
+  });
+  assert.equal(code, 1);
+  assert.match(s.err(), /unexpected extra positional/);
+});
+
+test("requeue: --since and --apply reach ctx.flags", async () => {
+  const s = makeStreams();
+  const requeue = spyCommand();
+  const code = await runCli({
+    argv: ["requeue", "--profile", "jared", "--since", "2026-10-20", "--apply"],
+    env: {},
+    stdout: s.stdout,
+    stderr: s.stderr,
+    commands: { requeue },
+  });
+  assert.equal(code, 0);
+  assert.equal(requeue.calls[0].flags.since, "2026-10-20");
+  assert.equal(requeue.calls[0].flags.apply, true);
+  assert.equal(requeue.calls[0].subcommand, "");
 });
 
 // RFC 068 §9 / BL-225: night + apply --deadline flags reach ctx.flags.
