@@ -90,6 +90,9 @@ function setup() {
     buildActiveCounts,
     resolveCapWindowDays,
     resolveUrl: async (url) => ({ ok: true, url, ats: "greenhouse", status: 0, hops: [] }),
+    // The fixture form is a file:// page; the real host allowlist is
+    // covered by the unit tests (apply.test.js).
+    trustedFormUrl: () => true,
     fetchJd: async () => ({ text: "The base pay range for this role is $150,000 - $190,000." }),
     makeNotionClient: () => ({}),
     fetchAllAnswers: async () => [],
@@ -119,7 +122,7 @@ test(
     const ctx = JSON.parse(
       fs.readFileSync(path.join(root, ".apply-state", "apply_context.json"), "utf8")
     );
-    assert.equal(ctx.jobs.length, 1, JSON.stringify(ctx.manual));
+    assert.equal(ctx.jobs.length, 1, JSON.stringify(ctx.skipped));
     const job = ctx.jobs[0];
     assert.deepEqual(
       job.unanswered
@@ -171,6 +174,6 @@ test(
 
     // A second submit run with the same context is a no-op (never double-apply).
     assert.equal(await h.run({ phase: "submit", answersFile: answersPath }), 0);
-    assert.match(h.out.join("\n"), /0 submitted, 0 dry-run, 0 manual, 0 failed, 1 skipped/);
+    assert.match(h.out.join("\n"), /0 submitted, 0 dry-run, 0 failed, 1 skipped/);
   }
 );

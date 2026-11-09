@@ -37,6 +37,7 @@ const APPLY_STATE_LABELS = {
   manual: "руками",
   failed: "ошибка",
   submitted: "подано",
+  skipped: "пропущено",
 };
 
 // Reason codes written to `apply_note` by the apply step (RFC 068 §1).
@@ -65,6 +66,12 @@ const REASON_LABELS = {
   resume_missing: "нет PDF резюме",
   cover_letter_missing: "форма требует cover letter, а его нет",
   unsupported_required_file: "форма требует файл, которого у нас нет",
+  // skip vocabulary (RFC 069 §4, engine/modules/apply/skip_reasons.js)
+  required_empty: "обязательное поле осталось пустым",
+  form_broken: "форма сломана или не открылась",
+  bot_check: "проверка «не бот» / код из письма",
+  closed: "вакансия закрыта",
+  no_company_form: "нет формы на сайте компании",
 };
 
 // Reasons that are about the candidate's side (an account, a human check, an
@@ -92,7 +99,8 @@ function str(v) {
 function parseReason(note) {
   const raw = str(note).trim();
   if (!raw) return { code: "", detail: "", label: "" };
-  const unsupported = raw.match(/^unsupported_ats:\s*(\S+)/);
+  // RFC 069 skips write "no_company_form: unsupported_ats:<host>".
+  const unsupported = raw.match(/^(?:no_company_form:\s*)?unsupported_ats:\s*(\S+)/);
   if (unsupported) {
     const host = unsupported[1];
     return {

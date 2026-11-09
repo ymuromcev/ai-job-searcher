@@ -12,7 +12,15 @@ test("buildNightEntry: flat counts from the TSV + apply summaries", () => {
     finishedAt: "2026-10-22T13:30:00.000Z",
     target: 100,
     tsv: { scanned: 210, prepared: { total: 64, strong: 12, medium: 30, weak: 22 } },
-    apply: { applyRounds: 3, queued: 45, submitted: 38, manual: 5, failed: 2, deferred: 4 },
+    apply: {
+      applyRounds: 3,
+      queued: 45,
+      submitted: 38,
+      manual: 5,
+      failed: 2,
+      skipped: 6,
+      deferred: 4,
+    },
     stopReason: "deadline",
   });
   assert.deepEqual(e, {
@@ -28,6 +36,7 @@ test("buildNightEntry: flat counts from the TSV + apply summaries", () => {
     submitted: 38,
     manual: 5,
     failed: 2,
+    skipped: 6,
     deferred: 4,
     apply_rounds: 3,
     stop_reason: "deadline",

@@ -33,6 +33,10 @@
 //                                        // still go to To Apply at/above this coverage (0–100)
 //   "relatives_at_company": false        // "Do you have relatives working at X?" → No
 //   "start_weeks_after_offer": 2         // "When can you start?" → "2 weeks after an offer"
+//   "choice_policy": {                   // RFC 069 §4; engine defaults in question_match.js
+//     "eeo": "decline" | "blank",        //   decline option when offered / leave optional EEO empty
+//     "how_did_you_hear": ["company website", "job board", "other"]  // option preference order
+//   }
 
 const APPLY_DEFAULTS_FILE = "apply_defaults.json";
 
@@ -52,7 +56,10 @@ const TOP_LEVEL_KEYS = Object.freeze([
   "tailor_ship_min_coverage",
   "relatives_at_company",
   "start_weeks_after_offer",
+  "choice_policy",
 ]);
+
+const VALID_CHOICE_EEO = Object.freeze(["decline", "blank"]);
 
 const ADDRESS_KEYS = Object.freeze([
   "street",
@@ -199,6 +206,30 @@ function validateApplyDefaults(raw) {
     )
   ) {
     err(`${base}.start_weeks_after_offer`, "must be an integer number of weeks, 0..26");
+  }
+
+  if (raw.choice_policy !== undefined) {
+    const cp = raw.choice_policy;
+    if (!isPlainObject(cp)) err(`${base}.choice_policy`, "must be an object");
+    else {
+      for (const k of Object.keys(cp)) {
+        if (k !== "eeo" && k !== "how_did_you_hear") {
+          warn(`${base}.choice_policy.${k}`, "unknown key (ignored)");
+        }
+      }
+      if (cp.eeo !== undefined && !VALID_CHOICE_EEO.includes(cp.eeo)) {
+        err(
+          `${base}.choice_policy.eeo`,
+          `must be one of [${VALID_CHOICE_EEO.join(", ")}], got ${JSON.stringify(cp.eeo)}`
+        );
+      }
+      if (
+        cp.how_did_you_hear !== undefined &&
+        !(Array.isArray(cp.how_did_you_hear) && cp.how_did_you_hear.every(isNonEmptyString))
+      ) {
+        err(`${base}.choice_policy.how_did_you_hear`, "must be an array of non-empty strings");
+      }
+    }
   }
 
   if (

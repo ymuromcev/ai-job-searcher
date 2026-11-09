@@ -113,7 +113,14 @@ function fakeAdapter(name, behavior, log) {
     detect: () => true,
     normalizeUrl: (u) => u,
     tenantKey: (u) => `${name}:${new URL(u).pathname.split("/")[1]}`,
-    jobRef: () => ({ slug: "acme", jobId: "111" }),
+    // Board slug + job id from the URL path (".../<slug>/jobs/<id>",
+    // ".../<slug>/<uuid>"); acme / 111 when the URL has neither.
+    jobRef: (u) => {
+      const m = String(u || "").match(
+        /\/([A-Za-z0-9_.-]+)\/(?:jobs\/)?(\d+|[0-9a-f-]{36})(?:[/?#]|$)/
+      );
+      return m ? { slug: m[1], jobId: m[2] } : { slug: "acme", jobId: "111" };
+    },
     async open(page, url) {
       page.url = url;
       log.push(["open", url]);
@@ -187,7 +194,13 @@ function harness({
       return { ok: true, url, ats, status: 0, hops: [] };
     },
     detectAts: (url) =>
-      url.includes("lever") ? "lever" : url.includes("greenhouse") ? "greenhouse" : null,
+      url.includes("lever")
+        ? "lever"
+        : url.includes("greenhouse")
+          ? "greenhouse"
+          : url.includes("ashbyhq")
+            ? "ashby"
+            : null,
     loadCompanies: () => ({ rows: companies }),
     // posting[jobId] = "open" | "closed"; default unknown.
     checkPostingOpen: async (ref) => {
@@ -255,6 +268,14 @@ function harness({
 
 const RESUME = path.join(ROOT, "resumes", "CV_Test_Candidate_Growth.pdf");
 
+// Rows the bot gave up on (RFC 069 vocabulary): key → [reason, code].
+const { isSkipReason } = require("../modules/apply/skip_reasons.js");
+function gaveUp(ctx) {
+  return Object.fromEntries(
+    ctx.skipped.filter((s) => isSkipReason(s.reason)).map((s) => [s.key, [s.reason, s.code]])
+  );
+}
+
 // ---------------------------------------------------------------------------
 
 test("phase is required", async () => {
@@ -263,7 +284,7 @@ test("phase is required", async () => {
   assert.match(h.err.join("\n"), /--phase <pre\|submit\|open>/);
 });
 
-test("pre: builds the context, resolves standard answers, flags manual cases", async () => {
+test("pre: builds the context, resolves standard answers, skips what it cannot do", async () => {
   const h = harness({
     apps: [
       row({ key: "gh1", companyName: "Acme", url: GH_URL }),
@@ -274,7 +295,7 @@ test("pre: builds the context, resolves standard answers, flags manual cases", a
         url: "https://epsilon.wd5.myworkdayjobs.com/job/1",
       }),
       row({ key: "dead", companyName: "Zeta", url: "https://grnh.se/gone" }),
-      row({ key: "weak", companyName: "Eta", url: GH2_URL, fit_score: "Weak" }),
+      row({ key: "weak", companyName: "Eta", url: GH2_URL, fit_score: "" }),
       row({ key: "nores", companyName: "Theta", url: GH2_URL, resume_ver: "Missing" }),
     ],
     files: [RESUME],
@@ -314,22 +335,23 @@ test("pre: builds the context, resolves standard answers, flags manual cases", a
     [["q_why", true]]
   );
 
-  const manual = Object.fromEntries(ctx.manual.map((m) => [m.key, m.reason]));
-  assert.equal(manual.adz, "unresolved_url:www.adzuna.com");
-  assert.equal(manual.wd, "unsupported_ats:epsilon.wd5.myworkdayjobs.com");
-  assert.equal(manual.nores, "resume_missing");
+  assert.equal(ctx.manual, undefined, "nothing is left for a human");
+  const gave = gaveUp(ctx);
+  assert.deepEqual(gave.adz, ["no_company_form", "unresolved_url:www.adzuna.com"]);
+  assert.deepEqual(gave.wd, ["no_company_form", "unsupported_ats:epsilon.wd5.myworkdayjobs.com"]);
+  assert.deepEqual(gave.nores, ["required_empty", "resume_missing"]);
   assert.equal(ctx.skipped.find((s) => s.key === "dead").reason, "url_dead");
-  assert.equal(ctx.skipped.find((s) => s.key === "weak").reason, "fit_not_strong_medium");
+  assert.equal(ctx.skipped.find((s) => s.key === "weak").reason, "fit_unscored");
 
   const byKey = Object.fromEntries(h.store.apps.map((a) => [a.key, a]));
   assert.equal(byKey.gh1.apply_state, "queued");
-  assert.equal(byKey.adz.apply_state, "manual");
-  assert.equal(byKey.adz.apply_note, "unresolved_url:www.adzuna.com");
-  assert.equal(byKey.dead.apply_state, "", "dead links are not put on the human list");
+  assert.equal(byKey.adz.apply_state, "skipped");
+  assert.equal(byKey.adz.apply_note, "no_company_form: unresolved_url:www.adzuna.com");
+  assert.equal(byKey.dead.apply_state, "", "dead links leave the row untouched");
   assert.equal(byKey.gh1.status, "To Apply");
 });
 
-test("pre: captcha / login at open → manual; salary under floor → skipped; --dry-run writes no TSV", async () => {
+test("pre: captcha at open → skipped captcha; salary under floor → skipped; --dry-run writes no TSV", async () => {
   const h = harness({
     apps: [
       row({ key: "cap", companyName: "Acme", url: GH_URL }),
@@ -346,7 +368,7 @@ test("pre: captcha / login at open → manual; salary under floor → skipped; -
   };
   assert.equal(await h.run({ phase: "pre", dryRun: true }), 0);
   const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
-  assert.equal(ctx.manual[0].reason, "captcha");
+  assert.deepEqual(gaveUp(ctx).cap, ["captcha", undefined]);
   assert.equal(ctx.skipped.find((s) => s.key === "low").reason, "salary_below_floor");
   assert.equal(h.store.saves, 0);
 });
@@ -445,7 +467,7 @@ test("submit: success marks Applied, applied_by bot, screenshot, Notion status",
   assert.equal(fill[2].q_auth, "Yes");
 });
 
-test("submit: a required question without an honest answer → manual, browser never opened", async () => {
+test("submit: a required question without an honest answer → skipped no_honest_answer, browser never opened", async () => {
   const h = submitHarness({
     apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
     keys: [["gh1", GH_URL, "Acme"]],
@@ -453,8 +475,8 @@ test("submit: a required question without an honest answer → manual, browser n
   });
   assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
   const r = h.store.apps.find((a) => a.key === "gh1");
-  assert.equal(r.apply_state, "manual");
-  assert.equal(r.apply_note, "no_honest_answer");
+  assert.equal(r.apply_state, "skipped");
+  assert.equal(r.apply_note, "no_honest_answer: Why do you want to join?");
   assert.equal(r.status, "To Apply");
   assert.equal(h.log.filter((l) => l[0] === "open").length, 0);
 });
@@ -479,7 +501,7 @@ test("submit: never double-applies — applied_date set since pre → skipped, n
   assert.equal(h.store.apps[0].applied_date, "2026-10-20");
 });
 
-test("submit: captcha → manual, no confirmation → failed (no retry), pre-submit gap → manual", async () => {
+test("submit: captcha → skipped, no confirmation → failed (no retry), required field empty → skipped, no click", async () => {
   const h = submitHarness({
     apps: [
       row({ key: "a", companyName: "Acme", url: GH_URL }),
@@ -500,9 +522,15 @@ test("submit: captcha → manual, no confirmation → failed (no retry), pre-sub
   });
   assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
   const by = Object.fromEntries(h.store.apps.map((a) => [a.key, a]));
-  assert.deepEqual([by.a.apply_state, by.a.apply_note], ["manual", "captcha"]);
+  assert.deepEqual([by.a.apply_state, by.a.apply_note], ["skipped", "captcha"]);
   assert.deepEqual([by.b.apply_state, by.b.apply_note], ["failed", "no_confirmation"]);
-  assert.deepEqual([by.c.apply_state, by.c.apply_note], ["manual", "presubmit_check"]);
+  assert.deepEqual([by.c.apply_state, by.c.apply_note], ["skipped", "required_empty: Resume/CV"]);
+  const results = JSON.parse([...h.disk.entries()].find(([k]) => /apply_results-/.test(k))[1]);
+  const c = results.results.find((r) => r.key === "c");
+  assert.deepEqual(
+    [c.outcome, c.reason, c.empty_fields],
+    ["skipped", "required_empty", ["Resume/CV"]]
+  );
   for (const k of ["a", "b", "c"]) assert.equal(by[k].status, "To Apply");
   assert.equal(h.log.filter((l) => l[0] === "submit" && l[1] === LEVER_URL).length, 0);
   assert.equal(h.notionCalls.length, 0);
@@ -570,8 +598,11 @@ test("submit: Greenhouse security code is read from the apply mailbox, typed, re
   assert.equal(by.a.apply_state, "submitted");
   assert.deepEqual(typed, [[GH_URL, "Ab3dE9fZ"]]);
   assert.equal(clicks[GH_URL], 2, "Submit pressed again after the code");
-  // No code in the mailbox → the human finishes it.
-  assert.deepEqual([by.b.apply_state, by.b.apply_note], ["manual", "email_code_missing"]);
+  // No code in the mailbox → skipped as a bot check, the run moves on.
+  assert.deepEqual(
+    [by.b.apply_state, by.b.apply_note],
+    ["skipped", "bot_check: email_code_missing"]
+  );
   assert.equal(by.b.status, "To Apply");
   assert.deepEqual(asked.sort(), ["Acme", "Beta"]);
 });
@@ -606,7 +637,7 @@ test("submit: no confirmation on the page but a thank-you mail → Applied, neve
   );
 });
 
-test("submit: no apply mailbox configured → security code stays with the human", async () => {
+test("submit: no apply mailbox configured → security code screen is skipped as bot_check", async () => {
   const h = submitHarness({
     apps: [row({ key: "a", companyName: "Acme", url: GH_URL })],
     keys: [["a", GH_URL, "Acme"]],
@@ -616,7 +647,7 @@ test("submit: no apply mailbox configured → security code stays with the human
   h.deps.makeCodeWaiter = () => null;
   assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
   const r = h.store.apps[0];
-  assert.deepEqual([r.apply_state, r.apply_note], ["manual", "email_verification"]);
+  assert.deepEqual([r.apply_state, r.apply_note], ["skipped", "bot_check: email_verification"]);
 });
 
 test("submit: input validation", async () => {
@@ -821,7 +852,7 @@ test("pre: ATS-sourced rows use the canonical form URL, never the career page", 
   assert.deepEqual(h.notionCalls, [["page-gh:8010057", "Closed"]]);
 });
 
-test("pre: no URL and no ATS slug → manual no_application_url", async () => {
+test("pre: no URL and no ATS slug → skipped no_company_form (no_application_url)", async () => {
   const h = harness({
     apps: [
       row({ key: "recruiter:x", source: "recruiter", jobId: "x", companyName: "Kappa", url: "" }),
@@ -831,13 +862,10 @@ test("pre: no URL and no ATS slug → manual no_application_url", async () => {
   });
   assert.equal(await h.run({ phase: "pre" }), 0);
   const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
-  assert.deepEqual(
-    ctx.manual.map((m) => [m.key, m.reason]),
-    [
-      ["recruiter:x", "no_application_url"],
-      ["manual:y", "no_application_url"],
-    ]
-  );
+  assert.deepEqual(gaveUp(ctx), {
+    "recruiter:x": ["no_company_form", "no_application_url"],
+    "manual:y": ["no_company_form", "no_application_url"],
+  });
 });
 
 test("pre: blocked aggregator falls back to a browser page; still blocked → unresolved_url", async () => {
@@ -870,10 +898,9 @@ test("pre: blocked aggregator falls back to a browser page; still blocked → un
     ctx.jobs.map((j) => [j.key, j.resolved_url]),
     [["adz1", GH_URL]]
   );
-  assert.deepEqual(
-    ctx.manual.map((m) => [m.key, m.reason]),
-    [["adz2", "unresolved_url:www.adzuna.com"]]
-  );
+  assert.deepEqual(gaveUp(ctx), {
+    adz2: ["no_company_form", "unresolved_url:www.adzuna.com"],
+  });
   // Resolved ATS URLs get the posting-API liveness check too.
   assert.ok(h.log.some((l) => l[0] === "posting" && l[1] === "greenhouse"));
 });
@@ -912,11 +939,10 @@ test("pre: aggregator 404 from fetch is re-checked in the browser", async () => 
   });
   assert.equal(await h.run({ phase: "pre" }), 0);
   const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
-  // Live ad on Adzuna without an employer link: work for the human, not dead.
-  assert.deepEqual(
-    ctx.manual.map((m) => [m.key, m.reason]),
-    [["live", "unresolved_url:www.adzuna.com"]]
-  );
+  // Live ad on Adzuna without an employer link: no company form, not dead.
+  assert.deepEqual(gaveUp(ctx), {
+    live: ["no_company_form", "unresolved_url:www.adzuna.com"],
+  });
   const skipped = Object.fromEntries(ctx.skipped.map((s) => [s.key, s.reason]));
   assert.equal(skipped.gone, "url_dead");
   // Browser blocked: fetch's 404 stands.
@@ -943,10 +969,15 @@ test("pre: writes a stamped apply_pre-<ts>.json with the keys it looked at", asy
   assert.equal(pre.generated_at, "2026-10-21T08:00:00.000Z");
   assert.equal(pre.dry_run, false);
   assert.deepEqual(pre.jobs, [{ key: "gh1" }]);
-  assert.deepEqual(pre.manual, [
-    { key: "wd", reason: "unsupported_ats:epsilon.wd5.myworkdayjobs.com" },
+  assert.equal(pre.manual, undefined);
+  assert.deepEqual(pre.skipped, [
+    { key: "dead", reason: "url_dead" },
+    {
+      key: "wd",
+      reason: "no_company_form",
+      code: "unsupported_ats:epsilon.wd5.myworkdayjobs.com",
+    },
   ]);
-  assert.deepEqual(pre.skipped, [{ key: "dead", reason: "url_dead" }]);
 });
 
 test("submit --deadline: no form is opened after the deadline; rows stay queued", async () => {
@@ -1345,4 +1376,372 @@ test("open: input validation and never on an applied job", async () => {
   assert.equal(await h.run({ phase: "open", key: "gh1" }), 1);
   assert.match(h.err.join("\n"), /already_applied/);
   assert.equal(h.launched.length, 0);
+});
+
+// ---- RFC 069 §4: the bot decides --------------------------------------------
+
+const ASHBY_URL = `https://jobs.ashbyhq.com/acme/${UUID}/application`;
+
+test("submit: Ashby forms open in a visible window, Greenhouse / Lever headless", async () => {
+  const h = submitHarness({
+    apps: [
+      row({ key: "gh1", companyName: "Acme", url: GH_URL }),
+      row({ key: "ash", companyName: "Beta", url: ASHBY_URL }),
+    ],
+    keys: [
+      ["gh1", GH_URL, "Acme"],
+      ["ash", ASHBY_URL, "Beta"],
+    ],
+    answers: [WHY("gh1"), WHY("ash")],
+  });
+  const launches = [];
+  const pagesBy = [];
+  h.deps.launchBrowser = async ({ headless }) => {
+    launches.push(headless);
+    return {
+      newPage: async () => {
+        pagesBy.push(headless);
+        return { page: { url: "", screenshot: async () => {} }, close: async () => {} };
+      },
+      close: async () => {},
+    };
+  };
+  const base = h.deps.getAdapter;
+  h.deps.getAdapter = (n) => (n === "ashby" ? { ...base("greenhouse"), name: "ashby" } : base(n));
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  ctx.jobs[1].ats = "ashby";
+  h.disk.set(CONTEXT_PATH, JSON.stringify(ctx));
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  assert.deepEqual(launches.sort(), [false, true], "one headless + one visible browser");
+  assert.deepEqual(pagesBy.sort(), [false, true]);
+  assert.ok(h.store.apps.every((a) => a.status === "Applied"));
+});
+
+test("submit: injected headlessFor decides the window per ATS", async () => {
+  const h = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers: [WHY("gh1")],
+  });
+  const launches = [];
+  const launch = h.deps.launchBrowser;
+  h.deps.launchBrowser = async (opts) => {
+    launches.push(opts.headless);
+    return launch(opts);
+  };
+  h.deps.headlessFor = (ats) => ats !== "greenhouse";
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  // browserReady launches the default (headless) one; the Greenhouse form
+  // itself opens in the visible one because the injected rule says so.
+  assert.deepEqual(launches, [true, false]);
+});
+
+test("submit: an optional question without an answer is left blank and the row goes out", async () => {
+  const form = [
+    ...FORM.filter((f) => f.id !== "q_why"),
+    { id: "q_extra", label: "Anything else?", type: "textarea", required: false, options: [] },
+  ];
+  const h = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers: [],
+    behavior: { [GH_URL]: { form } },
+  });
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  ctx.jobs[0].fields = form;
+  ctx.jobs[0].unanswered = [
+    {
+      field_id: "q_extra",
+      label: "Anything else?",
+      type: "textarea",
+      options: [],
+      required: false,
+    },
+  ];
+  h.disk.set(CONTEXT_PATH, JSON.stringify(ctx));
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  const fill = h.log.find((l) => l[0] === "fill");
+  assert.equal(Object.prototype.hasOwnProperty.call(fill[2], "q_extra"), false);
+  assert.equal(h.store.apps[0].status, "Applied");
+});
+
+test("submit: a crash after the Submit click is failed (never retried), before it skipped form_broken", async () => {
+  const h = submitHarness({
+    apps: [
+      row({ key: "a", companyName: "Acme", url: GH_URL }),
+      row({ key: "b", companyName: "Beta", url: GH2_URL }),
+    ],
+    keys: [
+      ["a", GH_URL, "Acme"],
+      ["b", GH2_URL, "Beta"],
+    ],
+    answers: [WHY("a"), WHY("b")],
+  });
+  const base = h.deps.getAdapter;
+  h.deps.getAdapter = (n) => ({
+    ...base(n),
+    async readSchema(page) {
+      if (page.url === GH2_URL) throw new Error("form vanished");
+      return FORM;
+    },
+    async submit() {
+      throw new Error("page crashed");
+    },
+  });
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  const by = Object.fromEntries(h.store.apps.map((x) => [x.key, x]));
+  assert.deepEqual([by.a.apply_state, by.a.apply_note], ["failed", "no_confirmation"]);
+  assert.deepEqual([by.b.apply_state, by.b.apply_note], ["skipped", "form_broken: unknown_page"]);
+});
+
+test("submit: guard skips (deadline) never touch the row state", async () => {
+  const h = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL, apply_state: "queued" })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers: [WHY("gh1")],
+  });
+  assert.equal(
+    await h.run({
+      phase: "submit",
+      answersFile: "/fake/answers.json",
+      deadline: "2026-10-21T07:00:00Z",
+    }),
+    0
+  );
+  assert.equal(h.store.apps[0].apply_state, "queued");
+  assert.equal(h.store.saves, 0);
+});
+
+test("resolveFields: the choice policy leaves an optional EEO question without a decline option blank", () => {
+  const fields = [
+    {
+      id: "vet",
+      label: "Are you a veteran?",
+      type: "radio",
+      required: false,
+      options: ["Yes", "No"],
+    },
+    {
+      id: "vet_req",
+      label: "Are you a protected veteran?",
+      type: "radio",
+      required: true,
+      options: ["Yes", "No"],
+    },
+    {
+      id: "gender",
+      label: "Gender",
+      type: "radio",
+      required: false,
+      options: ["Man", "Woman", "Prefer not to say"],
+    },
+  ];
+  const r = resolveFields(fields, {
+    job: { company: "Acme", title: "PM" },
+    identity: {},
+    applyDefaults: profile().applyDefaults,
+    salary: null,
+    bank: [],
+    files: { resume: { rel: "r.pdf" }, cover_letter: null },
+  });
+  assert.deepEqual(
+    r.answers.map((a) => [a.field_id, a.value]),
+    [["gender", "Prefer not to say"]]
+  );
+  assert.deepEqual(
+    r.unanswered.map((u) => u.field_id),
+    ["vet_req"],
+    "a required one goes to the drafter"
+  );
+});
+
+// ---- review fixes (BL-225): races, duplicates, trust ------------------------
+
+// Wrap the fake adapters so a hook runs on open / fill.
+function hookAdapter(h, hooks) {
+  const base = h.deps.getAdapter;
+  h.deps.getAdapter = (n) => {
+    const a = base(n);
+    if (!a) return a;
+    return {
+      ...a,
+      async open(page, url) {
+        if (hooks.open) await hooks.open(url);
+        return a.open(page, url);
+      },
+      async fill(page, values) {
+        if (hooks.fill) await hooks.fill(page.url);
+        return a.fill(page, values);
+      },
+    };
+  };
+}
+
+test("pre: a submit that lands between pre's load and save survives; the row is not re-queued", async () => {
+  const h = harness({
+    apps: [
+      row({ key: "gh1", companyName: "Acme", url: GH_URL }),
+      row({ key: "lv1", companyName: "Gamma", url: LEVER_URL }),
+    ],
+    files: [RESUME],
+  });
+  // The submitter (another process) sends gh1 while pre reads the forms.
+  hookAdapter(h, {
+    open: (url) => {
+      if (url !== GH_URL) return;
+      const r = h.store.apps.find((a) => a.key === "gh1");
+      Object.assign(r, {
+        status: "Applied",
+        applied_date: "2026-10-21",
+        applied_by: "bot",
+        apply_state: "submitted",
+        apply_note: ".apply-state/shots/gh1.png",
+      });
+    },
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const by = Object.fromEntries(h.store.apps.map((a) => [a.key, a]));
+  assert.deepEqual(
+    [by.gh1.status, by.gh1.applied_date, by.gh1.apply_state, by.gh1.apply_note],
+    ["Applied", "2026-10-21", "submitted", ".apply-state/shots/gh1.png"],
+    "the submit is not overwritten"
+  );
+  assert.equal(by.lv1.apply_state, "queued", "pre's own change still lands");
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  assert.deepEqual(
+    ctx.jobs.map((j) => j.key),
+    ["lv1"],
+    "the submitted row is not handed to the submitter again"
+  );
+  assert.equal(ctx.skipped.find((s) => s.key === "gh1").reason, "already_applied");
+});
+
+test("pre: the same job through two rows → one job in the context, the other a guard skip", async () => {
+  const h = harness({
+    apps: [
+      row({ key: "board", companyName: "Acme", url: GH_URL }),
+      row({ key: "adz", companyName: "Acme", url: GH_URL }),
+      // Already applied through a third row: a new row for the same form is
+      // never queued.
+      row({ key: "lv-done", companyName: "Gamma", url: LEVER_URL, status: "Applied" }),
+      row({ key: "lv-new", companyName: "Gamma", url: LEVER_URL }),
+    ],
+    files: [RESUME],
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  assert.equal(ctx.jobs.length, 1);
+  const kept = ctx.jobs[0].key;
+  assert.ok(["board", "adz"].includes(kept));
+  const dup = ctx.skipped.filter((s) => s.reason === "duplicate_job").map((s) => s.key);
+  assert.deepEqual(dup.sort(), [kept === "board" ? "adz" : "board", "lv-new"].sort());
+});
+
+test("submit: a second row with the same form as a submitted one is never sent", async () => {
+  const h = submitHarness({
+    apps: [
+      row({ key: "one", companyName: "Acme", url: GH_URL }),
+      row({ key: "two", companyName: "Acme", url: "https://www.adzuna.com/land/ad/9" }),
+    ],
+    keys: [
+      ["one", GH_URL, "Acme"],
+      ["two", GH_URL, "Acme"],
+    ],
+    answers: [WHY("one"), WHY("two")],
+  });
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  assert.equal(h.log.filter((l) => l[0] === "submit").length, 1, "one click only");
+  const by = Object.fromEntries(h.store.apps.map((a) => [a.key, a]));
+  assert.equal(by.one.status, "Applied");
+  assert.equal(by.two.status, "To Apply");
+  assert.equal(by.two.apply_state, "", "guard skip leaves the row as it is");
+  const results = JSON.parse([...h.disk.entries()].find(([k]) => /apply_results-/.test(k))[1]);
+  assert.equal(results.results.find((r) => r.key === "two").reason, "duplicate_job");
+});
+
+test("submit: the deadline is checked again right before the Submit click", async () => {
+  const h = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers: [WHY("gh1")],
+  });
+  let now = new Date("2026-10-21T08:00:00Z");
+  h.deps.now = () => new Date(now);
+  // Filling the form takes the clock past the deadline.
+  hookAdapter(h, { fill: () => (now = new Date("2026-10-21T08:10:00Z")) });
+  const flags = {
+    phase: "submit",
+    answersFile: "/fake/answers.json",
+    deadline: "2026-10-21T08:05:00Z",
+  };
+  assert.equal(await h.run(flags), 0);
+  assert.equal(h.log.filter((l) => l[0] === "submit").length, 0, "no click");
+  const r = h.store.apps.find((a) => a.key === "gh1");
+  assert.equal(r.status, "To Apply");
+  assert.equal(r.apply_note, "", "no submitting: mark — the next run picks it up");
+  const results = JSON.parse([...h.disk.entries()].find(([k]) => /apply_results-/.test(k))[1]);
+  assert.deepEqual(
+    [results.results[0].outcome, results.results[0].reason],
+    ["skipped", "deadline"]
+  );
+});
+
+test("submit: an unknown page after the Submit click is failed (unknown_after_click), not a skip", async () => {
+  const h = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers: [WHY("gh1")],
+    behavior: { [GH_URL]: { submit: { ok: false, reason: "unknown_page", evidence: null } } },
+  });
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  const r = h.store.apps.find((a) => a.key === "gh1");
+  assert.deepEqual([r.apply_state, r.apply_note], ["failed", "unknown_after_click"]);
+  assert.equal(r.status, "To Apply");
+});
+
+test("submit: a form URL off the ATS hosts, or not the ATS the context names, is never opened", async () => {
+  const evil = "https://boards.greenhouse.io.evil.example/acme/jobs/111";
+  const h = submitHarness({
+    apps: [
+      row({ key: "evil", companyName: "Acme", url: evil }),
+      row({ key: "mismatch", companyName: "Beta", url: LEVER_URL }),
+    ],
+    keys: [
+      ["evil", evil, "Acme"],
+      ["mismatch", LEVER_URL, "Beta"],
+    ],
+    answers: [],
+  });
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  ctx.jobs[0].ats = "greenhouse";
+  ctx.jobs[1].ats = "greenhouse"; // a Lever URL claimed as Greenhouse
+  h.disk.set(CONTEXT_PATH, JSON.stringify(ctx));
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  assert.equal(h.log.filter((l) => l[0] === "open").length, 0);
+  for (const r of h.store.apps) {
+    assert.deepEqual([r.apply_state, r.apply_note], ["skipped", "form_broken: form_url_untrusted"]);
+  }
+});
+
+test("buildFillPlan: a file answer outside the profile root, or not the engine's file, is never uploaded", () => {
+  const root = "/fake/profiles/demo";
+  const fields = [{ id: "resume", label: "Resume/CV", type: "file", required: true, options: [] }];
+  const job = (value) => ({
+    answers: [{ field_id: "resume", label: "Resume/CV", value, source: "file" }],
+  });
+  const ok = buildFillPlan(fields, job("resumes/cv.pdf"), [], root, ["resumes/cv.pdf"]);
+  assert.equal(ok.values.resume, path.join(root, "resumes", "cv.pdf"));
+  for (const bad of ["../../../etc/passwd", "/etc/passwd", "resumes/other.pdf"]) {
+    const p = buildFillPlan(fields, job(bad), [], root, ["resumes/cv.pdf"]);
+    assert.equal(p.values.resume, undefined, bad);
+    assert.deepEqual(p.missingRequired, ["resume"], bad);
+  }
+  // An LLM answer never names a file to upload.
+  const llm = buildFillPlan(
+    fields,
+    { answers: [] },
+    [{ key: "k", label: "Resume/CV", answer: "/Users/someone/.ssh/id_rsa" }],
+    root
+  );
+  assert.equal(llm.values.resume, undefined);
 });

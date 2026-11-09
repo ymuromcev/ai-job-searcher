@@ -945,7 +945,10 @@ test("load seeds the v8 apply defaults on v1 files too", () => {
 
 test("v8: allowed-value enums cover the RFC 068 contract", () => {
   assert.deepEqual([...apps.APPLIED_BY_VALUES], ["", "bot", "manual", "legacy_bot"]);
-  assert.deepEqual([...apps.APPLY_STATE_VALUES], ["", "queued", "manual", "failed", "submitted"]);
+  assert.deepEqual(
+    [...apps.APPLY_STATE_VALUES],
+    ["", "queued", "manual", "failed", "submitted", "skipped"]
+  );
   assert.deepEqual(apps.applyStateDefaults(), { applied_by: "", apply_state: "", apply_note: "" });
 });
 

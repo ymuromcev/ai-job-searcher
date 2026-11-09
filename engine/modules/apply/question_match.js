@@ -6,6 +6,9 @@
 //                                     relocation, EEO, how-did-you-hear, country
 //   { source: "salary",   value }   — desired salary (§4a, via ctx.salary)
 //   { source: "file",     value }   — "resume" | "cover_letter"
+//   { source: "policy", value: "", leave_blank: true }
+//                                   — the choice policy says: leave this
+//                                     optional question empty
 //   null                            — not a standard question (bank / LLM step)
 //
 // No LLM: normalized label text + synonym tables. For select / radio fields
@@ -17,6 +20,21 @@
 //   applyDefaults: profile.applyDefaults (shape in RFC 068 §4)
 //   salary:        result of salary.computeDesiredSalary() or null
 // }
+//
+// Choice policy (RFC 069 §4) — how selects / radios / checkbox groups are
+// answered without asking anyone. Engine defaults in DEFAULT_CHOICE_POLICY;
+// a profile overrides any key with `apply_defaults.choice_policy`:
+//   eeo: "decline" — gender / race / ethnicity / veteran / disability /
+//        orientation → the "decline to self-identify / prefer not to say"
+//        option when offered; no such option → an optional question is left
+//        blank, a required one goes to the drafter (and the row is skipped as
+//        no_honest_answer when there is no truthful answer).
+//        "blank" — leave optional EEO questions empty even when a decline
+//        option exists (required ones still take the decline option).
+//   how_did_you_hear: option preference list for "how did you hear about
+//        us", tried after `how_did_you_hear_default`: company website /
+//        careers page first, then a job board, then "Other".
+// Consent / acknowledgement checkboxes keep their own rules (matchLegal).
 
 const { salaryAnswer } = require("./salary.js");
 
@@ -123,20 +141,57 @@ function matchFile(label, field) {
 const EEO_RE =
   /\b(gender|sex|race|racial|ethnicity|ethnic|hispanic|latino|latinx|veteran|disability|disabled|sexual orientation|transgender|lgbtq)\b/;
 
+const DEFAULT_CHOICE_POLICY = Object.freeze({
+  eeo: "decline",
+  how_did_you_hear: Object.freeze([
+    "company website",
+    "careers page",
+    "career site",
+    "company careers",
+    "website",
+    "job board",
+    "online job board",
+    "job posting",
+    "other",
+  ]),
+});
+
+const EEO_POLICIES = new Set(["decline", "blank"]);
+
+// Engine defaults overlaid with the profile's `apply_defaults.choice_policy`.
+// The older `eeo.policy` key still counts when choice_policy.eeo is absent.
+function choicePolicy(ctx = {}) {
+  const ad = ctx.applyDefaults || {};
+  const own = ad.choice_policy && typeof ad.choice_policy === "object" ? ad.choice_policy : {};
+  const legacyEeo = ad.eeo && ad.eeo.policy;
+  let eeo = DEFAULT_CHOICE_POLICY.eeo;
+  if (EEO_POLICIES.has(own.eeo)) eeo = own.eeo;
+  else if (EEO_POLICIES.has(legacyEeo)) eeo = legacyEeo;
+  const heard =
+    Array.isArray(own.how_did_you_hear) && own.how_did_you_hear.length
+      ? own.how_did_you_hear.map(String)
+      : DEFAULT_CHOICE_POLICY.how_did_you_hear;
+  return { eeo, how_did_you_hear: heard };
+}
+
+const LEAVE_BLANK = Object.freeze({ source: "policy", value: "", leave_blank: true });
+
 function matchEeo(label, field, ctx) {
   if (!EEO_RE.test(label)) return undefined;
   // "Pronouns" and "gender identity" free-text fields both land here.
-  const policy =
-    (ctx.applyDefaults && ctx.applyDefaults.eeo && ctx.applyDefaults.eeo.policy) || "decline";
-  if (policy !== "decline") return null;
+  const { eeo } = choicePolicy(ctx);
+  if (eeo === "blank" && !field.required) return LEAVE_BLANK;
   if (hasOptions(field)) {
     const opt = pickDeclineOption(field.options);
-    return opt ? { source: "defaults", value: opt } : null;
+    if (opt) return { source: "defaults", value: opt };
+    // No decline option: an optional EEO question stays empty; a required
+    // one goes to the drafter (no demographic answer is guessed here).
+    return field.required ? null : LEAVE_BLANK;
   }
   if (field.type === "text" || field.type === "textarea") {
     return { source: "defaults", value: "Decline to self-identify" };
   }
-  return null;
+  return field.required ? null : LEAVE_BLANK;
 }
 
 function matchPronouns(label, field) {
@@ -202,13 +257,17 @@ function matchRelocation(label, field, ctx) {
 }
 
 function matchHowHeard(label, field, ctx) {
-  if (
-    !/\b(how did you (hear|find|learn|come across)|where (did|have) you (hear|heard|find|found|learn|learned) about|where did you (hear|find|learn)|how did you discover|referral source|source of (your )?application|how were you referred)\b/.test(
+  const asks =
+    /\b(how did you (hear|find|learn|come across)|where (did|have) you (hear|heard|find|found|learn|learned) about|where did you (hear|find|learn)|how did you discover|referral source|source of (your )?application|how were you referred)\b/.test(
       label
-    )
-  ) {
-    return undefined;
-  }
+    ) ||
+    // Ashby's source picker "What brought you to this job posting" — a source
+    // question only when it offers options (otherwise it is an essay).
+    (hasOptions(field) &&
+      /\bwhat brought you to (this|the|our) (job posting|job|role|position|posting|opening)\b/.test(
+        label
+      ));
+  if (!asks) return undefined;
   // "How did you hear about us and what compelled you to apply?" is an essay
   // with a source question in front — the LLM step answers both halves.
   if (/\band (what|why)\b/.test(label)) return null;
@@ -216,15 +275,9 @@ function matchHowHeard(label, field, ctx) {
   if (!hasOptions(field)) return def ? { source: "defaults", value: def } : null;
   const direct = def ? pickOption(field.options, def) : null;
   if (direct) return { source: "defaults", value: direct };
-  // Closest canonical buckets for "company careers page".
-  for (const w of [
-    "careers page",
-    "company website",
-    "career site",
-    "website",
-    "job board",
-    "other",
-  ]) {
+  // Choice policy: company website / careers page, then a job board, then
+  // "Other" — true for every application the bot sends.
+  for (const w of choicePolicy(ctx).how_did_you_hear) {
     const opt = pickOption(field.options, w);
     if (opt) return { source: "defaults", value: opt };
   }
@@ -492,6 +545,8 @@ function matchQuestion(field, ctx = {}) {
 
 module.exports = {
   matchQuestion,
+  choicePolicy,
+  DEFAULT_CHOICE_POLICY,
   pickOption,
   pickDeclineOption,
   normalizeLabel,

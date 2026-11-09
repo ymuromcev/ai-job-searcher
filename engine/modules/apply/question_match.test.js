@@ -408,3 +408,83 @@ test("start date → N weeks after an offer (text, notice period, options; never
   assert.equal(q(text("Earliest start date", { type: "date" })), null);
   assert.equal(m(text("When can you start a new role?")), null, "no setting → no guess");
 });
+
+// ---- choice policy (RFC 069 §4) ----------------------------------------------
+
+const { choicePolicy, DEFAULT_CHOICE_POLICY } = require("./question_match.js");
+const optional = (field) => ({ ...field, required: false });
+
+test("choice policy: engine defaults, overridable from apply_defaults.choice_policy", () => {
+  assert.equal(choicePolicy({}).eeo, "decline");
+  assert.deepEqual(choicePolicy({}).how_did_you_hear, DEFAULT_CHOICE_POLICY.how_did_you_hear);
+  const own = choicePolicy({
+    applyDefaults: { choice_policy: { eeo: "blank", how_did_you_hear: ["Job board"] } },
+  });
+  assert.deepEqual(own, { eeo: "blank", how_did_you_hear: ["Job board"] });
+  // Unknown values fall back to the defaults, never to "answer anything".
+  assert.equal(choicePolicy({ applyDefaults: { choice_policy: { eeo: "guess" } } }).eeo, "decline");
+});
+
+test("choice policy: EEO without a decline option → optional left blank, required to the drafter", () => {
+  const vet = select("Are you a protected veteran?", ["Yes", "No"]);
+  assert.deepEqual(m(optional(vet)), { source: "policy", value: "", leave_blank: true });
+  assert.equal(m(vet), null);
+  // "blank" policy: optional EEO stays empty even with a decline option;
+  // a required one still takes the decline option.
+  const blank = {
+    ...CTX,
+    applyDefaults: { ...CTX.applyDefaults, choice_policy: { eeo: "blank" } },
+  };
+  const gender = select("Gender", ["Man", "Woman", "Prefer not to say"]);
+  assert.equal(matchQuestion(optional(gender), blank).leave_blank, true);
+  assert.deepEqual(matchQuestion(gender, blank), {
+    source: "defaults",
+    value: "Prefer not to say",
+  });
+});
+
+test("choice policy: how did you hear → company website / careers page, then a job board", () => {
+  const noDefault = {
+    ...CTX,
+    applyDefaults: { ...CTX.applyDefaults, how_did_you_hear_default: "" },
+  };
+  const q = (f) => matchQuestion(f, noDefault);
+  assert.equal(
+    q(select("How did you hear about us?", ["LinkedIn", "Job board", "Company website"])).value,
+    "Company website"
+  );
+  assert.equal(
+    q(select("How did you hear about us?", ["Referral", "Job Board"])).value,
+    "Job Board"
+  );
+  // Ashby's source picker wording, only when it offers options.
+  assert.equal(
+    q(select("What brought you to this job posting", ["LinkedIn", "Company website"])).value,
+    "Company website"
+  );
+  assert.equal(q(text("What brought you to this job posting?")), null, "an essay, not a source");
+  // Profile preference list wins.
+  const own = {
+    ...noDefault,
+    applyDefaults: {
+      ...noDefault.applyDefaults,
+      choice_policy: { how_did_you_hear: ["job board"] },
+    },
+  };
+  assert.equal(
+    matchQuestion(select("How did you hear about us?", ["Company website", "Job board"]), own)
+      .value,
+    "Job board"
+  );
+});
+
+test("choice policy: SMS / text-message consent radios → the No option", () => {
+  const sms = select("SMS text message consent", [
+    "Yes - I consent to receiving SMS text messages",
+    "No - I do not consent to receiving SMS text messages",
+  ]);
+  assert.deepEqual(m({ ...sms, type: "radio" }), {
+    source: "defaults",
+    value: "No - I do not consent to receiving SMS text messages",
+  });
+});

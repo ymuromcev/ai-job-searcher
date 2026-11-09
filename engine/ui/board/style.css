@@ -22,6 +22,9 @@ h2 {
 [hidden] {
   display: none !important;
 }
+#morning {
+  margin-bottom: 20px;
+}
 nav {
   margin: 12px 0;
 }

@@ -337,11 +337,26 @@ function filledStateInPage(fields) {
   return res;
 }
 
+// Pre-submit guard (RFC 069 §4): re-read the live form — a follow-up question
+// may have appeared after an answer — and report every required field still
+// empty. The command never clicks Submit while `missing` is non-empty.
 async function checkFilled(page) {
-  const schema = await schemaFor(page);
-  const state = await page.evaluate(filledStateInPage, schema);
-  const missing = schema.filter((f) => f.required && !state[f.id]).map((f) => f.id);
-  return { missing, state };
+  const cached = await schemaFor(page);
+  let live = null;
+  try {
+    live = await page.evaluate(scanFormInPage, FORM_SEL);
+  } catch {
+    live = null; // navigation in flight — fall back to the schema we read
+  }
+  const fields = live && live.length ? live : cached;
+  for (const f of fields) f.label = cleanLabel(f.label);
+  const state = await page.evaluate(filledStateInPage, fields);
+  const empty = fields.filter((f) => f.required && !state[f.id]);
+  return {
+    missing: empty.map((f) => f.id),
+    missingLabels: empty.map((f) => f.label || f.id),
+    state,
+  };
 }
 
 async function isSuccess(page) {

@@ -41,6 +41,15 @@ function errorFields(issues) {
   return issues.filter((i) => i.severity === "error").map((i) => i.field);
 }
 
+test("validateApplyDefaults: optional choice_policy (RFC 069) is checked", () => {
+  const ok = { ...valid(), choice_policy: { eeo: "blank", how_did_you_hear: ["Job board"] } };
+  assert.deepEqual(validateApplyDefaults(ok), []);
+  const bad = { ...valid(), choice_policy: { eeo: "guess", how_did_you_hear: "Job board" } };
+  const fields = errorFields(validateApplyDefaults(bad));
+  assert.ok(fields.some((f) => /choice_policy\.eeo$/.test(f)));
+  assert.ok(fields.some((f) => /choice_policy\.how_did_you_hear$/.test(f)));
+});
+
 test("validateApplyDefaults: valid contract → no issues", () => {
   assert.deepEqual(validateApplyDefaults(valid()), []);
 });

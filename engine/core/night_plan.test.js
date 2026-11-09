@@ -6,20 +6,36 @@ const plan = require("./night_plan.js");
 // Local-time constructors keep these tests independent of the machine TZ.
 const local = (y, mo, d, h, mi = 0) => new Date(y, mo - 1, d, h, mi, 0, 0);
 
-test("computeDeadline: next local 06:30, capped at max hours", () => {
-  // 22:00 → next morning 06:30 (8.5h < 10h cap)
+test("computeDeadline: defaults are 11:00 and a 14 h cap (RFC 069)", () => {
+  assert.equal(plan.DEFAULT_STOP_AT, "11:00");
+  assert.equal(plan.DEFAULT_TARGET, 30);
+  // 22:00 → next morning 11:00 (13 h < 14 h cap)
   assert.equal(
     plan.computeDeadline(local(2026, 10, 21, 22)).getTime(),
+    local(2026, 10, 22, 11).getTime()
+  );
+  // 19:00 → 11:00 is 16 h away → capped at 14 h → 09:00
+  assert.equal(
+    plan.computeDeadline(local(2026, 10, 21, 19)).getTime(),
+    local(2026, 10, 22, 9).getTime()
+  );
+});
+
+test("computeDeadline: next local stop time, capped at max hours", () => {
+  const o = { stopAt: "06:30", maxHours: 10 };
+  // 22:00 → next morning 06:30 (8.5h < 10h cap)
+  assert.equal(
+    plan.computeDeadline(local(2026, 10, 21, 22), o).getTime(),
     local(2026, 10, 22, 6, 30).getTime()
   );
   // 01:15 (started after midnight) → same morning 06:30
   assert.equal(
-    plan.computeDeadline(local(2026, 10, 22, 1, 15)).getTime(),
+    plan.computeDeadline(local(2026, 10, 22, 1, 15), o).getTime(),
     local(2026, 10, 22, 6, 30).getTime()
   );
   // 18:00 → 06:30 is 12.5h away → capped at 10h → 04:00
   assert.equal(
-    plan.computeDeadline(local(2026, 10, 21, 18)).getTime(),
+    plan.computeDeadline(local(2026, 10, 21, 18), o).getTime(),
     local(2026, 10, 22, 4).getTime()
   );
   // custom stop time + cap
@@ -29,7 +45,7 @@ test("computeDeadline: next local 06:30, capped at max hours", () => {
   );
   // exactly at stop time → the next day's stop time (then capped)
   assert.equal(
-    plan.computeDeadline(local(2026, 10, 22, 6, 30), { maxHours: 30 }).getTime(),
+    plan.computeDeadline(local(2026, 10, 22, 6, 30), { stopAt: "06:30", maxHours: 30 }).getTime(),
     local(2026, 10, 23, 6, 30).getTime()
   );
   assert.throws(() => plan.computeDeadline(local(2026, 10, 21, 22), { stopAt: "6.30" }), /HH:MM/);
@@ -82,19 +98,57 @@ test("decideNextStep: apply once ≥10 fresh rows wait, else prepare the gap", (
   assert.equal(tail.step, "apply");
 });
 
-test("decideNextStep: rows already seen tonight are not fresh — the loop always ends", () => {
+test("decideNextStep: rows already seen tonight are not fresh — nothing left means top-up", () => {
   // Inbox exhausted, a few fresh rows → one more apply round.
   assert.equal(
     plan.decideNextStep(state({ inboxExhausted: true, applyReady: 6, applyFresh: 2 })).step,
     "apply"
   );
-  // Inbox exhausted, rows left only ones an apply pre already skipped → stop.
+  // Inbox exhausted, rows left only ones an apply pre already skipped → top-up
+  // (RFC 069 §6: no queue_empty stop; find more companies instead).
   const s = plan.decideNextStep(state({ inboxExhausted: true, applyReady: 6, applyFresh: 0 }));
-  assert.deepEqual([s.step, s.reason], ["stop", "queue_empty"]);
+  assert.deepEqual([s.step, s.reason, s.need], ["topup", null, 100]);
+  // Top-up has no round cap: the same state asks for it again.
+  assert.equal(
+    plan.decideNextStep(state({ inboxExhausted: true, submittedTonight: 40 })).step,
+    "topup"
+  );
   // Stale ready rows do not shrink the prepare gap.
   const p = plan.decideNextStep(state({ applyReady: 30, applyFresh: 0 }));
   assert.equal(p.step, "prepare");
   assert.equal(p.prepareTarget, 100);
+});
+
+test("decideNextStep: rows with the submitter count toward the gap, not the target", () => {
+  const t = { target: 30, inboxExhausted: true };
+  // 20 submitted + 10 in a ready manifest → wait for the submitter.
+  const w = plan.decideNextStep(state({ ...t, submittedTonight: 20, pendingSubmit: 10 }));
+  assert.deepEqual([w.step, w.need, w.pending], ["wait", 0, 10]);
+  // The submitter skipped 4 of them → the gap is back; nothing fresh → top-up.
+  const back = plan.decideNextStep(state({ ...t, submittedTonight: 26, pendingSubmit: 0 }));
+  assert.deepEqual([back.step, back.need], ["topup", 4]);
+  // Pending never reaches the target on its own.
+  const reached = plan.decideNextStep(state({ ...t, submittedTonight: 30, pendingSubmit: 5 }));
+  assert.deepEqual([reached.step, reached.reason], ["stop", "target_reached"]);
+  // The deadline still wins over waiting.
+  const late = plan.decideNextStep(
+    state({ ...t, now: local(2026, 10, 22, 7), submittedTonight: 1, pendingSubmit: 29 })
+  );
+  assert.equal(late.reason, "deadline");
+});
+
+test("resolveNightSettings: flag › profile apply_target / apply_stop_at › 30 / 11:00", () => {
+  assert.deepEqual(plan.resolveNightSettings({}, {}), { target: 30, stopAt: "11:00" });
+  assert.deepEqual(plan.resolveNightSettings({ apply_target: 45, apply_stop_at: "09:30" }, {}), {
+    target: 45,
+    stopAt: "09:30",
+  });
+  assert.deepEqual(
+    plan.resolveNightSettings({ apply_target: 45 }, { target: 12, stopAt: "08:00" }),
+    { target: 12, stopAt: "08:00" }
+  );
+  assert.equal(plan.resolveNightSettings({ apply_target: "junk" }, { target: null }).target, 30);
+  assert.equal(plan.resolveNightSettings(null, { target: 0 }).target, 30);
 });
 
 test("countTsvSince: scanned by createdAt, prepared by fit_evaluated_at outside Inbox", () => {
@@ -189,9 +243,35 @@ test("summarizeApplyFiles: counts tonight's non-dry-run files only", () => {
   assert.equal(s.failed, 1);
   assert.equal(s.manual, 2, "pre manual + submit manual");
   assert.equal(s.deferred, 1);
-  assert.equal(s.skipped, 1);
+  assert.equal(s.skipped, 0, "already_applied is a guard skip, not a skip");
   assert.equal(s.errors, 1);
   assert.deepEqual(s.seenKeys.sort(), ["a", "b", "d", "m"]);
+  assert.deepEqual(s.submittedKeys, ["a"]);
+
+  // The same job submitted in two result files (a re-run manifest) is one.
+  const twice = plan.summarizeApplyFiles(
+    [
+      {
+        kind: "results",
+        data: {
+          generated_at: "2026-10-22T08:00:00Z",
+          results: [{ key: "a", outcome: "submitted" }],
+        },
+      },
+      {
+        kind: "results",
+        data: {
+          generated_at: "2026-10-22T09:00:00Z",
+          results: [
+            { key: "a", outcome: "submitted" },
+            { key: "b", outcome: "submitted" },
+          ],
+        },
+      },
+    ],
+    since
+  );
+  assert.equal(twice.submitted, 2);
 });
 
 const CTX = {
