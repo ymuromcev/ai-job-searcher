@@ -38,6 +38,9 @@
 //     "eeo": "decline" | "blank",        //   decline option when offered / leave optional EEO empty
 //     "how_did_you_hear": ["company website", "job board", "other"]  // option preference order
 //   }
+//   "standing_answers": [                // owner's answers to recurring questions (2026-11-09):
+//     { "question": "Do you have a valid US driver's license?", "answer": "Yes" }
+//   ]                                    // read by the drafter and the truth review as a source
 
 const APPLY_DEFAULTS_FILE = "apply_defaults.json";
 
@@ -58,6 +61,7 @@ const TOP_LEVEL_KEYS = Object.freeze([
   "relatives_at_company",
   "start_weeks_after_offer",
   "choice_policy",
+  "standing_answers",
 ]);
 
 const VALID_CHOICE_EEO = Object.freeze(["decline", "blank"]);
@@ -200,6 +204,22 @@ function validateApplyDefaults(raw) {
     err(`${base}.tailor_ship_min_coverage`, "must be a number between 0 and 100");
   }
 
+  if (raw.standing_answers !== undefined) {
+    if (!Array.isArray(raw.standing_answers)) {
+      err(`${base}.standing_answers`, "must be an array of { question, answer }");
+    } else {
+      raw.standing_answers.forEach((sa, i) => {
+        const ok =
+          isPlainObject(sa) &&
+          typeof sa.question === "string" &&
+          sa.question.trim() !== "" &&
+          typeof sa.answer === "string" &&
+          sa.answer.trim() !== "";
+        if (!ok)
+          err(`${base}.standing_answers[${i}]`, "needs non-empty string question and answer");
+      });
+    }
+  }
   if (raw.relatives_at_company !== undefined && typeof raw.relatives_at_company !== "boolean") {
     err(`${base}.relatives_at_company`, "must be a boolean");
   }
