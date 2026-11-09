@@ -33,9 +33,11 @@
 //      stay queued for the next night); a failed submit run is retried on
 //      the next start, up to MAX_ATTEMPTS times.
 //
-// On its first run after the window closes it refreshes the morning report
-// (.health/morning-<date>.json) and sends one macOS notification for that
-// date (marker .health/morning-<date>.notified).
+// On its first run after the window closes it runs the owner's questions
+// step (`questions --apply`, RFC 070: pull his Notion answers, requeue the
+// rows they unblock, push tonight's blocking questions), refreshes the
+// morning report (.health/morning-<date>.json) and sends one macOS
+// notification for that date (marker .health/morning-<date>.notified).
 
 const fs = require("fs");
 const path = require("path");
@@ -111,6 +113,22 @@ async function submitViaApply({ ctx, profile, context, answersDir, deadline, con
   return { code, resultsFile };
 }
 
+// The owner's questions queue (RFC 070), in process: pull his Notion
+// answers, requeue the rows they unblock, push tonight's new blocking
+// questions — so the morning report counts them and they are in Notion by
+// the time he reads it.
+async function questionsViaCommand({ ctx, profile }) {
+  const { makeQuestionsCommand } = require("./questions.js");
+  return makeQuestionsCommand()({
+    profileId: profile.id,
+    profilesDir: ctx.profilesDir,
+    env: ctx.env || process.env,
+    flags: { apply: true },
+    stdout: ctx.stdout,
+    stderr: ctx.stderr,
+  });
+}
+
 function makeDefaultDeps() {
   const nightDeps = night.makeDefaultDeps();
   return {
@@ -132,6 +150,7 @@ function makeDefaultDeps() {
     pid: process.pid,
     pidAlive,
     runSubmit: submitViaApply,
+    runQuestions: questionsViaCommand,
     notify: macNotify,
   };
 }
@@ -312,6 +331,15 @@ async function maybeNotify(ctx, profile, deps, ws) {
     return { sent: false, reason: "night_running" };
   }
   const running = held && Date.parse(held.lock.started_at) <= closeMs ? held : null;
+
+  // Tonight's new blocking questions go to Notion before the report counts
+  // them; a failure here never stops the morning notification.
+  try {
+    const code = await deps.runQuestions({ ctx, profile });
+    if (code) ctx.stderr(`submit-ready: questions step exited ${code}`);
+  } catch (err) {
+    ctx.stderr(`submit-ready: questions step failed: ${err.message}`);
+  }
 
   // The night this morning belongs to: the last run log line that started in
   // the day before the window closed, else the running night, else none.

@@ -190,6 +190,11 @@ answer bank.
 | `Answer` | rich_text | Approved response. |
 | `Category` | select | Categorization for retrieval. |
 | `Last Used` | date | Optional. |
+| `Status` | select | RFC 070, added by `questions --apply` when missing. `Waiting for answer` (a question the bot could not answer), `Answered` (the owner's answer — becomes a standing answer), `Skip such jobs` (the bot skips jobs that ask it). Empty on ordinary bank answers. |
+| `Question key` | rich_text | RFC 070. Normalized question identity (company name → `<company>`); dedups the queue. |
+| `Jobs` | rich_text | RFC 070. One line per job that asked it: company — title — URL. |
+
+Waiting and skip entries are not answers: every bank read (`apply --phase pre`, the board, the weekly report) leaves them out. Make a "Waiting for answer" view (filter Status = Waiting for answer) and put its link into `profile.json` → `notion.application_qa_waiting_view_url` so the morning report links it.
 
 ## Job Platforms DB
 

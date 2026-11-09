@@ -199,3 +199,42 @@ test("guard skips are not skip reasons; warnings reach the report and the notifi
   assert.deepEqual(report.warnings, ["submitter_not_running"]);
   assert.match(morning.notificationText(report), /Внимание: отправка не запускалась/);
 });
+
+test("buildMorningReport: re-submitted thanks to the owner's answers + waiting questions (RFC 070)", () => {
+  const report = morning.buildMorningReport({
+    date: "2026-11-10",
+    since: SINCE,
+    now: NOW,
+    target: 30,
+    apps: APPS,
+    applyFiles: files(),
+    night: { stop_reason: "deadline" },
+    questions: {
+      waiting: 3,
+      view_url: "https://www.notion.so/qa",
+      // "s" and "w" went out tonight; "x" was requeued but not submitted.
+      requeued: [{ key: "s" }, { key: "w" }, { key: "x" }, null],
+    },
+  });
+  assert.deepEqual(report.answers, {
+    resubmitted: 2,
+    waiting: 3,
+    view_url: "https://www.notion.so/qa",
+  });
+  assert.equal(report.answers_line, "подано заново по твоим ответам: 2 · ждут твоего ответа: 3");
+  assert.match(
+    morning.notificationText(report),
+    /\. Подано заново по твоим ответам: 2 · ждут твоего ответа: 3/
+  );
+  const none = morning.buildMorningReport({
+    date: "2026-11-10",
+    since: SINCE,
+    now: NOW,
+    target: 30,
+    apps: APPS,
+    applyFiles: files(),
+  });
+  assert.deepEqual(none.answers, { resubmitted: 0, waiting: 0, view_url: null });
+  assert.equal(none.answers_line, "");
+  assert.doesNotMatch(morning.notificationText(none), /ответ/);
+});

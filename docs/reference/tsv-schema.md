@@ -67,7 +67,7 @@ instead of collapsing to `locations[0]`. The on-disk column is renamed
 | 27 | `applied_date` | v7 (BL-187) | ISO date | Date the row entered `Applied`. Drives the 14-day Applied → No Response sweep. TSV-only. |
 | 28 | `applied_by` | v8 (RFC 068) | enum | Who submitted: `bot` / `manual` / `legacy_bot` / `""`. TSV-only. |
 | 29 | `apply_state` | v8 (RFC 068) | enum | Apply bot state: `queued` / `manual` / `failed` / `submitted` / `""`. TSV-only. |
-| 30 | `apply_note` | v8 (RFC 068) | string | Reason for `manual` / `failed`, or the relative path to the confirmation screenshot. TSV-only. |
+| 30 | `apply_note` | v8 (RFC 068) | string | Reason for `manual` / `failed`, or the relative path to the confirmation screenshot. TSV-only. Skips: `<reason>[: <detail>]` (RFC 069), e.g. `no_honest_answer: <q1>; <q2>` — the blocking questions `questions` reads (RFC 070); `no_honest_answer: owner_skip: <q>` — the owner said skip such jobs; `requeued:<date> answers` — back in the queue after the owner answered. |
 
 ## Status values
 

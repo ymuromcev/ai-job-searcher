@@ -158,6 +158,21 @@ function renderMorning() {
   const skips = $("#morning-skips");
   skips.hidden = !m.skip_line;
   skips.textContent = m.skip_line ? "Пропущено: " + m.skip_line : "";
+  // RFC 070: re-submitted thanks to the owner's answers / waiting for one.
+  const answers = $("#morning-answers");
+  answers.hidden = !m.answers_line;
+  answers.textContent = m.answers_line
+    ? m.answers_line.charAt(0).toUpperCase() + m.answers_line.slice(1)
+    : "";
+  const viewHref = m.answers && m.answers.waiting ? safeHref(m.answers.view_url) : null;
+  if (m.answers_line && viewHref) {
+    const a = el("a", "открыть в Notion");
+    a.href = viewHref;
+    a.target = "_blank";
+    a.rel = "noreferrer noopener";
+    answers.appendChild(document.createTextNode(" — "));
+    answers.appendChild(a);
+  }
   const apps = Array.isArray(m.applications) ? m.applications : [];
   $("#morning-table").hidden = apps.length === 0;
   fillBody(

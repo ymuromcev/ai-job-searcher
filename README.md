@@ -227,6 +227,7 @@ node engine/cli.js <command> --profile <id> [flags]
 | `apply` | Bot applications (RFC 068): `--phase pre` reads the forms and answers standard questions, the `job-pipeline` skill answers the rest with a truth check, `--phase submit` fills, submits and records the ATS confirmation. `--dry-run` stops before Submit. |
 | `night` | Orchestration helpers for the unattended nightly run (lock, time budget, fan-out / collect, ready manifests for the submitter, run log, morning report) — see `skills/job-pipeline/night-apply.md`. |
 | `submit-ready` | The submitter (RFC 069): submits the rows of the night's ready manifests inside the profile's `apply_window` (default 02:00–11:00); started by launchd every 15 min. See [Autonomy](#autonomy). |
+| `questions` | The owner's questions queue (RFC 070): questions the bot could not answer wait in the Notion Application Q&A DB; answers the owner gives there become the bot's standing answers and the stuck jobs go back in the queue. Dry-run by default; `--apply` writes. |
 | `board` | Local registry UI on 127.0.0.1: applications, manual to-do list, week, sources / apply sites, answer bank with ratings. |
 | `report` | `--weekly` strategy review: funnel, sources, apply outcomes, nights, answer bank. |
 
@@ -244,9 +245,17 @@ dry it finds more companies on Greenhouse / Lever / Ashby and keeps going.
   left blank when optional; when required, the row is skipped with
   `no_honest_answer`. Captchas, login walls, bot checks and broken forms
   are skipped with a reason. Nothing goes to a «do by hand» queue.
+- **Questions it could not answer wait for the owner, not the night**
+  (RFC 070). Each one lands once in the Notion Application Q&A database
+  as "Waiting for answer", listing the jobs that asked it. When the owner
+  answers (Status "Answered") the next night takes the answer as a
+  standing answer and re-applies to those jobs; "Skip such jobs" makes the
+  bot skip every job that asks it. Nothing waits on him: unanswered
+  questions only keep their jobs skipped.
 - **The morning shows results, not questions:** submitted N (Strong /
   Medium / Weak), the list with confirmation status, one line of skip
-  reasons, and why it stopped below the target. It lives in
+  reasons, why it stopped below the target, and "re-submitted thanks to
+  your answers: N · waiting for your answer: M" with the Notion link. It lives in
   `profiles/<id>/.health/morning-<date>.json`, on top of the board's first
   tab, and arrives as one macOS notification after the window closes.
 - **Rule for every change to this project:** no proposal may depend on the
