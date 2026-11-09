@@ -458,7 +458,14 @@ async function resolveJobUrl(app, env) {
   }
   if (!String(app.url || "").trim()) return { manual: "no_application_url" };
 
-  let res = await deps.resolveUrl(app.url, { fetchFn: deps.fetchFn, detectAts: deps.detectAts });
+  // For aggregator links resolveUrl first looks for the same job on the
+  // company's own Greenhouse / Lever / Ashby board (RFC 069 §5).
+  let res = await deps.resolveUrl(app.url, {
+    fetchFn: deps.fetchFn,
+    detectAts: deps.detectAts,
+    job: { company: app.companyName, title: app.title, locations: app.locations },
+    slugIndex,
+  });
   const origHost = hostOf(app.url);
   // Aggregators (Adzuna) answer node fetch with 403/404 even for live ads, so
   // a "dead" from fetch is re-checked in the browser before it is believed.
@@ -486,6 +493,7 @@ async function resolveJobUrl(app, env) {
   }
   if (!res.ok) {
     if (res.reason === "dead") return { skip: "url_dead" };
+    if (res.reason === "no_company_form") return { manual: "no_company_form" };
     const host = hostOf(res.url) || origHost;
     if (res.reason === "no_ats" && !aggregatorHost(host)) {
       return { manual: `unsupported_ats:${host}` };

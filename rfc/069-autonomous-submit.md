@@ -66,7 +66,7 @@ When `night check` sees the queue (all fits) below what is needed for the target
 
 ### 8. October rows
 
-One-off `apply --phase requeue --since 2026-10-20`: rows `apply_state=submitted` with no confirmation email in the apply mailbox and the job still open → back to `queued`.
+One-off `requeue --profile <id> --since 2026-10-20 [--apply]`: rows `apply_state=submitted` with no confirmation email in the apply mailbox and the job still open → back to `queued`.
 
 ### 9. README rule
 

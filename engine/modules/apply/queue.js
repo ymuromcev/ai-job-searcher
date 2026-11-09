@@ -3,7 +3,9 @@
 // Gates, in order:
 //   1. status === "To Apply"
 //   2. applied_date empty (never applied — the double-apply guard)
-//   3. apply_state not "submitted" / "failed" / "manual"
+//   3. apply_state not "submitted" / "failed" / "manual" / "skipped" (a row the
+//      bot gave up on — captcha, account, no honest answer — is not retried;
+//      `requeue` can put it back)
 //      (failed is never retried automatically; manual waits for a human),
 //      and not an interrupted submit: apply_state "queued" with apply_note
 //      "submitting:<ts>" means the process died between the Submit click
@@ -33,7 +35,7 @@ const { enforceGeo } = require("../../core/geo_enforcer.js");
 // Fit priority: lower rank goes first.
 const FIT_RANK = { Strong: 0, Medium: 1, Weak: 2 };
 const FIT_OK = new Set(Object.keys(FIT_RANK));
-const STATES_DONE = new Set(["submitted", "failed", "manual"]);
+const STATES_DONE = new Set(["submitted", "failed", "manual", "skipped"]);
 
 function companyCapDecision(companyName, filterRules, counts) {
   const capOnly = { filter_rules: { company_cap: (filterRules && filterRules.company_cap) || {} } };
