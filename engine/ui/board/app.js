@@ -122,6 +122,56 @@ function renderHeader() {
   document.title = "Отклики — " + r.profile;
 }
 
+// --- morning report (RFC 069 §7) ---------------------------------------------
+
+function clock(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+
+function renderMorning() {
+  const m = state.registry.morning;
+  const box = $("#morning");
+  if (!m || !m.submitted) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const s = m.submitted;
+  $("#morning-title").textContent = "Итог ночи — " + ruDate(m.date);
+  $("#morning-summary").textContent =
+    "Подано " +
+    s.total +
+    " из " +
+    m.target +
+    " (Strong " +
+    s.strong +
+    " · Medium " +
+    s.medium +
+    " · Weak " +
+    s.weak +
+    ")";
+  const why = $("#morning-why");
+  why.hidden = !m.why_text;
+  why.textContent = m.why_text ? "Меньше цели: " + m.why_text : "";
+  const skips = $("#morning-skips");
+  skips.hidden = !m.skip_line;
+  skips.textContent = m.skip_line ? "Пропущено: " + m.skip_line : "";
+  const apps = Array.isArray(m.applications) ? m.applications : [];
+  $("#morning-table").hidden = apps.length === 0;
+  fillBody(
+    $("#morning-table tbody"),
+    apps.map((a) => [
+      a.company,
+      a.title,
+      a.fit || "—",
+      clock(a.at),
+      a.confirmation === "email" ? "письмо" : "страница",
+    ])
+  );
+}
+
 // --- «Отклики» -------------------------------------------------------------
 
 const FIT_RANK = { Strong: 3, Medium: 2, Weak: 1 };
@@ -448,6 +498,7 @@ function loadRegistry() {
   return api("/api/registry").then((data) => {
     state.registry = data;
     renderHeader();
+    renderMorning();
     renderResponses();
     renderTodo();
   });

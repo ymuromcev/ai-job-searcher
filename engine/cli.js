@@ -30,6 +30,7 @@ const KNOWN_COMMANDS = [
   "report",
   "apply",
   "night",
+  "submit-ready",
 ];
 
 // Commands that never write applications.tsv / Notion (RFC 068 §8 / §10). The
@@ -38,6 +39,10 @@ const KNOWN_COMMANDS = [
 // `night` (only its own lock / log / fan-out files) is polled many times a
 // night, where a sweep on every call would only add Notion traffic.
 const READ_ONLY_COMMANDS = new Set(["board", "report", "night"]);
+// The lazy sweeps are skipped for these too. `submit-ready` does write the TSV
+// (through apply's submit code) but launchd starts it every 15 minutes, day
+// and night — a sweep on every start would only add Notion traffic.
+const NO_SWEEP_COMMANDS = new Set([...READ_ONLY_COMMANDS, "submit-ready"]);
 
 const PARSE_OPTIONS = {
   options: {
@@ -90,6 +95,7 @@ const PARSE_OPTIONS = {
     "stop-at": { type: "string" },
     "max-hours": { type: "string" },
     "stop-reason": { type: "string" },
+    minutes: { type: "string" },
   },
   allowPositionals: true,
   strict: true,
@@ -169,7 +175,15 @@ Commands:
              (check), per-row / per-job fan-out files for parallel
              subagents (prepare-fanout, prepare-collect, apply-fanout), and
              one line per night in .health/apply_runs.jsonl (finish).
-             Never writes applications.tsv or Notion. See RFC 068 §9 / §11.
+             Ends each apply round with a ready manifest (ready) for the
+             submitter; never submits itself. Never writes applications.tsv
+             or Notion. See RFC 068 §9 / §11, RFC 069.
+  submit-ready
+             The submitter outside Claude (RFC 069): submits the rows of the
+             night's ready manifests inside the profile's apply_window
+             (default 02:00-11:00), never past a manifest deadline; after the
+             window sends one morning notification. Started by launchd every
+             15 min — scripts/install_submitter.sh --profile <id>.
 
 Flags:
   --profile <id>       Profile id (required for all commands). Lowercase, alphanum + - _.
@@ -256,15 +270,20 @@ apply flags:
                          Submit click; keeps a screenshot of the filled form.
 
 night flags:
-  --phase <start|check|prepare-fanout|prepare-collect|apply-fanout|finish>
+  --phase <start|check|prepare-fanout|prepare-collect|apply-fanout|ready|wait|finish>
                          Required. check exits 2 when the night must stop;
                          start exits 3 when another night holds the lock.
-  --target <N>           start: applications to aim for tonight (default 100).
+  --target <N>           start: applications to aim for tonight (default:
+                         profile apply_target, else 30).
   --stop-at <HH:MM>      start: local time to stop starting new work
-                         (default 06:30).
-  --max-hours <N>        start: hard cap on the run length (default 10).
+                         (default: profile apply_stop_at, else 11:00).
+  --max-hours <N>        start: hard cap on the run length (default 14).
+  --minutes <N>          wait: longest wait for the submitter (default 9).
   --stop-reason <text>   finish: why the night ended (deadline, target_reached,
-                         queue_empty, usage_budget, scan_failed, …).
+                         usage_budget, scan_failed, prepare_failed, apply_failed).
+
+submit-ready flags:
+  --concurrency <N>      Parallel browser contexts (default 4).
 
 answer flags:
   --phase <search|push>  Required. "search" looks up existing Q&A by company+role+question
@@ -334,6 +353,7 @@ function defaultCommands() {
     report: require("./commands/report.js"),
     apply: require("./commands/apply.js"),
     night: require("./commands/night.js"),
+    "submit-ready": require("./commands/submit_ready.js"),
   };
 }
 
@@ -422,6 +442,7 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
       stopAt: parsed.values["stop-at"] || "",
       maxHours: parsed.values["max-hours"] ? Number(parsed.values["max-hours"]) : null,
       stopReason: parsed.values["stop-reason"] || "",
+      minutes: parsed.values.minutes ? Number(parsed.values.minutes) : null,
     },
     env,
     stdout: writeOut,
@@ -496,7 +517,7 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
   const { runAutoNoResponseSweep } = require("./core/auto_no_response_sweep.js");
 
   try {
-    if (!READ_ONLY_COMMANDS.has(ctx.command)) {
+    if (!NO_SWEEP_COMMANDS.has(ctx.command)) {
       const todayStr = todayLocalISO();
       await runAutoDeadSweep(ctx.profileId, ctx, { todayStr });
       await runAutoNoResponseSweep(ctx.profileId, ctx, { todayStr });

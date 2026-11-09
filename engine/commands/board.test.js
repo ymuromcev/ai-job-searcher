@@ -370,6 +370,26 @@ test("makeDataLoaders: v8 fields flow into the todo list and site health", () =>
   assert.equal(lever.status_label, "Не работает");
 });
 
+test("makeDataLoaders: the newest morning report rides on the registry (RFC 069 §7)", () => {
+  const t = makeTempProfile();
+  const loaders = makeDataLoaders(
+    { id: "demo", modules: [], paths: { root: t.profileDir, applicationsTsv: "x" } },
+    { loadApplications: () => ({ apps: [] }), today: () => "2026-11-10", now: () => Date.now() }
+  );
+  assert.equal(loaders.registry().morning, null, "no report yet");
+  const health = path.join(t.profileDir, ".health");
+  fs.mkdirSync(health, { recursive: true });
+  fs.writeFileSync(path.join(health, "morning-2026-11-09.json"), JSON.stringify({ date: "old" }));
+  fs.writeFileSync(
+    path.join(health, "morning-2026-11-10.json"),
+    JSON.stringify({ date: "2026-11-10", submitted: { total: 3 } })
+  );
+  fs.writeFileSync(path.join(health, "morning-2026-11-10.notified"), "{}");
+  assert.deepEqual(loaders.registry().morning, { date: "2026-11-10", submitted: { total: 3 } });
+  fs.writeFileSync(path.join(health, "morning-2026-11-11.json"), "{torn");
+  assert.equal(loaders.registry().morning, null, "an unreadable file never breaks the tab");
+});
+
 // --- «Банк ответов» (BL-225 U7) ---------------------------------------------
 
 const BANK_A = "aaaaaaaa-0000-4000-8000-000000000001";

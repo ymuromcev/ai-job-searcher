@@ -39,6 +39,7 @@ const { buildWeeklyReport, weeklyTables } = require("../core/weekly_report.js");
 const { buildSourceHealth } = require("../core/source_health.js");
 const scanHealthLog = require("../core/scan_health_log.js");
 const nightRunsLog = require("../core/night_runs_log.js");
+const morningReport = require("../core/morning_report.js");
 const { todayLocalISO } = require("../core/auto_dead_sweep.js");
 const { makeClient } = require("../core/notion_sync.js");
 const { fetchAllAnswers } = require("../core/qa_notion.js");
@@ -448,6 +449,18 @@ function makeBankLoader(profile, deps, env) {
   };
 }
 
+// The newest morning report (RFC 069 §7) — shown at the top of the first
+// tab. Missing / unreadable → null, the tab renders without it.
+function readLatestMorning(profileRoot) {
+  try {
+    const dir = path.join(profileRoot, morningReport.HEALTH_DIR);
+    const name = morningReport.pickLatestMorning(fs.readdirSync(dir));
+    return name ? JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")) : null;
+  } catch {
+    return null;
+  }
+}
+
 function makeDataLoaders(profile, deps, env = {}) {
   const tsvPath = profile.paths.applicationsTsv;
   const readRows = () => deps.loadApplications(tsvPath).apps;
@@ -458,6 +471,7 @@ function makeDataLoaders(profile, deps, env = {}) {
       profile: profile.id,
       generatedAt: new Date(deps.now()).toISOString(),
       ...buildRegistryView(readRows()),
+      morning: readLatestMorning(profile.paths.root),
     }),
     week: async () => {
       const rows = readRows();

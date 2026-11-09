@@ -26,6 +26,7 @@ Commands:
 | `reclassify` | Re-run the email classifier across historical `OTHER` entries in `processed_messages.json` (30-day window). Dry-run by default. |
 | `retro-tailor` | Re-tailor Strong rows already in `To Apply` whose resume predates the RFC-044 tailoring loop. Recon by default; `--apply --results-file` commits. |
 | `apply` | Three-phase auto-apply on Greenhouse / Lever / Ashby: read forms + answer standard questions, (skill answers the rest), fill + submit + mark `Applied`. (RFC 068) |
+| `submit-ready` | The submitter outside Claude: submits the rows of the night's ready manifests inside the profile's `apply_window`; started by launchd every 15 min. (RFC 069) |
 | `companies-upsert` | Push relokant-sweep sweet-zone targets into the Notion Companies DB, two-way deduped (domain + name vs Notion / `data/companies.tsv` / relokant ledgers). Back-fills empty fields only; never writes `Tier`. Dry-run by default; `--apply` commits. (RFC 062) |
 
 The dispatcher also runs deterministic pre-command hooks (BL-151 / RFC 054). Today both `scan` and `prepare` auto-trigger `sync --apply` before their main work runs, so downstream filters / cap counters / fit-eval read fresh Notion state. The sync command itself also archives engine-tailored CV/CL files for rows whose status moved past `To Apply` (Applied / Interview / Offer / Rejected / Closed / No Response). The pre-hook is suppressed by `--no-sync`; `scan --dry-run` also suppresses it for parity with the prior dry-run-never-mutates behaviour.
@@ -586,18 +587,20 @@ Common errors:
 
 ### night
 
-Synopsis: `node engine/cli.js night --profile <id> --phase <start|check|prepare-fanout|prepare-collect|apply-fanout|finish> [...]`
+Synopsis: `node engine/cli.js night --profile <id> --phase <start|check|prepare-fanout|prepare-collect|apply-fanout|ready|wait|finish> [...]`
 
 The deterministic rails of the unattended nightly run (RFC 068 §9 / §11, BL-225). The runbook `skills/job-pipeline/night-apply.md` calls it between the `scan` / `prepare` / `apply` steps; Claude does the LLM work in between. `night` writes only its own files — never `applications.tsv`, never Notion — so the lazy sweeps are skipped for it.
 
 Phases:
 
-- `start` — takes the per-profile lock, stamps the start time, computes the deadline (next local `--stop-at`, at most `--max-hours` away), prints the apply-ready backlog and one JSON line (`started_at`, `deadline`, `target`, `apply_ready`). Another live night → exit 3, nothing touched. A lock left by a night that died (older than its deadline + 1 h) is closed as `abandoned` in the run log and replaced.
-- `check` — one JSON line: `step` (`prepare` with `prepare_batch`, `apply`, or `stop` with `reason`: `deadline`, `target_reached`, `queue_empty`), `minutes_left`, `submitted_tonight`, `need`, `apply_ready`, `apply_fresh` (rows no apply pre has looked at tonight), `prepare_target`, `inbox_exhausted`. Exit 0 for prepare / apply, 2 for stop.
+- `start` — takes the per-profile lock, stamps the start time, computes the deadline (next local stop time, at most `--max-hours` away), prints the apply-ready backlog and one JSON line (`started_at`, `deadline`, `target`, `apply_ready`). Target and stop time: `--target` / `--stop-at`, else the profile's `apply_target` / `apply_stop_at` (`profile.json`), else 30 / `11:00` (RFC 069). Another live night → exit 3, nothing touched. A lock left by a night that died (older than its deadline + 1 h) is closed as `abandoned` in the run log and replaced.
+- `check` — one JSON line: `step` (`prepare` with `prepare_batch`; `apply`; `wait` — rows in unfinished ready manifests cover the gap; `topup` — nothing left to prepare or apply, add companies; or `stop` with `reason`: `deadline`, `target_reached`), `minutes_left`, `submitted_tonight` (distinct jobs), `pending_submit`, `need`, `apply_ready`, `apply_fresh` (rows no apply pre has looked at tonight), `prepare_target`, `inbox_exhausted` (tonight's last prepare found nothing and no Inbox row was added after it), `scanned_since_prepare`. Exit 0 for every step but stop, 2 for stop.
 - `prepare-fanout` — splits `prepare_context.json` into `profiles/<id>/.prepare-state/rows/`: `memory.md` (shared memory blob), `jd/<row>.md` (JD body), `payloads/<row>.json` (one row's subagent input, pipeline-fit-evaluator contract plus tailoring paths, `result_path` and `tailor_dir`). One rolling folder: a topup keeps the rows already judged; files of rows no longer in the batch are pruned. Prints a JSON header and one `<payload path>\t<company> — <title>` line per row that has no result yet.
 - `prepare-collect` — reads `results/<row>.json`, validates each against what `prepare --phase commit` accepts (fit score, rationale, 4 cover-letter paragraphs + `clKey` + a known `resumeVer` for Strong/Medium, `tailoredResume` or an escalation reason for Strong, tier letter), writes `profiles/<id>/prepare_results_<YYYYMMDD_HHMMSS>.json` with `companyTiers`, and lists missing / invalid rows (they stay in Inbox; an invalid result file is removed so the next fan-out re-issues the row). Exit 2 when nothing is committable.
 - `apply-fanout` — splits `.apply-state/apply_context.json` into `.apply-state/rounds/<stamp>/jobs/<job>.json` for jobs with open questions (each names its `draft_path`, `review_path`, `answers_path`, `bank_dir`) and creates the `answers/` directory that `apply --phase submit --answers-file` reads.
-- `finish` — appends one JSON line to `profiles/<id>/.health/apply_runs.jsonl` (`started_at`, `finished_at`, `target`, `scanned`, `prepared`, `strong`, `medium`, `weak`, `queued`, `submitted`, `manual`, `failed`, `deferred`, `apply_rounds`, `stop_reason`) and releases the lock. Counts are recomputed from the TSV and the `.apply-state` files written since the start, never passed in. The weekly report and the board's weekly tab show these lines as «Ночные запуски».
+- `ready` — ends an apply round (RFC 069 §1): copies `.apply-state/apply_context.json` to `.apply-state/rounds/<stamp>/apply_context.json` and writes the ready manifest `.apply-state/ready/<stamp>.json` (`stamp`, `answers_dir`, `deadline` — the night's, `rows` — the context's job keys, `created_at`) through a temp file + rename. Once per context: a manifest for the same stamp in `ready/`, `ready/claimed/` or `ready/done/` is never written again. A context without jobs writes nothing.
+- `wait` — blocks until no ready manifest is left (the submitter finished them), `--minutes` pass (default 9) or the deadline comes; prints `waited_minutes` and `pending_submit`.
+- `finish` — appends one JSON line to `profiles/<id>/.health/apply_runs.jsonl` (`started_at`, `finished_at`, `target`, `scanned`, `prepared`, `strong`, `medium`, `weak`, `queued`, `submitted`, `manual`, `failed`, `deferred`, `apply_rounds`, `stop_reason`), writes the morning report `profiles/<id>/.health/morning-<date>.json` (submitted split Strong / Medium / Weak, the list with confirmation status, skip reasons with counts, why it stopped below the target) and releases the lock. Counts are recomputed from the TSV and the `.apply-state` files written since the start, never passed in. The weekly report and the board's weekly tab show the run lines as «Ночные запуски»; the board's first tab shows the newest morning report.
 
 Flags:
 
@@ -605,10 +608,11 @@ Flags:
 | --- | --- | --- | --- |
 | `--profile <id>` | string | — | Required. |
 | `--phase <...>` | string | — | Required. One of the phases above. |
-| `--target <N>` | integer | 100 | `start`: applications to aim for tonight. |
-| `--stop-at <HH:MM>` | string | 06:30 | `start`: local time after which no new work starts. |
-| `--max-hours <N>` | number | 10 | `start`: hard cap on the run length. |
-| `--stop-reason <text>` | string | `unspecified` | `finish`: why the night ended (`deadline`, `target_reached`, `queue_empty`, `usage_budget`, `scan_failed`, `prepare_failed`, `apply_failed`, …). |
+| `--target <N>` | integer | profile `apply_target`, else 30 | `start`: distinct jobs to submit tonight. |
+| `--stop-at <HH:MM>` | string | profile `apply_stop_at`, else 11:00 | `start`: local time after which no new work starts. |
+| `--max-hours <N>` | number | 14 | `start`: hard cap on the run length. |
+| `--minutes <N>` | number | 9 | `wait`: longest wait for the submitter. |
+| `--stop-reason <text>` | string | `unspecified` | `finish`: why the night ended (`deadline`, `target_reached`, `usage_budget`, `scan_failed`, `prepare_failed`, `apply_failed`, …). |
 
 Outputs and side effects:
 
@@ -618,8 +622,9 @@ Outputs and side effects:
 Example:
 
 ```bash
-node engine/cli.js night --profile <id> --phase start --target 100 --stop-at 06:30
+node engine/cli.js night --profile <id> --phase start
 node engine/cli.js night --profile <id> --phase check
+node engine/cli.js night --profile <id> --phase ready
 node engine/cli.js night --profile <id> --phase finish --stop-reason deadline
 ```
 
@@ -628,6 +633,37 @@ Common errors:
 - `night already running for <id> since … — this run stops here` (exit 3).
 - `no night in progress for <id> — run night --phase start first`.
 - `prepare_context.json missing or has no batch — run prepare --phase pre first`.
+
+### submit-ready
+
+Synopsis: `node engine/cli.js submit-ready --profile <id> [--concurrency <N>]`
+
+The submitter outside Claude (RFC 069 §2, BL-225). launchd starts it every 15 minutes (`scripts/install_submitter.sh --profile <id>`); it is safe to start by hand at any time and next to a running night.
+
+- Outside the profile's `apply_window` (`profile.json`, default `02:00-11:00` local, may wrap midnight) it submits nothing.
+- One submitter per profile: `~/Library/Application Support/ai-job-searcher/state/<id>/submit.lock` (a second start exits 0 with "another submitter is running"; a lock whose process is gone, or older than 6 h, is taken over). It never takes or waits for `night.lock`.
+- Takes the manifests in `.apply-state/ready/` in stamp order; each is claimed by an atomic rename into `ready/claimed/`, so only one run submits it. A claimed manifest left by a run that died is taken first.
+- Runs the `apply --phase submit` code in process on the manifest's rows only, reading the round snapshot `rounds/<stamp>/apply_context.json`, with `--answers-file <answers_dir>` and `--deadline` = the earlier of the manifest deadline and the window close. Per-row guards (`applied_date`, `apply_state=submitted`, the `submitting:` mark) keep a row from being sent twice.
+- Moves each manifest to `ready/done/<stamp>.json` with `outcome` (`submitted` + `result_file`, `expired` — past its deadline, rows stay queued; `no_jobs`; `invalid`; `submit_failed` after 3 failed runs — a failed run puts the manifest back for the next start).
+- On its first start after the window closes it rewrites `profiles/<id>/.health/morning-<date>.json` and sends one macOS notification for that date (`osascript`; marker `morning-<date>.notified`). While a night still holds its lock it waits up to an hour after the close.
+
+Flags:
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--profile <id>` | string | — | Required. |
+| `--concurrency <N>` | integer | 4 | Parallel browser contexts for the submit run. |
+
+Example:
+
+```bash
+node engine/cli.js submit-ready --profile <id>
+scripts/install_submitter.sh --profile <id> --dry-run
+```
+
+Common errors:
+
+- `invalid apply_window "<text>" — expected HH:MM-HH:MM (local time)`.
 
 ## Environment variables
 

@@ -9,7 +9,8 @@
 //      "submitting:<ts>" means the process died between the Submit click
 //      and the result write — the application may have gone out, so a
 //      human checks it (never re-submitted automatically).
-//   4. fit_score ∈ {Strong, Medium}
+//   4. fit_score ∈ {Strong, Medium, Weak} (RFC 069 §3: every scored fit is
+//      applied to; an unscored row is skipped as `fit_unscored`)
 //   5. company cap: ≤ filter_rules.company_cap applications per company in
 //      the rolling window. Counts come from `buildActiveCounts` (prepare.js)
 //      over rows that already left "To Apply" (Applied / Interview / …), and
@@ -23,12 +24,15 @@
 //      A miss is skipped with `archive: true` and the engine's geo reason;
 //      `apply --phase pre` archives the row.
 //
-// Order: newest `createdAt` first. `limit` truncates after gating.
+// Order: Strong → Medium → Weak, then newest `createdAt` first (RFC 069 §3).
+// `limit` truncates after gating.
 
 const { evaluateJob } = require("../../core/evaluate_job.js");
 const { enforceGeo } = require("../../core/geo_enforcer.js");
 
-const FIT_OK = new Set(["Strong", "Medium"]);
+// Fit priority: lower rank goes first.
+const FIT_RANK = { Strong: 0, Medium: 1, Weak: 2 };
+const FIT_OK = new Set(Object.keys(FIT_RANK));
 const STATES_DONE = new Set(["submitted", "failed", "manual"]);
 
 function companyCapDecision(companyName, filterRules, counts) {
@@ -89,7 +93,7 @@ function buildQueue(apps, opts = {}) {
       continue;
     }
     if (!FIT_OK.has(app.fit_score)) {
-      skipped.push({ ...base, reason: "fit_not_strong_medium" });
+      skipped.push({ ...base, reason: "fit_unscored" });
       continue;
     }
     if (profileGeo) {
@@ -105,7 +109,9 @@ function buildQueue(apps, opts = {}) {
     candidates.push(app);
   }
 
-  candidates.sort((a, b) => createdMs(b) - createdMs(a));
+  candidates.sort(
+    (a, b) => FIT_RANK[a.fit_score] - FIT_RANK[b.fit_score] || createdMs(b) - createdMs(a)
+  );
 
   const settled = apps.filter((a) => a.status !== "To Apply" && a.status !== "Inbox");
   const counts = { ...buildActiveCounts(settled, { windowDays, now }) };
@@ -128,4 +134,10 @@ function buildQueue(apps, opts = {}) {
   return { queue, skipped };
 }
 
-module.exports = { buildQueue, companyCapDecision, isInterruptedSubmit, SUBMITTING_PREFIX };
+module.exports = {
+  buildQueue,
+  companyCapDecision,
+  isInterruptedSubmit,
+  SUBMITTING_PREFIX,
+  FIT_RANK,
+};

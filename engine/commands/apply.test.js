@@ -274,7 +274,7 @@ test("pre: builds the context, resolves standard answers, flags manual cases", a
         url: "https://epsilon.wd5.myworkdayjobs.com/job/1",
       }),
       row({ key: "dead", companyName: "Zeta", url: "https://grnh.se/gone" }),
-      row({ key: "weak", companyName: "Eta", url: GH2_URL, fit_score: "Weak" }),
+      row({ key: "weak", companyName: "Eta", url: GH2_URL, fit_score: "" }),
       row({ key: "nores", companyName: "Theta", url: GH2_URL, resume_ver: "Missing" }),
     ],
     files: [RESUME],
@@ -319,7 +319,7 @@ test("pre: builds the context, resolves standard answers, flags manual cases", a
   assert.equal(manual.wd, "unsupported_ats:epsilon.wd5.myworkdayjobs.com");
   assert.equal(manual.nores, "resume_missing");
   assert.equal(ctx.skipped.find((s) => s.key === "dead").reason, "url_dead");
-  assert.equal(ctx.skipped.find((s) => s.key === "weak").reason, "fit_not_strong_medium");
+  assert.equal(ctx.skipped.find((s) => s.key === "weak").reason, "fit_unscored");
 
   const byKey = Object.fromEntries(h.store.apps.map((a) => [a.key, a]));
   assert.equal(byKey.gh1.apply_state, "queued");

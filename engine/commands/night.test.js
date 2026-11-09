@@ -34,7 +34,7 @@ function row(over) {
   };
 }
 
-function setup({ apps = [] } = {}) {
+function setup({ apps = [], profileExtra = {} } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "aijs-night-"));
   const profilesDir = path.join(root, "profiles");
   const profileDir = path.join(profilesDir, "demo");
@@ -45,6 +45,7 @@ function setup({ apps = [] } = {}) {
       id: "demo",
       resume: { versions_file: "resume_versions.json" },
       company_tiers: { Acme: "A" },
+      ...profileExtra,
     })
   );
   fs.writeFileSync(
@@ -58,6 +59,12 @@ function setup({ apps = [] } = {}) {
   const cmd = makeNightCommand({
     stateDir: () => stateDir,
     now: () => new Date(clock.now),
+    // `wait` sleeps on the fake clock; a test hook may change the disk meanwhile.
+    sleep: async (ms) => {
+      clock.now = new Date(clock.now.getTime() + ms);
+      clock.sleeps = (clock.sleeps || 0) + 1;
+      if (clock.onSleep) clock.onSleep();
+    },
   });
   const run = async (flags) => {
     const out = [];
@@ -105,7 +112,7 @@ test("start: takes the lock, sets the deadline; a second night exits 3 without t
   assert.equal(r.json.started_at, START.toISOString());
   assert.equal(r.json.deadline, "2026-10-22T07:00:00.000Z", "capped at 2h");
   assert.equal(r.json.target, 50);
-  assert.equal(r.json.apply_ready, 1, "only Strong / Medium rows are apply-ready");
+  assert.equal(r.json.apply_ready, 2, "every scored fit is apply-ready (RFC 069)");
   const lock = JSON.parse(fs.readFileSync(lockPath(t.stateDir, "demo"), "utf8"));
   assert.equal(lock.started_at, START.toISOString());
 
@@ -169,15 +176,17 @@ test("check: needs a running night; apply when fresh rows wait; stop at the dead
   assert.equal(r2.json.prepare_target, 99);
   assert.equal(r2.json.prepare_batch, 40);
 
-  // Tonight's prepare context says Inbox is empty → nothing fresh → stop.
+  // Tonight's prepare context says Inbox is empty → nothing fresh → top up
+  // with more companies (RFC 069 §6), never a queue_empty stop.
   writeJson(path.join(t.profileDir, "prepare_context.json"), {
     generatedAt: "2026-10-22T06:30:00.000Z",
     batch: [],
     stats: { inboxExhausted: true },
   });
   const r3 = await t.run({ phase: "check" });
-  assert.equal(r3.code, EXIT_STOP);
-  assert.equal(r3.json.reason, "queue_empty");
+  assert.equal(r3.code, 0);
+  assert.equal(r3.json.step, "topup");
+  assert.equal(r3.json.reason, null);
 
   // A round tonight that found nothing to judge counts as exhausted too.
   writeJson(path.join(t.profileDir, "prepare_context.json"), {
@@ -434,6 +443,219 @@ test("finish: one line in apply_runs.jsonl with counts recomputed from disk; loc
   assert.equal(runs[0].finished_at, "2026-10-22T13:30:00.000Z");
   assert.equal(fs.existsSync(lockPath(t.stateDir, "demo")), false);
   assert.equal((await t.run({ phase: "finish", stopReason: "deadline" })).code, 1);
+});
+
+// --- RFC 069 -----------------------------------------------------------------
+
+function localClockAfter(hours) {
+  const d = new Date(START.getTime() + hours * 3600 * 1000);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+test("start: target / stop time come from the profile, else 30 / 11:00", async () => {
+  const plain = setup();
+  const r = await plain.run({ phase: "start" });
+  assert.equal(r.json.target, 30);
+  const d = new Date(r.json.deadline);
+  const capped = d.getTime() === START.getTime() + 14 * 3600 * 1000;
+  assert.ok(capped || (d.getHours() === 11 && d.getMinutes() === 0), "11:00 or the 14 h cap");
+
+  const stopAt = localClockAfter(3);
+  const own = setup({ profileExtra: { apply_target: 45, apply_stop_at: stopAt } });
+  const r2 = await own.run({ phase: "start" });
+  assert.equal(r2.json.target, 45);
+  assert.equal(r2.json.deadline, new Date(START.getTime() + 3 * 3600 * 1000).toISOString());
+
+  // A flag still wins over the profile.
+  const flag = setup({ profileExtra: { apply_target: 45 } });
+  assert.equal((await flag.run({ phase: "start", target: 7 })).json.target, 7);
+});
+
+const APPLY_CTX = {
+  generated_at: "2026-10-22T06:00:00.000Z",
+  jobs: [
+    { key: "lever:a", company: "Acme", title: "PM", unanswered: [] },
+    { key: "lever:b", company: "Beta", title: "PM", unanswered: [] },
+  ],
+};
+
+test("ready: writes the manifest atomically with a context snapshot; idempotent per round", async () => {
+  const t = setup();
+  assert.equal((await t.run({ phase: "ready" })).code, 1, "needs a running night");
+  await t.run({ phase: "start", maxHours: 6 });
+  assert.equal((await t.run({ phase: "ready" })).code, 1, "needs an apply context");
+
+  const stateDir = path.join(t.profileDir, ".apply-state");
+  writeJson(path.join(stateDir, "apply_context.json"), APPLY_CTX);
+  t.clock.now = new Date("2026-10-22T06:05:00.000Z");
+  const r = await t.run({ phase: "ready" });
+  assert.equal(r.code, 0);
+  const readyDir = path.join(stateDir, "ready");
+  assert.equal(r.json.manifest, path.join(readyDir, "2026-10-22T06-00-00-000Z.json"));
+  assert.deepEqual(fs.readdirSync(readyDir), ["2026-10-22T06-00-00-000Z.json"], "no tmp left");
+  const m = JSON.parse(fs.readFileSync(r.json.manifest, "utf8"));
+  const roundDir = path.join(stateDir, "rounds", "2026-10-22T06-00-00-000Z");
+  assert.deepEqual(m, {
+    stamp: "2026-10-22T06-00-00-000Z",
+    answers_dir: path.join(roundDir, "answers"),
+    deadline: "2026-10-22T11:00:00.000Z",
+    rows: ["lever:a", "lever:b"],
+    created_at: "2026-10-22T06:05:00.000Z",
+  });
+  assert.ok(fs.statSync(m.answers_dir).isDirectory());
+  const snap = JSON.parse(fs.readFileSync(path.join(roundDir, "apply_context.json"), "utf8"));
+  assert.deepEqual(snap, APPLY_CTX);
+
+  // Same context again → nothing new, even once the submitter moved it on.
+  fs.mkdirSync(path.join(readyDir, "done"), { recursive: true });
+  fs.renameSync(r.json.manifest, path.join(readyDir, "done", path.basename(r.json.manifest)));
+  const again = await t.run({ phase: "ready" });
+  assert.equal(again.json.already_written, true);
+  assert.deepEqual(
+    fs.readdirSync(readyDir).filter((n) => n.endsWith(".json")),
+    []
+  );
+
+  // No jobs → no manifest.
+  writeJson(path.join(stateDir, "apply_context.json"), {
+    generated_at: "2026-10-22T07:00:00.000Z",
+    jobs: [],
+  });
+  assert.equal((await t.run({ phase: "ready" })).json.manifest, null);
+});
+
+test("check: rows with the submitter → wait; a top-up scan re-opens prepare", async () => {
+  const apps = [];
+  for (let i = 0; i < 3; i++) apps.push(row({ key: `s${i}` }));
+  const t = setup({ apps });
+  await t.run({ phase: "start", target: 3 });
+  const stateDir = path.join(t.profileDir, ".apply-state");
+  writeJson(path.join(stateDir, "apply_pre-a.json"), {
+    generated_at: "2026-10-22T05:10:00.000Z",
+    jobs: apps.map((a) => ({ key: a.key })),
+    manual: [],
+    skipped: [],
+  });
+  writeJson(path.join(stateDir, "ready", "2026-10-22T05-10-00-000Z.json"), {
+    stamp: "2026-10-22T05-10-00-000Z",
+    answers_dir: path.join(stateDir, "rounds", "x", "answers"),
+    deadline: "2026-10-22T11:00:00.000Z",
+    rows: ["s0", "s1", "s2"],
+    created_at: "2026-10-22T05:11:00.000Z",
+  });
+  t.clock.now = new Date("2026-10-22T05:20:00.000Z");
+  const w = await t.run({ phase: "check" });
+  assert.equal(w.code, 0);
+  assert.deepEqual([w.json.step, w.json.pending_submit, w.json.need], ["wait", 3, 0]);
+
+  // The submitter sent two (one twice — counted once) and skipped one.
+  fs.mkdirSync(path.join(stateDir, "ready", "done"), { recursive: true });
+  fs.renameSync(
+    path.join(stateDir, "ready", "2026-10-22T05-10-00-000Z.json"),
+    path.join(stateDir, "ready", "done", "2026-10-22T05-10-00-000Z.json")
+  );
+  writeJson(path.join(stateDir, "apply_results-a.json"), {
+    generated_at: "2026-10-22T05:30:00.000Z",
+    results: [
+      { key: "s0", outcome: "submitted" },
+      { key: "s1", outcome: "submitted" },
+      { key: "s2", outcome: "manual", reason: "captcha" },
+    ],
+  });
+  writeJson(path.join(stateDir, "apply_results-b.json"), {
+    generated_at: "2026-10-22T05:31:00.000Z",
+    results: [{ key: "s1", outcome: "submitted" }],
+  });
+  writeJson(path.join(t.profileDir, "prepare_context.json"), {
+    generatedAt: "2026-10-22T05:40:00.000Z",
+    batch: [],
+    stats: { inboxExhausted: true },
+  });
+  t.clock.now = new Date("2026-10-22T05:45:00.000Z");
+  const top = await t.run({ phase: "check" });
+  assert.deepEqual(
+    [top.json.step, top.json.submitted_tonight, top.json.need, top.json.pending_submit],
+    ["topup", 2, 1, 0]
+  );
+
+  // The top-up scan added an Inbox row after that prepare round → prepare.
+  const { apps: now } = applications.load(path.join(t.profileDir, "applications.tsv"));
+  now.push(row({ key: "new", status: "Inbox", createdAt: "2026-10-22T05:50:00.000Z" }));
+  applications.save(path.join(t.profileDir, "applications.tsv"), now);
+  const p = await t.run({ phase: "check" });
+  assert.deepEqual(
+    [p.json.step, p.json.inbox_exhausted, p.json.scanned_since_prepare],
+    ["prepare", false, 1]
+  );
+
+  // A manifest left over from an earlier night (deadline passed) is not
+  // pending: it never makes tonight wait.
+  writeJson(path.join(stateDir, "ready", "old.json"), {
+    stamp: "old",
+    answers_dir: "/tmp/a",
+    deadline: "2026-10-21T18:00:00.000Z",
+    rows: ["zz1", "zz2"],
+    created_at: "2026-10-21T05:00:00.000Z",
+  });
+  assert.equal((await t.run({ phase: "check" })).json.pending_submit, 0);
+});
+
+test("wait: returns when the submitter is done, else after --minutes", async () => {
+  const t = setup();
+  await t.run({ phase: "start" });
+  const readyDir = path.join(t.profileDir, ".apply-state", "ready");
+  const m = {
+    stamp: "x1",
+    answers_dir: "/tmp/a",
+    deadline: "2026-10-22T11:00:00.000Z",
+    rows: ["k1"],
+    created_at: "2026-10-22T05:00:00.000Z",
+  };
+  writeJson(path.join(readyDir, "x1.json"), m);
+  const r = await t.run({ phase: "wait", minutes: 3 });
+  assert.equal(r.code, 0);
+  assert.equal(r.json.pending_submit, 1);
+  assert.equal(r.json.waited_minutes, 3);
+
+  // The submitter finishes during the second poll → wait returns early.
+  t.clock.sleeps = 0;
+  t.clock.onSleep = () => {
+    if (t.clock.sleeps === 2) fs.rmSync(path.join(readyDir, "x1.json"));
+  };
+  const early = await t.run({ phase: "wait", minutes: 9 });
+  assert.equal(early.json.pending_submit, 0);
+  assert.equal(early.json.waited_minutes, 1);
+});
+
+test("finish: writes the morning report (submitted split by fit, skip reasons)", async () => {
+  const t = setup({
+    apps: [
+      row({ key: "a", status: "Applied", fit_score: "Strong" }),
+      row({ key: "b", status: "Applied", fit_score: "Weak" }),
+      row({ key: "c", fit_score: "Medium" }),
+    ],
+  });
+  await t.run({ phase: "start", target: 30 });
+  writeJson(path.join(t.profileDir, ".apply-state", "apply_results-a.json"), {
+    generated_at: "2026-10-22T06:00:00.000Z",
+    results: [
+      { key: "a", outcome: "submitted", evidence: { email: "thanks" } },
+      { key: "b", outcome: "submitted" },
+      { key: "c", outcome: "manual", reason: "captcha" },
+    ],
+  });
+  t.clock.now = new Date(2026, 9, 22, 11, 0, 0);
+  const r = await t.run({ phase: "finish", stopReason: "deadline" });
+  assert.equal(r.code, 0);
+  assert.equal(
+    r.json.morning_report,
+    path.join(t.profileDir, ".health", "morning-2026-10-22.json")
+  );
+  const rep = JSON.parse(fs.readFileSync(r.json.morning_report, "utf8"));
+  assert.deepEqual(rep.submitted, { total: 2, strong: 1, medium: 0, weak: 1, other: 0 });
+  assert.equal(rep.skip_line, "captcha 1");
+  assert.equal(rep.why_below_target, "deadline");
+  assert.equal(rep.applications[0].confirmation, "email");
 });
 
 test("the CLI registers the real night handler", async () => {

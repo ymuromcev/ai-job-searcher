@@ -124,8 +124,8 @@ Set expectations explicitly:
 - **Doesn't apply everywhere.** Since RFC 068 the bot fills and submits
   forms itself on Greenhouse, Lever and Ashby (headless browser on your
   machine). It never creates accounts, enters passwords, solves captchas
-  or uses LinkedIn Easy Apply; anything like that goes to a manual list
-  on the local board.
+  or uses LinkedIn Easy Apply; a form like that is skipped with a reason
+  and counted in the morning report (see [Autonomy](#autonomy)).
 - **Doesn't auto-reply to recruiters.** Email is read-only (Gmail
   OAuth scope `gmail.readonly`). `check` reads replies to update
   Notion status; the tool never sends mail.
@@ -225,11 +225,49 @@ node engine/cli.js <command> --profile <id> [flags]
 | `backfill-outreach-url` | One-shot: fill the LinkedIn people-search URL for existing `To Apply` / `Applied` rows that predate the RFC-059 outreach feature. Dry-run by default; `--apply` writes TSV + Notion. Idempotent. |
 | `companies-upsert` | Push relokant-sweep sweet-zone targets into the Notion Companies DB, two-way deduped (domain + name vs Notion / `data/companies.tsv` / relokant ledgers). Back-fills empty fields only; never writes `Tier`. Dry-run by default; `--apply` writes. (RFC 062) |
 | `apply` | Bot applications (RFC 068): `--phase pre` reads the forms and answers standard questions, the `job-pipeline` skill answers the rest with a truth check, `--phase submit` fills, submits and records the ATS confirmation. `--dry-run` stops before Submit. |
-| `night` | Orchestration helpers for the unattended nightly run (lock, time budget, fan-out / collect, run log) — see `skills/job-pipeline/night-apply.md`. |
+| `night` | Orchestration helpers for the unattended nightly run (lock, time budget, fan-out / collect, ready manifests for the submitter, run log, morning report) — see `skills/job-pipeline/night-apply.md`. |
+| `submit-ready` | The submitter (RFC 069): submits the rows of the night's ready manifests inside the profile's `apply_window` (default 02:00–11:00); started by launchd every 15 min. See [Autonomy](#autonomy). |
 | `board` | Local registry UI on 127.0.0.1: applications, manual to-do list, week, sources / apply sites, answer bank with ratings. |
 | `report` | `--weekly` strategy review: funnel, sources, apply outcomes, nights, answer bank. |
 
 `node engine/cli.js --help` prints the same list with full flag docs.
+
+## Autonomy
+
+The nightly bot decides and finishes on its own (RFC 069). Every night it
+applies until the profile's target (`apply_target` in `profile.json`,
+default 30 distinct jobs) or the stop time (`apply_stop_at`, default
+11:00), Strong fits first, then Medium, then Weak. When the queue runs
+dry it finds more companies on Greenhouse / Lever / Ashby and keeps going.
+
+- **No step waits for the owner.** A question without an honest answer is
+  left blank when optional; when required, the row is skipped with
+  `no_honest_answer`. Captchas, login walls, bot checks and broken forms
+  are skipped with a reason. Nothing goes to a «do by hand» queue.
+- **The morning shows results, not questions:** submitted N (Strong /
+  Medium / Weak), the list with confirmation status, one line of skip
+  reasons, and why it stopped below the target. It lives in
+  `profiles/<id>/.health/morning-<date>.json`, on top of the board's first
+  tab, and arrives as one macOS notification after the window closes.
+- **Rule for every change to this project:** no proposal may depend on the
+  owner's clicks or answers. If a design needs the owner in the loop, it is
+  not done yet.
+
+Claude prepares (scan, fit, tailoring, answers, truth review) and hands
+each round over as a ready manifest; a deterministic submitter outside
+Claude sends the forms. Install it once per profile on the Mac that runs
+the night:
+
+```bash
+scripts/install_submitter.sh --profile <id> --dry-run    # print the LaunchAgent, change nothing
+scripts/install_submitter.sh --profile <id>              # install (or reinstall)
+scripts/install_submitter.sh --profile <id> --uninstall  # remove
+```
+
+It installs `~/Library/LaunchAgents/com.<user>.ai-job-searcher.submit-<id>.plist`
+(every 15 min; a run missed while the Mac slept fires on wake) and logs to
+`~/Library/Logs/ai-job-searcher/submit-<id>.log`. Outside `apply_window`
+(default `02:00-11:00` local) the submitter does nothing.
 
 ## Discovery adapters
 

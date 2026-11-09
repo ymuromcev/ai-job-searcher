@@ -1,12 +1,15 @@
 // Night plan (RFC 068 §9 / §11, BL-225): pure helpers behind the `night`
-// command — the unattended nightly run that targets ~100 applications.
+// command — the unattended nightly run. Since RFC 069 the night prepares and
+// a separate submitter (submit-ready) sends; the night aims at the profile's
+// `apply_target` (default 30) by `apply_stop_at` (default 11:00).
 //
 // Nothing here touches the filesystem, the network or the clock: callers pass
 // `now`, parsed files and TSV rows in. The command (engine/commands/night.js)
 // owns the I/O.
 //
 //   computeDeadline(start, opts)       → Date — when the night stops starting work
-//   decideNextStep(state)              → { step: "prepare"|"apply"|"stop", … }
+//   decideNextStep(state)              → { step: "prepare"|"apply"|"wait"|"topup"|"stop", … }
+//   resolveNightSettings(profile, f)   → { target, stopAt } — flag › profile › default
 //   prepareBatchSize(prepareTarget)    → --batch for the next prepare round
 //   countTsvSince(apps, sinceIso)      → { scanned, prepared{…} }
 //   summarizeApplyFiles(files, since)  → submit / manual / failed counts + keys seen
@@ -15,9 +18,12 @@
 //   collectRowResults(batch, byKey, o) → results[] + companyTiers for commit
 //   buildQuestionJob(job, paths)       → one apply job's subagent input
 
-const DEFAULT_STOP_AT = "06:30";
-const DEFAULT_MAX_HOURS = 10;
-const DEFAULT_TARGET = 100;
+// RFC 069 §3: the night aims at 30 applications and stops starting new work
+// at 11:00. A night started in the evening owns up to 14 h, so a 21:00 start
+// still reaches 11:00; a run started by hand mid-day is still capped.
+const DEFAULT_STOP_AT = "11:00";
+const DEFAULT_MAX_HOURS = 14;
+const DEFAULT_TARGET = 30;
 const HOUR_MS = 60 * 60 * 1000;
 
 const FIT_SCORES = new Set(["Strong", "Medium", "Weak"]);
@@ -78,33 +84,43 @@ const APPLY_MIN_BATCH = 10;
 
 // state: {
 //   now, deadline, target,
-//   submittedTonight,   // applications sent since the night started
-//   applyReady,         // queueable To Apply rows (Strong/Medium, cap, never applied)
+//   submittedTonight,   // distinct jobs submitted since the night started
+//   pendingSubmit,      // distinct jobs in ready manifests the submitter has
+//                       // not finished yet (RFC 069 §1) — in flight, not done
+//   applyReady,         // queueable To Apply rows (all fits, cap, never applied)
 //   applyFresh,         // of those, rows no apply pre has looked at tonight
-//   inboxExhausted,     // last prepare context (tonight) said Inbox is empty
+//   inboxExhausted,     // tonight's last prepare found nothing to judge and no
+//                       // scan has added Inbox rows since
 //   usageStop,          // operator / usage budget says stop
 // }
 // The order of the checks is the contract the runbook relies on:
-//   deadline → usage → target → apply (≥ APPLY_MIN_BATCH fresh) → prepare
-//   → apply (any fresh) → stop (queue_empty).
+//   deadline → usage → target → wait (in-flight rows cover the gap)
+//   → apply (≥ APPLY_MIN_BATCH fresh) → prepare → apply (any fresh)
+//   → topup (find more companies, RFC 069 §6).
 // Rows an apply pre already looked at tonight (skipped as dead / under the
 // salary floor, deferred by the deadline) are not "fresh": they never count
-// toward the prepare gap and never trigger another apply round, so the loop
-// always ends.
+// toward the prepare gap and never trigger another apply round. When nothing
+// is left to prepare or apply, the night tops up instead of stopping — the
+// only stops are the deadline, the target, the usage budget and failures.
 function decideNextStep(state) {
   const target = Number.isFinite(state.target) && state.target > 0 ? state.target : DEFAULT_TARGET;
   const submitted = state.submittedTonight || 0;
+  const pending = state.pendingSubmit || 0;
   const applyReady = state.applyReady || 0;
   const applyFresh = state.applyFresh === undefined ? applyReady : state.applyFresh || 0;
   const left = minutesLeft(state.now, state.deadline);
-  const need = Math.max(0, target - submitted);
+  const need = Math.max(0, target - submitted - pending);
   const prepareTarget = Math.max(0, need - applyFresh);
-  const base = { minutesLeft: left, need, prepareTarget, applyReady, applyFresh };
+  const base = { minutesLeft: left, need, prepareTarget, applyReady, applyFresh, pending };
   const stop = (reason) => ({ step: "stop", reason, ...base, prepareBatch: 0 });
+  const go = (step) => ({ step, reason: null, ...base, prepareBatch: 0 });
 
   if (left <= 0) return stop("deadline");
   if (state.usageStop) return stop("usage_budget");
-  if (need === 0) return stop("target_reached");
+  if (submitted >= target) return stop("target_reached");
+  // Enough rows are already with the submitter: wait for its results before
+  // preparing more (a row it skips comes back into the gap).
+  if (need === 0) return go("wait");
   if (applyFresh >= Math.min(APPLY_MIN_BATCH, need)) {
     return { step: "apply", reason: null, ...base, prepareBatch: 0 };
   }
@@ -116,8 +132,22 @@ function decideNextStep(state) {
       prepareBatch: prepareBatchSize(prepareTarget),
     };
   }
-  if (applyFresh > 0) return { step: "apply", reason: null, ...base, prepareBatch: 0 };
-  return stop("queue_empty");
+  if (applyFresh > 0) return go("apply");
+  return go("topup");
+}
+
+function positiveInt(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+
+// Night target and stop time: an explicit flag wins, then the profile's
+// `apply_target` / `apply_stop_at` (profile.json), then the engine defaults.
+function resolveNightSettings(profile, flags = {}) {
+  const p = profile || {};
+  const target = positiveInt(flags.target) || positiveInt(p.apply_target) || DEFAULT_TARGET;
+  const stopAt = str(flags.stopAt).trim() || str(p.apply_stop_at).trim() || DEFAULT_STOP_AT;
+  return { target, stopAt };
 }
 
 function atOrAfter(value, sinceMs) {
@@ -158,8 +188,12 @@ function summarizeApplyFiles(files, sinceIso) {
     deferred: 0,
     errors: 0,
     seenKeys: [],
+    submittedKeys: [],
   };
   const seen = new Set();
+  // The target counts distinct jobs: a row listed as submitted by two result
+  // files (a retried manifest) is still one application.
+  const submitted = new Set();
   for (const f of files || []) {
     const d = f && f.data;
     if (!d || d.dry_run) continue;
@@ -176,8 +210,10 @@ function summarizeApplyFiles(files, sinceIso) {
     if (f.kind === "results") {
       for (const r of Array.isArray(d.results) ? d.results : []) {
         if (!r) continue;
-        if (r.outcome === "submitted") out.submitted++;
-        else if (r.outcome === "manual") out.manual++;
+        if (r.outcome === "submitted") {
+          if (r.key) submitted.add(r.key);
+          else out.submitted++;
+        } else if (r.outcome === "manual") out.manual++;
         else if (r.outcome === "failed") out.failed++;
         else if (r.outcome === "error") out.errors++;
         else if (r.outcome === "skipped" && r.reason === "deadline") out.deferred++;
@@ -185,6 +221,8 @@ function summarizeApplyFiles(files, sinceIso) {
       }
     }
   }
+  out.submitted += submitted.size;
+  out.submittedKeys = [...submitted];
   out.seenKeys = [...seen];
   return out;
 }
@@ -369,6 +407,7 @@ module.exports = {
   minutesLeft,
   prepareBatchSize,
   decideNextStep,
+  resolveNightSettings,
   countTsvSince,
   summarizeApplyFiles,
   safeKey,

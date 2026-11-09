@@ -213,6 +213,7 @@ test("KNOWN_COMMANDS lists exactly the supported commands", () => {
     "report",
     "retro-tailor",
     "scan",
+    "submit-ready",
     "sync",
     "validate",
   ]);
