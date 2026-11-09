@@ -2,6 +2,15 @@
 //
 //   companies add --profile <id> --ats greenhouse|lever|ashby --slug <slug>
 //                 [--name <company>]
+//   companies add --profile <id> --from-file <tsv>
+//
+// --from-file: one board per line, `ats<TAB>slug<TAB>name` (name optional;
+// blank lines and "#" comments ignored). Every line is validated like the
+// flags (ats in the set, slug ^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$, name plain
+// text) before anything is fetched; a bad line is reported as invalid and the
+// others still run. This is how the night hands over boards that subagents
+// found on the web: their text goes into a file, never into a shell command
+// (security review L3).
 //
 // Used by the night's volume top-up (Round S): a subagent finds a company
 // hiring matching roles on Greenhouse / Lever / Ashby and adds its board.
@@ -85,40 +94,9 @@ async function validateBoard(ats, slug, name, { fetchFn, adapters }) {
   return { ok: true, jobs: jobs.length };
 }
 
-// Exclusive lock file next to companies.tsv. Stale locks (a crashed
-// process) are broken after `staleMs`.
-async function withFileLock(lockPath, fn, { timeoutMs = 30000, staleMs = 60000 } = {}) {
-  const started = Date.now();
-  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-  for (;;) {
-    try {
-      const fd = fs.openSync(lockPath, "wx");
-      fs.writeSync(fd, String(process.pid));
-      fs.closeSync(fd);
-      break;
-    } catch (err) {
-      if (err.code !== "EEXIST") throw err;
-      try {
-        const age = Date.now() - fs.statSync(lockPath).mtimeMs;
-        if (age > staleMs) {
-          fs.rmSync(lockPath, { force: true });
-          continue;
-        }
-      } catch {
-        continue; // the holder just released it
-      }
-      if (Date.now() - started > timeoutMs) {
-        throw new Error(`companies.tsv is locked (${lockPath})`);
-      }
-      await new Promise((r) => setTimeout(r, 100));
-    }
-  }
-  try {
-    return await fn();
-  } finally {
-    fs.rmSync(lockPath, { force: true });
-  }
-}
+// Exclusive lock file next to companies.tsv: core/file_lock.js (pid-based —
+// a live holder is never robbed; a dead one's lock is broken).
+const { withFileLock } = require("../core/file_lock.js");
 
 function makeDefaultDeps() {
   const { defaultFetch } = require("../modules/discovery/_http.js");
@@ -129,6 +107,7 @@ function makeDefaultDeps() {
     fetchFn: defaultFetch,
     adapters: boardAdapters(),
     withLock: withFileLock,
+    readFile: (p) => fs.readFileSync(p, "utf8"),
   };
 }
 
@@ -142,8 +121,50 @@ function findRow(rows, ats, slug) {
   return rows.find((r) => r.source === ats && String(r.slug).toLowerCase() === s) || null;
 }
 
+// A company name from a file or a flag: one line of plain text.
+function cleanName(raw) {
+  return String(raw || "")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
+}
+
+// Pure. `ats\tslug\tname` lines → { entries: [{ats, slug, name, line}],
+// invalid: [{line, error}] }.
+function parseBoardLines(text) {
+  const entries = [];
+  const invalid = [];
+  const seen = new Set();
+  String(text || "")
+    .split(/\r?\n/)
+    .forEach((raw, i) => {
+      const line = i + 1;
+      if (!raw.trim() || raw.trim().startsWith("#")) return;
+      const parts = raw.split("\t");
+      const ats = String(parts[0] || "")
+        .trim()
+        .toLowerCase();
+      const slug = String(parts[1] || "").trim();
+      if (!ATS.includes(ats)) {
+        invalid.push({ line, error: `ats must be one of ${ATS.join(", ")}` });
+        return;
+      }
+      if (!SLUG_RE.test(slug)) {
+        invalid.push({ line, error: "slug must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$" });
+        return;
+      }
+      const k = `${ats}\t${slug.toLowerCase()}`;
+      if (seen.has(k)) return;
+      seen.add(k);
+      entries.push({ ats, slug, name: cleanName(parts.slice(2).join(" ")), line });
+    });
+  return { entries, invalid };
+}
+
 async function runAdd(ctx, deps) {
-  const { profileId, flags, stdout, stderr } = ctx;
+  const { profileId, flags, stderr } = ctx;
+  if (flags.fromFile) return runAddFromFile(ctx, deps);
   const ats = String(flags.ats || "")
     .trim()
     .toLowerCase();
@@ -156,13 +177,48 @@ async function runAdd(ctx, deps) {
     stderr("error: --slug <slug> is required (letters, digits, . _ -)");
     return 1;
   }
-  const name = String(flags.name || "").trim() || nameFromSlug(slug);
-
   // Validates the profile id and that the profile exists.
   deps.loadProfile(profileId, { profilesDir: resolveProfilesDir(ctx, ctx.env || process.env) });
+  return addOne(ctx, deps, { ats, slug, name: cleanName(flags.name) });
+}
+
+async function runAddFromFile(ctx, deps) {
+  const { profileId, flags, stdout, stderr } = ctx;
+  let text;
+  try {
+    text = deps.readFile(String(flags.fromFile));
+  } catch (err) {
+    stderr(`error: cannot read --from-file ${flags.fromFile}: ${err.message}`);
+    return 1;
+  }
+  deps.loadProfile(profileId, { profilesDir: resolveProfilesDir(ctx, ctx.env || process.env) });
+  const { entries, invalid } = parseBoardLines(text);
+  for (const bad of invalid) {
+    stdout(JSON.stringify({ result: "invalid", line: bad.line, error: bad.error }));
+  }
+  const tally = { added: 0, exists: 0, invalid: invalid.length };
+  for (const e of entries) {
+    await addOne(ctx, deps, e, (obj) => {
+      if (tally[obj.result] !== undefined) tally[obj.result] += 1;
+    });
+  }
+  stderr(
+    `companies add --from-file: ${tally.added} added, ${tally.exists} already known, ` +
+      `${tally.invalid} invalid`
+  );
+  return 0;
+}
+
+// Add one board (ats + slug already validated).
+async function addOne(ctx, deps, { ats, slug, name: rawName }, onResult = () => {}) {
+  const { profileId, stdout, stderr } = ctx;
+  const name = rawName || nameFromSlug(slug);
 
   const companiesPath = companiesPathFor(ctx);
-  const emit = (obj) => stdout(JSON.stringify(obj));
+  const emit = (obj) => {
+    onResult(obj);
+    stdout(JSON.stringify(obj));
+  };
 
   const { rows } = deps.loadCompanies(companiesPath);
   const known = findRow(rows, ats, slug);
@@ -225,3 +281,4 @@ module.exports.makeCompaniesCommand = makeCompaniesCommand;
 module.exports.validateBoard = validateBoard;
 module.exports.nameFromSlug = nameFromSlug;
 module.exports.withFileLock = withFileLock;
+module.exports.parseBoardLines = parseBoardLines;

@@ -210,6 +210,70 @@ test("a second submitter exits while the first holds the lock; a dead holder is 
   assert.equal(t.calls.length, 1, "pid 999 is dead — taken over");
 });
 
+test("a live submitter's lock is never taken over, however long it has been running", async () => {
+  const t = setup();
+  addManifest(t, "s1", ["a1"]);
+  const lock = path.join(t.stateDir, "demo", LOCK_FILE);
+  // Started two days ago and still alive (a very long night of forms).
+  writeJson(lock, { pid: 777, started_at: new Date(IN_WINDOW - 2 * 86400000).toISOString() });
+  const r = await t.run();
+  assert.match(r.out.join("\n"), /another submitter \(pid 777\) is running/);
+  assert.equal(t.calls.length, 0);
+  assert.equal(JSON.parse(fs.readFileSync(lock, "utf8")).pid, 777);
+});
+
+test("the manifest's answers_dir is ignored: the round folder comes from the stamp", async () => {
+  const t = setup();
+  const m = addManifest(t, "s1", ["a1"]);
+  // A tampered manifest points elsewhere: never used.
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), "elsewhere-"));
+  writeJson(path.join(t.readyDir, "s1.json"), {
+    ...m,
+    answers_dir: path.join(elsewhere, "answers"),
+  });
+  await t.run();
+  assert.equal(t.calls.length, 1);
+  assert.equal(t.calls[0].answersDir, path.join(t.apply, "rounds", "s1", "answers"));
+});
+
+test("a round folder that resolves outside .apply-state (symlink) is refused", async () => {
+  const t = setup();
+  addManifest(t, "s2", ["a1"]);
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "outside-round-"));
+  const roundDir = path.join(t.apply, "rounds", "s2");
+  fs.cpSync(roundDir, outside, { recursive: true });
+  fs.rmSync(roundDir, { recursive: true });
+  fs.symlinkSync(outside, roundDir);
+  const r = await t.run();
+  assert.equal(t.calls.length, 0);
+  assert.match(r.err.join("\n"), /outside \.apply-state/);
+  const done = JSON.parse(fs.readFileSync(path.join(t.readyDir, "done", "s2.json"), "utf8"));
+  assert.equal(done.outcome, "invalid");
+});
+
+test("every start writes a heartbeat (inside the window, outside it, lock busy or not)", async () => {
+  const t = setup();
+  const hb = path.join(t.stateDir, "demo", "submit-heartbeat.json");
+  await t.run();
+  let beat = JSON.parse(fs.readFileSync(hb, "utf8"));
+  assert.equal(beat.at, new Date(IN_WINDOW).toISOString());
+  assert.equal(beat.window_open, true);
+  t.clock.now = local(2026, 11, 10, 14);
+  writeJson(path.join(t.stateDir, "demo", LOCK_FILE), { pid: 777, started_at: "x" });
+  await t.run();
+  beat = JSON.parse(fs.readFileSync(hb, "utf8"));
+  assert.equal(beat.at, local(2026, 11, 10, 14).toISOString());
+  assert.equal(beat.window_open, false);
+});
+
+test("the submitter does not stop at the target: 30 is a minimum, not a cap", async () => {
+  const t = setup({ profileExtra: { apply_target: 1 } });
+  addManifest(t, "s1", ["a1"]);
+  addManifest(t, "s2", ["b1", "b2"]);
+  await t.run();
+  assert.equal(t.calls.length, 2, "both manifests submitted past a target of 1");
+});
+
 test("a manifest claimed by a run that died is submitted first", async () => {
   const t = setup();
   addManifest(t, "s2", ["b1"]);

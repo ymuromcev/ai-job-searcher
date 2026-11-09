@@ -129,7 +129,17 @@ async function runAutoNoResponseSweep(profileId, ctx, options = {}) {
       }
     }
 
-    deps.saveApplications(applicationsPath, apps);
+    // Write under the TSV lock onto a fresh read (the night / submitter may
+    // have written meanwhile): only rows that are still stale change.
+    const staleKeys = new Set(stale.map((a) => a.key));
+    const lockFn = deps.withApplicationsLock || applications.withLock;
+    await lockFn(applicationsPath, () => {
+      const fresh = deps.loadApplications(applicationsPath).apps;
+      for (const a of selectStaleApplied(fresh, todayStr, thresholdDays)) {
+        if (staleKeys.has(a.key)) a.status = NO_RESPONSE;
+      }
+      deps.saveApplications(applicationsPath, fresh);
+    });
 
     const notionNote = token
       ? `, ${result.notionPushed} pushed to Notion` +

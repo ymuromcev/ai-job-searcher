@@ -107,6 +107,7 @@ const PARSE_OPTIONS = {
     ats: { type: "string" },
     slug: { type: "string" },
     name: { type: "string" },
+    "from-file": { type: "string" },
   },
   allowPositionals: true,
   strict: true,
@@ -313,6 +314,8 @@ companies flags:
   --slug <slug>          Required. Board slug (boards.greenhouse.io/<slug>,
                          jobs.lever.co/<slug>, jobs.ashbyhq.com/<slug>).
   --name <company>       Company name (default: from the slug).
+  --from-file <tsv>      Instead of --ats/--slug: one board per line,
+                         "ats<TAB>slug<TAB>name"; every line validated.
 
 requeue flags:
   --since <YYYY-MM-DD>   Required. Bot submissions applied on/after this date.
@@ -494,6 +497,7 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
       ats: parsed.values.ats || "",
       slug: parsed.values.slug || "",
       name: parsed.values.name || "",
+      fromFile: parsed.values["from-file"] || "",
     },
     env,
     stdout: writeOut,

@@ -8,17 +8,76 @@ const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
-const SCRIPT = path.join(__dirname, "install_submitter.sh");
-const REPO = fs.realpathSync(path.join(__dirname, ".."));
+const SOURCE = path.join(__dirname, "install_submitter.sh");
 
-function run(args) {
+function git(cwd, args) {
+  const r = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@example.com",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@example.com",
+    },
+  });
+  if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+  return r.stdout;
+}
+
+// A throwaway main checkout holding a copy of the script and (optionally)
+// profiles/demo/profile.json — the installer refuses anything else.
+function makeRepo({ profile = true } = {}) {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "aijs-repo-")));
+  git(repo, ["init", "-q"]);
+  fs.mkdirSync(path.join(repo, "scripts"));
+  fs.copyFileSync(SOURCE, path.join(repo, "scripts", "install_submitter.sh"));
+  if (profile) {
+    fs.mkdirSync(path.join(repo, "profiles", "demo"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "profiles", "demo", "profile.json"), "{}");
+  }
+  return repo;
+}
+
+const REPO = makeRepo();
+const SCRIPT = path.join(REPO, "scripts", "install_submitter.sh");
+
+function run(args, script = SCRIPT) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "aijs-installer-"));
-  const res = spawnSync("bash", [SCRIPT, ...args], {
+  const res = spawnSync("bash", [script, ...args], {
     encoding: "utf8",
     env: { ...process.env, HOME: home },
   });
   return { ...res, home };
 }
+
+test("install refuses outside the main checkout (a git worktree)", () => {
+  const repo = makeRepo();
+  git(repo, ["add", "-A"]);
+  git(repo, ["commit", "-q", "-m", "init"]);
+  const wt = path.join(fs.realpathSync(os.tmpdir()), `aijs-wt-${process.pid}-${Date.now()}`);
+  git(repo, ["worktree", "add", "-q", wt]);
+  fs.mkdirSync(path.join(wt, "profiles", "demo"), { recursive: true });
+  fs.writeFileSync(path.join(wt, "profiles", "demo", "profile.json"), "{}");
+  const r = run(
+    ["--profile", "demo", "--dry-run"],
+    path.join(wt, "scripts", "install_submitter.sh")
+  );
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /main checkout/);
+  assert.deepEqual(fs.readdirSync(r.home), []);
+});
+
+test("install refuses when profiles/<id>/profile.json is missing", () => {
+  const repo = makeRepo({ profile: false });
+  const r = run(
+    ["--profile", "demo", "--dry-run"],
+    path.join(repo, "scripts", "install_submitter.sh")
+  );
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /profile\.json missing/);
+});
 
 test("--dry-run prints the LaunchAgent plist and writes nothing", () => {
   const r = run(["--profile", "demo", "--dry-run"]);

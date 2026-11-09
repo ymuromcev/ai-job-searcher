@@ -160,3 +160,42 @@ test("notificationText / morningPath / pickLatestMorning", () => {
   );
   assert.equal(morning.pickLatestMorning([]), null);
 });
+
+test("guard skips are not skip reasons; warnings reach the report and the notification", () => {
+  const report = morning.buildMorningReport({
+    date: "2026-11-10",
+    since: SINCE,
+    now: NOW,
+    target: 30,
+    apps: APPS,
+    applyFiles: [
+      {
+        kind: "pre",
+        data: {
+          generated_at: "2026-11-10T06:00:00.000Z",
+          skipped: [{ key: "dup", reason: "duplicate_job" }],
+        },
+      },
+      {
+        kind: "results",
+        data: {
+          generated_at: "2026-11-10T07:00:00.000Z",
+          results: [
+            { key: "a", outcome: "skipped", reason: "deadline" },
+            { key: "b", outcome: "skipped", reason: "interrupted_submit" },
+            { key: "c", outcome: "skipped", reason: "already_applied" },
+            { key: "d", outcome: "skipped", reason: "status_Closed" },
+            { key: "e", outcome: "skipped", reason: "row_missing" },
+            { key: "f", outcome: "skipped", reason: "captcha" },
+          ],
+        },
+      },
+    ],
+    night: { stop_reason: "deadline" },
+    warnings: ["submitter_not_running", "submitter_not_running"],
+  });
+  assert.deepEqual(report.skips, [{ reason: "captcha", count: 1 }]);
+  assert.equal(report.skip_line, "captcha 1");
+  assert.deepEqual(report.warnings, ["submitter_not_running"]);
+  assert.match(morning.notificationText(report), /Внимание: отправка не запускалась/);
+});

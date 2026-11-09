@@ -14,7 +14,8 @@
 //     "skips": [{ "reason": "captcha", "count": 4 }, …],
 //     "skip_line": "captcha 4 · required_empty 3",
 //     "stop_reason": "deadline" | … | null, "night_running": bool,
-//     "below_target": bool, "why_below_target": code | null, "why_text": "…" | null
+//     "below_target": bool, "why_below_target": code | null, "why_text": "…" | null,
+//     "warnings": ["submitter_not_running"], "warning_line": "отправка не запускалась"
 //   }
 //
 //   buildMorningReport(input)   → the object above
@@ -26,9 +27,15 @@ const path = require("path");
 
 const HEALTH_DIR = ".health";
 const FIT_FIELD = { Strong: "strong", Medium: "medium", Weak: "weak" };
-// A row the per-row guard skipped because it was already applied (it sat in
-// two manifests) is not a skip worth reporting.
-const IGNORED_REASONS = new Set(["already_applied"]);
+// Guard skips (deadline, target reached, already applied, an interrupted
+// submit, a status change, the same job through another row) leave the row
+// as it is — they are not skip reasons worth reporting.
+const { isGuardSkip } = require("../modules/apply/skip_reasons.js");
+
+// Warnings `night check` records for the night (.health/night_warnings.json).
+const WARNING_TEXT = {
+  submitter_not_running: "отправка не запускалась",
+};
 
 const WHY_TEXT = {
   deadline: "наступило время остановки",
@@ -67,7 +74,17 @@ function atOrAfter(iso, sinceMs) {
 //   night: { stop_reason, running } | null — tonight's night run, if any
 // }
 function buildMorningReport(input) {
-  const { date, since, now, target, apps = [], applyFiles = [], night = null } = input;
+  const {
+    date,
+    since,
+    now,
+    target,
+    apps = [],
+    applyFiles = [],
+    night = null,
+    warnings: rawWarnings = [],
+  } = input;
+  const warnings = [...new Set((rawWarnings || []).map(str).filter(Boolean))];
   const sinceMs = Date.parse(str(since));
   const byKey = new Map(apps.map((a) => [a.key, a]));
 
@@ -123,7 +140,7 @@ function buildMorningReport(input) {
 
   const reasonCounts = new Map();
   for (const [key, reason] of lastReason) {
-    if (submitted.has(key) || IGNORED_REASONS.has(reason)) continue;
+    if (submitted.has(key) || isGuardSkip(reason)) continue;
     reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1);
   }
   const skips = [...reasonCounts.entries()]
@@ -150,6 +167,8 @@ function buildMorningReport(input) {
     below_target: below,
     why_below_target: why,
     why_text: why ? WHY_TEXT[why] || why : null,
+    warnings,
+    warning_line: warnings.map((w) => WARNING_TEXT[w] || w).join(" · "),
   };
 }
 
@@ -160,6 +179,7 @@ function notificationText(report) {
     `(Strong ${s.strong || 0} · Medium ${s.medium || 0} · Weak ${s.weak || 0})`;
   if (report.why_text) text += `. Меньше цели: ${report.why_text}`;
   if (report.skip_line) text += `. Пропуски: ${report.skip_line}`;
+  if (report.warning_line) text += `. Внимание: ${report.warning_line}`;
   return text;
 }
 
@@ -169,5 +189,6 @@ module.exports = {
   notificationText,
   pickLatestMorning,
   WHY_TEXT,
+  WARNING_TEXT,
   HEALTH_DIR,
 };

@@ -90,6 +90,9 @@ function setup() {
     buildActiveCounts,
     resolveCapWindowDays,
     resolveUrl: async (url) => ({ ok: true, url, ats: "greenhouse", status: 0, hops: [] }),
+    // The fixture form is a file:// page; the real host allowlist is
+    // covered by the unit tests (apply.test.js).
+    trustedFormUrl: () => true,
     fetchJd: async () => ({ text: "The base pay range for this role is $150,000 - $190,000." }),
     makeNotionClient: () => ({}),
     fetchAllAnswers: async () => [],

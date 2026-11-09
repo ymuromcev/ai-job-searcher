@@ -898,6 +898,7 @@ function makeDefaultDeps() {
     loadSecrets: profileLoader.loadSecrets,
     loadApplications: applicationsTsv.load,
     saveApplications: applicationsTsv.save,
+    withApplicationsLock: applicationsTsv.withLock,
     checkUrls: checkAll,
     fetchJds: fetchAllJds,
     calcSalary,
@@ -1031,6 +1032,9 @@ async function runPre(ctx, deps) {
   // M, removed K (backup: …)" line otherwise so the user sees in Claude's
   // final report that the engine touched the TSV.
   const apps = runAutoDedup(loaded.apps, applicationsPath, ctx, deps);
+  // Rows as read: the save below re-loads under the TSV lock and applies
+  // only this run's per-row changes (the submitter writes meanwhile).
+  const loadedRows = applicationsTsv.snapshotRows(apps);
 
   // RFC 014 (2026-05-04): "Fresh / not triaged" = status "Inbox" (TSV-only).
   // After commit (RFC 034), every evaluated row transitions to "To Apply"
@@ -1349,7 +1353,7 @@ async function runPre(ctx, deps) {
   // saveApplications fails, the operator sees the throw and prepare_context
   // is not written — better than a half-applied state.
   if (archiveResult.archived > 0) {
-    deps.saveApplications(applicationsPath, apps);
+    await saveRowChanges(applicationsPath, apps, loadedRows, deps, stderr);
   }
 
   deps.writeFile(contextPath, JSON.stringify(context, null, 2));
@@ -1448,6 +1452,7 @@ async function runPreTopup(ctx, deps) {
   // 3) Re-load TSV and re-validate queued keys.
   const applicationsPath = profile.paths.applicationsTsv;
   const { apps } = deps.loadApplications(applicationsPath);
+  const loadedRows = applicationsTsv.snapshotRows(apps);
   const byKey = Object.fromEntries(apps.map((a) => [a.key, a]));
   // Drop committed keys (status moved out of Inbox / has notion_page_id).
   const inBatchKeys = new Set(prevBatch.map((e) => e.key));
@@ -1689,7 +1694,7 @@ async function runPreTopup(ctx, deps) {
   }
 
   if (archiveResult.archived > 0) {
-    deps.saveApplications(applicationsPath, apps);
+    await saveRowChanges(applicationsPath, apps, loadedRows, deps, stderr);
   }
 
   deps.writeFile(contextPath, JSON.stringify(merged, null, 2));
@@ -1883,6 +1888,10 @@ async function runCommit(ctx, deps) {
   const profile = deps.loadProfile(profileId, { profilesDir });
   const applicationsPath = profile.paths.applicationsTsv;
   const { apps } = deps.loadApplications(applicationsPath);
+  // Commit runs for minutes (Notion, cover letters, tailoring) while the
+  // submitter writes the TSV: the save merges per-row changes onto a fresh
+  // read under the TSV lock instead of writing this stale array back.
+  const loadedRows = applicationsTsv.snapshotRows(apps);
 
   const byKey = Object.fromEntries(apps.map((a) => [a.key, a]));
   const now = deps.now();
@@ -2822,9 +2831,30 @@ async function runCommit(ctx, deps) {
     return 0;
   }
 
-  deps.saveApplications(applicationsPath, apps);
+  await saveRowChanges(applicationsPath, apps, loadedRows, deps, stderr);
   stdout(`updated ${applicationsPath}`);
   return 0;
+}
+
+// Save a long-running writer's rows: under the TSV lock, re-load and apply
+// only the per-row changes made since `loadedRows` was taken. A row the
+// submitter touched meanwhile (Applied, submitted, mid-submit) keeps its
+// fresh state.
+async function saveRowChanges(applicationsPath, apps, loadedRows, deps, stderr) {
+  const lockFn = deps.withApplicationsLock || applicationsTsv.withLock;
+  const m = await lockFn(applicationsPath, () => {
+    const fresh = deps.loadApplications(applicationsPath).apps;
+    const merged = applicationsTsv.mergeRowChanges(fresh, apps, loadedRows);
+    deps.saveApplications(applicationsPath, merged.apps);
+    return merged;
+  });
+  if (m.conflicts.length && stderr) {
+    stderr(
+      `warn: ${m.conflicts.length} row(s) changed by another writer meanwhile — kept as they are: ` +
+        m.conflicts.join(", ")
+    );
+  }
+  return m;
 }
 
 // --- Factory + export --------------------------------------------------------
@@ -2873,3 +2903,4 @@ module.exports.computeInboxExhausted = computeInboxExhausted;
 module.exports.computeInboxHealth = computeInboxHealth;
 module.exports.isFreshInboxApp = isFreshInboxApp;
 module.exports.runAutoDedup = runAutoDedup;
+module.exports.saveRowChanges = saveRowChanges;

@@ -243,7 +243,7 @@ test("summarizeApplyFiles: counts tonight's non-dry-run files only", () => {
   assert.equal(s.failed, 1);
   assert.equal(s.manual, 2, "pre manual + submit manual");
   assert.equal(s.deferred, 1);
-  assert.equal(s.skipped, 1);
+  assert.equal(s.skipped, 0, "already_applied is a guard skip, not a skip");
   assert.equal(s.errors, 1);
   assert.deepEqual(s.seenKeys.sort(), ["a", "b", "d", "m"]);
   assert.deepEqual(s.submittedKeys, ["a"]);

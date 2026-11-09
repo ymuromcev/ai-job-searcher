@@ -69,6 +69,21 @@ const CODE_TO_REASON = Object.freeze({
   schema_changed: "no_honest_answer",
 });
 
+// Guard skips: the per-row guards that leave the row as it is (the job was
+// already handled, or is left for a later run). Never counted as skips.
+const GUARD_SKIPS = new Set([
+  "deadline",
+  "already_applied",
+  "interrupted_submit",
+  "row_missing",
+  "duplicate_job",
+]);
+
+function isGuardSkip(reason) {
+  const r = String(reason || "");
+  return GUARD_SKIPS.has(r) || r.startsWith("status_");
+}
+
 function isSkipReason(reason) {
   return SKIP_SET.has(String(reason || ""));
 }
@@ -89,4 +104,4 @@ function skipNote(reason, detail) {
   return d && d !== reason ? `${reason}: ${d}` : reason;
 }
 
-module.exports = { SKIP_REASONS, isSkipReason, skipReasonFor, skipNote };
+module.exports = { SKIP_REASONS, isSkipReason, isGuardSkip, skipReasonFor, skipNote };

@@ -10,7 +10,11 @@
 //   1. does nothing outside the submit window — profile `apply_window`,
 //      default "02:00-11:00" local;
 //   2. takes its own lock (submit.lock next to night.lock, one submitter per
-//      profile; it never waits for or blocks the night);
+//      profile; it never waits for or blocks the night). A lock is taken
+//      over only when its pid is gone — never from a live submitter, however
+//      long it runs. Every start (inside the window or not, lock or not)
+//      writes a heartbeat (submit-heartbeat.json next to the lock): `night
+//      check` warns when the night waits on a submitter that is not running;
 //   3. claims each manifest in stamp order with an atomic rename
 //      ready/<stamp>.json → ready/claimed/<stamp>.json, so a manifest is
 //      submitted by one run only; a claimed manifest left by a run that died
@@ -19,7 +23,11 @@
 //      submit);
 //   4. runs the existing submit code (`apply --phase submit`, in process via
 //      makeApplyCommand) on the manifest's rows with --deadline = the
-//      earlier of the manifest deadline and the window close;
+//      earlier of the manifest deadline and the window close. The target
+//      (30) is a minimum, not a cap: the submitter never stops at it.
+//      The manifest only names the round (`stamp`) and its rows: the round
+//      folder is always .apply-state/rounds/<stamp>/ (the manifest's own
+//      `answers_dir` is ignored) and must resolve inside .apply-state;
 //   5. moves the manifest to ready/done/<stamp>.json with the result file.
 //      A manifest past its deadline goes to done/ as "expired" (its rows
 //      stay queued for the next night); a failed submit run is retried on
@@ -39,12 +47,13 @@ const { resolveProfilesDir } = require("../core/paths.js");
 const readyManifest = require("../core/ready_manifest.js");
 const morning = require("../core/morning_report.js");
 const nightLog = require("../core/night_runs_log.js");
+const { createAtomic } = require("../core/file_lock.js");
 const plan = require("../core/night_plan.js");
 const { defaultStateDir } = require("./board.js");
 const night = require("./night.js");
 
 const LOCK_FILE = "submit.lock";
-const LOCK_STALE_MS = 6 * 60 * 60 * 1000;
+const STAMP_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const NIGHT_STALE_GRACE_MS = 60 * 60 * 1000;
 // After the window closes, wait this long for a still-running night to
 // finish before the notification goes out anyway.
@@ -114,14 +123,9 @@ function makeDefaultDeps() {
     mkdirp: (p) => fs.mkdirSync(p, { recursive: true }),
     removeFile: (p) => fs.rmSync(p, { force: true }),
     rename: (from, to) => fs.renameSync(from, to),
-    createExclusive: (p, data) => {
-      const fd = fs.openSync(p, "wx", 0o600);
-      try {
-        fs.writeSync(fd, data);
-      } finally {
-        fs.closeSync(fd);
-      }
-    },
+    // Atomic: the lock file appears fully written or not at all.
+    createExclusive: (p, data) => createAtomic(p, data),
+    realpath: (p) => fs.realpathSync(p),
     readNightRuns: nightLog.readNightRuns,
     stateDir: (env) => defaultStateDir(env),
     now: () => new Date(),
@@ -152,8 +156,12 @@ function acquireLock(file, deps) {
     } catch (err) {
       if (err.code !== "EEXIST") throw err;
       const cur = readJson(file, deps);
-      const age = cur ? deps.now().getTime() - Date.parse(cur.started_at) : Infinity;
-      if (cur && deps.pidAlive(cur.pid) && age < LOCK_STALE_MS) return { ok: false, holder: cur };
+      // A live holder keeps its lock, however long it has been running (a
+      // slow night of forms is not a dead one). Only a gone pid, or a file
+      // that is not a lock at all, is taken over.
+      if (cur && Number.isInteger(cur.pid) && deps.pidAlive(cur.pid)) {
+        return { ok: false, holder: cur };
+      }
       deps.removeFile(file); // a run that died — take over
     }
   }
@@ -186,8 +194,30 @@ function claim(dirs, name, deps) {
   }
 }
 
-function contextFor(manifest, profile, deps) {
-  const snapshot = path.join(path.dirname(manifest.answers_dir), "apply_context.json");
+// The round folder of a manifest: .apply-state/rounds/<stamp>/, never a path
+// the manifest names. null when the stamp is not a plain name or the folder
+// resolves (through a symlink) outside .apply-state.
+function roundDirFor(manifest, profile, deps) {
+  const st = String((manifest && manifest.stamp) || "");
+  if (!STAMP_RE.test(st) || st.includes("..")) return null;
+  const stateRoot = path.join(profile.paths.root, ".apply-state");
+  const dir = path.join(stateRoot, "rounds", st);
+  if (!deps.fileExists(dir)) return dir; // nothing to resolve yet
+  let realRoot;
+  let realDir;
+  try {
+    realRoot = deps.realpath(stateRoot);
+    realDir = deps.realpath(dir);
+  } catch {
+    return null;
+  }
+  const rel = path.relative(realRoot, realDir);
+  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return null;
+  return dir;
+}
+
+function contextFor(manifest, profile, deps, roundDir) {
+  const snapshot = path.join(roundDir, "apply_context.json");
   const live = path.join(profile.paths.root, ".apply-state", "apply_context.json");
   const source = deps.fileExists(snapshot) ? snapshot : live;
   const context = readJson(source, deps);
@@ -211,7 +241,13 @@ async function processManifest(name, raw, env) {
     ctx.stdout(`submit-ready: ${name} expired at ${manifest.deadline} — rows stay queued`);
     return { outcome: "expired" };
   }
-  const context = contextFor(manifest, profile, deps);
+  const roundDir = roundDirFor(manifest, profile, deps);
+  if (!roundDir) {
+    moveToDone(dirs, name, { ...base, outcome: "invalid", problems: ["round dir outside"] }, deps);
+    ctx.stderr(`submit-ready: ${name} names a round outside .apply-state — not submitted`);
+    return { outcome: "invalid" };
+  }
+  const context = contextFor(manifest, profile, deps, roundDir);
   if (!context || context.jobs.length === 0) {
     moveToDone(dirs, name, { ...base, outcome: "no_jobs" }, deps);
     ctx.stdout(`submit-ready: ${name} has no jobs in its apply context`);
@@ -225,7 +261,7 @@ async function processManifest(name, raw, env) {
       ctx,
       profile,
       context,
-      answersDir: manifest.answers_dir,
+      answersDir: path.join(roundDir, "answers"),
       deadline,
       concurrency,
     });
@@ -320,6 +356,26 @@ async function maybeNotify(ctx, profile, deps, ws) {
   return { sent, text, file };
 }
 
+// --- heartbeat ---------------------------------------------------------------
+
+function writeHeartbeat(ctx, profile, deps, window) {
+  const file = night.heartbeatPath(deps.stateDir(ctx.env || process.env), profile.id);
+  try {
+    deps.mkdirp(path.dirname(file));
+    deps.writeFile(
+      file,
+      JSON.stringify({
+        at: deps.now().toISOString(),
+        pid: deps.pid,
+        window: window.text,
+        window_open: readyManifest.windowState(deps.now(), window).open,
+      })
+    );
+  } catch (err) {
+    ctx.stderr(`submit-ready: heartbeat not written: ${err.message}`);
+  }
+}
+
 // --- command -----------------------------------------------------------------
 
 async function runSubmitReady(ctx, deps) {
@@ -334,6 +390,7 @@ async function runSubmitReady(ctx, deps) {
     return 1;
   }
   const lockFile = path.join(deps.stateDir(ctx.env || process.env), profile.id, LOCK_FILE);
+  writeHeartbeat(ctx, profile, deps, window);
   const lock = acquireLock(lockFile, deps);
   if (!lock.ok) {
     stdout(

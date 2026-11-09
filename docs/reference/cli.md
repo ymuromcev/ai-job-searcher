@@ -679,6 +679,7 @@ Flags:
 | `--ats <greenhouse\|lever\|ashby>` | string | — | Required. The board's ATS. |
 | `--slug <slug>` | string | — | Required. Board slug (`boards.greenhouse.io/<slug>`, `jobs.lever.co/<slug>`, `jobs.ashbyhq.com/<slug>`). |
 | `--name <company>` | string | from the slug | Company name as the scan will show it. |
+| `--from-file <tsv>` | string | — | Instead of `--ats` / `--slug`: one board per line, `ats<TAB>slug<TAB>name`. Every line is validated (ATS in the set, slug `^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`); a bad line is reported as `{"result":"invalid","line":N}` and the rest still run. The night's top-up writes the subagents' web-found lines to such a file, so untrusted text never reaches a shell command. Exit 0 unless the file cannot be read. |
 
 Output: one JSON line, `{"result":"added"|"exists"|"invalid","ats","slug","name","jobs"}` (`error` on invalid, `shared_with_profile` when an existing row was shared). Exit 0 for added / exists, 1 for invalid or bad arguments.
 
@@ -692,7 +693,7 @@ node engine/cli.js companies add --profile <id> --ats lever --slug acme-syntheti
 
 Synopsis: `node engine/cli.js requeue --profile <id> --since <YYYY-MM-DD> [--apply]`
 
-One-off repair for bot submissions that never really went out (RFC 069 §8: October 2026 Ashby forms submitted with required radios empty). A row goes back to the apply queue when it was a bot / recorded submit (`apply_state=submitted` or `applied_by=bot`), was applied on or after `--since`, is still `Applied` / `No Response`, has no "thank you for applying" mail for the company in the apply mailbox since the application day, and the job is not closed (posting-API check; Ashby has none and counts as open). Requeue sets status `To Apply`, clears `applied_date` / `applied_by`, sets `apply_state=queued`, `apply_note=requeued:<date>`, and moves the Notion page back to `To Apply` first (sync is pull-only — a page left at Applied would undo the requeue). A row whose Notion update fails is left as is.
+One-off repair for bot submissions that never really went out (RFC 069 §8: October 2026 Ashby forms submitted with required radios empty). A row goes back to the apply queue when it was a bot / recorded submit (`apply_state=submitted` or `applied_by=bot`), was applied on or after `--since`, is still `Applied` / `No Response`, has no "thank you for applying" mail for the company in the apply mailbox since the application day, has a record in the apply results files (`.apply-state/apply_results-*.json`) none of which shows the ATS's confirmation page (a row with no record is kept), and the job is not closed (posting-API check; Ashby has none and counts as open). Requeue sets status `To Apply`, clears `applied_date` / `applied_by`, sets `apply_state=queued`, `apply_note=requeued:<date>`, and moves the Notion page back to `To Apply` first (sync is pull-only — a page left at Applied would undo the requeue). A row whose Notion update fails is left as is.
 
 Flags:
 

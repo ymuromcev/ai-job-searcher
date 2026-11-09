@@ -103,9 +103,22 @@ const NOT_SENT_AFTER_CLICK = new Set([
   "email_code_missing",
   "email_code_field_missing",
   "email_code_rejected",
-  "unknown_page",
   "job_closed",
 ]);
+
+// Hosts a form may live on at submit time (RFC 069 review M1): the context
+// and manifests are files on disk, so the submitter re-checks where it is
+// about to send the candidate's data.
+const FORM_HOST_RE = /^(?:[a-z0-9-]+\.)*(?:greenhouse\.io|lever\.co|ashbyhq\.com)$/i;
+
+function formHostAllowed(url) {
+  try {
+    const u = new URL(String(url || ""));
+    return u.protocol === "https:" && FORM_HOST_RE.test(u.hostname);
+  } catch {
+    return false;
+  }
+}
 
 // A row the bot gave up on: outcome "skipped" + vocabulary reason + the
 // detailed code. `extra` carries labels / evidence / screenshot.
@@ -262,7 +275,33 @@ function resolveFields(fields, { job, identity, applyDefaults, salary, bank, fil
 
 // Merge context answers + LLM answers into a { fieldId → value } plan for a
 // live schema. Matching: field id first, then normalized label.
-function buildFillPlan(liveFields, contextJob, llmAnswers, profileRoot) {
+// File answers (resume / cover letter) must resolve inside the profile root
+// and, when `allowedFiles` (absolute paths) is given, be one of those — the
+// files the engine generated for this row. Anything else is never uploaded:
+// the field counts as empty. Only `source: "file"` answers can fill a file
+// field (an LLM answer never names a file to upload).
+function safeFilePath(value, profileRoot, allowedFiles) {
+  const root = path.resolve(profileRoot);
+  const abs = path.resolve(root, String(value));
+  const real = (p) => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const realRoot = real(root);
+  const realAbs = real(abs);
+  const rel = path.relative(realRoot, realAbs);
+  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return null;
+  if (Array.isArray(allowedFiles)) {
+    const ok = allowedFiles.some((f) => f && real(path.resolve(root, f)) === realAbs);
+    if (!ok) return null;
+  }
+  return abs;
+}
+
+function buildFillPlan(liveFields, contextJob, llmAnswers, profileRoot, allowedFiles = null) {
   const byId = new Map();
   const byLabel = new Map();
   for (const a of contextJob.answers || []) {
@@ -278,7 +317,8 @@ function buildFillPlan(liveFields, contextJob, llmAnswers, profileRoot) {
   for (const f of liveFields) {
     const a = byId.get(f.id) || byLabel.get(normalizeLabel(f.label));
     let v = a ? a.value : null;
-    if (v != null && a.source === "file") v = path.resolve(profileRoot, String(v));
+    if (v != null && a.source === "file") v = safeFilePath(v, profileRoot, allowedFiles);
+    else if (v != null && f.type === "file") v = null;
     if (v != null && isChoice(f) && f.options && f.options.length) {
       if (Array.isArray(v)) {
         v = v.map((x) => pickOption(f.options, x)).filter(Boolean);
@@ -306,6 +346,7 @@ function makeDefaultDeps() {
     loadSecrets: profileLoader.loadSecrets,
     loadApplications: applicationsTsv.load,
     saveApplications: applicationsTsv.save,
+    withApplicationsLock: applicationsTsv.withLock,
     buildActiveCounts,
     resolveCapWindowDays,
     fetchFn: defaultFetch,
@@ -390,19 +431,23 @@ async function browserReady(browser, stderr) {
   }
 }
 
-// Read-modify-write one TSV row under the mutex. `mutate(app)` edits in place.
+// Read-modify-write one TSV row under the in-process mutex and the
+// cross-process TSV lock. `mutate(app)` edits in place; returning false
+// leaves the file untouched.
 function makeRowWriter(applicationsPath, deps, { dryRun }) {
   const withLock = makeMutex();
   return function writeRow(key, mutate) {
     if (dryRun) return Promise.resolve(false);
-    return withLock(async () => {
-      const { apps } = deps.loadApplications(applicationsPath);
-      const app = apps.find((a) => a.key === key);
-      if (!app) return false;
-      mutate(app);
-      deps.saveApplications(applicationsPath, apps);
-      return true;
-    });
+    return withLock(() =>
+      deps.withApplicationsLock(applicationsPath, async () => {
+        const { apps } = deps.loadApplications(applicationsPath);
+        const app = apps.find((a) => a.key === key);
+        if (!app) return false;
+        if (mutate(app) === false) return false;
+        deps.saveApplications(applicationsPath, apps);
+        return true;
+      })
+    );
   };
 }
 
@@ -613,6 +658,46 @@ async function loadBank(profile, secrets, deps, stdout, stderr) {
   return bank;
 }
 
+// One application form, however the row reached it: "<ats>:<slug>:<jobId>" from
+// the adapter's job ref, else the form URL without query / hash / trailing
+// slash. null when nothing is known.
+function formRefOf(ats, url, deps) {
+  const u = String(url || "").trim();
+  if (!u) return null;
+  const kind = ats || deps.detectAts(u);
+  const adapter = kind ? deps.getAdapter(kind) : null;
+  const ref = adapter && adapter.jobRef ? adapter.jobRef(u) : null;
+  if (kind && ref && ref.jobId) {
+    return `${kind}:${String(ref.slug || "").toLowerCase()}:${String(ref.jobId).toLowerCase()}`;
+  }
+  try {
+    const x = new URL(u);
+    return `${x.host.toLowerCase()}${x.pathname.replace(/[/]+$/, "").toLowerCase()}`;
+  } catch {
+    return null;
+  }
+}
+
+// The form ref of a TSV row, from what the row itself knows (canonical board
+// URL for ATS-sourced rows, else its own URL when it is an ATS URL).
+function rowFormRef(app, slugIndex, deps) {
+  const canon = canonicalFormUrl(app, slugIndex || new Map());
+  if (canon) return formRefOf(canon.ats, canon.url, deps);
+  const ats = deps.detectAts(String(app.url || ""));
+  return ats ? formRefOf(ats, app.url, deps) : null;
+}
+
+// Form ref → key, for rows already applied / submitted / mid-submit.
+function submittedFormRefs(apps, slugIndex, deps) {
+  const out = new Map();
+  for (const a of apps || []) {
+    if (!applicationsTsv.isSubmitProtected(a)) continue;
+    const ref = rowFormRef(a, slugIndex, deps);
+    if (ref && !out.has(ref)) out.set(ref, a.key);
+  }
+  return out;
+}
+
 // Board slugs for ATS-sourced rows (canonical form URLs).
 function loadSlugIndex(ctx, deps, stderr) {
   try {
@@ -643,6 +728,10 @@ async function runPre(ctx, deps) {
   }
   const applicationsPath = profile.paths.applicationsTsv;
   const { apps } = deps.loadApplications(applicationsPath);
+  // What the rows looked like when read: the form work below takes minutes,
+  // and the submitter writes the TSV meanwhile. The save re-loads inside the
+  // TSV lock and applies only this run's per-row changes (mergeRowChanges).
+  const loadedRows = applicationsTsv.snapshotRows(apps);
   const filterRules = profile.filterRules || {};
   const { queue, skipped } = buildQueue(apps, {
     filterRules,
@@ -683,6 +772,9 @@ async function runPre(ctx, deps) {
   }
 
   const jobs = [];
+  // Form ref → the row that already owns that form: rows applied / being
+  // submitted (from the TSV), then the rows taken into this context.
+  const formHolders = submittedFormRefs(apps, slugIndex, deps);
   const gaveUp = []; // vocabulary skips (RFC 069 §4): the row is done for tonight
   const closed = [];
   const skippedNow = [];
@@ -697,8 +789,19 @@ async function runPre(ctx, deps) {
       giveUp({ key: app.key, company: app.companyName, title: app.title }, "unknown_page");
       continue;
     }
-    if (r.entry) jobs.push(r.entry);
-    else if (r.closed) closed.push({ ...r.job, reason: "job_closed" });
+    if (r.entry) {
+      // The same job reached through two rows (an aggregator row and the
+      // company's own board row, or two aggregator links): one form, one
+      // application. The first row in queue order (priority) keeps it.
+      const ref = formRefOf(r.entry.ats, r.entry.form_url, deps);
+      const holder = (ref && formHolders.get(ref)) || null;
+      if (holder) {
+        skippedNow.push({ ...r.job, reason: "duplicate_job", duplicate_of: holder });
+        continue;
+      }
+      if (ref) formHolders.set(ref, r.entry.key);
+      jobs.push(r.entry);
+    } else if (r.closed) closed.push({ ...r.job, reason: "job_closed" });
     else if (r.stop) giveUp(r.job, r.stop);
     else if (r.skip) skippedNow.push({ ...r.job, reason: r.skip });
   }
@@ -706,8 +809,8 @@ async function runPre(ctx, deps) {
   // Persist states: skipped (with the reason) for rows the bot gave up on,
   // "queued" for jobs carried to the LLM / submit steps. Nothing is left for
   // a human.
+  let byKey = new Map(apps.map((a) => [a.key, a]));
   if (!flags.dryRun) {
-    const byKey = new Map(apps.map((a) => [a.key, a]));
     const nowIso = deps.now().toISOString();
     for (const m of gaveUp) {
       const a = byKey.get(m.key);
@@ -742,8 +845,37 @@ async function runPre(ctx, deps) {
       a.apply_note = "";
       a.updatedAt = nowIso;
     }
-    if (gaveUp.length || jobs.length || closed.length || outOfArea.length)
-      deps.saveApplications(applicationsPath, apps);
+    if (gaveUp.length || jobs.length || closed.length || outOfArea.length) {
+      const merged = await deps.withApplicationsLock(applicationsPath, () => {
+        const fresh = deps.loadApplications(applicationsPath).apps;
+        const m = applicationsTsv.mergeRowChanges(fresh, apps, loadedRows);
+        deps.saveApplications(applicationsPath, m.apps);
+        return m;
+      });
+      // A row the submitter touched meanwhile (submitted, or mid-submit) is
+      // not this run's to queue: it leaves the context and its fresh state
+      // stays as the submitter wrote it.
+      if (merged.conflicts.length) {
+        const lost = new Set(merged.conflicts);
+        for (let i = jobs.length - 1; i >= 0; i -= 1) {
+          if (!lost.has(jobs[i].key)) continue;
+          const j = jobs[i];
+          skippedNow.push({
+            key: j.key,
+            company: j.company,
+            title: j.title,
+            reason: "already_applied",
+          });
+          jobs.splice(i, 1);
+        }
+        for (const list of [closed, outOfArea, gaveUp]) {
+          for (let i = list.length - 1; i >= 0; i -= 1)
+            if (lost.has(list[i].key)) list.splice(i, 1);
+        }
+        stderr(`apply pre: ${lost.size} row(s) changed by the submitter meanwhile — left as is`);
+      }
+      byKey = new Map(merged.apps.map((a) => [a.key, a]));
+    }
     await pushStatusToNotion(closed, "Closed", byKey, profile, secrets, deps, stderr);
     await pushStatusToNotion(outOfArea, "Archived", byKey, profile, secrets, deps, stderr);
   }
@@ -908,26 +1040,41 @@ async function submitOne(job, env) {
   const root = profile.paths.root;
   const shotRel = path.join(STATE_DIR, "shots", `${safeKey(job.key)}.png`);
   const shotAbs = path.join(root, shotRel);
-  const out = { key: job.key, company: job.company, title: job.title, ats: job.ats };
+  const out = {
+    key: job.key,
+    company: job.company,
+    title: job.title,
+    ats: job.ats,
+    form_url: job.form_url,
+  };
 
   // Night wall-clock budget: past the deadline no new form is opened. The
   // row keeps apply_state "queued" (no "submitting:" mark), so the next run
   // picks it up again.
-  if (env.deadlineMs !== null && deps.now().getTime() >= env.deadlineMs) {
-    return { ...out, outcome: "skipped", reason: "deadline" };
+  const pastDeadline = () => env.deadlineMs !== null && deps.now().getTime() >= env.deadlineMs;
+  if (pastDeadline()) return { ...out, outcome: "skipped", reason: "deadline" };
+
+  // Where the data goes: the form URL must be on a supported ATS host and
+  // be the ATS the context says it is.
+  const trusted =
+    deps.trustedFormUrl || ((u, ats) => formHostAllowed(u) && deps.detectAts(u) === ats);
+  if (!trusted(job.form_url, job.ats)) {
+    return skipped(out, "form_broken", { code: "form_url_untrusted" });
   }
 
   // Required questions answered (context + LLM)? Checked before the browser.
   // Optional questions without an answer are simply left blank; a required
   // one without an honest answer skips the row (RFC 069 §4).
-  const pre = buildFillPlan(job.fields || [], job, llmByKey.get(job.key) || [], root);
+  const row = freshRow(applicationsPath, job.key, deps);
+  const allowedFiles = engineFilesFor(row, profile, deps);
+  const pre = buildFillPlan(job.fields || [], job, llmByKey.get(job.key) || [], root, allowedFiles);
   if (pre.missingRequired.length) {
     return skipped(out, "no_honest_answer", {
       empty_fields: labelsOf(pre.missingRequired, job.fields),
     });
   }
 
-  const guard = alreadyApplied(freshRow(applicationsPath, job.key, deps));
+  const guard = alreadyApplied(row) || sameFormGuard(job, env);
   if (guard) return { ...out, outcome: "skipped", reason: guard };
 
   const adapter = deps.getAdapter(job.ats);
@@ -941,7 +1088,7 @@ async function submitOne(job, env) {
     if (!opened.ok) return skipped(out, opened.reason);
 
     const live = await adapter.readSchema(page);
-    const plan = buildFillPlan(live, job, llmByKey.get(job.key) || [], root);
+    const plan = buildFillPlan(live, job, llmByKey.get(job.key) || [], root, allowedFiles);
     if (plan.missingRequired.length) {
       // The live form asks a required question the context never saw.
       return skipped(out, "schema_changed", {
@@ -977,13 +1124,24 @@ async function submitOne(job, env) {
       return { ...out, outcome: "dry_run", screenshot: shotRel };
     }
 
-    // Final double-apply guard, then mark the attempt before clicking.
-    const last = alreadyApplied(freshRow(applicationsPath, job.key, deps));
-    if (last) return { ...out, outcome: "skipped", reason: last };
+    // The deadline again, right before the click: filling can take minutes.
+    // Past it the row stays queued for the next run (guard skip).
+    if (pastDeadline()) return { ...out, outcome: "skipped", reason: "deadline" };
+
+    // Final double-apply guard, then mark the attempt before clicking. The
+    // check and the mark happen under the TSV lock in one step, so no other
+    // writer can slip in between.
+    let last = "row_missing"; // stays so when the row is gone
     await writeRow(job.key, (a) => {
+      last = alreadyApplied(a) || sameFormGuard(job, env);
+      if (last) return false;
       a.apply_state = "queued";
       a.apply_note = `${SUBMITTING_PREFIX}${deps.now().toISOString()}`;
+      const ref = formRefOf(job.ats, job.form_url, deps);
+      if (ref && env.formsInFlight) env.formsInFlight.set(ref, job.key);
+      return true;
     });
+    if (last) return { ...out, outcome: "skipped", reason: last };
 
     const clickedAt = deps.now();
     clicked = true;
@@ -1010,9 +1168,19 @@ async function submitOne(job, env) {
     }
     // Held before it went out (captcha, login, a code that never came) →
     // skipped with the reason; anything else after the click → failed,
-    // never retried (the application may have gone out).
+    // never retried (the application may have gone out). An unknown page
+    // after the click may well be a sent application: failed.
     if (NOT_SENT_AFTER_CLICK.has(result.reason)) {
       return skipped(out, result.reason, { evidence: result.evidence, screenshot: shotRel });
+    }
+    if (result.reason === "unknown_page") {
+      return {
+        ...out,
+        outcome: "failed",
+        reason: "unknown_after_click",
+        evidence: result.evidence,
+        screenshot: shotRel,
+      };
     }
     return {
       ...out,
@@ -1032,6 +1200,66 @@ async function submitOne(job, env) {
   } finally {
     await close();
   }
+}
+
+// The resume / cover letter the engine generated for this row (from the TSV
+// row, not from the context file): the only files a form may receive.
+function engineFilesFor(row, profile, deps) {
+  if (!row) return [];
+  const exists = { exists: deps.fileExists };
+  const out = [];
+  const resume = resolveResumePdf(row, profile, exists);
+  if (resume && !resume.error && resume.rel) out.push(resume.rel);
+  const cl = resolveCoverLetterPdf(row, profile, exists);
+  if (cl && cl.rel) out.push(cl.rel);
+  return out;
+}
+
+// Another row owns the same form (applied, submitted or mid-submit — in the
+// TSV, tonight's results, or this run): never a second application to it.
+function sameFormGuard(job, env) {
+  const ref = formRefOf(job.ats, job.form_url, env.deps);
+  if (!ref) return null;
+  const inFlight = env.formsInFlight && env.formsInFlight.get(ref);
+  if (inFlight && inFlight !== job.key) return "duplicate_job";
+  const sent = env.sentForms && env.sentForms.get(ref);
+  if (sent && sent !== job.key) return "duplicate_job";
+  const { apps } = env.deps.loadApplications(env.applicationsPath);
+  for (const a of apps) {
+    if (a.key === job.key || !applicationsTsv.isSubmitProtected(a)) continue;
+    if (rowFormRef(a, env.slugIndex, env.deps) === ref) return "duplicate_job";
+  }
+  return null;
+}
+
+// Form refs of every job a results file says was submitted (or clicked and
+// failed) — rows reached through an aggregator do not carry the form URL in
+// the TSV.
+function sentFormsFromResults(profile, deps) {
+  const out = new Map();
+  const dir = stateDir(profile);
+  let names = [];
+  try {
+    names = deps.isDirectory && deps.isDirectory(dir) ? deps.listDir(dir) : [];
+  } catch {
+    names = [];
+  }
+  for (const name of names) {
+    if (!/^apply_results-.*\.json$/.test(name)) continue;
+    let data;
+    try {
+      data = JSON.parse(deps.readFile(path.join(dir, name)));
+    } catch {
+      continue;
+    }
+    if (!data || data.dry_run || !Array.isArray(data.results)) continue;
+    for (const r of data.results) {
+      if (!r || !r.form_url || (r.outcome !== "submitted" && r.outcome !== "failed")) continue;
+      const ref = formRefOf(r.ats, r.form_url, deps);
+      if (ref && !out.has(ref)) out.set(ref, r.key);
+    }
+  }
+  return out;
 }
 
 // Field ids → their labels (the morning report lists them).
@@ -1147,6 +1375,9 @@ async function runSubmit(ctx, deps) {
     stdout,
     deadlineMs,
     codeWaiter: flags.dryRun ? null : deps.makeCodeWaiter(profileId, ctx.env || process.env),
+    slugIndex: loadSlugIndex(ctx, deps, stderr),
+    sentForms: sentFormsFromResults(profile, deps),
+    formsInFlight: new Map(),
   };
   if (jobs.length > 0 && !(await browserReady(browser, stderr))) return 1;
   let results;
@@ -1425,5 +1656,8 @@ module.exports.buildFillPlan = buildFillPlan;
 module.exports.searchBank = searchBank;
 module.exports.loadAnswersFile = loadAnswersFile;
 module.exports.alreadyApplied = alreadyApplied;
+module.exports.formRefOf = formRefOf;
+module.exports.formHostAllowed = formHostAllowed;
+module.exports.NOT_SENT_AFTER_CLICK = NOT_SENT_AFTER_CLICK;
 module.exports.CONTEXT_FILE = CONTEXT_FILE;
 module.exports.STATE_DIR = STATE_DIR;

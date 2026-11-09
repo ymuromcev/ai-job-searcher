@@ -100,13 +100,32 @@ function setup() {
     { name: "Globex", source: "greenhouse", slug: "globex", extra: null, profile: "" },
     { name: "Umbrella Corp", source: "greenhouse", slug: "umbrella", extra: null, profile: "" },
   ]);
+  // The October submit run's results: "submitted" with no confirmation page.
+  writeResults(
+    root,
+    "2026-10-21T08-00-00-000Z",
+    rows().map((a) => ({ key: a.key, outcome: "submitted", evidence: null }))
+  );
   return { root, tsv, dataDir };
+}
+
+function writeResults(root, stamp, results) {
+  const dir = path.join(root, ".apply-state");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, `apply_results-${stamp}.json`),
+    JSON.stringify({ generated_at: "2026-10-21T08:00:00.000Z", results })
+  );
 }
 
 function fakeDeps(env, over = {}) {
   const log = { queries: [], posting: [], notion: [] };
   const deps = {
-    loadProfile: () => ({ id: "jared", paths: { applicationsTsv: env.tsv }, notion: {} }),
+    loadProfile: () => ({
+      id: "jared",
+      paths: { root: env.root, applicationsTsv: env.tsv },
+      notion: {},
+    }),
     loadSecrets: () => ({ NOTION_TOKEN: "secret_test" }),
     makeMailFetcher: () => async (q) => {
       log.queries.push(q);
@@ -184,7 +203,10 @@ test("requeue dry run: prints the list, writes nothing", async () => {
   const { deps, log } = fakeDeps(env);
   const r = await run(env, deps, {});
   assert.equal(r.code, 0);
-  assert.match(r.out, /4 bot submission\(s\): 2 to requeue, 1 confirmed by email, 1 closed/);
+  assert.match(
+    r.out,
+    /4 bot submission\(s\): 2 to requeue, 1 confirmed by email, 0 confirmed by page, 0 without a results record, 1 closed/
+  );
   assert.match(r.out, /requeue\s+greenhouse:111\s+Globex/);
   assert.match(r.out, /requeue\s+ashby:\S+\s+Initech .*job unknown/);
   assert.match(r.out, /confirmed greenhouse:222\s+Umbrella Corp/);
@@ -276,4 +298,60 @@ test("requeue: bad or missing --since", async () => {
     assert.equal(r.code, 1);
     assert.match(r.err, /--since/);
   }
+});
+
+test("requeue: a confirmation page in the results, or no results record at all → kept", async () => {
+  const env = setup();
+  // Globex: the ATS showed its thank-you page. Initech: no results record.
+  fs.rmSync(path.join(env.root, ".apply-state"), { recursive: true, force: true });
+  writeResults(env.root, "2026-10-21T08-00-00-000Z", [
+    {
+      key: "greenhouse:111",
+      outcome: "submitted",
+      evidence: { url: "https://job-boards.greenhouse.io/globex/jobs/111/done", text: "Thanks" },
+    },
+    { key: "lever:" + LEVER_ID, outcome: "submitted", evidence: null },
+  ]);
+  const { deps, log } = fakeDeps(env);
+  const r = await run(env, deps, { apply: true });
+  assert.equal(r.code, 0, r.err);
+  assert.match(
+    r.out,
+    /0 to requeue, 1 confirmed by email, 1 confirmed by page, 1 without a results record/
+  );
+  assert.match(r.out, /confirmed greenhouse:111 .*confirmation page/);
+  assert.match(r.out, /kept\s+ashby:\S+ .*no results record/);
+  assert.deepEqual(log.notion, []);
+  const byKey = Object.fromEntries(applicationsTsv.load(env.tsv).apps.map((a) => [a.key, a]));
+  assert.equal(byKey["greenhouse:111"].status, "Applied");
+  assert.equal(byKey["ashby:" + ASHBY_ID].apply_state, "submitted");
+});
+
+test("requeue --apply: a row that changed meanwhile is re-checked inside the TSV lock and kept", async () => {
+  const env = setup();
+  let locked = 0;
+  const { deps, log } = fakeDeps(env, {
+    // Between the Notion update and the TSV write, the Globex row moves on
+    // to Interview (a recruiter answered): it must not be requeued.
+    withApplicationsLock: async (p, fn) => {
+      locked += 1;
+      const { apps } = applicationsTsv.load(env.tsv);
+      apps.find((a) => a.key === "greenhouse:111").status = "Interview";
+      applicationsTsv.save(env.tsv, apps);
+      return applicationsTsv.withLock(p, fn);
+    },
+  });
+  const r = await run(env, deps, { apply: true });
+  assert.equal(locked, 1);
+  assert.match(r.out, /1 row\(s\) back in the queue/);
+  const byKey = Object.fromEntries(applicationsTsv.load(env.tsv).apps.map((a) => [a.key, a]));
+  assert.equal(byKey["greenhouse:111"].status, "Interview");
+  assert.equal(byKey["greenhouse:111"].apply_state, "submitted");
+  assert.equal(byKey["ashby:" + ASHBY_ID].status, "To Apply");
+  // Its Notion page had already been moved to To Apply: back to Interview.
+  assert.deepEqual(log.notion, [
+    ["page-globex", "To Apply"],
+    ["page-globex", "Interview"],
+  ]);
+  assert.match(r.err, /greenhouse:111 changed since the check \(now Interview\)/);
 });

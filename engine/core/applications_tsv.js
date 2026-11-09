@@ -140,6 +140,7 @@ const fs = require("fs");
 const path = require("path");
 
 const { fuzzyKey } = require("./dedup.js");
+const { withFileLock } = require("./file_lock.js");
 
 // BL-12 (2026-05-06): peel ATS prefixes from a jobId, preserving the case of
 // the remainder. Mirrors the prefix list in `engine/core/dedup.js` /
@@ -1062,6 +1063,128 @@ function appendNew(
   return { apps: existing.concat(fresh), fresh, fuzzyDuplicates };
 }
 
+// --- cross-process writes (BL-225 review) -----------------------------------
+//
+// The night (apply pre, prepare commit), the launchd submitter and the lazy
+// sweeps all read-modify-write this file, often at the same time. Every
+// load → modify → save goes through `withLock(filePath, fn)`: a lock file
+// next to the TSV (core/file_lock.js — pid-based, never stolen from a live
+// process). A writer that held its rows in memory for long (minutes of
+// browser work) re-loads inside the lock and applies only its own per-row
+// changes onto the fresh rows (`snapshotRows` at load, `mergeRowChanges` at
+// save), so a submit that landed meanwhile is never overwritten.
+
+const SUBMITTING_NOTE_PREFIX = "submitting:";
+
+function lockPathFor(filePath) {
+  return `${filePath}.lock`;
+}
+
+// Runs fn() holding the TSV lock. A TSV whose directory does not exist has
+// nothing to race on (and nothing to put the lock next to): fn runs as is.
+async function withLock(filePath, fn, opts) {
+  if (!fs.existsSync(path.dirname(path.resolve(filePath)))) return fn();
+  return withFileLock(lockPathFor(filePath), fn, opts);
+}
+
+// A row a submit has touched: it must never be overwritten by a writer that
+// loaded it before the submit (no re-queue, no double application).
+function isSubmitProtected(row) {
+  if (!row) return false;
+  if (String(row.status || "") === "Applied") return true;
+  if (String(row.applied_date || "").trim()) return true;
+  if (String(row.apply_state || "") === "submitted") return true;
+  return String(row.apply_note || "").startsWith(SUBMITTING_NOTE_PREFIX);
+}
+
+function cloneRow(row) {
+  return JSON.parse(JSON.stringify(row));
+}
+
+// key → deep copy of the row as loaded. Pair with mergeRowChanges.
+function snapshotRows(apps) {
+  const out = new Map();
+  for (const a of apps || []) if (a && a.key) out.set(a.key, cloneRow(a));
+  return out;
+}
+
+function sameValue(a, b) {
+  return JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b);
+}
+
+function changedFields(base, row) {
+  const fields = new Set([...Object.keys(base || {}), ...Object.keys(row || {})]);
+  return [...fields].filter((f) => !sameValue(base ? base[f] : undefined, row[f]));
+}
+
+// Pure. Apply the per-row changes the caller made (`working` vs the
+// `snapshot` taken when it loaded) onto `fresh` (the rows re-loaded inside
+// the lock):
+//   - a changed row → only the changed fields are written onto the fresh row;
+//   - skipped (kept as fresh) when another writer changed the row meanwhile
+//     and the fresh row is submit-protected (Applied / applied_date /
+//     apply_state submitted / a "submitting:" note);
+//   - a row new in `working` → appended unless fresh already has the key;
+//   - a row missing from `working` → removed only if fresh still equals the
+//     snapshot; rows another writer added are kept.
+// → { apps, applied: [key], conflicts: [key] }
+function mergeRowChanges(fresh, working, snapshot) {
+  const out = (fresh || []).map(cloneRow);
+  const index = new Map(out.map((a, i) => [a.key, i]));
+  const applied = [];
+  const conflicts = [];
+  const workingKeys = new Set();
+  for (const row of working || []) {
+    if (!row || !row.key) continue;
+    workingKeys.add(row.key);
+    const base = snapshot.get(row.key);
+    if (!base) {
+      if (!index.has(row.key)) {
+        index.set(row.key, out.length);
+        out.push(cloneRow(row));
+        applied.push(row.key);
+      }
+      continue;
+    }
+    const fields = changedFields(base, row);
+    if (!fields.length) continue;
+    const i = index.get(row.key);
+    if (i === undefined) continue; // removed by another writer meanwhile
+    const cur = out[i];
+    const touchedMeanwhile = changedFields(base, cur).length > 0;
+    if (touchedMeanwhile && isSubmitProtected(cur)) {
+      conflicts.push(row.key);
+      continue;
+    }
+    for (const f of fields) cur[f] = row[f] === undefined ? undefined : cloneRow({ v: row[f] }).v;
+    applied.push(row.key);
+  }
+  const removed = new Set();
+  for (const [key, base] of snapshot) {
+    if (workingKeys.has(key)) continue;
+    const i = index.get(key);
+    if (i === undefined) continue;
+    if (changedFields(base, out[i]).length === 0) removed.add(key);
+    else conflicts.push(key);
+  }
+  return {
+    apps: removed.size ? out.filter((a) => !removed.has(a.key)) : out,
+    applied,
+    conflicts,
+  };
+}
+
+// Load → mutate → save under the lock. `mutate(apps)` edits in place and
+// returns false to skip the save. → whatever mutate returned.
+async function update(filePath, mutate, { loadFn = load, saveFn = save, lockFn = withLock } = {}) {
+  return lockFn(filePath, async () => {
+    const { apps } = loadFn(filePath);
+    const r = await mutate(apps);
+    if (r !== false) saveFn(filePath, apps);
+    return r;
+  });
+}
+
 module.exports = {
   load,
   save,
@@ -1081,4 +1204,10 @@ module.exports = {
   APPLIED_BY_VALUES,
   APPLY_STATE_VALUES,
   applyStateDefaults,
+  withLock,
+  lockPathFor,
+  isSubmitProtected,
+  snapshotRows,
+  mergeRowChanges,
+  update,
 };

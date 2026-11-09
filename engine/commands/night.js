@@ -11,6 +11,9 @@
 //     A lock left by a night that died is closed as "abandoned" first.
 //
 //   night --profile <id> --phase check
+//     When the step is "wait" inside the submit window and submit-ready left
+//     no heartbeat in the last 30 min, the line carries
+//     `warning: "submitter_not_running"` (also kept for the morning report).
 //     Wall-clock + progress check. Prints one JSON line with `step`:
 //     "prepare" (with `prepare_batch`), "apply", "wait" (rows with the
 //     submitter cover the gap), "topup" (nothing left to prepare or apply —
@@ -71,6 +74,11 @@ const readyManifest = require("../core/ready_manifest.js");
 const morning = require("../core/morning_report.js");
 
 const LOCK_FILE = "night.lock";
+const HEARTBEAT_FILE = "submit-heartbeat.json";
+const WARNINGS_FILE = "night_warnings.json";
+// `submit-ready` runs every 15 min; no heartbeat this fresh inside the
+// submit window means launchd is not running it.
+const HEARTBEAT_MAX_AGE_MS = 30 * 60 * 1000;
 const APPLY_STATE_DIR = ".apply-state";
 const PREPARE_STATE_DIR = ".prepare-state";
 const EXIT_STOP = 2;
@@ -105,6 +113,54 @@ function makeDefaultDeps() {
 
 function lockPath(stateDir, profileId) {
   return path.join(stateDir, profileId, LOCK_FILE);
+}
+
+function heartbeatPath(stateDir, profileId) {
+  return path.join(stateDir, profileId, HEARTBEAT_FILE);
+}
+
+function warningsPath(profile) {
+  return path.join(profile.paths.root, morning.HEALTH_DIR, WARNINGS_FILE);
+}
+
+// Warnings recorded for the night that started at `since`.
+function nightWarnings(profile, since, deps) {
+  const w = readJson(warningsPath(profile), deps);
+  if (!w || w.night_started_at !== since || !Array.isArray(w.warnings)) return [];
+  return w.warnings.map(String);
+}
+
+function recordWarning(profile, lock, warning, deps) {
+  const prev = nightWarnings(profile, lock.started_at, deps);
+  if (prev.includes(warning)) return;
+  deps.writeFile(
+    warningsPath(profile),
+    JSON.stringify(
+      {
+        night_started_at: lock.started_at,
+        warnings: [...prev, warning],
+        updated_at: deps.now().toISOString(),
+      },
+      null,
+      2
+    )
+  );
+}
+
+// The night waits on the submitter: is it alive? Inside the submit window a
+// heartbeat newer than 30 minutes must exist. → "submitter_not_running" | null
+function submitterWarning(ctx, profile, deps, now) {
+  let window;
+  try {
+    window = readyManifest.parseWindow(profile.apply_window || readyManifest.DEFAULT_WINDOW);
+  } catch {
+    return null;
+  }
+  if (!readyManifest.windowState(now, window).open) return null;
+  const hb = readJson(heartbeatPath(deps.stateDir(ctx.env || process.env), profile.id), deps);
+  const at = hb ? Date.parse(hb.at) : NaN;
+  if (Number.isFinite(at) && now.getTime() - at <= HEARTBEAT_MAX_AGE_MS) return null;
+  return "submitter_not_running";
 }
 
 function readJson(p, deps) {
@@ -240,6 +296,7 @@ function writeMorningReport(profile, { since, target, night, date }, deps) {
     apps,
     applyFiles: applyFiles(profile, deps),
     night,
+    warnings: nightWarnings(profile, since, deps),
   });
   const file = morning.morningPath(profile.paths.root, report.date);
   deps.writeFile(file, JSON.stringify(report, null, 2));
@@ -360,6 +417,17 @@ function runCheck(ctx, profile, deps) {
     scanned_since_prepare: p.scannedSinceCtx,
     prepared_tonight: p.tsv.prepared.total,
   };
+  if (d.step === "wait") {
+    const warning = submitterWarning(ctx, profile, deps, p.now);
+    if (warning) {
+      out.warning = warning;
+      recordWarning(profile, lock, warning, deps);
+      ctx.stderr(
+        "warning: the night waits for the submitter, but submit-ready has not run in the last " +
+          "30 minutes (scripts/install_submitter.sh) — the morning report will say so"
+      );
+    }
+  }
   printJson(ctx.stdout, out);
   return d.step === "stop" ? EXIT_STOP : 0;
 }
@@ -675,7 +743,7 @@ function runFinish(ctx, profile, deps) {
   );
   deps.removeFile(file);
   stdout(
-    `night finished (${stopReason}): ${entry.submitted} submitted, ${entry.manual} manual, ` +
+    `night finished (${stopReason}): ${entry.submitted} submitted, ${entry.skipped} skipped, ` +
       `${entry.failed} failed, ${entry.deferred} deferred; prepared ${entry.prepared} ` +
       `(${entry.strong} Strong / ${entry.medium} Medium / ${entry.weak} Weak); scanned ${entry.scanned}`
   );
@@ -712,6 +780,8 @@ function makeNightCommand(overrides = {}) {
 module.exports = makeNightCommand();
 module.exports.makeNightCommand = makeNightCommand;
 module.exports.lockPath = lockPath;
+module.exports.heartbeatPath = heartbeatPath;
+module.exports.warningsPath = warningsPath;
 module.exports.EXIT_STOP = EXIT_STOP;
 module.exports.EXIT_LOCKED = EXIT_LOCKED;
 module.exports.PHASES = Object.keys(PHASES);

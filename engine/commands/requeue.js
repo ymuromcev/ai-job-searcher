@@ -14,7 +14,11 @@
 //   4. no "thank you for applying" mail for the company in the apply mailbox
 //      since the application day (email_code.findConfirmation — the same
 //      matcher the submit step uses);
-//   5. the job is not closed (canonical_url.checkPostingOpen — the same
+//   5. the apply results files (.apply-state/apply_results-*.json) hold a
+//      record of the submit and none of its records carries page
+//      confirmation evidence (the ATS's own thank-you page) — a row without
+//      any results record is kept: nothing proves it did not go out;
+//   6. the job is not closed (canonical_url.checkPostingOpen — the same
 //      posting-API check `apply --phase pre` uses; "unknown" counts as open,
 //      the apply pre-phase checks the page again).
 //
@@ -22,11 +26,14 @@
 // apply_state "queued", apply_note "requeued:<today>". The Notion page goes
 // back to "To Apply" first (sync is pull-only: a page left at Applied would
 // flip the row back on the next sync); a row whose Notion update fails is not
-// written. Default is a dry run that prints the list; --apply writes.
+// written. The write re-reads the TSV under its lock and re-checks every
+// criterion on the fresh row (the submitter may have written meanwhile).
+// Default is a dry run that prints the list; --apply writes.
 // The apply mailbox must be configured (<ID>_APPLY_GMAIL_USER /
 // <ID>_APPLY_GMAIL_APP_PASSWORD): without it nothing can be told apart and
 // the command refuses rather than risk a second application.
 
+const fs = require("fs");
 const path = require("path");
 
 const profileLoader = require("../core/profile_loader.js");
@@ -78,6 +85,48 @@ function selectCandidates(apps, since) {
   return { candidates, skipped };
 }
 
+// key → { records, pageConfirmed } from every non-dry-run results file.
+// Page confirmation = a "submitted" record whose evidence is the ATS's page
+// (a url / text), not the apply mailbox.
+function resultsIndex(profile, deps) {
+  const dir = path.join(profile.paths.root, ".apply-state");
+  const out = new Map();
+  let names = [];
+  try {
+    names = deps.listDir(dir);
+  } catch {
+    names = [];
+  }
+  for (const name of names) {
+    if (!/^apply_results-.*\.json$/.test(name)) continue;
+    let data;
+    try {
+      data = JSON.parse(deps.readFile(path.join(dir, name)));
+    } catch {
+      continue;
+    }
+    if (!data || data.dry_run || !Array.isArray(data.results)) continue;
+    for (const r of data.results) {
+      if (!r || !r.key) continue;
+      const e = out.get(r.key) || { records: 0, pageConfirmed: false };
+      e.records += 1;
+      const ev = r.evidence;
+      if (r.outcome === "submitted" && ev && !ev.email && (ev.url || ev.text)) {
+        e.pageConfirmed = true;
+      }
+      out.set(r.key, e);
+    }
+  }
+  return out;
+}
+
+// Still a requeue candidate on the fresh row (same rules as selectCandidates).
+function stillCandidate(app, since) {
+  if (!app || !isBotSubmit(app)) return false;
+  const day = appliedDay(app);
+  return Boolean(day) && day >= since && REQUEUE_STATUSES.has(app.status);
+}
+
 // Gmail search for confirmation mails since the day before `since` (the
 // mailbox and the TSV can disagree on the date across time zones).
 function confirmationQuery(since) {
@@ -124,6 +173,9 @@ function makeDefaultDeps() {
     loadSecrets: profileLoader.loadSecrets,
     loadApplications: applicationsTsv.load,
     saveApplications: applicationsTsv.save,
+    withApplicationsLock: applicationsTsv.withLock,
+    listDir: (p) => (fs.existsSync(p) ? fs.readdirSync(p) : []),
+    readFile: (p) => fs.readFileSync(p, "utf8"),
     loadCompanies: companiesTsv.load,
     fetchFn: defaultFetch,
     checkPostingOpen,
@@ -188,11 +240,21 @@ function makeRequeueCommand(overrides = {}) {
     }
 
     const slugIndex = loadSlugIndex(ctx, deps, stderr);
-    const plan = { requeue: [], confirmed: [], closed: [] };
+    const results = resultsIndex(profile, deps);
+    const plan = { requeue: [], confirmed: [], closed: [], pageConfirmed: [], noRecord: [] };
     for (const app of candidates) {
       const mail = findConfirmation(mails, { company: app.companyName, sinceMs: sinceMsFor(app) });
       if (mail) {
         plan.confirmed.push({ app, mail });
+        continue;
+      }
+      const rec = results.get(app.key);
+      if (!rec) {
+        plan.noRecord.push({ app });
+        continue;
+      }
+      if (rec.pageConfirmed) {
+        plan.pageConfirmed.push({ app });
         continue;
       }
       const state = await jobState(app, {
@@ -207,12 +269,15 @@ function makeRequeueCommand(overrides = {}) {
     stdout(
       `requeue: since ${since} — ${candidates.length} bot submission(s): ` +
         `${plan.requeue.length} to requeue, ${plan.confirmed.length} confirmed by email, ` +
-        `${plan.closed.length} closed`
+        `${plan.pageConfirmed.length} confirmed by page, ` +
+        `${plan.noRecord.length} without a results record, ${plan.closed.length} closed`
     );
     for (const r of plan.requeue) stdout(line("requeue", r.app, `job ${r.state}`));
     for (const c of plan.confirmed) {
       stdout(line("confirmed", c.app, `mail "${c.mail.subject || ""}" ${c.mail.date || ""}`));
     }
+    for (const c of plan.pageConfirmed) stdout(line("confirmed", c.app, "confirmation page"));
+    for (const c of plan.noRecord) stdout(line("kept", c.app, "no results record"));
     for (const c of plan.closed) stdout(line("closed", c.app));
     for (const s of skipped) stdout(line("kept", s.app, s.reason));
 
@@ -244,7 +309,14 @@ function makeRequeueCommand(overrides = {}) {
 
     const ok = new Set();
     let errors = 0;
+    // The mailbox / posting checks took a while: a row the submitter (or
+    // anyone) changed meanwhile is not touched, not even in Notion.
+    const before = new Map(deps.loadApplications(applicationsPath).apps.map((a) => [a.key, a]));
     for (const { app } of plan.requeue) {
+      if (!stillCandidate(before.get(app.key), since)) {
+        stderr(`  ${app.key} changed since the check — left as it is`);
+        continue;
+      }
       if (app.notion_page_id) {
         try {
           await deps.updatePageStatus(client, app.notion_page_id, "To Apply", propertyMap);
@@ -259,20 +331,41 @@ function makeRequeueCommand(overrides = {}) {
 
     const today = deps.today();
     const nowIso = new Date().toISOString();
-    // Re-read: the Notion round trips take a while.
-    const fresh = deps.loadApplications(applicationsPath).apps;
+    // Re-read under the TSV lock (the Notion round trips take a while and the
+    // submitter may write meanwhile); every criterion is checked again on
+    // the fresh row before it changes.
     let written = 0;
-    for (const a of fresh) {
-      if (!ok.has(a.key)) continue;
-      a.status = "To Apply";
-      a.applied_date = "";
-      a.applied_by = "";
-      a.apply_state = "queued";
-      a.apply_note = `requeued:${today}`;
-      a.updatedAt = nowIso;
-      written += 1;
+    const changed = [];
+    await deps.withApplicationsLock(applicationsPath, () => {
+      const fresh = deps.loadApplications(applicationsPath).apps;
+      for (const a of fresh) {
+        if (!ok.has(a.key)) continue;
+        if (!stillCandidate(a, since)) {
+          changed.push(a);
+          continue;
+        }
+        a.status = "To Apply";
+        a.applied_date = "";
+        a.applied_by = "";
+        a.apply_state = "queued";
+        a.apply_note = `requeued:${today}`;
+        a.updatedAt = nowIso;
+        written += 1;
+      }
+      if (written) deps.saveApplications(applicationsPath, fresh);
+    });
+    // Their Notion page already says To Apply: put it back to the row's
+    // fresh status, or the next (pull-only) sync would requeue the row.
+    for (const a of changed) {
+      stderr(`  ${a.key} changed since the check (now ${a.status}) — left as it is`);
+      if (!a.notion_page_id || !client) continue;
+      try {
+        await deps.updatePageStatus(client, a.notion_page_id, a.status, propertyMap);
+      } catch (err) {
+        errors += 1;
+        stderr(`  error: Notion revert for ${a.key} failed (${err.message})`);
+      }
     }
-    if (written) deps.saveApplications(applicationsPath, fresh);
     stdout(`requeue: ${written} row(s) back in the queue${errors ? `, ${errors} error(s)` : ""}.`);
     return errors ? 1 : 0;
   };
@@ -283,3 +376,4 @@ module.exports.makeRequeueCommand = makeRequeueCommand;
 module.exports.selectCandidates = selectCandidates;
 module.exports.confirmationQuery = confirmationQuery;
 module.exports.jobState = jobState;
+module.exports.resultsIndex = resultsIndex;

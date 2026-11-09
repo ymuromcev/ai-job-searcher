@@ -36,6 +36,7 @@ function fakeBoards(routes, pages = {}) {
 }
 
 const GH_API = (slug) => `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs`;
+const GH_BOARD = (slug) => `https://boards-api.greenhouse.io/v1/boards/${slug}`;
 const LEVER_API = (slug) => `https://api.lever.co/v0/postings/${slug}?mode=json`;
 const ASHBY_API = (slug) =>
   `https://api.ashbyhq.com/posting-api/job-board/${slug}?includeCompensation=true`;
@@ -56,7 +57,11 @@ test("guessSlugs / boardCandidates: known slug first, then guesses on every ATS"
   assert.deepEqual(guessSlugs(""), []);
   const index = buildSlugIndex([{ name: "Acme Synthetic", source: "ashby", slug: "acme-ai" }]);
   const c = boardCandidates("Acme Synthetic Inc", index);
-  assert.deepEqual(c[0], { ats: "ashby", slug: "acme-ai" });
+  assert.deepEqual(c[0], { ats: "ashby", slug: "acme-ai", guessed: false });
+  assert.ok(
+    c.slice(1).every((x) => x.guessed === true),
+    "the rest are guesses"
+  );
   assert.deepEqual(
     c.slice(1, 4).map((x) => x.ats),
     ["greenhouse", "lever", "ashby"]
@@ -167,11 +172,81 @@ test("findCompanyForm: a board fetch that throws is a miss, not a crash", async 
   assert.equal(r.reason, "no_company_form");
 });
 
+test("findCompanyForm: a guessed Greenhouse slug whose board is another company → no match", async () => {
+  const fetchFn = fakeBoards({
+    [GH_API("globex")]: {
+      jobs: [{ id: 42, title: "Product Manager", absolute_url: "https://x.example/42" }],
+    },
+    [GH_BOARD("globex")]: { name: "Globex Shipping Lines" },
+  });
+  const r = await findCompanyForm({ company: "Globex", title: "Product Manager" }, { fetchFn });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "no_company_form");
+  assert.ok(fetchFn.calls.includes(GH_BOARD("globex")), "the board's own name was read");
+});
+
+test("findCompanyForm: a guessed Greenhouse slug without a readable board name → no match", async () => {
+  const fetchFn = fakeBoards({
+    [GH_API("globex")]: {
+      jobs: [{ id: 42, title: "Product Manager", absolute_url: "https://x.example/42" }],
+    },
+  });
+  const r = await findCompanyForm({ company: "Globex", title: "Product Manager" }, { fetchFn });
+  assert.equal(r.ok, false);
+});
+
+test("findCompanyForm: a known slug (companies.tsv) needs no board-name check", async () => {
+  const fetchFn = fakeBoards({
+    [GH_API("gx")]: {
+      jobs: [{ id: 42, title: "Product Manager", absolute_url: "https://x.example/42" }],
+    },
+  });
+  const slugIndex = buildSlugIndex([{ name: "Globex", source: "greenhouse", slug: "gx" }]);
+  const r = await findCompanyForm(
+    { company: "Globex", title: "Product Manager" },
+    { fetchFn, slugIndex }
+  );
+  assert.equal(r.ok, true);
+  assert.ok(!fetchFn.calls.includes(GH_BOARD("gx")));
+});
+
+test("findCompanyForm: a guessed Lever / Ashby slug needs the location to match too", async () => {
+  const board = {
+    [ASHBY_API("globex")]: {
+      jobs: [
+        {
+          id: LEVER_ID,
+          title: "Product Manager",
+          location: "Berlin, Germany",
+          jobUrl: "https://x.example/pm",
+        },
+      ],
+    },
+  };
+  const elsewhere = await findCompanyForm(
+    { company: "Globex", title: "Product Manager", locations: ["Austin, TX"] },
+    { fetchFn: fakeBoards(board) }
+  );
+  assert.equal(elsewhere.ok, false, "title alone is not enough on a guessed board");
+  const noLocation = await findCompanyForm(
+    { company: "Globex", title: "Product Manager", locations: [] },
+    { fetchFn: fakeBoards(board) }
+  );
+  assert.equal(noLocation.ok, false, "no location to compare → no match");
+  const same = await findCompanyForm(
+    { company: "Globex", title: "Product Manager", locations: ["Berlin"] },
+    { fetchFn: fakeBoards(board) }
+  );
+  assert.equal(same.ok, true);
+  assert.equal(same.ats, "ashby");
+});
+
 test("resolveUrl with job: Adzuna row found on the company board, no aggregator fetch", async () => {
   const fetchFn = fakeBoards({
     [GH_API("globex")]: {
       jobs: [{ id: 42, title: "Product Manager", absolute_url: "https://x.example/42" }],
     },
+    [GH_BOARD("globex")]: { name: "Globex" },
   });
   const r = await resolveUrl(ADZUNA, {
     fetchFn,

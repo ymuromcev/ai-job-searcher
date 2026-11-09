@@ -416,14 +416,17 @@ test("finish: one line in apply_runs.jsonl with counts recomputed from disk; loc
     results: [
       { key: "new", outcome: "submitted" },
       { key: "x", outcome: "skipped", reason: "deadline" },
+      { key: "y", outcome: "skipped", reason: "captcha" },
+      { key: "z", outcome: "skipped", reason: "already_applied" },
     ],
   });
   t.clock.now = new Date("2026-10-22T13:30:00.000Z");
   const r = await t.run({ phase: "finish", stopReason: "deadline" });
   assert.equal(r.code, 0);
+  // Skipped (real skips only — guard skips are not counted), never "manual".
   assert.match(
     r.out[0],
-    /night finished \(deadline\): 1 submitted, 1 manual, 0 failed, 1 deferred/
+    /night finished \(deadline\): 1 submitted, 1 skipped, 0 failed, 1 deferred/
   );
   const runs = readNightRuns(nightRunsPath(t.profileDir));
   assert.equal(runs.length, 1);
@@ -669,4 +672,49 @@ test("the CLI registers the real night handler", async () => {
   });
   assert.equal(code, 1);
   assert.match(err.join(""), /--phase <start\|check\|prepare-fanout/);
+});
+
+test("check: waiting on a submitter with no heartbeat in 30 min → warning, shown in the morning report", async () => {
+  const apps = [row({ key: "s0" })];
+  // A window that is open at any test hour.
+  const t = setup({ apps, profileExtra: { apply_window: "00:00-23:59" } });
+  await t.run({ phase: "start", target: 1 });
+  const stateDir = path.join(t.profileDir, ".apply-state");
+  writeJson(path.join(stateDir, "ready", "2026-10-22T05-10-00-000Z.json"), {
+    stamp: "2026-10-22T05-10-00-000Z",
+    answers_dir: "ignored",
+    deadline: "2026-10-22T11:00:00.000Z",
+    rows: ["s0"],
+    created_at: "2026-10-22T05:11:00.000Z",
+  });
+  const hb = path.join(t.stateDir, "demo", "submit-heartbeat.json");
+  t.clock.now = new Date("2026-10-22T05:20:00.000Z");
+
+  // A fresh heartbeat: no warning.
+  writeJson(hb, { at: "2026-10-22T05:10:00.000Z" });
+  let w = await t.run({ phase: "check" });
+  assert.equal(w.json.step, "wait");
+  assert.equal(w.json.warning, undefined);
+
+  // The last heartbeat is 40 minutes old: launchd is not running it.
+  writeJson(hb, { at: "2026-10-22T04:40:00.000Z" });
+  w = await t.run({ phase: "check" });
+  assert.equal(w.json.step, "wait");
+  assert.equal(w.json.warning, "submitter_not_running");
+
+  // No heartbeat at all: same warning.
+  fs.rmSync(hb);
+  w = await t.run({ phase: "check" });
+  assert.equal(w.json.warning, "submitter_not_running");
+
+  t.clock.now = new Date("2026-10-22T06:00:00.000Z");
+  await t.run({ phase: "finish", stopReason: "deadline" });
+  const morningFile = fs
+    .readdirSync(path.join(t.profileDir, ".health"))
+    .find((n) => /^morning-.*\.json$/.test(n));
+  const report = JSON.parse(
+    fs.readFileSync(path.join(t.profileDir, ".health", morningFile), "utf8")
+  );
+  assert.deepEqual(report.warnings, ["submitter_not_running"]);
+  assert.equal(report.warning_line, "отправка не запускалась");
 });

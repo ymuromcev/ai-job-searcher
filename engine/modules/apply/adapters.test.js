@@ -463,6 +463,36 @@ describe("apply adapters on synthetic fixtures", { skip: SKIP }, () => {
     });
   });
 
+  test("ashby: a combobox counts as filled only by its selected value — not 'unselected', not listbox options", async () => {
+    await withPage(async (page) => {
+      await page.setContent(`
+        <div data-field-path="c_empty">
+          <input role="combobox" value="">
+          <div class="option-unselected">Pick one</div>
+          <div role="listbox">
+            <div role="option" class="option selected" aria-selected="true">Yes</div>
+          </div>
+        </div>
+        <div data-field-path="c_chosen">
+          <input role="combobox" value="">
+          <div class="css-1x-singleValue">Yes</div>
+        </div>
+        <div data-field-path="c_aria">
+          <input role="combobox" value="">
+          <span aria-selected="true">United States</span>
+        </div>
+        <div data-field-path="c_typed">
+          <input role="combobox" value="Canada">
+        </div>`);
+      const fields = ["c_empty", "c_chosen", "c_aria", "c_typed"].map((id) => ({
+        id,
+        kind: "combo",
+      }));
+      const state = await page.evaluate(ashby.filledStateInPage, fields);
+      assert.deepEqual(state, { c_empty: false, c_chosen: true, c_aria: true, c_typed: true });
+    });
+  });
+
   test("ashby: a required radio group left empty is reported by its label (never submitted)", async () => {
     await withPage(async (page) => {
       await ashby.open(page, fixtureUrl("ashby_choice_groups.html"));

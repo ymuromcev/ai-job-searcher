@@ -29,7 +29,10 @@
 // board endpoints. Board slugs: the ones already known in data/companies.tsv
 // (`opts.slugIndex`, see canonical_url.buildSlugIndex) first, then slugs
 // guessed from the company name. Match = same normalized title (location
-// breaks ties and vetoes an obviously different city). Match → the canonical
+// breaks ties and vetoes an obviously different city). A guessed slug may be
+// another company's board, so it must also prove it is this company: the
+// Greenhouse board's own name equals the row's company, and on Lever / Ashby
+// (no name endpoint) the location matches too. Match → the canonical
 // form URL (`via: "company_board"`). No match → the redirect resolver below
 // still runs; if it finds no ATS either, the result is
 // `reason: "no_company_form"` (the original reason in `redirect_reason`).
@@ -162,15 +165,15 @@ function guessSlugs(company) {
 function boardCandidates(company, slugIndex) {
   const seen = new Set();
   const out = [];
-  const add = (ats, slug) => {
+  const add = (ats, slug, guessed) => {
     const k = `${ats}\t${String(slug).toLowerCase()}`;
     if (!slug || seen.has(k)) return;
     seen.add(k);
-    out.push({ ats, slug });
+    out.push({ ats, slug, guessed });
   };
   const known = (slugIndex && slugIndex.get && slugIndex.get(normalizeName(company))) || [];
-  for (const r of known) if (BOARD_ATS.includes(r.source)) add(r.source, r.slug);
-  for (const slug of guessSlugs(company)) for (const ats of BOARD_ATS) add(ats, slug);
+  for (const r of known) if (BOARD_ATS.includes(r.source)) add(r.source, r.slug, false);
+  for (const slug of guessSlugs(company)) for (const ats of BOARD_ATS) add(ats, slug, true);
   return out;
 }
 
@@ -255,6 +258,39 @@ function pickBoardMatch(boardJobs, job) {
   return best.j;
 }
 
+// Same company? Normalized names equal, or equal with the spaces squashed
+// ("Acme Synthetic" ≈ "AcmeSynthetic").
+function sameCompany(a, b) {
+  const norm = (x) => normalizeName(String(x || "").replace(/&/g, " and "));
+  const na = norm(a);
+  const nb = norm(b);
+  if (!na || !nb) return false;
+  return na === nb || na.replace(/\s+/g, "") === nb.replace(/\s+/g, "");
+}
+
+// The board's own company name (Greenhouse only: GET /v1/boards/{slug}
+// answers { name }). null when it cannot be read.
+async function greenhouseBoardName(slug, fetchFn) {
+  const url = `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(slug)}`;
+  try {
+    const res = await fetchFn(url, { method: "GET", timeoutMs: 10000, retries: 0 });
+    if (!res || res.ok === false || (res.status && res.status >= 400)) return null;
+    const body = typeof res.json === "function" ? await res.json() : JSON.parse(await res.text());
+    return body && typeof body.name === "string" ? body.name : null;
+  } catch {
+    return null;
+  }
+}
+
+// A slug guessed from the company name may be another company's board
+// (security review L1). Greenhouse: the board's own name must be the row's
+// company. Lever / Ashby (no name endpoint): the title already matched; the
+// location must match too (score ≥ 1).
+async function guessedBoardIsCompany(ats, slug, hit, job, company, fetchFn) {
+  if (ats === "greenhouse") return sameCompany(await greenhouseBoardName(slug, fetchFn), company);
+  return locationScore(job.locations, hit.locations) >= 1;
+}
+
 // Look an aggregator row up on the company's own board.
 // job: { company | companyName, title, locations? }.
 // → { ok: true, url, ats, slug, jobId, via: "company_board", tried }
@@ -266,7 +302,7 @@ async function findCompanyForm(job, opts = {}) {
   const tried = [];
   if (!company || !job.title) return { ok: false, reason: "no_company_form", tried };
   const silent = { warn: () => {} };
-  for (const { ats, slug } of boardCandidates(company, slugIndex)) {
+  for (const { ats, slug, guessed } of boardCandidates(company, slugIndex)) {
     const adapter = adapters[ats];
     if (!adapter || typeof adapter.discover !== "function") continue;
     tried.push(`${ats}:${slug}`);
@@ -282,6 +318,9 @@ async function findCompanyForm(job, opts = {}) {
       jobs = [];
     }
     const hit = pickBoardMatch(jobs, job);
+    if (hit && guessed && !(await guessedBoardIsCompany(ats, slug, hit, job, company, fetchFn))) {
+      continue;
+    }
     if (hit) {
       return {
         ok: true,
@@ -499,4 +538,5 @@ module.exports = {
   normalizeTitle,
   titleMatches,
   pickBoardMatch,
+  sameCompany,
 };

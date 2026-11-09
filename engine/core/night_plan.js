@@ -176,6 +176,11 @@ function countTsvSince(apps, sinceIso) {
 // files: [{ kind: "pre" | "results", data }] — parsed `apply_pre-*.json` /
 // `apply_results-*.json` from .apply-state/. Only files generated at or after
 // `sinceIso` and not dry-run count.
+const { isGuardSkip } = require("../modules/apply/skip_reasons.js");
+
+// Guard skips that leave the row queued for a later run.
+const DEFERRED_REASONS = new Set(["deadline"]);
+
 function summarizeApplyFiles(files, sinceIso) {
   const since = Date.parse(str(sinceIso));
   const out = {
@@ -216,8 +221,8 @@ function summarizeApplyFiles(files, sinceIso) {
         } else if (r.outcome === "manual") out.manual++;
         else if (r.outcome === "failed") out.failed++;
         else if (r.outcome === "error") out.errors++;
-        else if (r.outcome === "skipped" && r.reason === "deadline") out.deferred++;
-        else if (r.outcome === "skipped") out.skipped++;
+        else if (r.outcome === "skipped" && DEFERRED_REASONS.has(r.reason)) out.deferred++;
+        else if (r.outcome === "skipped" && !isGuardSkip(r.reason)) out.skipped++;
       }
     }
   }

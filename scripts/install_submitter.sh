@@ -14,6 +14,8 @@
 # Writes ~/Library/LaunchAgents/com.<user>.ai-job-searcher.submit-<id>.plist
 # and logs to ~/Library/Logs/ai-job-searcher/submit-<id>.log. The repo path
 # is where this script lives; node is whatever `command -v node` finds now.
+# Install refuses unless run from the main checkout (not a git worktree) and
+# profiles/<id>/profile.json exists there.
 
 set -euo pipefail
 
@@ -69,6 +71,20 @@ if [ "$MODE" = "uninstall" ]; then
   run rm -f "$PLIST"
   echo "submitter for ${PROFILE} removed (${LABEL})"
   exit 0
+fi
+
+# Install only from the main checkout: a worktree is deleted after its PR is
+# merged, and launchd would then run a path that no longer exists (or an
+# old copy of the engine).
+GIT_DIR_ABS="$(cd "$REPO" && git rev-parse --path-format=absolute --git-dir 2>/dev/null || true)"
+GIT_COMMON_ABS="$(cd "$REPO" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+if [ -z "$GIT_DIR_ABS" ] || [ "$GIT_DIR_ABS" != "$GIT_COMMON_ABS" ]; then
+  echo "error: run this from the main checkout of the repo, not a worktree ($REPO)" >&2
+  exit 1
+fi
+if [ ! -f "$REPO/profiles/$PROFILE/profile.json" ]; then
+  echo "error: no profile \"$PROFILE\" here ($REPO/profiles/$PROFILE/profile.json missing)" >&2
+  exit 1
 fi
 
 NODE="$(command -v node || true)"

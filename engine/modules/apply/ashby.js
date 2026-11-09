@@ -477,11 +477,23 @@ function filledStateInPage(fields) {
         );
         ok = tagged.some((i) => i.checked);
       } else if (f.kind === "combo" || f.kind === "combo-select") {
+        // The chosen value: an element whose class token IS a selected-value
+        // marker (react-select "singleValue" / "single-value" — never a
+        // substring match, which "unselected" would pass), or a non-option
+        // element with aria-selected="true". The open listbox and its
+        // options never count: they list choices, not the choice.
         const input = scope.querySelector('input[role="combobox"]');
-        const chosen = scope.querySelector('[class*="singleValue" i], [class*="selected" i]');
-        ok = Boolean(
-          (input && String(input.value || "").trim()) || (chosen && (chosen.innerText || "").trim())
+        const MARKER = /(^|[-_])(singlevalue|single-value|selected-value|selectedvalue)$/i;
+        const inList = (el) =>
+          el.getAttribute("role") === "option" || Boolean(el.closest('[role="listbox"]'));
+        const chosen = Array.from(scope.querySelectorAll("[class], [aria-selected]")).find(
+          (el) =>
+            !inList(el) &&
+            (el.getAttribute("aria-selected") === "true" ||
+              Array.from(el.classList || []).some((c) => MARKER.test(c))) &&
+            (el.innerText || el.textContent || "").trim()
         );
+        ok = Boolean((input && String(input.value || "").trim()) || chosen);
       } else if (f.kind === "unknown") {
         ok = false;
       } else {
@@ -558,4 +570,6 @@ module.exports = {
   checkFilled,
   submit,
   isSuccess,
+  // Browser-side helper, exported for tests (page.evaluate).
+  filledStateInPage,
 };
