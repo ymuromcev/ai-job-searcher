@@ -15,7 +15,9 @@
 //     "skip_line": "captcha 4 · required_empty 3",
 //     "stop_reason": "deadline" | … | null, "night_running": bool,
 //     "below_target": bool, "why_below_target": code | null, "why_text": "…" | null,
-//     "warnings": ["submitter_not_running"], "warning_line": "отправка не запускалась"
+//     "warnings": ["submitter_not_running"], "warning_line": "отправка не запускалась",
+//     "answers": { "resubmitted": n, "waiting": n, "view_url": "…" | null },  // RFC 070
+//     "answers_line": "подано заново по твоим ответам: 2 · ждут твоего ответа: 3"
 //   }
 //
 //   buildMorningReport(input)   → the object above
@@ -72,6 +74,8 @@ function atOrAfter(iso, sinceMs) {
 //   apps: TSV rows (fit / company / title by key),
 //   applyFiles: [{ kind: "pre" | "results", data }] — parsed .apply-state files,
 //   night: { stop_reason, running } | null — tonight's night run, if any
+//   questions: .apply-state/questions.json (RFC 070) | null — rows requeued
+//     thanks to the owner's answers, questions still waiting for one
 // }
 function buildMorningReport(input) {
   const {
@@ -83,6 +87,7 @@ function buildMorningReport(input) {
     applyFiles = [],
     night = null,
     warnings: rawWarnings = [],
+    questions = null,
   } = input;
   const warnings = [...new Set((rawWarnings || []).map(str).filter(Boolean))];
   const sinceMs = Date.parse(str(since));
@@ -153,6 +158,7 @@ function buildMorningReport(input) {
   const below = goal > 0 && counts.total < goal;
   let why = null;
   if (below) why = running ? "night_running" : stopReason || (night ? "unknown" : "no_night");
+  const answers = answersSummary(questions, submitted);
   return {
     date: str(date),
     since: str(since),
@@ -169,7 +175,33 @@ function buildMorningReport(input) {
     why_text: why ? WHY_TEXT[why] || why : null,
     warnings,
     warning_line: warnings.map((w) => WARNING_TEXT[w] || w).join(" · "),
+    answers,
+    answers_line: answersLine(answers),
   };
+}
+
+// RFC 070: jobs submitted tonight that the owner's answers put back in the
+// queue, and questions still waiting for his answer.
+function answersSummary(questions, submitted) {
+  const q = questions && typeof questions === "object" ? questions : {};
+  const requeued = new Set(
+    (Array.isArray(q.requeued) ? q.requeued : []).map((r) => r && str(r.key)).filter(Boolean)
+  );
+  let resubmitted = 0;
+  for (const key of submitted.keys()) if (requeued.has(key)) resubmitted++;
+  const waiting = Number.isInteger(q.waiting) && q.waiting > 0 ? q.waiting : 0;
+  return { resubmitted, waiting, view_url: q.view_url ? str(q.view_url) : null };
+}
+
+function answersLine(a) {
+  const parts = [];
+  if (a.resubmitted) parts.push(`подано заново по твоим ответам: ${a.resubmitted}`);
+  if (a.waiting) parts.push(`ждут твоего ответа: ${a.waiting}`);
+  return parts.join(" · ");
+}
+
+function capitalize(s) {
+  return s ? s[0].toUpperCase() + s.slice(1) : s;
 }
 
 function notificationText(report) {
@@ -179,6 +211,7 @@ function notificationText(report) {
     `(Strong ${s.strong || 0} · Medium ${s.medium || 0} · Weak ${s.weak || 0})`;
   if (report.why_text) text += `. Меньше цели: ${report.why_text}`;
   if (report.skip_line) text += `. Пропуски: ${report.skip_line}`;
+  if (report.answers_line) text += `. ${capitalize(report.answers_line)}`;
   if (report.warning_line) text += `. Внимание: ${report.warning_line}`;
   return text;
 }

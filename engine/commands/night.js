@@ -72,6 +72,7 @@ const plan = require("../core/night_plan.js");
 const nightLog = require("../core/night_runs_log.js");
 const readyManifest = require("../core/ready_manifest.js");
 const morning = require("../core/morning_report.js");
+const ownerQuestions = require("../core/owner_questions.js");
 
 const LOCK_FILE = "night.lock";
 const HEARTBEAT_FILE = "submit-heartbeat.json";
@@ -297,6 +298,8 @@ function writeMorningReport(profile, { since, target, night, date }, deps) {
     applyFiles: applyFiles(profile, deps),
     night,
     warnings: nightWarnings(profile, since, deps),
+    // RFC 070: re-submitted thanks to the owner's answers / still waiting.
+    questions: readJson(ownerQuestions.statePath(profile.paths.root), deps),
   });
   const file = morning.morningPath(profile.paths.root, report.date);
   deps.writeFile(file, JSON.stringify(report, null, 2));

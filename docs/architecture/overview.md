@@ -76,6 +76,7 @@ Three invariants follow:
 | `ready_manifest.js` | Ready-manifest contract (night → submitter, RFC 069 §1), manifest order, the `apply_window` submit window. | `commands/night.js`, `commands/submit_ready.js` |
 | `morning_report.js` | `profiles/<id>/.health/morning-<date>.json`: submitted split by fit, list with confirmation, skip reasons, why below target; notification text. | `commands/night.js`, `commands/submit_ready.js`, `commands/board.js` |
 | `night_runs_log.js` | `profiles/<id>/.health/apply_runs.jsonl` — one line per night (same pattern as `scan_health_log.js`). | `commands/night.js`, `commands/board.js`, `commands/report.js` |
+| `owner_questions.js` | RFC 070: blocking questions of `no_honest_answer` rows — question identity across companies (`<company>`), bot-check / no-AI exclusions, which rows to requeue / keep skipped by a skip rule / wait, grouping into one entry per question, merge of the owner's Notion answers into `apply_defaults.json`, the state file for the morning report. Pure. | `commands/questions.js`, `commands/apply.js`, `commands/night.js` |
 
 ## 2. CLI commands
 
@@ -187,9 +188,25 @@ profile's `apply_window` (default 02:00–11:00) it claims ready manifests by
 atomic rename, runs the `apply --phase submit` code on their rows (round
 snapshot of the apply context, deadline = manifest deadline or window close,
 whichever is first) and files them under `ready/done/`. After the window it
-refreshes the morning report and sends one macOS notification per date.
+runs `questions --apply` (below), refreshes the morning report and sends
+one macOS notification per date.
 Helpers: `core/ready_manifest.js` (manifest contract, window) and
 `core/morning_report.js`.
+
+**`questions`** (RFC 070). The owner's questions queue. `pull` takes the
+Notion Application Q&A entries he marked "Answered" / "Skip such jobs"
+into `apply_defaults.json` (`standing_answers` / `skip_questions`, tagged
+with the page id); `requeue` puts `no_honest_answer` rows whose every
+blocking question is now answered back in the apply queue (TSV lock,
+fresh-row re-check, same pattern as `requeue`); `push` adds the remaining
+blocking questions to the Q&A database as "Waiting for answer", one entry
+per question across companies, adding its `Status` / `Question key` /
+`Jobs` properties when missing. `apply --phase pre` then fills exact
+standing-answer matches itself and skips forms with a skip-rule question.
+Run by the night after its scan and by `submit-ready` after the window;
+`.apply-state/questions.json` feeds the morning report's "re-submitted
+thanks to your answers / waiting for your answer" line. Helper:
+`core/owner_questions.js`.
 
 ## 3. Discovery adapters
 

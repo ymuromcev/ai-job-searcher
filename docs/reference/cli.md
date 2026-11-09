@@ -27,6 +27,7 @@ Commands:
 | `retro-tailor` | Re-tailor Strong rows already in `To Apply` whose resume predates the RFC-044 tailoring loop. Recon by default; `--apply --results-file` commits. |
 | `apply` | Three-phase auto-apply on Greenhouse / Lever / Ashby: read forms + answer standard questions, (skill answers the rest), fill + submit + mark `Applied`. (RFC 068) |
 | `submit-ready` | The submitter outside Claude: submits the rows of the night's ready manifests inside the profile's `apply_window`; started by launchd every 15 min. (RFC 069) |
+| `questions` | The owner's questions queue: pull his Notion answers into the bot's standing answers, requeue the jobs they unblock, push the remaining blocking questions to Notion as "Waiting for answer". Dry-run by default. (RFC 070) |
 | `companies-upsert` | Push relokant-sweep sweet-zone targets into the Notion Companies DB, two-way deduped (domain + name vs Notion / `data/companies.tsv` / relokant ledgers). Back-fills empty fields only; never writes `Tier`. Dry-run by default; `--apply` commits. (RFC 062) |
 
 The dispatcher also runs deterministic pre-command hooks (BL-151 / RFC 054). Today both `scan` and `prepare` auto-trigger `sync --apply` before their main work runs, so downstream filters / cap counters / fit-eval read fresh Notion state. The sync command itself also archives engine-tailored CV/CL files for rows whose status moved past `To Apply` (Applied / Interview / Offer / Rejected / Closed / No Response). The pre-hook is suppressed by `--no-sync`; `scan --dry-run` also suppresses it for parity with the prior dry-run-never-mutates behaviour.
@@ -714,13 +715,43 @@ node engine/cli.js requeue --profile <id> --since 2026-10-20
 node engine/cli.js requeue --profile <id> --since 2026-10-20 --apply
 ```
 
+### questions
+
+Synopsis: `node engine/cli.js questions --profile <id> [--phase <pull|requeue|push>] [--apply]`
+
+The owner's questions queue (RFC 070, BL-231). Rows the night skipped as `no_honest_answer` name their blocking required questions in `apply_note`; this command keeps those questions in the Notion Application Q&A database for the owner to answer, and puts the rows back in the apply queue once he has. Without `--phase` it runs all three steps, in this order:
+
+- **pull** — Q&A entries with Status `Answered` and a non-empty Answer become `standing_answers` in `profiles/<id>/apply_defaults.json`; entries with Status `Skip such jobs` become `skip_questions`. Both are tagged `notion_page_id` and replaced on every pull; the owner's own (untagged) entries are never touched. The merged file must pass `validate`'s apply_defaults check before it is written.
+- **requeue** — a row skipped as `no_honest_answer` (still `To Apply`, never applied, not an Ashby form) whose every blocking question now has a standing answer gets `apply_state=queued`, `apply_note=requeued:<date> answers`. A row with a skip-rule question stays skipped, `apply_note=no_honest_answer: owner_skip: <questions>`. Written under the TSV lock; a row changed since the plan is left alone. Requeued keys are kept in `.apply-state/questions.json` for the morning report.
+- **push** — the remaining blocking questions, one entry per distinct question (the company's name is normalized to `<company>`, so the same question across companies is one entry listing every job), go to the Q&A database as `Waiting for answer` with `Question key`, `Jobs` (company — title — URL per line), `Company`, `Role` and `Category`. The `Status` / `Question key` / `Jobs` properties and the status options are added to the database first when missing. A waiting entry already there gets its job list updated; `Answered` / `Skip such jobs` entries are never touched or duplicated. "Prove you are human" and "certify that no AI was used" questions are never pushed.
+
+`apply --phase pre` uses the result: a form question whose normalized text equals a standing answer's is filled with it (`source: "standing"`), and a form that asks a skip-rule question is skipped as `no_honest_answer: owner_skip: <question>`. The night runs `questions --apply` after its scan (`skills/job-pipeline/night-apply.md`), and `submit-ready` runs it once after the submit window, before the morning report.
+
+Flags:
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--profile <id>` | string | — | Required. |
+| `--phase <pull\|requeue\|push>` | string | all three | Run one step only. |
+| `--apply` | boolean | false | Write `apply_defaults.json`, the TSV, Notion and `.apply-state/questions.json`. Default is a dry run that reads Notion and prints the plan. |
+
+Needs `<ID>_NOTION_TOKEN` and `profile.notion.application_qa_db_id` for pull / push; without them those steps are skipped and requeue runs on the standing answers already on disk. Optional `profile.notion.application_qa_waiting_view_url`: the "Waiting for answer" view the morning report links (default: the database).
+
+Example:
+
+```bash
+node engine/cli.js questions --profile <id>
+node engine/cli.js questions --profile <id> --apply
+node engine/cli.js questions --profile <id> --phase push
+```
+
 ## Environment variables
 
 Secrets are loaded by `engine/core/profile_loader.loadSecrets(profileId, env)`. Per-profile namespacing: each variable is prefixed by the uppercased profile id followed by `_`. Other profiles' secrets are never read by the running command.
 
 | Variable | Required by | Notes |
 | --- | --- | --- |
-| `<ID>_NOTION_TOKEN` | `sync`, `prepare --phase commit`, `check --apply`, `answer`, the `scan → sync` hook | Internal Notion integration token. |
+| `<ID>_NOTION_TOKEN` | `sync`, `prepare --phase commit`, `check --apply`, `answer`, `questions`, the `scan → sync` hook | Internal Notion integration token. |
 | `<ID>_USAJOBS_API_KEY` | USAJOBS adapter (when `discovery:usajobs` is enabled) | Free key from usajobs.gov. |
 | `<ID>_USAJOBS_EMAIL` | USAJOBS adapter | Contact email registered with the API key. |
 | `<ID>_GMAIL_USER` | `check --auto` | Gmail address the IMAP login should use. |

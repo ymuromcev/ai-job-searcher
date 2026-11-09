@@ -210,6 +210,7 @@ test("KNOWN_COMMANDS lists exactly the supported commands", () => {
     "indeed-prep",
     "night",
     "prepare",
+    "questions",
     "reclassify",
     "report",
     "requeue",

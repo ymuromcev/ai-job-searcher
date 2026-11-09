@@ -15,6 +15,7 @@ const fs = require("fs");
 const path = require("path");
 
 const { normalizeRatings, parseBackupMarkdown } = require("./answer_bank.js");
+const { isQueueEntry } = require("./qa_notion.js");
 
 const ANSWERS_DIR = ".answers";
 const RATINGS_FILE = "ratings.json";
@@ -111,7 +112,11 @@ async function loadAnswerBank({ profile, secrets, deps }) {
     };
   }
   try {
-    const entries = await deps.fetchAllAnswers(deps.makeClient(token), dbId);
+    // Questions waiting for the owner and "skip such jobs" rules (RFC 070)
+    // share the database but are not answers.
+    const entries = (await deps.fetchAllAnswers(deps.makeClient(token), dbId)).filter(
+      (e) => !isQueueEntry(e)
+    );
     return { entries, source: "notion", notice: "" };
   } catch (err) {
     const entries = local();

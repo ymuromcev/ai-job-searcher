@@ -2,6 +2,11 @@
 // Schema (matches scripts/stage16/migrate_application_qa.js + the live DB):
 //   Question (title) | Answer (rich_text) | Category (select) |
 //   Role (rich_text) | Company (rich_text) | Notes (rich_text)
+// Added by `questions --phase push` (RFC 070) when missing:
+//   Status (select: Waiting for answer / Answered / Skip such jobs) |
+//   Question key (rich_text) | Jobs (rich_text)
+// Rows without a Status are ordinary bank answers. "Waiting for answer" and
+// "Skip such jobs" rows are not answers (`isBankAnswer`).
 //
 // Module is pure w.r.t. profiles: accepts a Notion client + DB id, never
 // reads env or the profile dir. The CLI is responsible for constructing
@@ -11,6 +16,23 @@ const { dedupKey } = require("./qa_dedup.js");
 const { resolveDataSourceId } = require("./notion_sync.js");
 
 const RICH_TEXT_CHUNK = 2000; // Notion rich_text item content limit.
+// Notion allows 100 rich_text items per property; long job lists are cut.
+const RICH_TEXT_MAX_ITEMS = 100;
+
+// RFC 070: the owner's questions queue inside the Q&A database.
+const QA_STATUS_PROP = "Status";
+const QA_KEY_PROP = "Question key";
+const QA_JOBS_PROP = "Jobs";
+const QA_STATUS = Object.freeze({
+  waiting: "Waiting for answer",
+  answered: "Answered",
+  skip: "Skip such jobs",
+});
+const QA_STATUS_COLORS = Object.freeze({
+  [QA_STATUS.waiting]: "yellow",
+  [QA_STATUS.answered]: "green",
+  [QA_STATUS.skip]: "gray",
+});
 
 // ---------- pure helpers (tested directly) ----------------------------------
 
@@ -20,6 +42,7 @@ function chunkRichText(value) {
   const out = [];
   for (let i = 0; i < s.length; i += RICH_TEXT_CHUNK) {
     out.push({ type: "text", text: { content: s.slice(i, i + RICH_TEXT_CHUNK) } });
+    if (out.length >= RICH_TEXT_MAX_ITEMS) break;
   }
   return out;
 }
@@ -73,9 +96,94 @@ function parseAnswerPage(page) {
     role: readRichText(p.Role),
     company: readRichText(p.Company),
     notes: readRichText(p.Notes),
+    // RFC 070 — null / "" on databases without these properties.
+    status: readSelect(p[QA_STATUS_PROP]),
+    questionKey: readRichText(p[QA_KEY_PROP]),
+    jobs: readRichText(p[QA_JOBS_PROP]),
     // Page creation time — "newer first" ordering for the bot and the board.
     createdAt: page.created_time || null,
   };
+}
+
+// A real answer the bot may reuse: not a question waiting for the owner,
+// not a "skip such jobs" rule, and not empty.
+function isBankAnswer(entry) {
+  if (!entry || !String(entry.answer || "").trim()) return false;
+  return !isQueueEntry(entry);
+}
+
+// An entry of the owner's questions queue that is not an answer yet:
+// "Waiting for answer" or a "Skip such jobs" rule.
+function isQueueEntry(entry) {
+  return Boolean(entry) && (entry.status === QA_STATUS.waiting || entry.status === QA_STATUS.skip);
+}
+
+// Properties of a "Waiting for answer" entry (RFC 070). Empty values are
+// left out — Notion rejects some empty property values.
+function buildPendingProperties({ question, key, jobs, companies, roles, category }) {
+  const props = {
+    Question: { title: chunkRichText(question) },
+    [QA_STATUS_PROP]: { select: { name: QA_STATUS.waiting } },
+    [QA_KEY_PROP]: { rich_text: chunkRichText(key) },
+    [QA_JOBS_PROP]: { rich_text: chunkRichText(jobs) },
+  };
+  if (companies) props.Company = { rich_text: chunkRichText(companies) };
+  if (roles) props.Role = { rich_text: chunkRichText(roles) };
+  if (category) props.Category = { select: { name: String(category) } };
+  return props;
+}
+
+function buildPendingUpdate({ jobs, companies, roles }) {
+  const props = { [QA_JOBS_PROP]: { rich_text: chunkRichText(jobs) } };
+  if (companies) props.Company = { rich_text: chunkRichText(companies) };
+  if (roles) props.Role = { rich_text: chunkRichText(roles) };
+  return props;
+}
+
+// Pure: what the data source schema lacks for RFC 070.
+//   → { ok, properties: <dataSources.update payload> | null, error: string | null }
+function pendingSchemaPatch(dataSource) {
+  const props = (dataSource && dataSource.properties) || {};
+  const patch = {};
+  const status = props[QA_STATUS_PROP];
+  const wanted = Object.values(QA_STATUS);
+  if (!status) {
+    patch[QA_STATUS_PROP] = {
+      select: { options: wanted.map((name) => ({ name, color: QA_STATUS_COLORS[name] })) },
+    };
+  } else if (status.type === "select" || (status.select && !status.type)) {
+    const options = (status.select && status.select.options) || [];
+    const have = new Set(options.map((o) => o && o.name));
+    const missing = wanted.filter((n) => !have.has(n));
+    if (missing.length) {
+      patch[QA_STATUS_PROP] = {
+        select: {
+          options: [
+            ...options.map((o) => ({ name: o.name, ...(o.color ? { color: o.color } : {}) })),
+            ...missing.map((name) => ({ name, color: QA_STATUS_COLORS[name] })),
+          ],
+        },
+      };
+    }
+  } else {
+    return {
+      ok: false,
+      properties: null,
+      error: `property "${QA_STATUS_PROP}" exists with type "${status.type}" — needs a select`,
+    };
+  }
+  for (const name of [QA_KEY_PROP, QA_JOBS_PROP]) {
+    const p = props[name];
+    if (!p) patch[name] = { rich_text: {} };
+    else if (p.type && p.type !== "rich_text") {
+      return {
+        ok: false,
+        properties: null,
+        error: `property "${name}" exists with type "${p.type}" — needs rich text`,
+      };
+    }
+  }
+  return { ok: true, properties: Object.keys(patch).length ? patch : null, error: null };
 }
 
 // ---------- API ops --------------------------------------------------------
@@ -143,7 +251,8 @@ function matchAnswers(all, { company, role, question }) {
 }
 
 async function searchAnswers(client, databaseId, { company, role, question }) {
-  const all = await fetchAllAnswers(client, databaseId);
+  // The owner's questions queue (RFC 070) is not something to reuse.
+  const all = (await fetchAllAnswers(client, databaseId)).filter((e) => !isQueueEntry(e));
   return matchAnswers(all, { company, role, question });
 }
 
@@ -163,16 +272,52 @@ async function updateAnswerPage(client, pageId, fields) {
   return resp;
 }
 
+// Add the RFC 070 properties / status options the database lacks.
+// → { changed: string[] } (names of added / extended properties). Throws
+// when a property exists with the wrong type.
+async function ensurePendingSchema(client, databaseId) {
+  const dataSourceId = await resolveDataSourceId(client, databaseId);
+  const ds = await client.dataSources.retrieve({ data_source_id: dataSourceId });
+  const plan = pendingSchemaPatch(ds);
+  if (!plan.ok) throw new Error(plan.error);
+  if (!plan.properties) return { changed: [] };
+  await client.dataSources.update({ data_source_id: dataSourceId, properties: plan.properties });
+  return { changed: Object.keys(plan.properties) };
+}
+
+async function createPendingPage(client, databaseId, fields) {
+  return client.pages.create({
+    parent: { database_id: databaseId },
+    properties: buildPendingProperties(fields),
+  });
+}
+
+async function updatePendingPage(client, pageId, fields) {
+  return client.pages.update({ page_id: pageId, properties: buildPendingUpdate(fields) });
+}
+
 module.exports = {
+  QA_STATUS,
+  QA_STATUS_PROP,
+  QA_KEY_PROP,
+  QA_JOBS_PROP,
   // pure helpers
   chunkRichText,
   buildAnswerProperties,
   buildUpdateProperties,
   parseAnswerPage,
+  isBankAnswer,
+  isQueueEntry,
+  buildPendingProperties,
+  buildPendingUpdate,
+  pendingSchemaPatch,
   // API ops
   fetchAllAnswers,
   matchAnswers,
   searchAnswers,
   createAnswerPage,
   updateAnswerPage,
+  ensurePendingSchema,
+  createPendingPage,
+  updatePendingPage,
 };

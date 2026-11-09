@@ -38,6 +38,7 @@ Run every command from `REPO`: `cd "$REPO" && …` (the path has a space — kee
 | --- | --- |
 | `night start` | lock `~/Library/Application Support/ai-job-searcher/state/$P/night.lock` |
 | `scan` | `data/jobs.tsv`; new `Inbox` rows in `profiles/$P/applications.tsv`; `profiles/$P/.health/scan_runs.jsonl` |
+| `questions --apply` | `profiles/$P/apply_defaults.json` (`standing_answers` / `skip_questions` from Notion); requeued rows in the TSV; `Waiting for answer` entries in the Notion Application Q&A DB; `profiles/$P/.apply-state/questions.json` |
 | `companies add` (top-up) | new boards in `data/companies.tsv` for the next scan |
 | `prepare --phase pre` | `profiles/$P/prepare_context.json`; filtered-out rows `Archived` in the TSV |
 | `night prepare-fanout` | `profiles/$P/.prepare-state/rows/` → `memory.md`, `payloads/<row>.json`, `jd/<row>.md` |
@@ -48,7 +49,7 @@ Run every command from `REPO`: `cd "$REPO" && …` (the path has a space — kee
 | `night apply-fanout` | `profiles/$P/.apply-state/rounds/<stamp>/` → `jobs/`, `drafts/`, `reviews/`, `answers/`, `bank/` |
 | bank push | Notion Application Q&A DB + `profiles/$P/application_answers/*.md` |
 | `night ready` | `profiles/$P/.apply-state/ready/<stamp>.json` (manifest) + `rounds/<stamp>/apply_context.json` (snapshot) |
-| `submit-ready` (launchd, not this session) | TSV `Applied` + Notion status; `.apply-state/apply_results-<ts>.json`; manifest → `ready/done/` |
+| `submit-ready` (launchd, not this session) | TSV `Applied` + Notion status; `.apply-state/apply_results-<ts>.json`; manifest → `ready/done/`; after the window: `questions --apply` once (tonight's new blocking questions reach Notion) before the morning report |
 | `night finish` | one line in `profiles/$P/.health/apply_runs.jsonl`; `profiles/$P/.health/morning-<date>.json` |
 
 ## Step 0 — git sync
@@ -84,6 +85,18 @@ Per-source errors are isolated inside scan. Before scanning, scan pulls Notion �
 
 - Exit ≠ 0 → **continue** with what is already in Inbox and the apply backlog; remember `scan_failed` for the report, and run the first `prepare --phase pre` of the night **without** `--no-sync`.
 - Note `fresh jobs: N` from stdout for the report.
+
+## Step 2b — the owner's answers (before any apply round)
+
+```
+cd "$REPO" && node engine/cli.js questions --profile jared --apply
+```
+
+Deterministic (RFC 070), no LLM. Pulls the questions the owner answered in the Notion Application Q&A database (Status `Answered`) into `apply_defaults.json` → `standing_answers`, and his `Skip such jobs` marks into `skip_questions`; puts every row skipped as `no_honest_answer` whose blocking questions are now all answered back in the queue (`apply_note=requeued:<date> answers`), so tonight's apply rounds pick them up — `apply --phase pre` fills those answers itself; pushes the questions still unanswered to Notion as `Waiting for answer`.
+
+- Exit ≠ 0 or a missing Notion token → **continue**; the rows stay skipped until the next run. Note it once for the report.
+- Never answer a waiting question yourself, never edit `apply_defaults.json` by hand. The owner answers in Notion; the bot only reads what he wrote.
+- Note the `requeue — N row(s) back to the queue` count for the report.
 
 ## Step 3 — the loop
 
@@ -209,6 +222,7 @@ One short message in Russian, results only (no questions, no «доделать 
 - **Git:** ok `<sha>` or `⚠️ skipped: <reason>`.
 - **Итог ночи:** from the morning file: подано N из 30 (Strong / Medium / Weak); почему меньше цели, если меньше.
 - **Пропуски:** the `skip_line` from the morning file (`captcha 4 · required_empty 3 · no_honest_answer 2`).
+- **Твои ответы:** the `answers_line` from the morning file (`подано заново по твоим ответам: N · ждут твоего ответа: M`) with `answers.view_url`; leave the line out when it is empty. A fact, not a request — the owner answers when he wants.
 - **Нашли и подготовили:** new jobs from scan and top-up (companies added, slugs rejected); prepared Strong / Medium / Weak; a Strong row with neither a tailored resume nor an escalation is a bug — name it.
 - **Предупреждения:** `scan_failed`, prepare/commit/apply failures with the stderr line, a missing token (by env-var name), usage stop, `companies add` missing.
 
@@ -221,6 +235,7 @@ If nothing was found and nothing was submitted: `📭 новых ваканси�
 | `night start` exit 3 | Another night holds the lock → end the session, no finish. |
 | git pull fails | Continue on current code, report. |
 | scan exit ≠ 0 | Continue with existing Inbox + backlog; first prepare pre without `--no-sync`. |
+| `questions` exit ≠ 0 | Continue; stuck rows stay skipped until the next run; report it once. |
 | prepare pre fails twice | No more prepare / top-up rounds tonight; apply rounds continue while `apply_fresh` > 0, then finish with `prepare_failed`. |
 | a row worker crashes / returns garbage | Ignore; collect lists it as missing / invalid; it stays in Inbox. |
 | collect exit 2 | Nothing to commit this round; back to the loop. |

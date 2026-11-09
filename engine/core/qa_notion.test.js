@@ -317,3 +317,139 @@ test("updateAnswerPage sends only the provided fields", async () => {
   assert.equal(captured.properties.Answer.rich_text[0].text.content, "new");
   assert.equal(captured.properties.Category.select.name, "Salary");
 });
+
+// ---------- RFC 070: the owner's questions queue ----------
+
+const qa = require("./qa_notion.js");
+
+test("parseAnswerPage reads Status / Question key / Jobs (null / empty when absent)", () => {
+  const out = parseAnswerPage({
+    id: "p1",
+    properties: {
+      Question: { title: [{ plain_text: "Visa?" }] },
+      Status: { select: { name: "Waiting for answer" } },
+      "Question key": { rich_text: [{ plain_text: "visa" }] },
+      Jobs: { rich_text: [{ plain_text: "Acme — PM — https://x" }] },
+    },
+  });
+  assert.equal(out.status, "Waiting for answer");
+  assert.equal(out.questionKey, "visa");
+  assert.equal(out.jobs, "Acme — PM — https://x");
+  const plain = parseAnswerPage({ id: "p2", properties: {} });
+  assert.equal(plain.status, null);
+  assert.equal(plain.questionKey, "");
+});
+
+test("isBankAnswer / isQueueEntry: waiting and skip entries are not answers", () => {
+  assert.equal(qa.isBankAnswer({ answer: "Yes", status: null }), true);
+  assert.equal(qa.isBankAnswer({ answer: "Yes", status: "Answered" }), true);
+  assert.equal(qa.isBankAnswer({ answer: "Yes", status: "Skip such jobs" }), false);
+  assert.equal(qa.isBankAnswer({ answer: "", status: null }), false);
+  assert.equal(qa.isQueueEntry({ status: "Waiting for answer" }), true);
+  assert.equal(qa.isQueueEntry({ status: "Answered" }), false);
+});
+
+test("buildPendingProperties: Waiting status, key, jobs; empty values left out", () => {
+  const p = qa.buildPendingProperties({
+    question: "Visa?",
+    key: "visa",
+    jobs: "Acme — PM",
+    companies: "",
+    roles: "PM",
+    category: "Logistics",
+  });
+  assert.equal(p.Status.select.name, "Waiting for answer");
+  assert.equal(p["Question key"].rich_text[0].text.content, "visa");
+  assert.equal(p.Jobs.rich_text[0].text.content, "Acme — PM");
+  assert.equal(p.Role.rich_text[0].text.content, "PM");
+  assert.equal(p.Company, undefined);
+  assert.equal(p.Category.select.name, "Logistics");
+  assert.equal(p.Answer, undefined);
+});
+
+test("pendingSchemaPatch: adds missing properties / options, keeps existing options", () => {
+  const none = qa.pendingSchemaPatch({ properties: { Question: { type: "title" } } });
+  assert.equal(none.ok, true);
+  assert.deepEqual(
+    none.properties.Status.select.options.map((o) => o.name),
+    ["Waiting for answer", "Answered", "Skip such jobs"]
+  );
+  assert.deepEqual(none.properties["Question key"], { rich_text: {} });
+  const partial = qa.pendingSchemaPatch({
+    properties: {
+      Status: { type: "select", select: { options: [{ name: "Answered", color: "blue" }] } },
+      "Question key": { type: "rich_text" },
+      Jobs: { type: "rich_text" },
+    },
+  });
+  assert.deepEqual(
+    partial.properties.Status.select.options.map((o) => o.name),
+    ["Answered", "Waiting for answer", "Skip such jobs"]
+  );
+  assert.equal(partial.properties.Status.select.options[0].color, "blue");
+  assert.equal(partial.properties.Jobs, undefined);
+  const done = qa.pendingSchemaPatch({
+    properties: {
+      Status: {
+        type: "select",
+        select: {
+          options: [
+            { name: "Waiting for answer" },
+            { name: "Answered" },
+            { name: "Skip such jobs" },
+          ],
+        },
+      },
+      "Question key": { type: "rich_text" },
+      Jobs: { type: "rich_text" },
+    },
+  });
+  assert.deepEqual(done, { ok: true, properties: null, error: null });
+  const wrong = qa.pendingSchemaPatch({ properties: { Status: { type: "status", status: {} } } });
+  assert.equal(wrong.ok, false);
+  assert.match(wrong.error, /needs a select/);
+});
+
+test("ensurePendingSchema: one update through dataSources (SDK v5), none when complete", async () => {
+  const calls = [];
+  const client = {
+    databases: { retrieve: async () => ({ data_sources: [{ id: "ds-1" }] }) },
+    dataSources: {
+      retrieve: async (args) => {
+        calls.push(["retrieve", args]);
+        return { properties: { Question: { type: "title" } } };
+      },
+      update: async (args) => {
+        calls.push(["update", args]);
+        return {};
+      },
+    },
+  };
+  const r = await qa.ensurePendingSchema(client, "db-1");
+  assert.deepEqual(r.changed.sort(), ["Jobs", "Question key", "Status"]);
+  assert.equal(calls[1][0], "update");
+  assert.equal(calls[1][1].data_source_id, "ds-1");
+});
+
+test("createPendingPage / updatePendingPage hit pages.create / pages.update", async () => {
+  const seen = [];
+  const client = {
+    pages: {
+      create: async (a) => {
+        seen.push(["create", a]);
+        return { id: "new" };
+      },
+      update: async (a) => {
+        seen.push(["update", a]);
+        return { id: a.page_id };
+      },
+    },
+  };
+  await qa.createPendingPage(client, "db-1", { question: "Q?", key: "q", jobs: "A — PM" });
+  await qa.updatePendingPage(client, "p-1", { jobs: "A — PM\nB — PM", companies: "A, B" });
+  assert.equal(seen[0][1].parent.database_id, "db-1");
+  assert.equal(seen[0][1].properties.Status.select.name, "Waiting for answer");
+  assert.equal(seen[1][1].page_id, "p-1");
+  assert.equal(seen[1][1].properties.Status, undefined);
+  assert.equal(seen[1][1].properties.Company.rich_text[0].text.content, "A, B");
+});
