@@ -868,6 +868,30 @@ test("pre: no URL and no ATS slug → skipped no_company_form (no_application_ur
   });
 });
 
+test("pre: Ashby rows → skipped bot_check before any form is read (its reCAPTCHA blocks submit)", async () => {
+  const h = harness({
+    apps: [
+      row({
+        key: "ashby:a1",
+        source: "ashby",
+        jobId: "a1",
+        companyName: "Kappa",
+        url: "https://jobs.ashbyhq.com/kappa/a1",
+      }),
+    ],
+    files: [RESUME],
+  });
+  const resolve = h.deps.resolveUrl;
+  h.deps.resolveUrl = async (url, o) =>
+    url.includes("ashbyhq")
+      ? { ok: true, url, ats: "ashby", status: 0, hops: [] }
+      : resolve(url, o);
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  assert.deepEqual(gaveUp(ctx), { "ashby:a1": ["bot_check", "bot_check:ashby_recaptcha"] });
+  assert.equal(ctx.jobs.length, 0);
+});
+
 test("pre: blocked aggregator falls back to a browser page; still blocked → unresolved_url", async () => {
   const h = harness({
     apps: [
