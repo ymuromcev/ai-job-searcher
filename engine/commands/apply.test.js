@@ -730,6 +730,70 @@ test("resolveFields: missing required cover letter / unknown required file block
   assert.deepEqual(r2.blockers, ["unsupported_required_file"]);
 });
 
+test("resolveFields: the owner's standing answers fill exact matches; a skip rule blocks (RFC 070)", () => {
+  const applyDefaults = {
+    standing_answers: [
+      { question: "Have you worked at <company> before?", answer: "No" },
+      { question: "Your favourite <company> product?", answer: "The API" },
+    ],
+    skip_questions: [{ question: "Can you work 5 days a week in our office?" }],
+  };
+  const ctx = {
+    job: { company: "Acme", title: "PM" },
+    identity: {},
+    applyDefaults,
+    salary: null,
+    bank: [],
+    files: { resume: { rel: "r.pdf" }, cover_letter: null },
+  };
+  const fields = [
+    {
+      id: "w",
+      label: "Have you worked at Acme before? *",
+      type: "radio",
+      required: true,
+      options: ["Yes", "No"],
+    },
+    { id: "p", label: "Your favourite Acme product?", type: "text", required: true, options: [] },
+    { id: "o", label: "Other question?", type: "text", required: true, options: [] },
+  ];
+  const r = resolveFields(fields, ctx);
+  assert.deepEqual(
+    r.answers.map((a) => [a.field_id, a.value, a.source]),
+    [
+      ["w", "No", "standing"],
+      ["p", "The API", "standing"],
+    ]
+  );
+  assert.deepEqual(
+    r.unanswered.map((u) => u.field_id),
+    ["o"]
+  );
+  assert.deepEqual(r.blockers, []);
+
+  const blocked = resolveFields(
+    [
+      ...fields,
+      {
+        id: "x",
+        label: "Can you work 5 days a week in our office?",
+        type: "radio",
+        required: false,
+        options: ["Yes", "No"],
+      },
+    ],
+    ctx
+  );
+  assert.deepEqual(blocked.blockers, ["owner_skip: Can you work 5 days a week in our office?"]);
+  // The note the pre phase writes from that stop code.
+  const { skipReasonFor, skipNote } = require("../modules/apply/skip_reasons.js");
+  const code = blocked.blockers[0];
+  assert.equal(
+    skipNote(skipReasonFor(code), code),
+    "no_honest_answer: owner_skip: Can you work 5 days a week in our office?"
+  );
+});
+
 test("buildFillPlan: id first, then label; LLM answers mapped onto options", () => {
   const live = [
     { id: "new_id", label: "First Name", type: "text", required: true, options: [] },

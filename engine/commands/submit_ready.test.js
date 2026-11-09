@@ -38,7 +38,7 @@ function row(key, over = {}) {
   };
 }
 
-function setup({ profileExtra = {}, apps = [] } = {}) {
+function setup({ profileExtra = {}, apps = [], extra = {} } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "aijs-submit-"));
   const profilesDir = path.join(root, "profiles");
   const profileDir = path.join(profilesDir, "demo");
@@ -84,6 +84,7 @@ function setup({ profileExtra = {}, apps = [] } = {}) {
       notes.push({ title, text });
       return true;
     },
+    ...extra,
   };
   const cmd = makeSubmitReadyCommand(overrides);
   const run = async (flags = {}) => {
@@ -364,6 +365,54 @@ test("no night at all still sends one notification (a silent failure is visible)
   await t.run();
   assert.equal(t.notes.length, 1);
   assert.match(t.notes[0].text, /ночного запуска не было/);
+});
+
+test("after the window the questions step runs before the report (RFC 070)", async () => {
+  const seen = [];
+  const t = setup({
+    apps: [row("a1")],
+    extra: {
+      runQuestions: async ({ profile }) => {
+        seen.push(profile.id);
+        writeJson(path.join(profile.paths.root, ".apply-state", "questions.json"), {
+          waiting: 4,
+          view_url: "https://www.notion.so/qa",
+          requeued: [{ key: "a1" }],
+        });
+        return 0;
+      },
+    },
+  });
+  addManifest(t, "s1", ["a1"]);
+  await t.run(); // inside the window: submits a1
+  assert.deepEqual(seen, [], "never inside the window");
+  t.clock.now = new Date(AFTER_WINDOW);
+  await t.run();
+  assert.deepEqual(seen, ["demo"]);
+  assert.match(t.notes[0].text, /Подано заново по твоим ответам: 1 · ждут твоего ответа: 4/);
+  const rep = JSON.parse(
+    fs.readFileSync(path.join(t.profileDir, ".health", "morning-2026-11-10.json"), "utf8")
+  );
+  assert.deepEqual(rep.answers, {
+    resubmitted: 1,
+    waiting: 4,
+    view_url: "https://www.notion.so/qa",
+  });
+});
+
+test("a failing questions step never stops the morning notification", async () => {
+  const t = setup({
+    extra: {
+      runQuestions: async () => {
+        throw new Error("Notion down");
+      },
+    },
+  });
+  t.clock.now = new Date(AFTER_WINDOW);
+  const r = await t.run();
+  assert.equal(r.code, 0);
+  assert.equal(t.notes.length, 1);
+  assert.match(r.err.join("\n"), /questions step failed: Notion down/);
 });
 
 test("escapeAppleScript: quotes and backslashes cannot break out of the string", () => {

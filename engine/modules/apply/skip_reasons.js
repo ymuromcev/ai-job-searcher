@@ -67,6 +67,8 @@ const CODE_TO_REASON = Object.freeze({
   unsupported_required_file: "required_empty",
   no_honest_answer: "no_honest_answer",
   schema_changed: "no_honest_answer",
+  // The form asks a question the owner marked "skip such jobs" (RFC 070).
+  owner_skip: "no_honest_answer",
 });
 
 // Guard skips: the per-row guards that leave the row as it is (the job was

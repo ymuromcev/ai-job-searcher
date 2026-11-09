@@ -58,10 +58,11 @@ const profileLoader = require("../core/profile_loader.js");
 const applicationsTsv = require("../core/applications_tsv.js");
 const { resolveProfilesDir, resolveDataDir } = require("../core/paths.js");
 const notionSync = require("../core/notion_sync.js");
-const { fetchAllAnswers, matchAnswers } = require("../core/qa_notion.js");
+const { fetchAllAnswers, matchAnswers, isQueueEntry } = require("../core/qa_notion.js");
 const { rankBank, bankUsesFromJobs } = require("../core/answer_bank.js");
 const { ratingsPath, parseRatingsFile } = require("../core/answer_bank_store.js");
 const { categorize } = require("../core/qa_categorize.js");
+const ownerQuestions = require("../core/owner_questions.js");
 const { fetchJd } = require("../core/jd_cache.js");
 const { extractJDStructure } = require("../core/jd_extract.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
@@ -236,7 +237,22 @@ function resolveFields(fields, { job, identity, applyDefaults, salary, bank, fil
   const answers = [];
   const unanswered = [];
   const blockers = [];
+  // The owner's own answers and "skip such jobs" rules (RFC 070).
+  const owner = ownerQuestions.answerIndex(applyDefaults);
+  const ownerSkips = [];
   for (const field of fields) {
+    if (field.type !== "file" && ownerQuestions.isSkipQuestion(owner, field.label, job.company)) {
+      ownerSkips.push(ownerQuestions.cleanLabel(field.label));
+      continue;
+    }
+    const standing =
+      field.type === "file"
+        ? null
+        : bankValue(field, ownerQuestions.findStandingAnswer(owner, field.label, job.company));
+    if (standing) {
+      answers.push({ field_id: field.id, label: field.label, value: standing, source: "standing" });
+      continue;
+    }
     const m = matchQuestion(field, { identity, applyDefaults, salary, job });
     if (m && m.source === "file") {
       const f = files[m.value];
@@ -271,6 +287,10 @@ function resolveFields(fields, { job, identity, applyDefaults, salary, bank, fil
       ...(field.options_partial ? { options_partial: true } : {}),
       required: Boolean(field.required),
     });
+  }
+  // The owner said: skip jobs that ask this. First, so the note names it.
+  if (ownerSkips.length) {
+    blockers.unshift(`${ownerQuestions.OWNER_SKIP_CODE}: ${ownerSkips.join("; ")}`);
   }
   return { answers, unanswered, blockers };
 }
@@ -668,7 +688,11 @@ async function loadBank(profile, secrets, deps, stdout, stderr) {
   const dbId = profile.notion && profile.notion.application_qa_db_id;
   if (dbId && secrets.NOTION_TOKEN) {
     try {
-      bank = await deps.fetchAllAnswers(deps.makeNotionClient(secrets.NOTION_TOKEN), dbId);
+      // Questions waiting for the owner and "skip such jobs" rules (RFC 070)
+      // live in the same database but are not answers.
+      bank = (await deps.fetchAllAnswers(deps.makeNotionClient(secrets.NOTION_TOKEN), dbId)).filter(
+        (e) => !isQueueEntry(e)
+      );
       stdout(`answer bank: ${bank.length} answer(s)`);
     } catch (err) {
       stderr(`warn: answer bank unavailable (${err.message}) — bank answers skipped`);

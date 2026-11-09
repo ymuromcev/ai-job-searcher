@@ -33,6 +33,7 @@ const KNOWN_COMMANDS = [
   "submit-ready",
   "companies",
   "requeue",
+  "questions",
 ];
 
 // Commands that take one sub-command positional (`companies add`).
@@ -208,6 +209,13 @@ Commands:
              (apply_state manual / failed, still To Apply) go back too,
              unless a mail or the ATS page shows they went out.
              Dry-run by default; --apply writes. See RFC 069 §8.
+  questions  The owner's questions queue (RFC 070): pull his answers from
+             the Notion Application Q&A DB into apply_defaults.json, put
+             rows skipped as no_honest_answer back in the queue once every
+             blocking question is answered, push the remaining questions to
+             Notion as "Waiting for answer" (one entry per question, jobs
+             listed). Runs nightly and after the submit window.
+             Dry-run by default; --apply writes.
 
 Flags:
   --profile <id>       Profile id (required for all commands). Lowercase, alphanum + - _.
@@ -323,6 +331,12 @@ requeue flags:
   --since <YYYY-MM-DD>   Required. Bot submissions applied on/after this date.
   --apply                Write TSV + Notion. Default: dry-run (prints the list).
 
+questions flags:
+  --phase <pull|requeue|push>
+                         Run one step only (default: all three, in this order).
+  --apply                Write apply_defaults.json, the TSV, Notion and
+                         .apply-state/questions.json. Default: dry-run.
+
 answer flags:
   --phase <search|push>  Required. "search" looks up existing Q&A by company+role+question
                          and prints a JSON match report. "push" reads --results-file and
@@ -405,6 +419,7 @@ function defaultCommands() {
     "submit-ready": require("./commands/submit_ready.js"),
     companies: require("./commands/companies.js"),
     requeue: require("./commands/requeue.js"),
+    questions: require("./commands/questions.js"),
   };
 }
 

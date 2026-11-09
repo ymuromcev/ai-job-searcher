@@ -114,3 +114,24 @@ test("loadAnswerBank: Notion when configured, local backup without a token or on
   assert.equal(down.entries[0].question, "Q1?");
   assert.match(down.notice, /Notion недоступен \(ECONNRESET\) — показан локальный бэкап \(1\)/);
 });
+
+test("loadAnswerBank: questions waiting for the owner and skip rules are not answers (RFC 070)", async () => {
+  const p = tmpProfile();
+  const r = await store.loadAnswerBank({
+    profile: p,
+    secrets: { NOTION_TOKEN: "t" },
+    deps: {
+      makeClient: () => ({}),
+      fetchAllAnswers: async () => [
+        { pageId: "1", question: "Bank?", answer: "Yes", status: null },
+        { pageId: "2", question: "Owner's?", answer: "No", status: "Answered" },
+        { pageId: "3", question: "Waiting?", answer: "", status: "Waiting for answer" },
+        { pageId: "4", question: "Skip?", answer: "", status: "Skip such jobs" },
+      ],
+    },
+  });
+  assert.deepEqual(
+    r.entries.map((e) => e.pageId),
+    ["1", "2"]
+  );
+});

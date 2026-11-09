@@ -145,6 +145,32 @@ test("validateApplyDefaults: standing_answers is a list of { question, answer } 
   ]);
 });
 
+test("validateApplyDefaults: skip_questions + notion_page_id tags (RFC 070)", () => {
+  const ok = {
+    ...valid(),
+    standing_answers: [{ question: "Q?", answer: "A", notion_page_id: "p1" }],
+    skip_questions: [{ question: "Office 5 days?" }, { question: "Texas?", notion_page_id: "p2" }],
+  };
+  assert.deepEqual(validateApplyDefaults(ok), []);
+  assert.deepEqual(errorFields(validateApplyDefaults({ ...valid(), skip_questions: {} })), [
+    "apply_defaults.skip_questions",
+  ]);
+  assert.deepEqual(
+    errorFields(
+      validateApplyDefaults({
+        ...valid(),
+        standing_answers: [{ question: "Q?", answer: "A", notion_page_id: "" }],
+        skip_questions: [{ question: "" }, { question: "X?", notion_page_id: 5 }],
+      })
+    ),
+    [
+      "apply_defaults.standing_answers[0].notion_page_id",
+      "apply_defaults.skip_questions[0]",
+      "apply_defaults.skip_questions[1].notion_page_id",
+    ]
+  );
+});
+
 test("getSalaryFloor: returns the floor or null", () => {
   assert.equal(getSalaryFloor(valid()), 100000);
   assert.equal(getSalaryFloor(null), null);

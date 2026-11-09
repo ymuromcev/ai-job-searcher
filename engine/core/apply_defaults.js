@@ -40,7 +40,15 @@
 //   }
 //   "standing_answers": [                // owner's answers to recurring questions (2026-11-09):
 //     { "question": "Do you have a valid US driver's license?", "answer": "Yes" }
-//   ]                                    // read by the drafter and the truth review as a source
+//   ]                                    // read by the drafter and the truth review as a source;
+//                                        // `apply --phase pre` fills an exact match itself
+//   "skip_questions": [                  // RFC 070: "skip such jobs" — a form asking one of
+//     { "question": "..." }              // these is skipped (no_honest_answer: owner_skip: …)
+//   ]
+//   Entries in both lists that carry "notion_page_id" (and "question_key")
+//   are written by `questions --phase pull` from the Notion Q&A database
+//   (RFC 070) and are replaced on every pull; entries without it are the
+//   owner's own.
 
 const APPLY_DEFAULTS_FILE = "apply_defaults.json";
 
@@ -62,6 +70,7 @@ const TOP_LEVEL_KEYS = Object.freeze([
   "start_weeks_after_offer",
   "choice_policy",
   "standing_answers",
+  "skip_questions",
 ]);
 
 const VALID_CHOICE_EEO = Object.freeze(["decline", "blank"]);
@@ -217,6 +226,21 @@ function validateApplyDefaults(raw) {
           sa.answer.trim() !== "";
         if (!ok)
           err(`${base}.standing_answers[${i}]`, "needs non-empty string question and answer");
+        else if (sa.notion_page_id !== undefined && !isNonEmptyString(sa.notion_page_id))
+          err(`${base}.standing_answers[${i}].notion_page_id`, "must be a non-empty string");
+      });
+    }
+  }
+  if (raw.skip_questions !== undefined) {
+    if (!Array.isArray(raw.skip_questions)) {
+      err(`${base}.skip_questions`, "must be an array of { question }");
+    } else {
+      raw.skip_questions.forEach((sq, i) => {
+        if (!isPlainObject(sq) || !isNonEmptyString(sq.question)) {
+          err(`${base}.skip_questions[${i}]`, "needs a non-empty string question");
+        } else if (sq.notion_page_id !== undefined && !isNonEmptyString(sq.notion_page_id)) {
+          err(`${base}.skip_questions[${i}].notion_page_id`, "must be a non-empty string");
+        }
       });
     }
   }
