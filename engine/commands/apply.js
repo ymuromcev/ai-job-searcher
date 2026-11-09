@@ -1158,7 +1158,11 @@ async function submitOne(job, env) {
       env.codeWaiter &&
       typeof env.codeWaiter.confirmed === "function"
     ) {
-      const mail = await env.codeWaiter.confirmed({ company: job.company, since: clickedAt });
+      const mail = await env.codeWaiter.confirmed({
+        company: job.company,
+        title: job.title,
+        since: clickedAt,
+      });
       if (mail) result = { ok: true, evidence: { email: mail } };
     }
     await screenshot(page, shotAbs, deps);

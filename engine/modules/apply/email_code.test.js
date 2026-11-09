@@ -125,6 +125,64 @@ test("findConfirmation: the employer's thank-you mail after the click, not a sec
   );
 });
 
+test("findConfirmation: a common first word in another employer's body is not a match", () => {
+  const since = Date.parse("2026-10-21T22:17:00.000Z");
+  const bill = {
+    from: "no-reply@hq.bill.com",
+    subject: "Thank You for Applying to Join BILL!",
+    body: "Thank you for applying. Next steps: our team will review your application.",
+    date: "2026-10-21T22:18:15.000Z",
+  };
+  assert.equal(findConfirmation([bill], { company: "Next Insurance", sinceMs: since }), null);
+  const next = {
+    from: "Next Insurance <no-reply@greenhouse.io>",
+    subject: "Thank you for applying",
+    body: "Thank you for your interest in Next Insurance.",
+    date: "2026-10-21T22:19:00.000Z",
+  };
+  assert.equal(findConfirmation([bill, next], { company: "Next Insurance", sinceMs: since }), next);
+});
+
+test("findConfirmation: one mail confirms one row, the title it names wins", () => {
+  const since = Date.parse("2026-10-22T10:00:00.000Z");
+  const commerce = {
+    messageId: "m1",
+    from: "Flexport <no-reply@greenhouse.io>",
+    subject: "Application for Senior Product Manager, Commerce received by Team Flexport!",
+    body: "Thanks for applying.",
+    date: "2026-10-22T10:27:05.000Z",
+  };
+  const used = new Set();
+  const visibilityFirst = findConfirmation([commerce], {
+    company: "Flexport",
+    title: "Senior Product Manager, Visibility",
+    sinceMs: since,
+    used,
+    titleOnly: true,
+  });
+  assert.equal(visibilityFirst, null, "the mail names another title");
+  assert.equal(
+    findConfirmation([commerce], {
+      company: "Flexport",
+      title: "Senior Product Manager, Commerce",
+      sinceMs: since,
+      used,
+      titleOnly: true,
+    }),
+    commerce
+  );
+  assert.equal(
+    findConfirmation([commerce], {
+      company: "Flexport",
+      title: "Senior Product Manager, Visibility",
+      sinceMs: since,
+      used,
+    }),
+    null,
+    "already used by the Commerce row"
+  );
+});
+
 test("makeCodeWaiter.confirmed polls the mailbox for the thank-you mail", async () => {
   let t = Date.parse("2026-10-21T22:17:00.000Z");
   let calls = 0;

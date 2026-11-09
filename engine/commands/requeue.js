@@ -242,8 +242,26 @@ function makeRequeueCommand(overrides = {}) {
     const slugIndex = loadSlugIndex(ctx, deps, stderr);
     const results = resultsIndex(profile, deps);
     const plan = { requeue: [], confirmed: [], closed: [], pageConfirmed: [], noRecord: [] };
+    // One mail confirms one row. First pass: mails that name the row's job
+    // title (two Flexport rows, one Flexport mail → the row it names);
+    // second pass: any remaining mail of the company.
+    const usedMails = new Set();
+    const mailFor = new Map();
+    for (const titleOnly of [true, false]) {
+      for (const app of candidates) {
+        if (mailFor.has(app.key)) continue;
+        const mail = findConfirmation(mails, {
+          company: app.companyName,
+          title: app.title,
+          sinceMs: sinceMsFor(app),
+          used: usedMails,
+          titleOnly,
+        });
+        if (mail) mailFor.set(app.key, mail);
+      }
+    }
     for (const app of candidates) {
-      const mail = findConfirmation(mails, { company: app.companyName, sinceMs: sinceMsFor(app) });
+      const mail = mailFor.get(app.key);
       if (mail) {
         plan.confirmed.push({ app, mail });
         continue;
