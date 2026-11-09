@@ -397,6 +397,88 @@ describe("apply adapters on synthetic fixtures", { skip: SKIP }, () => {
       assert.equal(out.reason, "captcha");
     });
   });
+
+  // ---- Ashby choice groups (RFC 069 §4: the October 2026 silent failure) ----
+
+  const Q = (n) => `6b6b6b6b-0000-4000-8000-00000000000${n}`;
+  const CHOICE_CUSTOM = {
+    "How many years of product management experience do you have?": "10+ years",
+    "Which segments have you worked with?": ["SMB", "Enterprise"],
+    "I certify that the information I provide is true and complete.": "Yes",
+  };
+
+  test("ashby: fieldset radio / checkbox groups, survey EEO, SMS consent and a picker are read", async () => {
+    await withPage(async (page) => {
+      assert.deepEqual(await ashby.open(page, fixtureUrl("ashby_choice_groups.html")), {
+        ok: true,
+      });
+      const fields = await ashby.readSchema(page);
+      const byId = Object.fromEntries(fields.map((f) => [f.id, f]));
+      assert.deepEqual(
+        [byId[Q(2)].type, byId[Q(2)].required, byId[Q(2)].options],
+        ["radio", true, ["Yes", "No"]]
+      );
+      assert.deepEqual(byId[Q(3)].options, ["0-2 years", "3-5 years", "6-9 years", "10+ years"]);
+      assert.equal(byId[Q(3)].required, true);
+      assert.deepEqual([byId[Q(4)].type, byId[Q(4)].options], ["checkbox", ["SMB", "Enterprise"]]);
+      assert.deepEqual([byId[Q(5)].type, byId[Q(5)].options], ["checkbox", []]);
+      assert.deepEqual(
+        [byId[Q(6)].type, byId[Q(6)].options],
+        ["select", ["LinkedIn", "Company website", "Job board", "Referral", "Other"]]
+      );
+      assert.equal(byId[Q(7)].required, false, "the EEO survey is optional");
+      assert.deepEqual(byId[Q(7)].options, ["Woman", "Man", "Prefer not to say"]);
+      const sms = byId[`${Q(1)}#smsConsent`];
+      assert.equal(sms.type, "radio");
+      assert.equal(sms.required, true);
+      assert.match(sms.options[1], /^No - I do not consent/);
+      assert.equal(byId[Q(1)].type, "phone");
+    });
+  });
+
+  test("ashby: choice groups get filled — required radios, multi-option radio, checkboxes, picker", async () => {
+    await withPage(async (page) => {
+      await ashby.open(page, fixtureUrl("ashby_choice_groups.html"));
+      const fields = await ashby.readSchema(page);
+      const values = planValues(fields, CHOICE_CUSTOM);
+      assert.equal(values[Q(2)], "Yes", "work authorization from the defaults");
+      assert.equal(values[Q(5)], "Yes", "single-box certification takes yes");
+      assert.equal(values[Q(6)], "Company website", "how did you hear → company website");
+      assert.equal(values[Q(7)], "Prefer not to say", "EEO → decline option");
+      const veteran = fields.find((f) => f.id === Q(8));
+      const m = matchQuestion(veteran, { identity: IDENTITY, applyDefaults: DEFAULTS });
+      assert.equal(m.leave_blank, true, "EEO without a decline option stays blank");
+      assert.ok(!values[Q(8)]);
+      assert.match(values[`${Q(1)}#smsConsent`], /^No - /);
+      const res = await ashby.fill(page, values);
+      assert.deepEqual(res.errors, []);
+      assert.deepEqual((await ashby.checkFilled(page)).missing, []);
+      assert.equal(await page.isChecked("#e_q2-labeled-radio-0"), true);
+      assert.equal(await page.isChecked("#e_q3-labeled-radio-3"), true);
+      assert.equal(await page.isChecked("#e_q4-labeled-checkbox-0"), true);
+      assert.equal(await page.isChecked("#e_q4-labeled-checkbox-1"), true);
+      assert.equal(await page.isChecked("#e_q8-labeled-radio-0"), false);
+      const out = await ashby.submit(page, { timeoutMs: 8000 });
+      assert.equal(out.ok, true, JSON.stringify(out));
+    });
+  });
+
+  test("ashby: a required radio group left empty is reported by its label (never submitted)", async () => {
+    await withPage(async (page) => {
+      await ashby.open(page, fixtureUrl("ashby_choice_groups.html"));
+      const fields = await ashby.readSchema(page);
+      const values = planValues(fields, CHOICE_CUSTOM);
+      delete values[Q(2)];
+      delete values[Q(3)];
+      await ashby.fill(page, values);
+      const check = await ashby.checkFilled(page);
+      assert.deepEqual(check.missing, [Q(2), Q(3)]);
+      assert.deepEqual(check.missingLabels, [
+        "Are you authorized to work in the country you currently reside in?",
+        "How many years of product management experience do you have?",
+      ]);
+    });
+  });
 });
 
 test("pickLocationOption: same city + state in the US wins (Greenhouse and Lever formats)", () => {

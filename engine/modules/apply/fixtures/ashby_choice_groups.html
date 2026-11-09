@@ -1,0 +1,421 @@
+<!doctype html>
+<!--
+  Synthetic Ashby form with choice groups (RFC 069 test fixture).
+  Reproduces the October 2026 failure: radio / checkbox questions render as
+  `<div data-field-path><fieldset class="_fieldEntry_…">` WITHOUT the
+  `ashby-application-form-field-entry` class, option inputs sit under a styled
+  circle (opacity 0) with a sibling `<label for>`, the EEO survey lives in a
+  second container, a phone row carries SMS consent radios, and a single-select
+  question is a combobox. Markup copied in shape from public forms (2026-11);
+  no real candidate or company data.
+
+  Submit validates every `_required` row like Ashby does (radio groups,
+  checkbox groups, comboboxes included) and shows "needs corrections" when one
+  is empty.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Product Manager @ Acme Synthetic</title>
+    <style>
+      .circle-wrap {
+        position: relative;
+        display: inline-block;
+        width: 24px;
+        height: 24px;
+      }
+      .circle-wrap .circle {
+        position: absolute;
+        inset: 0;
+        border: 1px solid #333;
+        border-radius: 50%;
+        pointer-events: auto;
+        z-index: 2;
+      }
+      .circle-wrap input {
+        opacity: 0;
+        width: 24px;
+        height: 24px;
+        margin: 0;
+      }
+      [role="listbox"] [role="option"] {
+        padding: 4px;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="ashby-application-form-container" id="container">
+      <div class="ashby-application-form-section-container">
+        <div
+          class="_fieldEntry_x ashby-application-form-field-entry"
+          data-field-path="_systemfield_name"
+        >
+          <label
+            class="_heading_a _required_b ashby-application-form-question-title"
+            for="_systemfield_name"
+            >Full Name</label
+          >
+          <input id="_systemfield_name" name="_systemfield_name" type="text" required />
+        </div>
+        <div
+          class="_fieldEntry_x ashby-application-form-field-entry"
+          data-field-path="_systemfield_email"
+        >
+          <label
+            class="_heading_a _required_b ashby-application-form-question-title"
+            for="_systemfield_email"
+            >Email</label
+          >
+          <input id="_systemfield_email" name="_systemfield_email" type="email" required />
+        </div>
+        <div
+          class="_fieldEntry_x ashby-application-form-field-entry"
+          data-field-path="6b6b6b6b-0000-4000-8000-000000000001"
+        >
+          <label
+            class="_heading_a _required_b ashby-application-form-question-title"
+            for="6b6b6b6b-0000-4000-8000-000000000001"
+            >Phone Number</label
+          >
+          <input
+            id="6b6b6b6b-0000-4000-8000-000000000001"
+            name="6b6b6b6b-0000-4000-8000-000000000001"
+            type="tel"
+            required
+          />
+          <div
+            class="_phoneNumberConsentLegalText_q ashby-application-form-texting-consent-description"
+          >
+            <p>Check Yes or No to indicate your agreement to receive text message updates.</p>
+            <ul class="_consentRadioGroupList_q">
+              <li class="_consentRadioGroupItem_q">
+                <p class="_consentRadioGroupItemLabel_q">SMS</p>
+                <div class="_consentRadioGroup_q">
+                  <label
+                    ><input type="radio" name="smsConsent" value="given" />
+                    <div>
+                      <p><strong>Yes</strong> - I consent to receiving SMS text messages</p>
+                    </div></label
+                  >
+                  <label
+                    ><input type="radio" name="smsConsent" value="notGiven" />
+                    <div>
+                      <p><strong>No</strong> - I do not consent to receiving SMS text messages</p>
+                    </div></label
+                  >
+                </div>
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div
+          class="_fieldEntry_x ashby-application-form-field-entry"
+          data-field-path="_systemfield_resume"
+        >
+          <label
+            class="_heading_a _required_b ashby-application-form-question-title"
+            for="_systemfield_resume"
+            >Resume</label
+          >
+          <div role="presentation">
+            <input
+              id="_systemfield_resume"
+              type="file"
+              style="
+                position: absolute;
+                width: 1px;
+                height: 1px;
+                overflow: hidden;
+                clip: rect(0 0 0 0);
+              "
+            /><button type="button">Upload File</button>
+          </div>
+        </div>
+
+        <!-- Required yes/no as a radio group (fieldset shape). -->
+        <div
+          data-field-path="6b6b6b6b-0000-4000-8000-000000000002"
+          data-field-entry-id="e_6b6b6b6b-0000-4000-8000-000000000002"
+        >
+          <fieldset class="_container_r _fieldEntry_x ashby-application-form-input-radio-group">
+            <label
+              class="_heading_a _required_b ashby-application-form-question-title"
+              for="6b6b6b6b-0000-4000-8000-000000000002"
+              >Are you authorized to work in the country you currently reside in?</label
+            >
+            <div class="ashby-application-form-input-radio-group-option">
+              <span class="circle-wrap"
+                ><span class="circle"></span
+                ><input
+                  type="radio"
+                  id="e_q2-labeled-radio-0"
+                  name="e_q2"
+                  class="ashby-application-form-input-radio-group-option-radio"
+              /></span>
+              <label
+                for="e_q2-labeled-radio-0"
+                class="ashby-application-form-input-radio-group-option-label"
+                >Yes
+              </label>
+            </div>
+            <div class="ashby-application-form-input-radio-group-option">
+              <span class="circle-wrap"
+                ><span class="circle"></span
+                ><input
+                  type="radio"
+                  id="e_q2-labeled-radio-1"
+                  name="e_q2"
+                  class="ashby-application-form-input-radio-group-option-radio"
+              /></span>
+              <label
+                for="e_q2-labeled-radio-1"
+                class="ashby-application-form-input-radio-group-option-label"
+                >No
+              </label>
+            </div>
+          </fieldset>
+        </div>
+
+        <!-- Required multi-option radio group. -->
+        <div
+          data-field-path="6b6b6b6b-0000-4000-8000-000000000003"
+          data-field-entry-id="e_6b6b6b6b-0000-4000-8000-000000000003"
+        >
+          <fieldset class="_container_r _fieldEntry_x ashby-application-form-input-radio-group">
+            <label
+              class="_heading_a _required_b ashby-application-form-question-title"
+              for="6b6b6b6b-0000-4000-8000-000000000003"
+              >How many years of product management experience do you have?</label
+            >
+            <div class="ashby-application-form-input-radio-group-option">
+              <span class="circle-wrap"
+                ><span class="circle"></span
+                ><input type="radio" id="e_q3-labeled-radio-0" name="e_q3"
+              /></span>
+              <label for="e_q3-labeled-radio-0">0-2 years</label>
+            </div>
+            <div class="ashby-application-form-input-radio-group-option">
+              <span class="circle-wrap"
+                ><span class="circle"></span
+                ><input type="radio" id="e_q3-labeled-radio-1" name="e_q3"
+              /></span>
+              <label for="e_q3-labeled-radio-1">3-5 years</label>
+            </div>
+            <div class="ashby-application-form-input-radio-group-option">
+              <span class="circle-wrap"
+                ><span class="circle"></span
+                ><input type="radio" id="e_q3-labeled-radio-2" name="e_q3"
+              /></span>
+              <label for="e_q3-labeled-radio-2">6-9 years</label>
+            </div>
+            <div class="ashby-application-form-input-radio-group-option">
+              <span class="circle-wrap"
+                ><span class="circle"></span
+                ><input type="radio" id="e_q3-labeled-radio-3" name="e_q3"
+              /></span>
+              <label for="e_q3-labeled-radio-3">10+ years</label>
+            </div>
+          </fieldset>
+        </div>
+
+        <!-- Required checkbox group (names are the option texts, like Ashby). -->
+        <div
+          data-field-path="6b6b6b6b-0000-4000-8000-000000000004"
+          data-field-entry-id="e_6b6b6b6b-0000-4000-8000-000000000004"
+        >
+          <fieldset class="_container_c _fieldEntry_x ashby-application-form-input-checkbox-group">
+            <label
+              class="_heading_a _required_b ashby-application-form-question-title"
+              for="6b6b6b6b-0000-4000-8000-000000000004"
+              >Which segments have you worked with?</label
+            >
+            <div class="ashby-application-form-input-checkbox-group-option">
+              <span class="circle-wrap"
+                ><span class="circle"></span
+                ><input type="checkbox" id="e_q4-labeled-checkbox-0" name="SMB"
+              /></span>
+              <label for="e_q4-labeled-checkbox-0">SMB</label>
+            </div>
+            <div class="ashby-application-form-input-checkbox-group-option">
+              <span class="circle-wrap"
+                ><span class="circle"></span
+                ><input type="checkbox" id="e_q4-labeled-checkbox-1" name="Enterprise"
+              /></span>
+              <label for="e_q4-labeled-checkbox-1">Enterprise</label>
+            </div>
+          </fieldset>
+        </div>
+
+        <!-- Required single-box acknowledgement. -->
+        <div
+          data-field-path="6b6b6b6b-0000-4000-8000-000000000005"
+          data-field-entry-id="e_6b6b6b6b-0000-4000-8000-000000000005"
+        >
+          <fieldset class="_container_c _fieldEntry_x ashby-application-form-input-checkbox-group">
+            <label
+              class="_heading_a _required_b ashby-application-form-question-title"
+              for="6b6b6b6b-0000-4000-8000-000000000005"
+              >I certify that the information I provide is true and complete.</label
+            >
+            <div class="ashby-application-form-input-checkbox-group-option">
+              <span class="circle-wrap"
+                ><span class="circle"></span
+                ><input type="checkbox" id="e_q5-labeled-checkbox-0" name="I agree"
+              /></span>
+              <label for="e_q5-labeled-checkbox-0">I agree</label>
+            </div>
+          </fieldset>
+        </div>
+
+        <!-- Required single-select combobox ("how did you hear"). -->
+        <div
+          data-field-path="6b6b6b6b-0000-4000-8000-000000000006"
+          data-field-entry-id="e_6b6b6b6b-0000-4000-8000-000000000006"
+        >
+          <fieldset class="_container_w _fieldEntry_x">
+            <label
+              class="_heading_a _required_b ashby-application-form-question-title"
+              for="6b6b6b6b-0000-4000-8000-000000000006"
+              >What brought you to this job posting</label
+            >
+            <div class="_inputContainer_d">
+              <input
+                class="ashby-application-form-input-autocomplete"
+                placeholder="Start typing..."
+                role="combobox"
+                aria-autocomplete="list"
+                value=""
+              />
+              <div class="listbox-host"></div>
+            </div>
+          </fieldset>
+        </div>
+      </div>
+    </div>
+
+    <div class="ashby-survey-form-container">
+      <div class="ashby-application-form-container">
+        <div data-field-path="6b6b6b6b-0000-4000-8000-000000000007">
+          <fieldset class="_container_r _fieldEntry_x ashby-application-form-input-radio-group">
+            <label
+              class="_heading_a ashby-application-form-question-title"
+              for="6b6b6b6b-0000-4000-8000-000000000007"
+              >Which option best describes your gender identity?</label
+            >
+            <div>
+              <span class="circle-wrap"
+                ><span class="circle"></span
+                ><input type="radio" id="e_q7-labeled-radio-0" name="e_q7" /></span
+              ><label for="e_q7-labeled-radio-0">Woman</label>
+            </div>
+            <div>
+              <span class="circle-wrap"
+                ><span class="circle"></span
+                ><input type="radio" id="e_q7-labeled-radio-1" name="e_q7" /></span
+              ><label for="e_q7-labeled-radio-1">Man</label>
+            </div>
+            <div>
+              <span class="circle-wrap"
+                ><span class="circle"></span
+                ><input type="radio" id="e_q7-labeled-radio-2" name="e_q7" /></span
+              ><label for="e_q7-labeled-radio-2">Prefer not to say</label>
+            </div>
+          </fieldset>
+        </div>
+        <div data-field-path="6b6b6b6b-0000-4000-8000-000000000008">
+          <fieldset class="_container_r _fieldEntry_x ashby-application-form-input-radio-group">
+            <label
+              class="_heading_a ashby-application-form-question-title"
+              for="6b6b6b6b-0000-4000-8000-000000000008"
+              >Are you a veteran of the armed forces?</label
+            >
+            <div>
+              <span class="circle-wrap"
+                ><span class="circle"></span
+                ><input type="radio" id="e_q8-labeled-radio-0" name="e_q8" /></span
+              ><label for="e_q8-labeled-radio-0">Yes</label>
+            </div>
+            <div>
+              <span class="circle-wrap"
+                ><span class="circle"></span
+                ><input type="radio" id="e_q8-labeled-radio-1" name="e_q8" /></span
+              ><label for="e_q8-labeled-radio-1">No</label>
+            </div>
+          </fieldset>
+        </div>
+      </div>
+    </div>
+
+    <p id="err"></p>
+    <button type="button" class="ashby-application-form-submit-button">
+      <span>Submit Application</span>
+    </button>
+
+    <script>
+      // Combobox picker: opens on click, filters on typing.
+      const OPTIONS = ["LinkedIn", "Company website", "Job board", "Referral", "Other"];
+      const combo = document.querySelector(
+        '[data-field-path$="000000000006"] input[role="combobox"]'
+      );
+      const host = document.querySelector('[data-field-path$="000000000006"] .listbox-host');
+      function renderList(filter) {
+        host.innerHTML = "";
+        const list = document.createElement("div");
+        list.setAttribute("role", "listbox");
+        for (const o of OPTIONS.filter(
+          (x) => !filter || x.toLowerCase().includes(filter.toLowerCase())
+        )) {
+          const el = document.createElement("div");
+          el.setAttribute("role", "option");
+          el.textContent = o;
+          el.addEventListener("click", () => {
+            combo.value = o;
+            host.innerHTML = "";
+          });
+          list.appendChild(el);
+        }
+        host.appendChild(list);
+      }
+      combo.addEventListener("click", () => renderList(""));
+      combo.addEventListener("input", () => renderList(combo.value));
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") host.innerHTML = "";
+      });
+
+      document
+        .querySelector(".ashby-application-form-submit-button")
+        .addEventListener("click", () => {
+          const missing = [];
+          document.querySelectorAll("[data-field-path]").forEach((row) => {
+            const title = row.querySelector(".ashby-application-form-question-title");
+            if (!title || !/_required/.test(title.className)) return;
+            const file = row.querySelector("input[type=file]");
+            const choices = row.querySelectorAll(
+              "fieldset input[type=radio], fieldset input[type=checkbox]"
+            );
+            const comboInput = row.querySelector("input[role=combobox]");
+            const text = row.querySelector(
+              "input[type=text], input[type=email], input[type=tel], textarea"
+            );
+            let ok = true;
+            if (file) ok = file.files.length > 0;
+            else if (choices.length) ok = [...choices].some((c) => c.checked);
+            else if (comboInput) ok = Boolean(comboInput.value.trim());
+            else if (text) ok = Boolean(text.value.trim());
+            if (!ok) missing.push(row.dataset.fieldPath);
+            const sms = row.querySelectorAll("input[name=smsConsent]");
+            if (sms.length && ![...sms].some((c) => c.checked)) missing.push("smsConsent");
+          });
+          if (missing.length) {
+            document.getElementById("err").textContent =
+              "Your form needs corrections: " + missing.join(", ");
+            return;
+          }
+          document.getElementById("container").outerHTML =
+            '<div class="ashby-application-form-success-container"><h2>Application submitted</h2>' +
+            "<p>Thank you for applying. Your application was successfully submitted.</p></div>";
+        });
+    </script>
+  </body>
+</html>

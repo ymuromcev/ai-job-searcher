@@ -21,12 +21,16 @@
 //                   (`legacy_bot` = the pre-RFC-068 external bot, imported
 //                   from its mailbox). See APPLIED_BY_VALUES.
 //   `apply_state` — the apply bot's per-row state: "" | "queued" | "manual" |
-//                   "failed" | "submitted". "manual" = the bot stopped and a
-//                   human has to finish (captcha, login, unsupported ATS);
-//                   "failed" = submit attempted without confirmation, never
-//                   auto-retried. See APPLY_STATE_VALUES.
-//   `apply_note`  — free text: the reason for manual/failed, or the relative
-//                   path to the confirmation screenshot on success.
+//                   "failed" | "submitted" | "skipped". "skipped" = the bot
+//                   could not submit honestly and moved on (RFC 069 §4;
+//                   reason vocabulary in engine/modules/apply/skip_reasons.js);
+//                   "manual" = legacy (RFC 068) rows left for a human, no
+//                   longer written by the bot; "failed" = submit attempted
+//                   without confirmation, never auto-retried. See
+//                   APPLY_STATE_VALUES.
+//   `apply_note`  — free text: the reason for skipped/failed
+//                   ("<reason>[: <detail>]"), or the relative path to the
+//                   confirmation screenshot on success.
 //
 // v7 (added 2026-06-03 for BL-187 / RFC 059 amendment — append the
 // `applied_date` anchor column for the auto-No-Response sweep). The v7 column
@@ -278,7 +282,14 @@ const HEADER = HEADER_V8;
 // `apply_state` — the bot's per-row submit state; "" when the bot has not
 //                 touched the row.
 const APPLIED_BY_VALUES = Object.freeze(["", "bot", "manual", "legacy_bot"]);
-const APPLY_STATE_VALUES = Object.freeze(["", "queued", "manual", "failed", "submitted"]);
+const APPLY_STATE_VALUES = Object.freeze([
+  "",
+  "queued",
+  "manual",
+  "failed",
+  "submitted",
+  "skipped",
+]);
 
 // RFC 059: default values for the six v6 outreach fields. Older rowToApp*
 // paths seed these so an old file loads cleanly; the next save() rewrites it
