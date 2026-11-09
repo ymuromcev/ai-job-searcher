@@ -72,27 +72,64 @@ function pickCodeMail(mails, { company, sinceMs, used }) {
 const CONFIRM_RE =
   /thank(s| you) for (applying|your application|your interest)|application (was )?(received|submitted)|we(’|')ve received your application|received your application/i;
 
-function findConfirmation(mails, { company, sinceMs }) {
-  const name = norm(firstWord(company));
-  if (!name) return null;
-  return (
-    (mails || []).find((m) => {
-      const t = Date.parse(m.date || "");
-      if (!Number.isFinite(t) || t < sinceMs - CLOCK_SLACK_MS) return false;
-      if (SUBJECT_RE.test(m.subject || "")) return false; // a security code, not a confirmation
-      const text = `${m.subject || ""}\n${m.body || ""}`;
-      return CONFIRM_RE.test(text) && norm(`${m.from || ""} ${text}`).includes(name);
-    }) || null
-  );
+// Lower-case word tokens: "Thank You for Applying to Join BILL!" →
+// ["thank", "you", …, "bill"]; "no-reply@hq.bill.com" → […, "bill", "com"].
+function tokens(s) {
+  return String(s || "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
 }
 
-// "Bill.com" → "Bill"; skips one-letter tokens.
-function firstWord(s) {
-  return (
-    String(s || "")
-      .split(/[\s.,&!-]+/)
-      .find((w) => w.length > 1) || ""
-  );
+// Legal / domain suffixes that are not part of how a mail names the employer.
+const NAME_NOISE = new Set(["inc", "llc", "ltd", "corp", "co", "com", "io", "ai", "the"]);
+
+function hasSequence(words, seq) {
+  if (!seq.length) return false;
+  for (let i = 0; i + seq.length <= words.length; i++) {
+    if (seq.every((w, j) => words[i + j] === w)) return true;
+  }
+  return false;
+}
+
+// The mail is about this company when the whole name ("next insurance")
+// appears as words anywhere in it, or its first word ("bill") appears as a
+// word in the sender or the subject. A first word alone in the body is not
+// enough: "Next Insurance" must not match "next steps" in another
+// employer's mail (a live false match, 09.11.2026).
+function mailNamesCompany(mail, company) {
+  const name = tokens(company).filter((w) => !NAME_NOISE.has(w));
+  if (!name.length) return false;
+  const all = tokens(`${mail.from || ""} ${mail.subject || ""} ${mail.body || ""}`);
+  if (hasSequence(all, name)) return true;
+  const head = tokens(`${mail.from || ""} ${mail.subject || ""}`);
+  return name[0].length > 1 && head.includes(name[0]);
+}
+
+function mailId(m) {
+  return m.rfcMessageId || m.messageId || `${m.date || ""}|${m.from || ""}|${m.subject || ""}`;
+}
+
+// The employer's "thank you for applying" mail sent after `sinceMs`.
+// `used` (a Set of mail ids) keeps one mail from confirming two rows. With a
+// `title`, a mail that names the job title wins; `titleOnly` returns only
+// such a mail (the first pass when one company has several rows).
+function findConfirmation(mails, { company, sinceMs, title = "", used = null, titleOnly = false }) {
+  if (!tokens(company).some((w) => !NAME_NOISE.has(w))) return null;
+  const candidates = (mails || []).filter((m) => {
+    const t = Date.parse(m.date || "");
+    if (!Number.isFinite(t) || t < sinceMs - CLOCK_SLACK_MS) return false;
+    if (SUBJECT_RE.test(m.subject || "")) return false; // a security code, not a confirmation
+    if (used && used.has(mailId(m))) return false;
+    return CONFIRM_RE.test(`${m.subject || ""}\n${m.body || ""}`) && mailNamesCompany(m, company);
+  });
+  const t = norm(title);
+  const byTitle = t
+    ? candidates.find((m) => norm(`${m.subject || ""} ${m.body || ""}`).includes(t))
+    : null;
+  const hit = byTitle || (titleOnly ? null : candidates[0]) || null;
+  if (hit && used) used.add(mailId(hit));
+  return hit;
 }
 
 // One waiter per run: it remembers which mails it already used, so two forms
@@ -105,10 +142,11 @@ function makeCodeWaiter({
   pollMs = 10 * 1000,
 }) {
   const used = new Set();
+  const confirmUsed = new Set();
   return {
     // After a submit that showed no confirmation: look for the employer's
     // "thank you for applying" mail for up to `waitMs`.
-    async confirmed({ company, since, waitMs = 60 * 1000 }) {
+    async confirmed({ company, title = "", since, waitMs = 60 * 1000 }) {
       const sinceMs = since instanceof Date ? since.getTime() : Number(since) || now();
       const started = now();
       for (;;) {
@@ -118,7 +156,7 @@ function makeCodeWaiter({
         } catch {
           mails = [];
         }
-        const hit = findConfirmation(mails, { company, sinceMs });
+        const hit = findConfirmation(mails, { company, title, sinceMs, used: confirmUsed });
         if (hit) return { subject: hit.subject, date: hit.date, from: hit.from };
         if (now() - started >= waitMs) return null;
         await sleep(pollMs);
