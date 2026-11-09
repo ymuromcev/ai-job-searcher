@@ -248,7 +248,7 @@ function locContainsState(locLower, states) {
     }
 
     for (const code of codes) {
-      const re = new RegExp(`(^|[\\s,])${code}([\\s,]|$)`, "i");
+      const re = new RegExp(`(^|[\\s,;/|])${code}([\\s,;/|]|$)`, "i");
       if (re.test(locLower)) return st;
     }
     for (const name of names) {
@@ -489,10 +489,76 @@ function locInHomeStateCounty(locLower, homeState) {
   return !otherState;
 }
 
+// California cities that postings often name without the state
+// ("San Francisco", "Hybrid - San Francisco", "Mountain View, US"). The owner
+// takes any work format anywhere in California (2026-11-09), so a bare city
+// name counts as the home state. Shared with jd_workplace.js.
+const CA_CITY_NAMES = Object.freeze([
+  "san francisco",
+  "south san francisco",
+  "bay area",
+  "silicon valley",
+  "los angeles",
+  "san diego",
+  "san jose",
+  "palo alto",
+  "mountain view",
+  "sunnyvale",
+  "menlo park",
+  "redwood city",
+  "san mateo",
+  "foster city",
+  "san carlos",
+  "burlingame",
+  "oakland",
+  "berkeley",
+  "emeryville",
+  "cupertino",
+  "santa clara",
+  "santa monica",
+  "culver city",
+  "playa vista",
+  "el segundo",
+  "irvine",
+  "costa mesa",
+  "newport beach",
+  "pasadena",
+  "burbank",
+  "sacramento",
+  "roseville",
+  "fremont",
+  "long beach",
+  "walnut creek",
+  "pleasanton",
+  "los gatos",
+  "milpitas",
+  "santa barbara",
+]);
+const CA_CITY_RE = new RegExp(
+  `(?<![a-z])(${CA_CITY_NAMES.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})(?![a-z])`,
+  "gi"
+);
+// Same city name in another place: "San Jose, Costa Rica", "Pasadena, TX".
+const CA_CITY_ELSEWHERE_RE =
+  /^\s*,\s*(costa rica|philippines|mexico|chile|spain|cuba|colombia|argentina|[a-z]{2}\b)/;
+
+function locInHomeStateCity(locLower, homeState) {
+  if (String(homeState).toUpperCase() !== "CA") return false;
+  for (const m of locLower.matchAll(CA_CITY_RE)) {
+    const after = locLower.slice(m.index + m[0].length);
+    const elsewhere = after.match(CA_CITY_ELSEWHERE_RE);
+    if (!elsewhere) return true;
+    const tail = elsewhere[1];
+    if (tail === "ca" || tail === "us") return true;
+  }
+  return false;
+}
+
 function locInHomeState(locLower, homeState) {
   if (!homeState) return false;
   const hit = locContainsState(locLower, [homeState]);
-  if (!hit) return locInHomeStateCounty(locLower, homeState);
+  if (!hit)
+    return locInHomeStateCounty(locLower, homeState) || locInHomeStateCity(locLower, homeState);
   const code = String(homeState).length === 2 ? String(homeState).toUpperCase() : null;
   const name = code ? stateNameForCode(code) : String(homeState).toLowerCase();
   // Full state name present → unambiguous.
@@ -834,4 +900,5 @@ module.exports = {
   canonicalStateCode,
   US_CODE_TO_NAME,
   locInHomeState,
+  CA_CITY_NAMES,
 };
