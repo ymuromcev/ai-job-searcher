@@ -5,8 +5,9 @@
 //   apply --profile <id> --phase pre [--limit N] [--concurrency N] [--dry-run]
 //     Deterministic. Builds the queue (To Apply + Strong/Medium + never
 //     applied + company cap), resolves aggregator links to the ATS form,
-//     detects the ATS (unsupported → apply_state=manual), opens each form
-//     headless, reads its schema, answers every field it can from identity /
+//     detects the ATS (unsupported → skipped no_company_form), opens each
+//     form (Ashby in a visible window, the rest headless — browser.headlessFor),
+//     reads its schema, answers every field it can from identity /
 //     apply_defaults / salary rule / the Notion answer bank, and writes
 //     profiles/<id>/.apply-state/apply_context.json with the remaining
 //     `unanswered[]` questions per job.
@@ -25,17 +26,25 @@
 //     re-check applied_date, Submit, wait for the adapter's confirmation,
 //     screenshot. Success → status Applied / applied_by bot / apply_state
 //     submitted (+ Notion status via notion_sync.updatePageStatus). No
-//     confirmation → failed (never retried). Captcha / login / unexpected
-//     screen → manual. `--dry-run` stops before the Submit click and keeps
-//     a screenshot of the filled form.
+//     confirmation → failed (never retried). `--dry-run` stops before the
+//     Submit click and keeps a screenshot of the filled form.
+//
+// The bot decides on its own (RFC 069 §4): nothing is left for a human. A
+// row it cannot submit honestly ends as apply_state "skipped" with one
+// reason from modules/apply/skip_reasons.js (required_empty,
+// no_honest_answer, captcha, account_required, form_broken, bot_check,
+// closed, no_company_form) and the run moves on. An optional question
+// without an answer is left blank; a required one skips the row
+// (no_honest_answer). A required field still empty after filling never gets
+// a Submit click (required_empty, with the empty field labels).
 //
 // Safety rails (RFC 068 "Безопасность"):
 //   - never two submissions for one job: applied_date is re-read from disk
 //     right before the click; apply_state="queued" + apply_note
 //     "submitting:<ts>" is persisted before the click so a crash mid-submit
 //     is never auto-retried (see modules/apply/queue.js);
-//   - no passwords, no accounts, no captcha solving — those pages stop as
-//     manual with a reason;
+//   - no passwords, no accounts, no captcha solving — those pages are
+//     skipped with a reason (captcha / account_required / bot_check);
 //   - TSV writes go through applications_tsv.load/save under a mutex,
 //     re-reading the file each time.
 //
@@ -72,17 +81,20 @@ const { parsePublishedRange, computeDesiredSalary } = require("../modules/apply/
 const { resolveResumePdf, resolveCoverLetterPdf } = require("../modules/apply/resume_path.js");
 const { buildQueue, SUBMITTING_PREFIX } = require("../modules/apply/queue.js");
 const { runPool, makeMutex } = require("../modules/apply/pool.js");
-const { launchBrowser } = require("../modules/apply/browser.js");
+const { launchBrowser, headlessFor } = require("../modules/apply/browser.js");
 const emailCode = require("../modules/apply/email_code.js");
 const { detectBlocker, sleep } = require("../modules/apply/_dom.js");
+const { skipReasonFor, skipNote, isSkipReason } = require("../modules/apply/skip_reasons.js");
 
 const DEFAULT_CONCURRENCY = 4;
 const STATE_DIR = ".apply-state";
 const CONTEXT_FILE = "apply_context.json";
 
-// Stop reasons that leave the job for a human (manual) vs. a submit that
-// went out without confirmation (failed).
-const MANUAL_REASONS = new Set([
+// Stop reasons after the Submit click that mean the application did NOT go
+// out — the row is skipped (vocabulary reason via skipReasonFor), never
+// "failed". Everything else after a click (no_confirmation,
+// validation_error) is failed: never retried.
+const NOT_SENT_AFTER_CLICK = new Set([
   "captcha",
   "login_required",
   "email_verification",
@@ -94,6 +106,13 @@ const MANUAL_REASONS = new Set([
   "unknown_page",
   "job_closed",
 ]);
+
+// A row the bot gave up on: outcome "skipped" + vocabulary reason + the
+// detailed code. `extra` carries labels / evidence / screenshot.
+function skipped(out, code, extra = {}) {
+  const reason = skipReasonFor(code);
+  return { ...out, outcome: "skipped", reason, ...(code !== reason ? { code } : {}), ...extra };
+}
 
 // Outcomes after which the application may still have gone out: before the
 // row is marked, the apply mailbox is checked for the employer's thank-you.
@@ -217,6 +236,9 @@ function resolveFields(fields, { job, identity, applyDefaults, salary, bank, fil
       if (field.required) blockers.push("unsupported_required_file");
       continue;
     }
+    // Choice policy: this optional question stays empty (EEO without a
+    // decline option, …) — neither answered nor sent to the drafter.
+    if (m && m.leave_blank && !field.required) continue;
     if (m && m.value !== "" && m.value != null) {
       answers.push({ field_id: field.id, label: field.label, value: m.value, source: m.source });
       continue;
@@ -329,21 +351,26 @@ function concurrencyOf(flags) {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_CONCURRENCY;
 }
 
-// Lazily launched, shared browser for one run.
+// Lazily launched, shared browsers for one run: one headless, one visible
+// (Ashby — browser.headlessFor). `get(ats)` picks by the form's ATS; no ATS
+// (resolving an aggregator link) → headless. Both are Playwright's Chromium.
 function makeBrowserHandle(deps) {
-  let launching = null;
+  const launching = new Map(); // headless(bool) -> Promise<browser>
+  const modeFor = (ats) => (deps.headlessFor || headlessFor)(ats || null);
   return {
-    async get() {
-      if (!launching) launching = deps.launchBrowser({ headless: true });
-      return launching;
+    async get(ats) {
+      const headless = modeFor(ats);
+      if (!launching.has(headless)) launching.set(headless, deps.launchBrowser({ headless }));
+      return launching.get(headless);
     },
     async close() {
-      if (!launching) return;
-      try {
-        const b = await launching;
-        await b.close();
-      } catch {
-        // launch failed — nothing to close
+      for (const p of launching.values()) {
+        try {
+          const b = await p;
+          await b.close();
+        } catch {
+          // launch failed — nothing to close
+        }
       }
     },
   };
@@ -351,7 +378,7 @@ function makeBrowserHandle(deps) {
 
 // Launch the browser before touching any job. A browser that cannot start
 // (missing playwright-core, no Chromium) must stop the run, not mark every
-// job manual / unknown_page — at night that would bury a whole queue.
+// job skipped / form_broken — at night that would bury a whole queue.
 async function browserReady(browser, stderr) {
   try {
     await browser.get();
@@ -417,10 +444,10 @@ async function salaryForJob(job, ats, adapter, resolvedUrl, profile, deps, apply
 // Where is this job's application form? Order:
 //   1. ATS-sourced row + board slug (companies.tsv or the row URL) → the
 //      canonical form URL, after a posting-API liveness check (404 → closed).
-//   2. No URL at all → manual `no_application_url`.
+//   2. No URL at all → stop `no_application_url` (skipped no_company_form).
 //   3. Fetch-based redirect resolver; for aggregators that block fetch
 //      (Adzuna) a real browser page is tried next.
-// Returns { res } | { closed: true } | { manual } | { skip }.
+// Returns { res } | { closed: true } | { manual: stopCode } | { skip }.
 async function resolveJobUrl(app, env) {
   const { deps, slugIndex, browser } = env;
   const canon = canonicalFormUrl(app, slugIndex);
@@ -484,28 +511,28 @@ async function preparePreJob(app, env) {
 
   const where = await resolveJobUrl(app, env);
   if (where.closed) return { job, closed: true };
-  if (where.manual) return { job, manual: where.manual };
+  if (where.manual) return { job, stop: where.manual };
   if (where.skip) return { job, skip: where.skip };
   const res = where.res;
   const ats = res.ats;
-  if (!ats) return { job, manual: `unsupported_ats:${hostOf(res.url)}` };
+  if (!ats) return { job, stop: `unsupported_ats:${hostOf(res.url)}` };
   const adapter = deps.getAdapter(ats);
-  if (!adapter) return { job, manual: `unsupported_ats:${hostOf(res.url)}` };
+  if (!adapter) return { job, stop: `unsupported_ats:${hostOf(res.url)}` };
   const formUrl = adapter.normalizeUrl(res.url);
 
   const resume = resolveResumePdf(app, profile, { exists: deps.fileExists });
-  if (resume.error) return { job, manual: resume.error };
+  if (resume.error) return { job, stop: resume.error };
   const cl = resolveCoverLetterPdf(app, profile, { exists: deps.fileExists });
 
   let salary = await salaryForJob(job, ats, adapter, res.url, profile, deps, applyDefaults);
   if (salary.desired.belowFloor) return { job, skip: "salary_below_floor" };
 
-  const b = await browser.get();
+  const b = await browser.get(ats);
   const { page, close } = await b.newPage();
   try {
     const opened = await adapter.open(page, formUrl);
     if (!opened.ok && opened.reason === "job_closed") return { job, closed: true };
-    if (!opened.ok) return { job, manual: opened.reason };
+    if (!opened.ok) return { job, stop: opened.reason };
     // No JD in the cache / API: Greenhouse renders the posting (with its
     // pay range) above the form, so read the range off the page itself.
     if (!salary.range) {
@@ -530,7 +557,7 @@ async function preparePreJob(app, env) {
       bank,
       files: { resume: { rel: resume.rel }, cover_letter: cl ? { rel: cl.rel } : null },
     });
-    if (blockers.length) return { job, manual: blockers[0] };
+    if (blockers.length) return { job, stop: blockers[0] };
     return {
       job,
       entry: {
@@ -556,7 +583,7 @@ async function preparePreJob(app, env) {
     };
   } catch (err) {
     stderr(`apply pre: ${app.key}: ${err.message}`);
-    return { job, manual: "unknown_page" };
+    return { job, stop: "unknown_page" };
   } finally {
     await close();
   }
@@ -648,36 +675,38 @@ async function runPre(ctx, deps) {
   }
 
   const jobs = [];
-  const manual = [];
+  const gaveUp = []; // vocabulary skips (RFC 069 §4): the row is done for tonight
   const closed = [];
   const skippedNow = [];
+  const giveUp = (job, code) => {
+    const reason = skipReasonFor(code);
+    gaveUp.push({ ...job, reason, ...(code !== reason ? { code } : {}) });
+  };
   for (let i = 0; i < results.length; i += 1) {
     const r = results[i] || {};
     const app = queue[i];
     if (r.error) {
-      manual.push({
-        key: app.key,
-        company: app.companyName,
-        title: app.title,
-        reason: "unknown_page",
-      });
+      giveUp({ key: app.key, company: app.companyName, title: app.title }, "unknown_page");
       continue;
     }
     if (r.entry) jobs.push(r.entry);
     else if (r.closed) closed.push({ ...r.job, reason: "job_closed" });
-    else if (r.manual) manual.push({ ...r.job, reason: r.manual });
+    else if (r.stop) giveUp(r.job, r.stop);
     else if (r.skip) skippedNow.push({ ...r.job, reason: r.skip });
   }
 
-  // Persist states: manual reasons for the human list, "queued" for jobs
-  // carried to the LLM / submit steps.
+  // Persist states: skipped (with the reason) for rows the bot gave up on,
+  // "queued" for jobs carried to the LLM / submit steps. Nothing is left for
+  // a human.
   if (!flags.dryRun) {
     const byKey = new Map(apps.map((a) => [a.key, a]));
-    for (const m of manual) {
+    const nowIso = deps.now().toISOString();
+    for (const m of gaveUp) {
       const a = byKey.get(m.key);
       if (!a) continue;
-      a.apply_state = "manual";
-      a.apply_note = m.reason;
+      a.apply_state = "skipped";
+      a.apply_note = skipNote(m.reason, m.code);
+      a.updatedAt = nowIso;
     }
     for (const j of jobs) {
       const a = byKey.get(j.key);
@@ -686,7 +715,6 @@ async function runPre(ctx, deps) {
       a.apply_note = "";
     }
     // Closed postings are not work for anyone: the job itself is Closed.
-    const nowIso = deps.now().toISOString();
     for (const c of closed) {
       const a = byKey.get(c.key);
       if (!a) continue;
@@ -706,7 +734,7 @@ async function runPre(ctx, deps) {
       a.apply_note = "";
       a.updatedAt = nowIso;
     }
-    if (manual.length || jobs.length || closed.length || outOfArea.length)
+    if (gaveUp.length || jobs.length || closed.length || outOfArea.length)
       deps.saveApplications(applicationsPath, apps);
     await pushStatusToNotion(closed, "Closed", byKey, profile, secrets, deps, stderr);
     await pushStatusToNotion(outOfArea, "Archived", byKey, profile, secrets, deps, stderr);
@@ -716,18 +744,19 @@ async function runPre(ctx, deps) {
     generated_at: deps.now().toISOString(),
     profile: profileId,
     jobs,
-    manual,
     closed,
-    skipped: [...skipped, ...skippedNow],
+    // Queue gate skips, pre skips (url_dead, salary_below_floor) and the rows
+    // the bot gave up on (vocabulary reason + the detailed `code`).
+    skipped: [...skipped, ...skippedNow, ...gaveUp],
   };
   const contextPath = path.join(stateDir(profile), CONTEXT_FILE);
   deps.writeFile(contextPath, JSON.stringify(context, null, 2));
   // Small stamped record of this pre run, next to apply_results-*.json: the
-  // nightly run log (`night --phase finish`) counts rounds / queued / manual
+  // nightly run log (`night --phase finish`) counts rounds / queued / skipped
   // from these, and `night --phase check` uses the keys to tell rows already
   // looked at tonight from fresh ones (apply_context.json is overwritten).
   const preStamp = context.generated_at.replace(/[:.]/g, "-");
-  const keyOf = (x) => ({ key: x.key, reason: x.reason });
+  const keyOf = (x) => ({ key: x.key, reason: x.reason, ...(x.code ? { code: x.code } : {}) });
   deps.writeFile(
     path.join(stateDir(profile), `apply_pre-${preStamp}.json`),
     JSON.stringify(
@@ -735,8 +764,7 @@ async function runPre(ctx, deps) {
         generated_at: context.generated_at,
         dry_run: Boolean(flags.dryRun),
         jobs: jobs.map((j) => ({ key: j.key })),
-        manual: manual.map(keyOf),
-        skipped: skippedNow.map(keyOf),
+        skipped: [...skippedNow, ...gaveUp].map(keyOf),
         // Which bank answers went into which forms — the board's reuse count.
         bank_used: bankUsesFromJobs(jobs),
       },
@@ -748,10 +776,12 @@ async function runPre(ctx, deps) {
   const needLlm = jobs.filter((j) => j.unanswered.some((u) => u.required)).length;
   stdout(
     `apply pre: ${jobs.length} form(s) read — ${jobs.length - needLlm} fully answered, ` +
-      `${needLlm} need the LLM step; ${manual.length} manual; ${closed.length} closed; ` +
-      `${skippedNow.length} skipped`
+      `${needLlm} need the LLM step; ${closed.length} closed; ` +
+      `${skippedNow.length + gaveUp.length} skipped`
   );
-  for (const m of manual) stdout(`  manual  ${m.company} — ${m.title}: ${m.reason}`);
+  for (const m of gaveUp) {
+    stdout(`  skipped ${m.company} — ${m.title}: ${skipNote(m.reason, m.code)}`);
+  }
   stdout(`context: ${path.relative(process.cwd(), contextPath)}`);
   return 0;
 }
@@ -880,42 +910,58 @@ async function submitOne(job, env) {
   }
 
   // Required questions answered (context + LLM)? Checked before the browser.
+  // Optional questions without an answer are simply left blank; a required
+  // one without an honest answer skips the row (RFC 069 §4).
   const pre = buildFillPlan(job.fields || [], job, llmByKey.get(job.key) || [], root);
-  if (pre.missingRequired.length) return { ...out, outcome: "manual", reason: "no_honest_answer" };
+  if (pre.missingRequired.length) {
+    return skipped(out, "no_honest_answer", {
+      empty_fields: labelsOf(pre.missingRequired, job.fields),
+    });
+  }
 
   const guard = alreadyApplied(freshRow(applicationsPath, job.key, deps));
   if (guard) return { ...out, outcome: "skipped", reason: guard };
 
   const adapter = deps.getAdapter(job.ats);
-  if (!adapter) return { ...out, outcome: "manual", reason: `unsupported_ats:${job.ats}` };
+  if (!adapter) return skipped(out, `unsupported_ats:${job.ats}`);
 
-  const b = await browser.get();
+  const b = await browser.get(job.ats);
   const { page, close } = await b.newPage();
+  let clicked = false;
   try {
     const opened = await adapter.open(page, job.form_url);
-    if (!opened.ok) return { ...out, outcome: "manual", reason: opened.reason };
+    if (!opened.ok) return skipped(out, opened.reason);
 
     const live = await adapter.readSchema(page);
     const plan = buildFillPlan(live, job, llmByKey.get(job.key) || [], root);
     if (plan.missingRequired.length) {
-      return { ...out, outcome: "manual", reason: "schema_changed", detail: plan.missingRequired };
+      // The live form asks a required question the context never saw.
+      return skipped(out, "schema_changed", {
+        empty_fields: labelsOf(plan.missingRequired, live),
+      });
     }
     const filled = await adapter.fill(page, plan.values);
     const requiredIds = new Set(live.filter((f) => f.required).map((f) => f.id));
     const hardErrors = filled.errors.filter((e) => requiredIds.has(e.id));
     if (hardErrors.length) {
       await screenshot(page, shotAbs, deps);
-      return {
-        ...out,
-        outcome: "manual",
-        reason: `fill_error:${hardErrors[0].error}`,
+      return skipped(out, `fill_error:${hardErrors[0].error}`, {
+        empty_fields: labelsOf(
+          hardErrors.map((e) => e.id),
+          live
+        ),
         detail: hardErrors,
-      };
+        screenshot: shotRel,
+      });
     }
+    // Required-field guard: anything required still empty → never Submit.
     const check = await adapter.checkFilled(page);
     if (check.missing.length) {
       await screenshot(page, shotAbs, deps);
-      return { ...out, outcome: "manual", reason: "presubmit_check", detail: check.missing };
+      return skipped(out, "required_empty", {
+        empty_fields: check.missingLabels || labelsOf(check.missing, live),
+        screenshot: shotRel,
+      });
     }
 
     if (flags.dryRun) {
@@ -932,6 +978,7 @@ async function submitOne(job, env) {
     });
 
     const clickedAt = deps.now();
+    clicked = true;
     let result = await adapter.submit(page);
     if (!result.ok && result.reason === "email_verification") {
       result = await passEmailCode(page, adapter, job, clickedAt, env);
@@ -953,25 +1000,52 @@ async function submitOne(job, env) {
       stdout(`  applied  ${job.company} — ${job.title}`);
       return { ...out, outcome: "submitted", screenshot: shotRel, evidence: result.evidence };
     }
-    const outcome = MANUAL_REASONS.has(result.reason) ? "manual" : "failed";
+    // Held before it went out (captcha, login, a code that never came) →
+    // skipped with the reason; anything else after the click → failed,
+    // never retried (the application may have gone out).
+    if (NOT_SENT_AFTER_CLICK.has(result.reason)) {
+      return skipped(out, result.reason, { evidence: result.evidence, screenshot: shotRel });
+    }
     return {
       ...out,
-      outcome,
+      outcome: "failed",
       reason: result.reason,
       evidence: result.evidence,
       screenshot: shotRel,
     };
   } catch (err) {
     await screenshot(page, shotAbs, deps);
-    return { ...out, outcome: "manual", reason: "unknown_page", detail: err.message };
+    // A crash after the Submit click may still have sent the application:
+    // failed (never retried), not skipped.
+    if (clicked) {
+      return { ...out, outcome: "failed", reason: "no_confirmation", detail: err.message };
+    }
+    return skipped(out, "unknown_page", { detail: err.message });
   } finally {
     await close();
   }
 }
 
+// Field ids → their labels (the morning report lists them).
+function labelsOf(ids, fields) {
+  const byId = new Map((fields || []).map((f) => [f.id, f.label || f.id]));
+  return (ids || []).map((id) => byId.get(id) || id);
+}
+
 async function recordOutcome(r, env) {
   const { deps, writeRow, notion } = env;
-  if (!r || r.outcome === "skipped" || r.outcome === "dry_run") return;
+  if (!r || r.outcome === "dry_run") return;
+  if (r.outcome === "skipped") {
+    // Guard skips (deadline, already applied, interrupted submit, status
+    // changed) leave the row exactly as it is; vocabulary skips record why.
+    if (!isSkipReason(r.reason)) return;
+    await writeRow(r.key, (a) => {
+      a.apply_state = "skipped";
+      a.apply_note = skipNote(r.reason, r.empty_fields || r.code);
+      a.updatedAt = deps.now().toISOString();
+    });
+    return;
+  }
   if (r.outcome === "submitted") {
     const today = deps.today();
     let pageId = "";
@@ -995,7 +1069,7 @@ async function recordOutcome(r, env) {
     return;
   }
   await writeRow(r.key, (a) => {
-    a.apply_state = r.outcome === "failed" ? "failed" : "manual";
+    a.apply_state = "failed";
     a.apply_note = r.reason || r.outcome;
   });
 }
@@ -1117,12 +1191,17 @@ async function runSubmit(ctx, deps) {
   ).length;
   stdout(
     `apply submit: ${count("submitted")} submitted, ${count("dry_run")} dry-run, ` +
-      `${count("manual")} manual, ${count("failed")} failed, ${count("skipped")} skipped` +
+      `${count("failed")} failed, ${count("skipped")} skipped` +
       (deferred ? ` (${deferred} left for the next run: deadline)` : "")
   );
   for (const r of normalized) {
-    if (r && (r.outcome === "manual" || r.outcome === "failed" || r.outcome === "error")) {
-      stdout(`  ${r.outcome.padEnd(6)} ${r.company} — ${r.title}: ${r.reason}`);
+    if (!r) continue;
+    if (r.outcome === "failed" || r.outcome === "error") {
+      stdout(`  ${r.outcome.padEnd(7)} ${r.company} — ${r.title}: ${r.reason}`);
+    } else if (r.outcome === "skipped" && isSkipReason(r.reason)) {
+      stdout(
+        `  skipped ${r.company} — ${r.title}: ${skipNote(r.reason, r.empty_fields || r.code)}`
+      );
     }
   }
   stdout(`results: ${path.relative(process.cwd(), resultsPath)}`);
@@ -1235,7 +1314,7 @@ async function runOpen(ctx, deps) {
   }
   if (!r.entry) {
     stderr(
-      `error: ${app.companyName} — ${app.title}: ${r.manual || r.skip || "cannot read the form"}`
+      `error: ${app.companyName} — ${app.title}: ${r.stop || r.skip || "cannot read the form"}`
     );
     return 1;
   }
@@ -1273,7 +1352,7 @@ async function runOpen(ctx, deps) {
     let codeTried = false;
     for (;;) {
       if (typeof page.isClosed === "function" && page.isClosed()) {
-        stdout("  the window was closed — the job stays in «Доделать руками»");
+        stdout("  the window was closed — the row stays as it was");
         return 0;
       }
       let evidence = null;
@@ -1306,7 +1385,7 @@ async function runOpen(ctx, deps) {
       if (deps.now().getTime() - started >= watchMs) {
         stdout(
           `  no confirmation within ${Math.round(watchMs / 60000)} min — ` +
-            "the job stays in «Доделать руками»"
+            "the row stays as it was"
         );
         return 0;
       }

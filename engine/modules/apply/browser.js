@@ -3,7 +3,13 @@
 // Uses `playwright-core` with Playwright's own Chromium build
 // (~/Library/Caches/ms-playwright, installed by `npx playwright install
 // chromium`). Never the system Google Chrome — the candidate's personal
-// browser profile must not be touched.
+// browser profile must not be touched: `launchOptions` never sets `channel`
+// or `executablePath`, so even a headed window is Playwright's Chromium.
+//
+// Window mode per ATS (RFC 069 §2): Ashby forms open in a *visible* window
+// (its invisible bot check rejects the headless browser); Greenhouse and
+// Lever stay headless. `headlessFor(ats, overrides)` is the single switch;
+// the apply command takes it as an injectable dep.
 
 const fs = require("fs");
 
@@ -37,11 +43,26 @@ function browserStatus() {
   return { ok: true, executablePath: exe };
 }
 
+const HEADLESS_BY_ATS = Object.freeze({ greenhouse: true, lever: true, ashby: false });
+
+// true → headless, false → visible window. Unknown ATS / no ATS (aggregator
+// pages read while resolving a link) → headless.
+function headlessFor(ats, overrides = null) {
+  const table = overrides ? { ...HEADLESS_BY_ATS, ...overrides } : HEADLESS_BY_ATS;
+  const v = ats ? table[ats] : undefined;
+  return v === undefined ? true : Boolean(v);
+}
+
+// Options for chromium.launch — Playwright's own Chromium only.
+function launchOptions({ headless = true } = {}) {
+  return { headless: Boolean(headless) };
+}
+
 async function launchBrowser({ headless = true } = {}) {
   const status = browserStatus();
   if (!status.ok) throw new Error(status.reason);
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ headless });
+  const browser = await chromium.launch(launchOptions({ headless }));
   return {
     browser,
     // Fresh context per job: no cookie bleed between applications.
@@ -63,4 +84,11 @@ async function launchBrowser({ headless = true } = {}) {
   };
 }
 
-module.exports = { launchBrowser, browserStatus, USER_AGENT };
+module.exports = {
+  launchBrowser,
+  launchOptions,
+  headlessFor,
+  HEADLESS_BY_ATS,
+  browserStatus,
+  USER_AGENT,
+};
