@@ -665,6 +665,52 @@ Common errors:
 
 - `invalid apply_window "<text>" — expected HH:MM-HH:MM (local time)`.
 
+### companies
+
+Synopsis: `node engine/cli.js companies add --profile <id> --ats <greenhouse|lever|ashby> --slug <slug> [--name <company>]`
+
+Adds a company's Greenhouse / Lever / Ashby board to `data/companies.tsv` so the next `scan` reads it (RFC 069 §6 — the night's volume top-up). The board is fetched once through the same discovery adapter `scan` uses: an HTTP error or an unexpected body is `invalid`; a valid board with no open jobs is still added. Dedup is on (ATS, slug). The new row is visible to this profile only; an existing row owned by another profile gets this profile added to its `profile` list. Writes go through `engine/core/companies.js` under a lock file, so parallel subagents never lose each other's rows. No cap on the number of companies. Never writes `applications.tsv` or Notion, so the lazy sweeps are skipped.
+
+Flags:
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--profile <id>` | string | — | Required. |
+| `--ats <greenhouse\|lever\|ashby>` | string | — | Required. The board's ATS. |
+| `--slug <slug>` | string | — | Required. Board slug (`boards.greenhouse.io/<slug>`, `jobs.lever.co/<slug>`, `jobs.ashbyhq.com/<slug>`). |
+| `--name <company>` | string | from the slug | Company name as the scan will show it. |
+
+Output: one JSON line, `{"result":"added"|"exists"|"invalid","ats","slug","name","jobs"}` (`error` on invalid, `shared_with_profile` when an existing row was shared). Exit 0 for added / exists, 1 for invalid or bad arguments.
+
+Example:
+
+```bash
+node engine/cli.js companies add --profile <id> --ats lever --slug acme-synthetic --name "Acme Synthetic"
+```
+
+### requeue
+
+Synopsis: `node engine/cli.js requeue --profile <id> --since <YYYY-MM-DD> [--apply]`
+
+One-off repair for bot submissions that never really went out (RFC 069 §8: October 2026 Ashby forms submitted with required radios empty). A row goes back to the apply queue when it was a bot / recorded submit (`apply_state=submitted` or `applied_by=bot`), was applied on or after `--since`, is still `Applied` / `No Response`, has no "thank you for applying" mail for the company in the apply mailbox since the application day, and the job is not closed (posting-API check; Ashby has none and counts as open). Requeue sets status `To Apply`, clears `applied_date` / `applied_by`, sets `apply_state=queued`, `apply_note=requeued:<date>`, and moves the Notion page back to `To Apply` first (sync is pull-only — a page left at Applied would undo the requeue). A row whose Notion update fails is left as is.
+
+Flags:
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--profile <id>` | string | — | Required. |
+| `--since <YYYY-MM-DD>` | string | — | Required. Bot submissions applied on/after this date. |
+| `--apply` | boolean | false | Write TSV + Notion. Default is a dry run that prints the list (requeue / confirmed / closed / kept). |
+
+Requires the apply mailbox (`<ID>_APPLY_GMAIL_USER`, `<ID>_APPLY_GMAIL_APP_PASSWORD`); without it the command refuses. `--apply` also needs `<ID>_NOTION_TOKEN` when any row has a Notion page.
+
+Example:
+
+```bash
+node engine/cli.js requeue --profile <id> --since 2026-10-20
+node engine/cli.js requeue --profile <id> --since 2026-10-20 --apply
+```
+
 ## Environment variables
 
 Secrets are loaded by `engine/core/profile_loader.loadSecrets(profileId, env)`. Per-profile namespacing: each variable is prefixed by the uppercased profile id followed by `_`. Other profiles' secrets are never read by the running command.

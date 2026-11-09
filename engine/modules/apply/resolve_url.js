@@ -6,21 +6,37 @@
 // employer's ATS. Company career pages that embed Greenhouse carry a
 // `gh_jid=<id>` query and reference the board slug in their HTML.
 //
-// `resolveUrl(url, { fetchFn, detectAts, maxHops })` → {
+// `resolveUrl(url, { fetchFn, detectAts, maxHops, job?, slugIndex? })` → {
 //   ok: boolean,
 //   url: string,          // final URL (the ATS URL when found)
 //   ats: string | null,   // adapter name when the final URL is a supported ATS
 //   status: number,       // last HTTP status seen
 //   hops: string[],       // URLs visited
+//   via?: string,         // "company_board" when found on the company's board
 //   reason?: string,      // "dead" | "blocked" | "fetch_error" | "unsafe_url" | "no_ats"
+//                         // | "no_company_form" (aggregator row + `job` given)
 // }
 //
 // fetchFn has the engine `defaultFetch` shape: (url, {method, redirect,
 // timeoutMs, retries, headers}) → Response-like {status, url, text()}.
 // Redirects are followed by fetch itself (`redirect: "follow"`); this module
 // adds the HTML-level hops fetch cannot see.
+//
+// Aggregator rows (RFC 069 §5). When `opts.job` ({ company, title,
+// locations }) is passed and the URL is a job-aggregator link (Adzuna,
+// Indeed, LinkedIn, …), the same job is first looked up on the company's own
+// Greenhouse / Lever / Ashby board through the discovery adapters' public
+// board endpoints. Board slugs: the ones already known in data/companies.tsv
+// (`opts.slugIndex`, see canonical_url.buildSlugIndex) first, then slugs
+// guessed from the company name. Match = same normalized title (location
+// breaks ties and vetoes an obviously different city). Match → the canonical
+// form URL (`via: "company_board"`). No match → the redirect resolver below
+// still runs; if it finds no ATS either, the result is
+// `reason: "no_company_form"` (the original reason in `redirect_reason`).
 
 const { isSafeLivenessUrl } = require("../../core/url_check.js");
+const { normalizeName } = require("../../core/company_keys.js");
+const { formUrl } = require("./canonical_url.js");
 
 const BROWSER_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
@@ -104,7 +120,211 @@ async function readText(res) {
   }
 }
 
+// --- Aggregator rows → the company's own board (RFC 069 §5) -----------------
+
+// Job aggregators whose listing points at someone else's posting. Short links
+// (grnh.se, lnkd.in) are not here: they redirect to the ATS by themselves.
+const AGGREGATOR_HOST_RE =
+  /(^|\.)(adzuna\.[a-z.]+|indeed\.com|linkedin\.com|glassdoor\.com|ziprecruiter\.com|simplyhired\.com|talent\.com|jooble\.org)$/i;
+
+function isAggregatorUrl(u) {
+  return AGGREGATOR_HOST_RE.test(hostOf(u));
+}
+
+const BOARD_ATS = ["greenhouse", "lever", "ashby"];
+
+let defaultBoards = null;
+function boardAdapters() {
+  if (!defaultBoards) {
+    defaultBoards = {
+      greenhouse: require("../discovery/greenhouse.js"),
+      lever: require("../discovery/lever.js"),
+      ashby: require("../discovery/ashby.js"),
+    };
+  }
+  return defaultBoards;
+}
+
+// "Acme Synthetic, Inc." → ["acmesynthetic", "acme-synthetic"]. Board slugs
+// are the company name squashed or hyphenated; a first-word guess ("acme")
+// is left out on purpose — it lands on unrelated companies' boards.
+function guessSlugs(company) {
+  const key = normalizeName(String(company || "").replace(/&/g, " and "));
+  const words = key.split(" ").filter((w) => /^[a-z0-9]+$/.test(w));
+  if (!words.length) return [];
+  const out = [words.join("")];
+  if (words.length > 1) out.push(words.join("-"));
+  return out;
+}
+
+// (ats, slug) pairs to try: slugs known in companies.tsv first, then guesses
+// on every supported ATS. No duplicates.
+function boardCandidates(company, slugIndex) {
+  const seen = new Set();
+  const out = [];
+  const add = (ats, slug) => {
+    const k = `${ats}\t${String(slug).toLowerCase()}`;
+    if (!slug || seen.has(k)) return;
+    seen.add(k);
+    out.push({ ats, slug });
+  };
+  const known = (slugIndex && slugIndex.get && slugIndex.get(normalizeName(company))) || [];
+  for (const r of known) if (BOARD_ATS.includes(r.source)) add(r.source, r.slug);
+  for (const slug of guessSlugs(company)) for (const ats of BOARD_ATS) add(ats, slug);
+  return out;
+}
+
+const TITLE_WORDS = [
+  [/\bsr\b/g, "senior"],
+  [/\bjr\b/g, "junior"],
+  [/\bmgr\b/g, "manager"],
+  [/\bvp\b/g, "vice president"],
+];
+
+function normalizeTitle(t) {
+  let s = String(t || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  for (const [re, to] of TITLE_WORDS) s = s.replace(re, to);
+  return s.replace(/\s+/g, " ").trim();
+}
+
+// Same title with any "(…)" part removed: "PM (Remote)" ≈ "PM".
+function bareTitle(t) {
+  return normalizeTitle(String(t || "").replace(/\([^)]*\)/g, " "));
+}
+
+function titleMatches(a, b) {
+  const na = normalizeTitle(a);
+  if (!na) return false;
+  if (na === normalizeTitle(b)) return true;
+  const ba = bareTitle(a);
+  return ba !== "" && ba === bareTitle(b);
+}
+
+function normLoc(l) {
+  return String(l || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9,]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const REMOTE_RE = /\b(remote|anywhere|distributed)\b/;
+
+// 2 = a city / region in common, 1 = both remote, 0 = nothing in common.
+function locationScore(rowLocs, jobLocs) {
+  const a = (rowLocs || []).map(normLoc).filter(Boolean);
+  const b = (jobLocs || []).map(normLoc).filter(Boolean);
+  const place = (l) => l.split(",")[0].trim();
+  for (const x of a) {
+    for (const y of b) {
+      const px = place(x);
+      const py = place(y);
+      if (px && !REMOTE_RE.test(px) && y.includes(px)) return 2;
+      if (py && !REMOTE_RE.test(py) && x.includes(py)) return 2;
+    }
+  }
+  if (a.some((x) => REMOTE_RE.test(x)) && b.some((y) => REMOTE_RE.test(y))) return 1;
+  return 0;
+}
+
+// A different concrete city ("Austin, TX" vs "New York, NY", no remote on
+// the board side) means another posting with the same title.
+function locationVeto(rowLocs, jobLocs) {
+  const a = (rowLocs || []).map(normLoc).filter(Boolean);
+  const b = (jobLocs || []).map(normLoc).filter(Boolean);
+  if (!a.length || !b.length) return false;
+  if (b.some((y) => REMOTE_RE.test(y))) return false;
+  const concrete = (l) => l.includes(",") && !REMOTE_RE.test(l);
+  if (!a.some(concrete) || !b.some(concrete)) return false;
+  return locationScore(a, b) === 0;
+}
+
+// The board job that is the row's job, or null.
+function pickBoardMatch(boardJobs, job) {
+  const same = (boardJobs || []).filter((j) => j && j.jobId && titleMatches(job.title, j.title));
+  if (!same.length) return null;
+  const scored = same
+    .map((j) => ({ j, score: locationScore(job.locations, j.locations) }))
+    .sort((x, y) => y.score - x.score);
+  const best = scored[0];
+  if (best.score === 0 && locationVeto(job.locations, best.j.locations)) return null;
+  return best.j;
+}
+
+// Look an aggregator row up on the company's own board.
+// job: { company | companyName, title, locations? }.
+// → { ok: true, url, ats, slug, jobId, via: "company_board", tried }
+// | { ok: false, reason: "no_company_form", tried }
+async function findCompanyForm(job, opts = {}) {
+  const { fetchFn, slugIndex = null, adapters = boardAdapters() } = opts;
+  if (!fetchFn) throw new Error("findCompanyForm: fetchFn is required");
+  const company = (job && (job.company || job.companyName)) || "";
+  const tried = [];
+  if (!company || !job.title) return { ok: false, reason: "no_company_form", tried };
+  const silent = { warn: () => {} };
+  for (const { ats, slug } of boardCandidates(company, slugIndex)) {
+    const adapter = adapters[ats];
+    if (!adapter || typeof adapter.discover !== "function") continue;
+    tried.push(`${ats}:${slug}`);
+    let jobs = [];
+    try {
+      // A wrong slug answers 404; the adapter logs it and returns [].
+      jobs = await adapter.discover([{ name: company, slug }], {
+        fetchFn,
+        logger: silent,
+        concurrency: 1,
+      });
+    } catch {
+      jobs = [];
+    }
+    const hit = pickBoardMatch(jobs, job);
+    if (hit) {
+      return {
+        ok: true,
+        url: formUrl(ats, slug, hit.jobId),
+        ats,
+        slug,
+        jobId: hit.jobId,
+        via: "company_board",
+        tried,
+      };
+    }
+  }
+  return { ok: false, reason: "no_company_form", tried };
+}
+
 async function resolveUrl(url, opts = {}) {
+  const { job = null, slugIndex = null, boardAdapters: adapters } = opts;
+  const start = String(url || "").trim();
+  if (job && opts.fetchFn && isSafeLivenessUrl(start).ok && isAggregatorUrl(start)) {
+    const board = await findCompanyForm(job, {
+      fetchFn: opts.fetchFn,
+      slugIndex,
+      ...(adapters ? { adapters } : {}),
+    });
+    if (board.ok) {
+      return {
+        ok: true,
+        url: board.url,
+        ats: board.ats,
+        status: 200,
+        hops: [start],
+        via: "company_board",
+      };
+    }
+    const res = await followUrl(start, opts);
+    if (res.ok || res.reason === "unsafe_url") return res;
+    return { ...res, reason: "no_company_form", redirect_reason: res.reason };
+  }
+  return followUrl(url, opts);
+}
+
+// The redirect / HTML-hop resolver (RFC 068 §1).
+async function followUrl(url, opts = {}) {
   const { fetchFn, detectAts = () => null, maxHops = 4, timeoutMs = 15000 } = opts;
   const hops = [];
   let current = String(url || "").trim();
@@ -266,4 +486,17 @@ function hostOf(u) {
   }
 }
 
-module.exports = { resolveUrl, resolveViaPage, findHtmlHop, greenhouseFromEmbed, hostOf };
+module.exports = {
+  resolveUrl,
+  resolveViaPage,
+  findHtmlHop,
+  greenhouseFromEmbed,
+  hostOf,
+  isAggregatorUrl,
+  findCompanyForm,
+  guessSlugs,
+  boardCandidates,
+  normalizeTitle,
+  titleMatches,
+  pickBoardMatch,
+};
