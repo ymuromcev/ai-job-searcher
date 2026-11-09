@@ -22,6 +22,13 @@
 //      posting-API check `apply --phase pre` uses; "unknown" counts as open,
 //      the apply pre-phase checks the page again).
 //
+// Rows the old bot left to a human (apply_state "manual" / "failed", status
+// still "To Apply", touched on or after --since) also go back to the queue:
+// RFC 069 has no manual queue any more, and the new bot either applies or
+// skips them with a reason. Same mailbox check (a "failed" row may still
+// have gone out); a row whose results record shows the confirmation page is
+// kept. No Notion change — the page already says To Apply.
+//
 // Requeue = status "To Apply", applied_date / applied_by cleared,
 // apply_state "queued", apply_note "requeued:<today>". The Notion page goes
 // back to "To Apply" first (sync is pull-only: a page left at Applied would
@@ -52,6 +59,7 @@ const { detectAts, getAdapter } = require("../modules/apply/index.js");
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const REQUEUE_STATUSES = new Set(["Applied", "No Response"]);
+const LEFT_STATES = new Set(["manual", "failed"]);
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function appliedDay(app) {
@@ -83,6 +91,18 @@ function selectCandidates(apps, since) {
     candidates.push(app);
   }
   return { candidates, skipped };
+}
+
+// Pure: rows the old bot left to a human since the date.
+function isLeft(app, since) {
+  if (!app || !LEFT_STATES.has(String(app.apply_state || "").trim())) return false;
+  if (app.status !== "To Apply") return false;
+  const day = appliedDay(app);
+  return Boolean(day) && day >= since;
+}
+
+function selectLeft(apps, since) {
+  return (apps || []).filter((a) => isLeft(a, since));
 }
 
 // key → { records, pageConfirmed } from every non-dry-run results file.
@@ -217,7 +237,8 @@ function makeRequeueCommand(overrides = {}) {
     const { apps } = deps.loadApplications(applicationsPath);
 
     const { candidates, skipped } = selectCandidates(apps, since);
-    if (!candidates.length) {
+    const left = selectLeft(apps, since);
+    if (!candidates.length && !left.length) {
       stdout(`requeue: since ${since} — no bot submissions to check`);
       for (const s of skipped) stdout(line("kept", s.app, s.reason));
       return 0;
@@ -248,7 +269,7 @@ function makeRequeueCommand(overrides = {}) {
     const usedMails = new Set();
     const mailFor = new Map();
     for (const titleOnly of [true, false]) {
-      for (const app of candidates) {
+      for (const app of candidates.concat(left)) {
         if (mailFor.has(app.key)) continue;
         const mail = findConfirmation(mails, {
           company: app.companyName,
@@ -284,6 +305,15 @@ function makeRequeueCommand(overrides = {}) {
       else plan.requeue.push({ app, state });
     }
 
+    const leftPlan = { requeue: [], kept: [] };
+    for (const app of left) {
+      const mail = mailFor.get(app.key);
+      const rec = results.get(app.key);
+      if (mail) leftPlan.kept.push({ app, why: `mail "${mail.subject || ""}" ${mail.date || ""}` });
+      else if (rec && rec.pageConfirmed) leftPlan.kept.push({ app, why: "confirmation page" });
+      else leftPlan.requeue.push({ app });
+    }
+
     stdout(
       `requeue: since ${since} — ${candidates.length} bot submission(s): ` +
         `${plan.requeue.length} to requeue, ${plan.confirmed.length} confirmed by email, ` +
@@ -298,16 +328,27 @@ function makeRequeueCommand(overrides = {}) {
     for (const c of plan.noRecord) stdout(line("kept", c.app, "no results record"));
     for (const c of plan.closed) stdout(line("closed", c.app));
     for (const s of skipped) stdout(line("kept", s.app, s.reason));
+    if (left.length) {
+      stdout(
+        `requeue: ${left.length} row(s) the old bot left to a human (manual / failed): ` +
+          `${leftPlan.requeue.length} to requeue, ${leftPlan.kept.length} kept`
+      );
+      for (const r of leftPlan.requeue) {
+        stdout(line("requeue", r.app, `was ${r.app.apply_state}: ${r.app.apply_note || ""}`));
+      }
+      for (const k of leftPlan.kept) stdout(line("kept", k.app, k.why));
+    }
+    const total = plan.requeue.length + leftPlan.requeue.length;
 
     if (!apply) {
       stdout(
-        plan.requeue.length
-          ? `dry-run: nothing written. Re-run with --apply to requeue ${plan.requeue.length} row(s).`
+        total
+          ? `dry-run: nothing written. Re-run with --apply to requeue ${total} row(s).`
           : "dry-run: nothing to requeue."
       );
       return 0;
     }
-    if (!plan.requeue.length) {
+    if (!total) {
       stdout("requeue: nothing to write.");
       return 0;
     }
@@ -326,6 +367,7 @@ function makeRequeueCommand(overrides = {}) {
       (profile.notion && profile.notion.property_map) || notionSync.DEFAULT_PROPERTY_MAP;
 
     const ok = new Set();
+    const leftOk = new Set(leftPlan.requeue.map((r) => r.app.key));
     let errors = 0;
     // The mailbox / posting checks took a while: a row the submitter (or
     // anyone) changed meanwhile is not touched, not even in Notion.
@@ -357,6 +399,14 @@ function makeRequeueCommand(overrides = {}) {
     await deps.withApplicationsLock(applicationsPath, () => {
       const fresh = deps.loadApplications(applicationsPath).apps;
       for (const a of fresh) {
+        if (leftOk.has(a.key)) {
+          if (!isLeft(a, since)) continue; // the submitter took it meanwhile
+          a.apply_state = "queued";
+          a.apply_note = `requeued:${today}`;
+          a.updatedAt = nowIso;
+          written += 1;
+          continue;
+        }
         if (!ok.has(a.key)) continue;
         if (!stillCandidate(a, since)) {
           changed.push(a);
@@ -392,6 +442,7 @@ function makeRequeueCommand(overrides = {}) {
 module.exports = makeRequeueCommand();
 module.exports.makeRequeueCommand = makeRequeueCommand;
 module.exports.selectCandidates = selectCandidates;
+module.exports.selectLeft = selectLeft;
 module.exports.confirmationQuery = confirmationQuery;
 module.exports.jobState = jobState;
 module.exports.resultsIndex = resultsIndex;

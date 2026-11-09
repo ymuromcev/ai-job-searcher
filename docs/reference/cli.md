@@ -695,6 +695,8 @@ Synopsis: `node engine/cli.js requeue --profile <id> --since <YYYY-MM-DD> [--app
 
 One-off repair for bot submissions that never really went out (RFC 069 §8: October 2026 Ashby forms submitted with required radios empty). A row goes back to the apply queue when it was a bot / recorded submit (`apply_state=submitted` or `applied_by=bot`), was applied on or after `--since`, is still `Applied` / `No Response`, has no "thank you for applying" mail for the company in the apply mailbox since the application day, has a record in the apply results files (`.apply-state/apply_results-*.json`) none of which shows the ATS's confirmation page (a row with no record is kept), and the job is not closed (posting-API check; Ashby has none and counts as open). Requeue sets status `To Apply`, clears `applied_date` / `applied_by`, sets `apply_state=queued`, `apply_note=requeued:<date>`, and moves the Notion page back to `To Apply` first (sync is pull-only — a page left at Applied would undo the requeue). A row whose Notion update fails is left as is.
 
+Rows the old bot left to a human also go back to the queue. These are rows with `apply_state=manual` or `failed`, status still `To Apply`, and touched on or after `--since`. RFC 069 has no manual queue: the new bot either applies to them or skips them with a reason. A row stays as it is when a confirmation mail for it is in the apply mailbox, or when its results record shows the ATS's confirmation page. Requeue sets `apply_state=queued` and `apply_note=requeued:<date>`. Notion is not touched, because the page already says `To Apply`.
+
 Flags:
 
 | Flag | Type | Default | Description |

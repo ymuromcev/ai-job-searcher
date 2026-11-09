@@ -355,3 +355,68 @@ test("requeue --apply: a row that changed meanwhile is re-checked inside the TSV
   ]);
   assert.match(r.err, /greenhouse:111 changed since the check \(now Interview\)/);
 });
+
+test("requeue: rows the old bot left to a human go back to the queue, unless they went out", async () => {
+  const env = setup();
+  const left = (over) =>
+    app({
+      status: "To Apply",
+      applied_date: "",
+      applied_by: "",
+      updatedAt: "2026-10-25T00:00:00Z",
+      ...over,
+    });
+  applicationsTsv.save(
+    env.tsv,
+    rows().concat([
+      left({
+        key: "ashby:m1",
+        companyName: "Soylent",
+        apply_state: "manual",
+        apply_note: "captcha",
+      }),
+      left({
+        key: "ashby:f1",
+        companyName: "Massive Dynamic",
+        apply_state: "failed",
+        apply_note: "no_confirmation",
+      }),
+      // Its results record shows the ATS's thank-you page → kept.
+      left({ key: "ashby:f2", companyName: "Wayne", apply_state: "failed" }),
+      // Before --since → not looked at.
+      left({ key: "ashby:m2", apply_state: "manual", updatedAt: "2026-10-01T00:00:00Z" }),
+      // Already handled by the new bot → not looked at.
+      left({ key: "ashby:s1", apply_state: "skipped", apply_note: "captcha" }),
+    ])
+  );
+  writeResults(env.root, "2026-10-25T08-00-00-000Z", [
+    {
+      key: "ashby:f2",
+      outcome: "submitted",
+      evidence: { url: "https://jobs.ashbyhq.com/wayne/thanks" },
+    },
+  ]);
+  const { deps, log } = fakeDeps(env);
+  const dry = await run(env, deps, {});
+  assert.equal(dry.code, 0, dry.err);
+  assert.match(
+    dry.out,
+    /3 row\(s\) the old bot left to a human \(manual \/ failed\): 2 to requeue, 1 kept/
+  );
+  assert.match(dry.out, /requeue\s+ashby:m1\s+Soylent .*was manual: captcha/);
+  assert.match(dry.out, /requeue\s+ashby:f1\s+Massive Dynamic/);
+  assert.match(dry.out, /dry-run: nothing written. Re-run with --apply to requeue 4 row\(s\)/);
+
+  const r = await run(env, deps, { apply: true });
+  assert.equal(r.code, 0, r.err);
+  const byKey = Object.fromEntries(applicationsTsv.load(env.tsv).apps.map((a) => [a.key, a]));
+  for (const key of ["ashby:m1", "ashby:f1"]) {
+    assert.equal(byKey[key].apply_state, "queued", key);
+    assert.equal(byKey[key].apply_note, "requeued:2026-11-09");
+    assert.equal(byKey[key].status, "To Apply");
+  }
+  assert.equal(byKey["ashby:m2"].apply_state, "manual");
+  assert.equal(byKey["ashby:s1"].apply_state, "skipped");
+  // No Notion call for the left rows: their pages already say To Apply.
+  assert.deepEqual(log.notion, [["page-globex", "To Apply"]]);
+});
