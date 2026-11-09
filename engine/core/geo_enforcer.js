@@ -833,4 +833,5 @@ module.exports = {
   isUsCountryOnlyLoc,
   canonicalStateCode,
   US_CODE_TO_NAME,
+  locInHomeState,
 };

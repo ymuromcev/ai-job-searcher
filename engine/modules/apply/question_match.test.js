@@ -488,3 +488,30 @@ test("choice policy: SMS / text-message consent radios → the No option", () =>
     value: "No - I do not consent to receiving SMS text messages",
   });
 });
+
+test("relocation within_states: willing for an office in those states, not elsewhere", () => {
+  const ctx = (locations) => ({
+    ...CTX,
+    applyDefaults: {
+      ...CTX.applyDefaults,
+      relocation: { willing: false, within_states: ["CA"] },
+    },
+    job: { locations },
+  });
+  const q = select("Are you willing to relocate?", ["Yes", "No"]);
+  assert.equal(matchQuestion(q, ctx(["San Francisco, CA"])).value, "Yes");
+  assert.equal(matchQuestion(q, ctx(["Los Angeles, California"])).value, "Yes");
+  assert.equal(matchQuestion(q, ctx(["New York, NY"])).value, "No");
+  assert.equal(matchQuestion(q, ctx(["Remote", "New York, NY"])).value, "No");
+  // Remote-only or unknown location → the LLM step reads the posting.
+  assert.equal(matchQuestion(q, ctx(["Remote"])), null);
+  assert.equal(matchQuestion(q, ctx([])), null);
+  // The question itself names a California city.
+  assert.equal(
+    matchQuestion(select("Are you willing to relocate to San Diego, CA?", ["Yes", "No"]), ctx([]))
+      .value,
+    "Yes"
+  );
+  // No within_states → the plain boolean, as before.
+  assert.equal(m(q).value, "No");
+});
