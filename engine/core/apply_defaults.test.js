@@ -132,6 +132,19 @@ test("validateApplyDefaults: relatives_at_company / start_weeks_after_offer (own
   ]);
 });
 
+test("validateApplyDefaults: standing_answers is a list of { question, answer } (2026-11-09)", () => {
+  const ok = [{ question: "Valid US driver's license?", answer: "Yes" }];
+  assert.deepEqual(validateApplyDefaults({ ...valid(), standing_answers: ok }), []);
+  assert.deepEqual(errorFields(validateApplyDefaults({ ...valid(), standing_answers: "yes" })), [
+    "apply_defaults.standing_answers",
+  ]);
+  const bad = [{ question: "Pronouns?" }, { question: "", answer: "x" }];
+  assert.deepEqual(errorFields(validateApplyDefaults({ ...valid(), standing_answers: bad })), [
+    "apply_defaults.standing_answers[0]",
+    "apply_defaults.standing_answers[1]",
+  ]);
+});
+
 test("getSalaryFloor: returns the floor or null", () => {
   assert.equal(getSalaryFloor(valid()), 100000);
   assert.equal(getSalaryFloor(null), null);
