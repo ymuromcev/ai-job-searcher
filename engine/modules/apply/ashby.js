@@ -50,7 +50,7 @@ const {
   FillError,
   SUBMIT_TIMEOUT_MS,
 } = require("./_dom.js");
-const { pickOption } = require("./question_match.js");
+const { pickOption, DEFAULT_CHOICE_POLICY } = require("./question_match.js");
 
 const NAME = "ashby";
 const ENTRY_SEL = ".ashby-application-form-field-entry";
@@ -357,15 +357,29 @@ async function tickTagged(page, fieldId, k) {
   if (!(await checked())) throw new FillError("option_not_checked", fieldId);
 }
 
+// "How did you hear about us" pickers whose options were not readable when
+// the schema was (they load on open): the default string ("Company careers
+// page") rarely matches their wording, so the choice policy's list is tried
+// against the live options — company site, then a job board, then Other.
+const HOW_HEARD_RE =
+  /how did you (hear|find|learn|come across)|where did you (hear|find|learn)|referral source|what brought you to/i;
+
 async function chooseComboOption(page, field, value) {
   const input = row(page, field.id).locator('input[role="combobox"]').first();
   await input.click({ timeout: 5000 });
+  const wants = [String(value)];
+  if (HOW_HEARD_RE.test(field.label || "")) wants.push(...DEFAULT_CHOICE_POLICY.how_did_you_hear);
   let texts = await visibleOptionTexts(page);
-  let pick = pickOption(texts, value);
-  if (!pick) {
-    await input.fill(String(value));
+  let pick = null;
+  for (const w of wants) {
+    pick = pickOption(texts, w);
+    if (pick) break;
+  }
+  for (const w of wants) {
+    if (pick) break;
+    await input.fill(w);
     texts = await visibleOptionTexts(page);
-    pick = pickOption(texts, value);
+    pick = pickOption(texts, w);
   }
   if (!pick) {
     await page.keyboard.press("Escape").catch(() => {});
@@ -554,8 +568,63 @@ async function submit(page, { timeoutMs = SUBMIT_TIMEOUT_MS, ignoreBlockers = []
   if ((await btn.count()) === 0) btn = page.locator('button:has-text("Submit Application")');
   if ((await btn.count()) === 0)
     return { ok: false, reason: STOP_REASONS.UNKNOWN_PAGE, evidence: null };
+  // Record what Ashby's API answered to the click: when no confirmation
+  // shows, the response (spam flag, validation error, 4xx) is the only
+  // record of why — the page itself often looks unchanged.
+  const calls = [];
+  const onResponse = async (res) => {
+    try {
+      const req = res.request();
+      if (req.method() !== "POST" || !/ashbyhq\.com\/api\//.test(res.url())) return;
+      let body = "";
+      try {
+        body = (await res.text()).slice(0, 600);
+      } catch {
+        body = "";
+      }
+      calls.push({
+        path: new URL(res.url()).pathname + new URL(res.url()).search,
+        status: res.status(),
+        body,
+      });
+    } catch {
+      // a response that vanished with the page
+    }
+  };
+  if (typeof page.on === "function") page.on("response", onResponse);
   await btn.first().click();
-  return waitForOutcome(page, { isSuccess, hasValidationError, timeoutMs, ignoreBlockers });
+  const out = await waitForOutcome(page, {
+    isSuccess,
+    hasValidationError,
+    timeoutMs,
+    ignoreBlockers,
+  });
+  if (typeof page.off === "function") page.off("response", onResponse);
+  if (!out.ok && out.evidence) {
+    out.evidence = { ...out.evidence, api: calls.slice(-6), alerts: await alertsText(page) };
+  }
+  return out;
+}
+
+// Visible alert / error / toast text on the page (Ashby shows its spam and
+// submit errors there, not in the field rows).
+async function alertsText(page) {
+  try {
+    return await page.evaluate(() =>
+      Array.from(
+        document.querySelectorAll(
+          '[role="alert"], [class*="error" i], [class*="toast" i], [class*="notice" i]'
+        )
+      )
+        .filter((e) => e.offsetParent !== null)
+        .map((e) => (e.innerText || "").trim())
+        .filter(Boolean)
+        .slice(0, 8)
+        .map((t) => t.slice(0, 300))
+    );
+  } catch {
+    return [];
+  }
 }
 
 module.exports = {
