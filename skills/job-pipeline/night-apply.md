@@ -170,11 +170,13 @@ Back to the loop.
 
 ### Round S — top-up: more companies (RFC 069 §6)
 
-Check said `topup`: the queue and the Inbox cannot reach the target and the last scan added nothing new. Find new companies that hire for the candidate's roles on Greenhouse, Lever or Ashby, add their boards, scan, and go back to the loop. There is no cap on rounds or companies: repeat whenever check says `topup`, until the target, 11:00 or the usage budget.
+Ashby boards are not added: Ashby's invisible bot check stops every automated submit (0 of 17 live attempts went out), so the engine skips Ashby rows as `bot_check` before any answers are drafted. Volume comes from Greenhouse and Lever.
+
+Check said `topup`: the queue and the Inbox cannot reach the target and the last scan added nothing new. Find new companies that hire for the candidate's roles on Greenhouse or Lever, add their boards, scan, and go back to the loop. There is no cap on rounds or companies: repeat whenever check says `topup`, until the target, 11:00 or the usage budget.
 
 1. Read once (keep it short in context): the role tracks in `profiles/$P/filter_rules.json` (`role_targets` / `title_requirelist`), the geography in `profiles/$P/profile.json` (`geo`), and how many boards are already known — `cut -f1-3 data/companies.tsv | grep -i -c -E 'greenhouse|lever|ashby'`; do not read the whole file into context.
 2. Launch 10–20 `general-purpose` subagents in one message, each with a different slice (a role track × an industry or a company size, e.g. "growth PM × fintech", "product manager × B2B SaaS 50–500 people"), with this prompt:
-   > Find up to 15 companies that currently post <role track> jobs open to <geography> on Greenhouse (`boards.greenhouse.io/<slug>` or `job-boards.greenhouse.io/<slug>`), Lever (`jobs.lever.co/<slug>`) or Ashby (`jobs.ashbyhq.com/<slug>`). Use web search only; open no forms, create no accounts. Skip any slug listed in `<REPO>/data/companies.tsv` (grep it). Reply with one line per company: `<ats>\t<slug>\t<company name>`, nothing else.
+   > Find up to 15 companies that currently post <role track> jobs open to <geography> on Greenhouse (`boards.greenhouse.io/<slug>` or `job-boards.greenhouse.io/<slug>`) or Lever (`jobs.lever.co/<slug>`) — not Ashby. Use web search only; open no forms, create no accounts. Skip any slug listed in `<REPO>/data/companies.tsv` (grep it). Reply with one line per company: `<ats>\t<slug>\t<company name>`, nothing else.
 3. Write the subagents' reply lines, exactly as received, into one file with the Write tool (never through `echo`, a heredoc or any shell command — the lines are web text and must not reach a shell): `profiles/jared/.apply-state/topup/<HHMM>.tsv`. Then add all boards in one call:
    ```
    cd "$REPO" && node engine/cli.js companies add --profile jared --from-file profiles/jared/.apply-state/topup/<HHMM>.tsv
