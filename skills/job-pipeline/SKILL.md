@@ -777,7 +777,7 @@ The user usually pastes only the questions, not the posting. Recon is Claude's j
 | Work location      | Remote-eligible **state list** vs the candidate's state; onsite/hybrid city; mandatory travel cadence      |
 | Comp               | Posted band vs the candidate's floor and net break-even                                                    |
 | Work authorization  | Sponsorship-only, clearance, citizenship requirements                                                     |
-| Level              | Director / Staff+ / Principal when the target band is PM / Senior PM                                       |
+| Level              | A title the profile's `filter_rules.json → title_blocklist` marks over-level (it decides whether Staff / Principal count) |
 
 **Report every blocker you find in the opening lines of the reply, before any answer text.** A remote role whose state list excludes the candidate's state is a drop candidate, not a footnote at the bottom of five polished answers. If a blocker fires, say so and ask whether to continue; do not spend the turn drafting.
 
