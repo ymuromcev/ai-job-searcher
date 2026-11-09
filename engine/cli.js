@@ -204,8 +204,10 @@ Commands:
   requeue    --since <YYYY-MM-DD>: bot submissions since the date with no
              confirmation mail in the apply mailbox and the job still open
              go back to the apply queue (status To Apply, apply_state
-             queued; Notion status too). Dry-run by default; --apply writes.
-             See RFC 069 §8.
+             queued; Notion status too). Rows the old bot left to a human
+             (apply_state manual / failed, still To Apply) go back too,
+             unless a mail or the ATS page shows they went out.
+             Dry-run by default; --apply writes. See RFC 069 §8.
 
 Flags:
   --profile <id>       Profile id (required for all commands). Lowercase, alphanum + - _.
