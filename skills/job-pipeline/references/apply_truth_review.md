@@ -15,6 +15,7 @@ The answer will be sent to an employer without the candidate seeing it. A recrui
   - the storybank — `## Storybank` section of `interview-coach-state/coaching_state.md` (or `storybank.md` if it exists)
   - the files listed in `profile.json` → `memory` (`writing_style_file`, `resume_key_points_file`, `feedback_dir/*.md`)
   - the source excerpts the writer cited for this answer
+  - `apply_defaults.json`: the owner's standing answers (work authorization, sponsorship, relocation and office rules with `relocation.within_states`, EEO, legal acknowledgements). An answer that follows it is sourced. Office rule 2026-11-09: a California office → yes to attendance, commute and relocation; outside California → remote only.
 
 Read every source the writer cited, and search the others for each claim you cannot place. Do not skim.
 

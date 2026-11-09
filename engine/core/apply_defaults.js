@@ -15,7 +15,8 @@
 //       "requires_sponsorship": false,     // boolean
 //       "status_text": "US Permanent Resident (Green Card)"  // non-empty string
 //     },
-//     "relocation": { "willing": false },  // boolean
+//     "relocation": { "willing": false,    // boolean — outside within_states
+//                     "within_states": ["CA"] },  // optional: willing for offices there
 //     "eeo": { "policy": "decline" },      // one of VALID_EEO_POLICIES
 //     "salary": {
 //       "floor": 120000,                   // number >= 0 — published range top below this → skip
@@ -128,6 +129,11 @@ function validateApplyDefaults(raw) {
     err(`${base}.relocation`, "must be an object");
   } else if (typeof rel.willing !== "boolean") {
     err(`${base}.relocation.willing`, "must be a boolean");
+  } else if (
+    rel.within_states !== undefined &&
+    !(Array.isArray(rel.within_states) && rel.within_states.every(isNonEmptyString))
+  ) {
+    err(`${base}.relocation.within_states`, "must be an array of state codes");
   }
 
   const eeo = raw.eeo;
