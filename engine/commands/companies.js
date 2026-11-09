@@ -124,6 +124,7 @@ function findRow(rows, ats, slug) {
 // A company name from a file or a flag: one line of plain text.
 function cleanName(raw) {
   return String(raw || "")
+    // eslint-disable-next-line no-control-regex -- strip control characters on purpose
     .replace(/[\u0000-\u001f\u007f]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
