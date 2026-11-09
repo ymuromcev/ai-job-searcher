@@ -1162,6 +1162,8 @@ Translated: bridge says "even though this is FDE not PM, if it's an AI-native co
 Candidate's real achievements (the fit basis): `prepare_context.memory.fitProfile` (generated from the storybank, see `profiles/<id>/fit_profile.md`).
 Acceptable role-tracks + treatments: `prepare_context.roleTargets` (sourced from `profiles/<id>/filter_rules.json → role_targets`).
 
+**Per-track treatment.** When `roleTargets.fit_treatments[<track.id>]` exists, it applies to every job whose title is on that track, in addition to the rules above. It may name reasons to archive the job (for example "client-facing" or "a must-have is hands-on engineering"): check each one against the live JD and the profile sources, and when one fires, score the job Pass with that reason in `fit_rationale`. This is the one case where a track rule lowers a score — the profile owner wrote it for that track.
+
 ### Salary Expectations (auto-fill at prepare time)
 
 Determined automatically from **Company Tier × Role Level**. No JD salary analysis needed.
