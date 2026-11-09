@@ -30,14 +30,26 @@ const KNOWN_COMMANDS = [
   "report",
   "apply",
   "night",
+  "submit-ready",
+  "companies",
+  "requeue",
 ];
+
+// Commands that take one sub-command positional (`companies add`).
+const SUBCOMMANDS = { companies: ["add"] };
 
 // Commands that never write applications.tsv / Notion (RFC 068 §8 / §10). The
 // lazy auto-Dead / auto-No-Response sweeps write the TSV and Notion, so they
 // are skipped for these — opening the registry must never change data, and
 // `night` (only its own lock / log / fan-out files) is polled many times a
 // night, where a sweep on every call would only add Notion traffic.
-const READ_ONLY_COMMANDS = new Set(["board", "report", "night"]);
+// `companies` writes only data/companies.tsv and runs many times in a night
+// (RFC 069 §6 top-up).
+const READ_ONLY_COMMANDS = new Set(["board", "report", "night", "companies"]);
+// The lazy sweeps are skipped for these too. `submit-ready` does write the TSV
+// (through apply's submit code) but launchd starts it every 15 minutes, day
+// and night — a sweep on every start would only add Notion traffic.
+const NO_SWEEP_COMMANDS = new Set([...READ_ONLY_COMMANDS, "submit-ready"]);
 
 const PARSE_OPTIONS = {
   options: {
@@ -90,6 +102,12 @@ const PARSE_OPTIONS = {
     "stop-at": { type: "string" },
     "max-hours": { type: "string" },
     "stop-reason": { type: "string" },
+    minutes: { type: "string" },
+    // `companies add` (RFC 069 §6).
+    ats: { type: "string" },
+    slug: { type: "string" },
+    name: { type: "string" },
+    "from-file": { type: "string" },
   },
   allowPositionals: true,
   strict: true,
@@ -169,7 +187,25 @@ Commands:
              (check), per-row / per-job fan-out files for parallel
              subagents (prepare-fanout, prepare-collect, apply-fanout), and
              one line per night in .health/apply_runs.jsonl (finish).
-             Never writes applications.tsv or Notion. See RFC 068 §9 / §11.
+             Ends each apply round with a ready manifest (ready) for the
+             submitter; never submits itself. Never writes applications.tsv
+             or Notion. See RFC 068 §9 / §11, RFC 069.
+  submit-ready
+             The submitter outside Claude (RFC 069): submits the rows of the
+             night's ready manifests inside the profile's apply_window
+             (default 02:00-11:00), never past a manifest deadline; after the
+             window sends one morning notification. Started by launchd every
+             15 min — scripts/install_submitter.sh --profile <id>.
+  companies  companies add --ats greenhouse|lever|ashby --slug <slug>
+             [--name <company>]: add a company board to data/companies.tsv
+             for this profile. The board is fetched once to validate it;
+             duplicates are reported, not added. Prints one JSON line
+             {"result":"added"|"exists"|"invalid",…}. See RFC 069 §6.
+  requeue    --since <YYYY-MM-DD>: bot submissions since the date with no
+             confirmation mail in the apply mailbox and the job still open
+             go back to the apply queue (status To Apply, apply_state
+             queued; Notion status too). Dry-run by default; --apply writes.
+             See RFC 069 §8.
 
 Flags:
   --profile <id>       Profile id (required for all commands). Lowercase, alphanum + - _.
@@ -256,15 +292,34 @@ apply flags:
                          Submit click; keeps a screenshot of the filled form.
 
 night flags:
-  --phase <start|check|prepare-fanout|prepare-collect|apply-fanout|finish>
+  --phase <start|check|prepare-fanout|prepare-collect|apply-fanout|ready|wait|finish>
                          Required. check exits 2 when the night must stop;
                          start exits 3 when another night holds the lock.
-  --target <N>           start: applications to aim for tonight (default 100).
+  --target <N>           start: applications to aim for tonight (default:
+                         profile apply_target, else 30).
   --stop-at <HH:MM>      start: local time to stop starting new work
-                         (default 06:30).
-  --max-hours <N>        start: hard cap on the run length (default 10).
+                         (default: profile apply_stop_at, else 11:00).
+  --max-hours <N>        start: hard cap on the run length (default 14).
+  --minutes <N>          wait: longest wait for the submitter (default 9).
   --stop-reason <text>   finish: why the night ended (deadline, target_reached,
-                         queue_empty, usage_budget, scan_failed, …).
+                         usage_budget, scan_failed, prepare_failed, apply_failed).
+
+submit-ready flags:
+  --concurrency <N>      Parallel browser contexts (default 4).
+
+companies flags:
+  add                    Required subcommand (companies add …).
+  --ats <greenhouse|lever|ashby>
+                         Required. The board's ATS.
+  --slug <slug>          Required. Board slug (boards.greenhouse.io/<slug>,
+                         jobs.lever.co/<slug>, jobs.ashbyhq.com/<slug>).
+  --name <company>       Company name (default: from the slug).
+  --from-file <tsv>      Instead of --ats/--slug: one board per line,
+                         "ats<TAB>slug<TAB>name"; every line validated.
+
+requeue flags:
+  --since <YYYY-MM-DD>   Required. Bot submissions applied on/after this date.
+  --apply                Write TSV + Notion. Default: dry-run (prints the list).
 
 answer flags:
   --phase <search|push>  Required. "search" looks up existing Q&A by company+role+question
@@ -308,6 +363,17 @@ function pickCommand(positionals) {
   if (!KNOWN_COMMANDS.includes(command)) {
     return { error: `unknown command: ${command} (known: ${KNOWN_COMMANDS.join(", ")})` };
   }
+  const subs = SUBCOMMANDS[command];
+  if (subs) {
+    const sub = positionals[1];
+    if (!sub || !subs.includes(sub)) {
+      return { error: `${command} needs a subcommand: ${subs.join(", ")}` };
+    }
+    if (positionals.length > 2) {
+      return { error: `unexpected extra positional args: ${positionals.slice(2).join(" ")}` };
+    }
+    return { command, subcommand: sub };
+  }
   if (positionals.length > 1) {
     return { error: `unexpected extra positional args: ${positionals.slice(1).join(" ")}` };
   }
@@ -334,6 +400,9 @@ function defaultCommands() {
     report: require("./commands/report.js"),
     apply: require("./commands/apply.js"),
     night: require("./commands/night.js"),
+    "submit-ready": require("./commands/submit_ready.js"),
+    companies: require("./commands/companies.js"),
+    requeue: require("./commands/requeue.js"),
   };
 }
 
@@ -373,6 +442,7 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
 
   const ctx = {
     command: cmdResult.command,
+    subcommand: cmdResult.subcommand || "",
     profileId: profile,
     flags: {
       dryRun: Boolean(parsed.values["dry-run"]),
@@ -422,6 +492,12 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
       stopAt: parsed.values["stop-at"] || "",
       maxHours: parsed.values["max-hours"] ? Number(parsed.values["max-hours"]) : null,
       stopReason: parsed.values["stop-reason"] || "",
+      minutes: parsed.values.minutes ? Number(parsed.values.minutes) : null,
+      // companies add (RFC 069 §6)
+      ats: parsed.values.ats || "",
+      slug: parsed.values.slug || "",
+      name: parsed.values.name || "",
+      fromFile: parsed.values["from-file"] || "",
     },
     env,
     stdout: writeOut,
@@ -496,7 +572,7 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
   const { runAutoNoResponseSweep } = require("./core/auto_no_response_sweep.js");
 
   try {
-    if (!READ_ONLY_COMMANDS.has(ctx.command)) {
+    if (!NO_SWEEP_COMMANDS.has(ctx.command)) {
       const todayStr = todayLocalISO();
       await runAutoDeadSweep(ctx.profileId, ctx, { todayStr });
       await runAutoNoResponseSweep(ctx.profileId, ctx, { todayStr });

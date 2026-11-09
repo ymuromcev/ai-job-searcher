@@ -151,7 +151,7 @@ const q = (apps, extra = {}) =>
 test("queue: gates on status, fit, applied_date and apply_state", () => {
   const apps = [
     row({ key: "a" }),
-    row({ key: "b", fit_score: "Weak" }),
+    row({ key: "b", companyName: "Weak Co", fit_score: "Weak" }),
     row({ key: "c", applied_date: "2026-10-01" }),
     row({ key: "d", apply_state: "submitted" }),
     row({ key: "e", apply_state: "failed" }),
@@ -160,11 +160,13 @@ test("queue: gates on status, fit, applied_date and apply_state", () => {
     row({ key: "h", apply_state: "queued", fit_score: "Medium" }),
     row({ key: "i", status: "Applied" }),
     row({ key: "j", status: "Inbox" }),
+    row({ key: "k", fit_score: "" }),
   ];
   const { queue, skipped } = q(apps);
-  assert.deepEqual(queue.map((a) => a.key).sort(), ["a", "h"]);
+  assert.deepEqual(queue.map((a) => a.key).sort(), ["a", "b", "h"], "Weak is queued (RFC 069)");
   const reasons = Object.fromEntries(skipped.map((s) => [s.key, s.reason]));
-  assert.equal(reasons.b, "fit_not_strong_medium");
+  assert.equal(reasons.b, undefined);
+  assert.equal(reasons.k, "fit_unscored");
   assert.equal(reasons.c, "already_applied");
   assert.equal(reasons.d, "apply_state_submitted");
   assert.equal(reasons.e, "apply_state_failed");
@@ -189,6 +191,34 @@ test("queue: newest createdAt first, then --limit", () => {
     ["new", "mid"]
   );
   assert.equal(limited.skipped.find((s) => s.key === "old").reason, "over_limit");
+});
+
+test("queue: Strong → Medium → Weak, newest first inside each fit", () => {
+  const at = (d) => `2026-${d}T00:00:00Z`;
+  const apps = [
+    row({ key: "w-new", companyName: "A", fit_score: "Weak", createdAt: at("10-21") }),
+    row({ key: "m-old", companyName: "B", fit_score: "Medium", createdAt: at("10-01") }),
+    row({ key: "s-old", companyName: "C", fit_score: "Strong", createdAt: at("10-02") }),
+    row({ key: "m-new", companyName: "D", fit_score: "Medium", createdAt: at("10-20") }),
+    row({ key: "s-new", companyName: "E", fit_score: "Strong", createdAt: at("10-19") }),
+    row({ key: "w-old", companyName: "F", fit_score: "Weak", createdAt: at("09-01") }),
+  ];
+  assert.deepEqual(
+    q(apps).queue.map((a) => a.key),
+    ["s-new", "s-old", "m-new", "m-old", "w-new", "w-old"]
+  );
+  // The company cap is spent on the better fit first.
+  const capped = q(
+    [
+      row({ key: "weak", fit_score: "Weak", createdAt: at("10-21") }),
+      row({ key: "strong", fit_score: "Strong", createdAt: at("10-01") }),
+    ],
+    { filterRules: { company_cap: { max_active: 1 } } }
+  );
+  assert.deepEqual(
+    capped.queue.map((a) => a.key),
+    ["strong"]
+  );
 });
 
 test("queue: company cap counts recent applications + tonight's queue", () => {

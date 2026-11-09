@@ -227,3 +227,38 @@ test("todayLocalISO: formats a Date as YYYY-MM-DD (local)", () => {
   assert.equal(todayLocalISO(d), "2026-06-03");
   assert.match(todayLocalISO(), /^\d{4}-\d{2}-\d{2}$/);
 });
+
+test("sweep: writes under the TSV lock onto a fresh read — another writer's change survives", async () => {
+  const { ctx } = makeCtx();
+  // The TSV on "disk": re-read on every load (copies), changed by the
+  // submitter while the sweep talks to Notion.
+  let disk = appsFixture().concat([{ key: "gh:new", status: "To Apply", apply_state: "" }]);
+  const copy = () => disk.map((a) => ({ ...a }));
+  let locked = 0;
+  await runAutoDeadSweep("jared", ctx, {
+    todayStr: TODAY,
+    deps: {
+      loadProfile: () => PROFILE,
+      loadSecrets: () => ({ NOTION_TOKEN: "secret_token" }),
+      loadApplications: () => ({ apps: copy() }),
+      saveApplications: (_p, a) => {
+        disk = a.map((x) => ({ ...x }));
+      },
+      withApplicationsLock: async (_p, fn) => {
+        locked += 1;
+        return fn();
+      },
+      makeClient: (token) => ({ token }),
+      updatePageStatus: async () => {
+        const r = disk.find((a) => a.key === "gh:new");
+        r.status = "Applied";
+        r.apply_state = "submitted";
+      },
+    },
+  });
+  assert.equal(locked, 1);
+  const by = Object.fromEntries(disk.map((a) => [a.key, a]));
+  assert.equal(by["lever:stale"].status, "Dead");
+  assert.equal(by["lever:fresh"].status, "In flight");
+  assert.deepEqual([by["gh:new"].status, by["gh:new"].apply_state], ["Applied", "submitted"]);
+});

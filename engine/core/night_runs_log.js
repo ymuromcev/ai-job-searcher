@@ -35,6 +35,7 @@ const COUNT_FIELDS = [
   "submitted",
   "manual",
   "failed",
+  "skipped",
   "deferred",
   "apply_rounds",
 ];
@@ -73,6 +74,7 @@ function buildNightEntry({ startedAt, finishedAt, target, tsv, apply, stopReason
     submitted: count(a.submitted),
     manual: count(a.manual),
     failed: count(a.failed),
+    skipped: count(a.skipped),
     deferred: count(a.deferred),
     apply_rounds: count(a.applyRounds),
     stop_reason: reason(stopReason),

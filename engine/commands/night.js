@@ -2,16 +2,33 @@
 // (RFC 068 §9 / §11, BL-225). The runbook skills/job-pipeline/night-apply.md
 // drives it; Claude does the LLM work in between.
 //
-//   night --profile <id> --phase start [--target 100] [--stop-at 06:30] [--max-hours 10]
+//   night --profile <id> --phase start [--target N] [--stop-at HH:MM] [--max-hours 14]
 //     Takes the per-profile lock (a second night exits 3 and must not touch
 //     anything), stamps the start, computes the deadline (next local --stop-at,
 //     at most --max-hours away) and prints the apply-ready backlog.
+//     Target / stop time: flag › profile `apply_target` / `apply_stop_at` ›
+//     30 / 11:00 (RFC 069 §3).
 //     A lock left by a night that died is closed as "abandoned" first.
 //
 //   night --profile <id> --phase check
+//     When the step is "wait" inside the submit window and submit-ready left
+//     no heartbeat in the last 30 min, the line carries
+//     `warning: "submitter_not_running"` (also kept for the morning report).
 //     Wall-clock + progress check. Prints one JSON line with `step`:
-//     "prepare" (with `prepare_batch`), "apply" or "stop" (with `reason`).
-//     Exit 0 for prepare / apply, 2 for stop.
+//     "prepare" (with `prepare_batch`), "apply", "wait" (rows with the
+//     submitter cover the gap), "topup" (nothing left to prepare or apply —
+//     find more companies, RFC 069 §6) or "stop" (with `reason`).
+//     Exit 0 for every step but stop, 2 for stop.
+//
+//   night --profile <id> --phase ready
+//     Ends an apply round (RFC 069 §1): snapshots .apply-state/apply_context.json
+//     into the round folder and writes the ready manifest
+//     .apply-state/ready/<stamp>.json (atomic rename) for `submit-ready`.
+//     The night never submits itself.
+//
+//   night --profile <id> --phase wait [--minutes 9]
+//     Blocks until the submitter has finished every ready manifest, the
+//     minutes run out or the deadline passes, then prints one JSON line.
 //
 //   night --profile <id> --phase prepare-fanout
 //     Splits prepare_context.json into one small input file per batch row
@@ -36,7 +53,8 @@
 //   night --profile <id> --phase finish --stop-reason <reason>
 //     Appends one line to profiles/<id>/.health/apply_runs.jsonl (counts are
 //     recomputed from the TSV and .apply-state files since the start, never
-//     taken from the LLM) and releases the lock.
+//     taken from the LLM), writes .health/morning-<date>.json (RFC 069 §7)
+//     and releases the lock.
 //
 // Writes only its own files (lock, run log, fan-out files, results file) —
 // never applications.tsv, never Notion.
@@ -52,12 +70,22 @@ const { buildActiveCounts, resolveCapWindowDays } = require("./prepare.js");
 const { defaultStateDir } = require("./board.js");
 const plan = require("../core/night_plan.js");
 const nightLog = require("../core/night_runs_log.js");
+const readyManifest = require("../core/ready_manifest.js");
+const morning = require("../core/morning_report.js");
 
 const LOCK_FILE = "night.lock";
+const HEARTBEAT_FILE = "submit-heartbeat.json";
+const WARNINGS_FILE = "night_warnings.json";
+// `submit-ready` runs every 15 min; no heartbeat this fresh inside the
+// submit window means launchd is not running it.
+const HEARTBEAT_MAX_AGE_MS = 30 * 60 * 1000;
 const APPLY_STATE_DIR = ".apply-state";
 const PREPARE_STATE_DIR = ".prepare-state";
 const EXIT_STOP = 2;
 const EXIT_LOCKED = 3;
+const READY_DIR = "ready";
+const DEFAULT_WAIT_MINUTES = 9;
+const WAIT_POLL_MS = 30 * 1000;
 // A lock older than its deadline + this grace belongs to a night that died.
 const STALE_GRACE_MS = 60 * 60 * 1000;
 
@@ -79,11 +107,60 @@ function makeDefaultDeps() {
     appendNightRun: nightLog.appendNightRun,
     stateDir: (env) => defaultStateDir(env),
     now: () => new Date(),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   };
 }
 
 function lockPath(stateDir, profileId) {
   return path.join(stateDir, profileId, LOCK_FILE);
+}
+
+function heartbeatPath(stateDir, profileId) {
+  return path.join(stateDir, profileId, HEARTBEAT_FILE);
+}
+
+function warningsPath(profile) {
+  return path.join(profile.paths.root, morning.HEALTH_DIR, WARNINGS_FILE);
+}
+
+// Warnings recorded for the night that started at `since`.
+function nightWarnings(profile, since, deps) {
+  const w = readJson(warningsPath(profile), deps);
+  if (!w || w.night_started_at !== since || !Array.isArray(w.warnings)) return [];
+  return w.warnings.map(String);
+}
+
+function recordWarning(profile, lock, warning, deps) {
+  const prev = nightWarnings(profile, lock.started_at, deps);
+  if (prev.includes(warning)) return;
+  deps.writeFile(
+    warningsPath(profile),
+    JSON.stringify(
+      {
+        night_started_at: lock.started_at,
+        warnings: [...prev, warning],
+        updated_at: deps.now().toISOString(),
+      },
+      null,
+      2
+    )
+  );
+}
+
+// The night waits on the submitter: is it alive? Inside the submit window a
+// heartbeat newer than 30 minutes must exist. → "submitter_not_running" | null
+function submitterWarning(ctx, profile, deps, now) {
+  let window;
+  try {
+    window = readyManifest.parseWindow(profile.apply_window || readyManifest.DEFAULT_WINDOW);
+  } catch {
+    return null;
+  }
+  if (!readyManifest.windowState(now, window).open) return null;
+  const hb = readJson(heartbeatPath(deps.stateDir(ctx.env || process.env), profile.id), deps);
+  const at = hb ? Date.parse(hb.at) : NaN;
+  if (Number.isFinite(at) && now.getTime() - at <= HEARTBEAT_MAX_AGE_MS) return null;
+  return "submitter_not_running";
 }
 
 function readJson(p, deps) {
@@ -126,6 +203,40 @@ function applyFiles(profile, deps) {
   return out;
 }
 
+// Ready manifests waiting for the submitter (ready/) or being submitted
+// right now (ready/claimed/). Finished ones live in ready/done/.
+function readyDirs(profile) {
+  const base = path.join(profile.paths.root, APPLY_STATE_DIR, READY_DIR);
+  return { base, claimed: path.join(base, "claimed"), done: path.join(base, "done") };
+}
+
+// A manifest past its deadline is never submitted (the submitter files it as
+// expired), so it is not pending either — an old one left behind by a
+// missing submitter must not keep tonight waiting.
+function pendingManifests(profile, deps) {
+  const dirs = readyDirs(profile);
+  const nowMs = deps.now().getTime();
+  const out = [];
+  for (const dir of [dirs.base, dirs.claimed]) {
+    for (const name of readyManifest.orderManifestNames(deps.listDir(dir))) {
+      const raw = readJson(path.join(dir, name), deps);
+      const { manifest } = readyManifest.parseManifest(raw);
+      if (manifest && Date.parse(manifest.deadline) > nowMs) out.push(manifest);
+    }
+  }
+  return out;
+}
+
+// Distinct jobs in unfinished manifests that are not submitted yet.
+function pendingKeys(profile, deps, submittedKeys = []) {
+  const done = new Set(submittedKeys);
+  const keys = new Set();
+  for (const m of pendingManifests(profile, deps)) {
+    for (const k of m.rows) if (!done.has(k)) keys.add(k);
+  }
+  return keys;
+}
+
 function applyQueue(apps, profile, now) {
   const filterRules = profile.filterRules || {};
   return buildQueue(apps, {
@@ -144,11 +255,18 @@ function progress(profile, lock, deps) {
   const queue = applyQueue(apps, profile, now);
   const applyFresh = queue.filter((a) => !seen.has(a.key)).length;
   const ctx = readJson(path.join(profile.paths.root, "prepare_context.json"), deps);
-  const ctxTonight = ctx && Date.parse(ctx.generatedAt) >= Date.parse(lock.started_at) ? ctx : null;
+  const ctxMs = ctx ? Date.parse(ctx.generatedAt) : NaN;
+  const ctxTonight = ctx && ctxMs >= Date.parse(lock.started_at) ? ctx : null;
+  // Inbox rows a scan added after that prepare round (a top-up scan): the
+  // Inbox is not exhausted any more, prepare them first.
+  const scannedSinceCtx = ctxTonight
+    ? apps.filter((a) => a.status === "Inbox" && Date.parse(a.createdAt || "") > ctxMs).length
+    : 0;
   // A prepare round tonight that found nothing to judge also means "stop
   // preparing" — otherwise check would send the night to prepare forever.
   const inboxExhausted = Boolean(
     ctxTonight &&
+    scannedSinceCtx === 0 &&
     ((ctxTonight.stats && ctxTonight.stats.inboxExhausted) ||
       (Array.isArray(ctxTonight.batch) && ctxTonight.batch.length === 0))
   );
@@ -158,9 +276,31 @@ function progress(profile, lock, deps) {
     apply,
     applyReady: queue.length,
     applyFresh,
+    pending: pendingKeys(profile, deps, apply.submittedKeys).size,
     inboxExhausted,
+    scannedSinceCtx,
     tsv: plan.countTsvSince(apps, lock.started_at),
   };
+}
+
+// The morning report (RFC 069 §7) for the night that started at `since`.
+// Written by `finish` and refreshed by `submit-ready` after the window.
+function writeMorningReport(profile, { since, target, night, date }, deps) {
+  const now = deps.now();
+  const { apps } = deps.loadApplications(profile.paths.applicationsTsv);
+  const report = morning.buildMorningReport({
+    date: date || readyManifest.localDate(now),
+    since,
+    now,
+    target,
+    apps,
+    applyFiles: applyFiles(profile, deps),
+    night,
+    warnings: nightWarnings(profile, since, deps),
+  });
+  const file = morning.morningPath(profile.paths.root, report.date);
+  deps.writeFile(file, JSON.stringify(report, null, 2));
+  return { file, report };
 }
 
 function closeRun(profile, lock, stopReason, deps) {
@@ -204,17 +344,18 @@ function runStart(ctx, profile, deps) {
     deps.removeFile(file);
   }
 
+  const settings = plan.resolveNightSettings(profile, flags);
   let deadline;
   try {
     deadline = plan.computeDeadline(now, {
-      stopAt: flags.stopAt || plan.DEFAULT_STOP_AT,
+      stopAt: settings.stopAt,
       maxHours: Number.isFinite(flags.maxHours) ? flags.maxHours : plan.DEFAULT_MAX_HOURS,
     });
   } catch (err) {
     stderr(`error: ${err.message}`);
     return 1;
   }
-  const target = Number.isFinite(flags.target) && flags.target > 0 ? flags.target : 100;
+  const target = settings.target;
   const lock = {
     profile: profile.id,
     started_at: now.toISOString(),
@@ -254,6 +395,7 @@ function runCheck(ctx, profile, deps) {
     deadline: lock.deadline,
     target: lock.target,
     submittedTonight: p.apply.submitted,
+    pendingSubmit: p.pending,
     applyReady: p.applyReady,
     applyFresh: p.applyFresh,
     inboxExhausted: p.inboxExhausted,
@@ -265,14 +407,27 @@ function runCheck(ctx, profile, deps) {
     deadline: lock.deadline,
     target: lock.target,
     submitted_tonight: p.apply.submitted,
+    pending_submit: p.pending,
     need: d.need,
     apply_ready: d.applyReady,
     apply_fresh: d.applyFresh,
     prepare_target: d.prepareTarget,
     prepare_batch: d.prepareBatch,
     inbox_exhausted: p.inboxExhausted,
+    scanned_since_prepare: p.scannedSinceCtx,
     prepared_tonight: p.tsv.prepared.total,
   };
+  if (d.step === "wait") {
+    const warning = submitterWarning(ctx, profile, deps, p.now);
+    if (warning) {
+      out.warning = warning;
+      recordWarning(profile, lock, warning, deps);
+      ctx.stderr(
+        "warning: the night waits for the submitter, but submit-ready has not run in the last " +
+          "30 minutes (scripts/install_submitter.sh) — the morning report will say so"
+      );
+    }
+  }
   printJson(ctx.stdout, out);
   return d.step === "stop" ? EXIT_STOP : 0;
 }
@@ -497,19 +652,102 @@ function runApplyFanout(ctx, profile, deps) {
   return 0;
 }
 
+// Ends an apply round: the rows of the current apply context go to the
+// submitter as one ready manifest. Idempotent per context — a manifest for
+// the same stamp (waiting, claimed or done) is never written twice.
+function runReady(ctx, profile, deps) {
+  const { stdout, stderr } = ctx;
+  const { lock } = requireLock(ctx, profile, deps);
+  if (!lock) return 1;
+  const stateDir = path.join(profile.paths.root, APPLY_STATE_DIR);
+  const context = readJson(path.join(stateDir, "apply_context.json"), deps);
+  if (!context || !Array.isArray(context.jobs)) {
+    stderr("error: .apply-state/apply_context.json missing — run apply --phase pre first");
+    return 1;
+  }
+  const st = stamp(context.generated_at);
+  const roundDir = path.join(stateDir, "rounds", st);
+  const answersDir = path.join(roundDir, "answers");
+  const dirs = readyDirs(profile);
+  const name = `${st}.json`;
+  const manifestPath = path.join(dirs.base, name);
+  for (const dir of [dirs.base, dirs.claimed, dirs.done]) {
+    if (deps.fileExists(path.join(dir, name))) {
+      printJson(stdout, { manifest: path.join(dir, name), rows: null, already_written: true });
+      return 0;
+    }
+  }
+  const rows = context.jobs.map((j) => j && j.key).filter(Boolean);
+  if (!rows.length) {
+    printJson(stdout, { manifest: null, rows: 0 });
+    return 0;
+  }
+  deps.mkdirp(answersDir);
+  // The submitter reads this snapshot, not the live context: the next apply
+  // pre rewrites apply_context.json while this manifest may still wait.
+  deps.writeFile(path.join(roundDir, "apply_context.json"), JSON.stringify(context, null, 2));
+  const manifest = readyManifest.buildManifest({
+    stamp: st,
+    answersDir,
+    deadline: lock.deadline,
+    rows,
+    createdAt: deps.now().toISOString(),
+  });
+  deps.mkdirp(dirs.base);
+  deps.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+  printJson(stdout, {
+    manifest: manifestPath,
+    rows: manifest.rows.length,
+    deadline: lock.deadline,
+  });
+  return 0;
+}
+
+// Waits for the submitter (check said "wait"): returns as soon as no ready
+// manifest is left, after --minutes (default 9, under a tool-call timeout),
+// or at the night deadline.
+async function runWait(ctx, profile, deps) {
+  const { flags, stdout } = ctx;
+  const { lock } = requireLock(ctx, profile, deps);
+  if (!lock) return 1;
+  const minutes =
+    Number.isFinite(flags.minutes) && flags.minutes > 0 ? flags.minutes : DEFAULT_WAIT_MINUTES;
+  const startMs = deps.now().getTime();
+  const untilMs = Math.min(startMs + minutes * 60000, Date.parse(lock.deadline));
+  const pendingNow = () => {
+    const apply = plan.summarizeApplyFiles(applyFiles(profile, deps), lock.started_at);
+    return pendingKeys(profile, deps, apply.submittedKeys).size;
+  };
+  let pending = pendingNow();
+  while (pending > 0 && deps.now().getTime() < untilMs) {
+    await deps.sleep(Math.min(WAIT_POLL_MS, Math.max(0, untilMs - deps.now().getTime())));
+    pending = pendingNow();
+  }
+  printJson(stdout, {
+    waited_minutes: Math.round((deps.now().getTime() - startMs) / 6000) / 10,
+    pending_submit: pending,
+  });
+  return 0;
+}
+
 function runFinish(ctx, profile, deps) {
   const { flags, stdout } = ctx;
   const { lock, file } = requireLock(ctx, profile, deps);
   if (!lock) return 1;
   const stopReason = String(flags.stopReason || "").trim() || "unspecified";
   const entry = closeRun(profile, lock, stopReason, deps);
+  const { file: morningFile } = writeMorningReport(
+    profile,
+    { since: lock.started_at, target: lock.target, night: { stop_reason: stopReason } },
+    deps
+  );
   deps.removeFile(file);
   stdout(
-    `night finished (${stopReason}): ${entry.submitted} submitted, ${entry.manual} manual, ` +
+    `night finished (${stopReason}): ${entry.submitted} submitted, ${entry.skipped} skipped, ` +
       `${entry.failed} failed, ${entry.deferred} deferred; prepared ${entry.prepared} ` +
       `(${entry.strong} Strong / ${entry.medium} Medium / ${entry.weak} Weak); scanned ${entry.scanned}`
   );
-  printJson(stdout, entry);
+  printJson(stdout, { ...entry, morning_report: morningFile });
   return 0;
 }
 
@@ -519,6 +757,8 @@ const PHASES = {
   "prepare-fanout": runPrepareFanout,
   "prepare-collect": runPrepareCollect,
   "apply-fanout": runApplyFanout,
+  ready: runReady,
+  wait: runWait,
   finish: runFinish,
 };
 
@@ -540,6 +780,12 @@ function makeNightCommand(overrides = {}) {
 module.exports = makeNightCommand();
 module.exports.makeNightCommand = makeNightCommand;
 module.exports.lockPath = lockPath;
+module.exports.heartbeatPath = heartbeatPath;
+module.exports.warningsPath = warningsPath;
 module.exports.EXIT_STOP = EXIT_STOP;
 module.exports.EXIT_LOCKED = EXIT_LOCKED;
 module.exports.PHASES = Object.keys(PHASES);
+module.exports.makeDefaultDeps = makeDefaultDeps;
+module.exports.readyDirs = readyDirs;
+module.exports.applyFiles = applyFiles;
+module.exports.writeMorningReport = writeMorningReport;
