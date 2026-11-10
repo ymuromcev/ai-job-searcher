@@ -192,7 +192,7 @@ Common errors:
 
 ### prepare
 
-Synopsis: `node engine/cli.js prepare --profile <id> --phase <pre|commit> [--mode <fresh|topup>] [--batch <n>] [--need <k>] [--results-file <path>] [--dry-run] [--no-sync]`
+Synopsis: `node engine/cli.js prepare --profile <id> --phase <pre|commit> [--mode <fresh|topup>] [--batch <n>] [--need <k>] [--results-file <path>] [--dry-run] [--no-sync] [--submittable-only]`
 
 Two-phase fresh-row triage. `--phase pre` enriches every fresh row (status `Inbox` or `To Apply` without `notion_page_id`) with URL-liveness, JD fetch, salary calc, and writes `prepare_context.json` for the `job-pipeline` skill to consume. `--phase commit` reads a SKILL-produced results file and, for every evaluated row, flips status to `To Apply`, generates the cover letter (when `clParagraphs` is present), pushes the Notion page, and back-fills `notion_page_id` / `salaryMin` / `salaryMax` / `clPath`. A legacy `decision` field on a row is tolerated — the engine logs one warning per run and ignores it.
 
@@ -213,6 +213,7 @@ Flags:
 | `--batch <n>` | int | 30 | Used by `--phase pre --mode fresh`. Target alive rows after URL-check. The pre phase keeps pulling from the filter-passed pool until `--batch` rows are alive or the pool is exhausted. |
 | `--need <k>` | int | deficit | Used by `--phase pre --mode topup`. Number of new alive entries to append. Default fills the deficit (`batchSize - len(currentBatch)`). |
 | `--results-file <path>` | string | — | Required for `--phase commit`. JSON produced by the SKILL. |
+| `--submittable-only` | bool | false | Used by `--phase pre --mode fresh`; the night passes it (BL-233). Rows the apply bot cannot submit — Ashby / Workday sources and companies whose form already showed a captcha — are left out of the batch and stay in Inbox, so no tokens are spent on them. |
 | `--dry-run` | boolean | false | `pre`: skip writing `prepare_context.json`. `commit`: skip TSV write. |
 | `--no-sync` | boolean | false | Skip the auto-sync pre-hook (BL-151 / RFC 054). |
 
