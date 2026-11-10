@@ -31,7 +31,7 @@ Weak rows get no cover letter (RFC 034 §5) — omit `clKey` / `clParagraphs` / 
 
 For a `Strong` row run the full loop from [`SKILL.md`](../SKILL.md) → Step 6.5. One iteration = one pass of the [`.claude/agents/resume-tailor-mirror.md`](../../../.claude/agents/resume-tailor-mirror.md) contract with that iteration's inputs (`prev_resume_data`, `missing_from_prev`, `iteration_n`).
 
-- If you can launch subagents, run each iteration as a fresh `resume-tailor-mirror` subagent. Otherwise do the iteration yourself, following that file exactly, one pass at a time.
+- If you can launch subagents, run each iteration as a fresh subagent of type `resume-tailor-mirror` (never `general-purpose`: the tailor type carries the model the resume needs, while workers run on a cheaper one — BL-233). Otherwise do the iteration yourself, following that file exactly, one pass at a time.
 - Write each iteration's output to `<tailor_dir>/iter-<n>.json` (`tailor_dir` is in the payload), so a long loop can be audited.
 - Exit rules, checked in order after every iteration: coverage ≥ 85 → `threshold_met`; from iteration 2, growth < 1 point → `no_growth`; iteration 6 → `iteration_cap_reached`. **No other exit** (BL-132): not "good enough", not "this is expensive".
 - Then the escalation decision from Step 6.5 and the five fields: `tailoredResume`, `tailorCoverage`, `tailorEscalated`, `tailorEscalationReason`, `tailorEscalationDetail`.
