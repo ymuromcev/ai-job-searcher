@@ -68,6 +68,7 @@ const PARSE_OPTIONS = {
     since: { type: "string" },
     "reprocess-since": { type: "string" },
     "no-sync": { type: "boolean", default: false },
+    "submittable-only": { type: "boolean", default: false },
     "no-callout": { type: "boolean", default: false },
     auto: { type: "boolean", default: false },
     company: { type: "string" },
@@ -239,6 +240,10 @@ prepare flags:
                          writes prepare_context.json. "commit" applies SKILL results.
   --results-file <path>  Required for --phase commit. Path to SKILL results JSON.
   --batch <n>            Max jobs per prepare run (default: 30). Used with --phase pre.
+  --submittable-only     Used with --phase pre (the night passes it). Leaves out of the
+                         batch rows the apply bot cannot submit (Ashby / Workday
+                         sources, companies whose form showed a captcha); they stay
+                         in Inbox.
   --mode <fresh|topup>
                          Used with --phase pre. "fresh" (default) runs the full pipeline
                          and rewrites prepare_context.json. "topup" reads the existing
@@ -474,6 +479,7 @@ async function runCli({ argv, env = process.env, stdout, stderr, commands } = {}
       since: parsed.values.since || "",
       reprocessSince: parsed.values["reprocess-since"] || "",
       noSync: Boolean(parsed.values["no-sync"]),
+      submittableOnly: Boolean(parsed.values["submittable-only"]),
       noCallout: Boolean(parsed.values["no-callout"]),
       auto: Boolean(parsed.values.auto),
       company: parsed.values.company || "",

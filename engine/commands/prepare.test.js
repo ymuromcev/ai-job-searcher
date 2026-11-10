@@ -5690,3 +5690,50 @@ test("prepare --phase commit (BL-123): generateResumeDocx failure falls back to 
   // stderr warns about the failure.
   assert.ok(ctx._errLines.some((l) => /failed to generate tailored resume/.test(l)));
 });
+
+// BL-233: the night prepares only rows the apply bot can submit.
+test("holdUnsubmittable: holds no-submit sources and captcha companies, keeps the rest", () => {
+  const { holdUnsubmittable } = require("./prepare.js");
+  const history = [
+    {
+      key: "lever:x1",
+      source: "lever",
+      companyName: "Xsolla",
+      apply_state: "skipped",
+      apply_note: "captcha",
+    },
+    {
+      key: "greenhouse:e1",
+      source: "greenhouse",
+      companyName: "EarnIn",
+      apply_state: "skipped",
+      apply_note: "no_honest_answer: Q",
+    },
+  ];
+  const rows = [
+    { key: "ashby:a", source: "ashby", companyName: "Acme" },
+    { key: "workday:w", source: "workday", companyName: "Walmart" },
+    { key: "lever:x2", source: "lever", companyName: " xsolla " },
+    { key: "greenhouse:e2", source: "greenhouse", companyName: "EarnIn" },
+    { key: "adzuna:z", source: "adzuna", companyName: "Cala Health" },
+  ];
+  const { kept, held } = holdUnsubmittable(rows, [...history, ...rows]);
+  assert.deepEqual(
+    kept.map((a) => a.key),
+    ["greenhouse:e2", "adzuna:z"]
+  );
+  assert.deepEqual(
+    held.map((h) => [h.app.key, h.reason]),
+    [
+      ["ashby:a", "no_submit_source:ashby"],
+      ["workday:w", "no_submit_source:workday"],
+      ["lever:x2", "captcha_company"],
+    ]
+  );
+});
+
+test("holdUnsubmittable: empty input", () => {
+  const { holdUnsubmittable } = require("./prepare.js");
+  assert.deepEqual(holdUnsubmittable([], []), { kept: [], held: [] });
+  assert.deepEqual(holdUnsubmittable(undefined, undefined), { kept: [], held: [] });
+});

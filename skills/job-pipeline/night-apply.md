@@ -127,15 +127,15 @@ Follow [`SKILL.md`](SKILL.md) → `prepare` → *Run parameters* (night column) 
 
 1. Pre — one fresh batch, sized by check:
    ```
-   cd "$REPO" && node engine/cli.js prepare --profile jared --phase pre --mode fresh --batch <prepare_batch> --no-sync
+   cd "$REPO" && node engine/cli.js prepare --profile jared --phase pre --mode fresh --batch <prepare_batch> --no-sync --submittable-only
    ```
-   (Drop `--no-sync` only for the first pre of a night whose scan failed.) Exit ≠ 0 → retry once; second failure → no more prepare rounds tonight: from now on, when check says `prepare` or `topup`, do a Round A instead if `apply_fresh` > 0, otherwise finish with `prepare_failed`. Read only the stats: `node -e 'const c=require("./profiles/jared/prepare_context.json");console.log(JSON.stringify({inBatch:c.batch.length,...c.stats}))'`. `inBatch` 0 → back to the loop (check will see the empty round).
+   (Drop `--no-sync` only for the first pre of a night whose scan failed. `--submittable-only` keeps out of the batch the rows the bot cannot submit — Ashby / Workday, companies whose form showed a captcha; they stay in Inbox and cost no tokens.) Exit ≠ 0 → retry once; second failure → no more prepare rounds tonight: from now on, when check says `prepare` or `topup`, do a Round A instead if `apply_fresh` > 0, otherwise finish with `prepare_failed`. Read only the stats: `node -e 'const c=require("./profiles/jared/prepare_context.json");console.log(JSON.stringify({inBatch:c.batch.length,...c.stats}))'`. `inBatch` 0 → back to the loop (check will see the empty round).
 2. Fan out:
    ```
    cd "$REPO" && node engine/cli.js night --profile jared --phase prepare-fanout
    ```
    First line: JSON header. Every other line: `<payload path>\t<company> — <title>`.
-3. Row workers — for each payload line, one `general-purpose` subagent with this prompt:
+3. Row workers — for each payload line, one `general-purpose` subagent **with `model: "sonnet"`** (BL-233: the night's token budget; the Strong tailoring inside the worker runs as `resume-tailor-mirror` subagents, which keep their own model) with this prompt:
    > Read `skills/job-pipeline/references/night_row_worker.md` in the ai-job-searcher repo (`$REPO`) and follow it exactly for the row in `<payload path>`. Reply with the one JSON line it asks for.
 
    Launch 10–20 in one message, wait for all, then the next batch. Keep only each worker's one-line reply. Between batches run `night --phase check`: if it says `stop` with `deadline` (or the usage limit is near), launch no more workers and go straight to collect + commit with what is finished.
@@ -164,7 +164,7 @@ Back to the loop.
    cd "$REPO" && node engine/cli.js night --profile jared --phase apply-fanout
    ```
    Keep `answers_dir` and `bank_dir` from the JSON header. No job lines (every form was answered by the engine) → go straight to the hand-over (step 5 of this round).
-3. Answers — [`SKILL.md`](SKILL.md) → `apply` → Phase 2 → **file flow**: drafters (one per job file) → reviewers (a *different* fresh subagent per job, brief [`references/apply_truth_review.md`](references/apply_truth_review.md)) → one rewrite + one re-check for FAILs only. Batches of 10–20; keep one-line replies only. Tonight's rules on top of the skill:
+3. Answers — [`SKILL.md`](SKILL.md) → `apply` → Phase 2 → **file flow**, every subagent launched with `model: "sonnet"` (BL-233): drafters (one per job file) → reviewers (a *different* fresh subagent per job, brief [`references/apply_truth_review.md`](references/apply_truth_review.md)) → one rewrite + one re-check for FAILs only. Batches of 10–20; keep one-line replies only. Tonight's rules on top of the skill:
    - no honest answer to an **optional** question → leave it out (blank);
    - no honest answer to a **required** question → leave it out; the engine skips the row as `no_honest_answer`. That is a counted skip, not a question for anyone;
    - choice questions (selects, radios, «how did you hear», EEO) the engine did not fill → pick from the options per `apply_defaults` (EEO → "decline to self-identify" when offered); still no fit → no answer.

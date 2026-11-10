@@ -286,6 +286,44 @@ function jobFromTsv(app) {
 // A separate command will handle them later.
 const PREPARE_SOURCE_EXCLUDE = new Set(["calcareers"]);
 
+// BL-233: the night prepares only rows the apply bot can submit. Rows from
+// these sources stop at a bot check or an account wall (apply.js
+// NO_SUBMIT_ATS; Workday needs an account), and a company whose form already
+// showed a captcha shows it again. Such rows stay in Inbox untouched — they
+// are only left out of tonight's batch, so no tokens are spent on them.
+const NO_SUBMIT_SOURCES = new Set(["ashby", "workday"]);
+
+function companyKey(name) {
+  return String(name || "")
+    .trim()
+    .toLowerCase();
+}
+
+// Pure. `rows` — candidates for the batch; `allApps` — the whole TSV (the
+// captcha history). Returns { kept, held: [{ app, reason }] }.
+function holdUnsubmittable(rows, allApps) {
+  const captchaCompanies = new Set();
+  for (const a of allApps || []) {
+    if (a.apply_state === "skipped" && /captcha/i.test(a.apply_note || "")) {
+      const k = companyKey(a.companyName);
+      if (k) captchaCompanies.add(k);
+    }
+  }
+  const kept = [];
+  const held = [];
+  for (const app of rows || []) {
+    const source = String(app.source || "").toLowerCase();
+    if (NO_SUBMIT_SOURCES.has(source)) {
+      held.push({ app, reason: `no_submit_source:${source}` });
+    } else if (captchaCompanies.has(companyKey(app.companyName))) {
+      held.push({ app, reason: "captcha_company" });
+    } else {
+      kept.push(app);
+    }
+  }
+  return { kept, held };
+}
+
 function applyPrepareFilter(apps, rules, activeCounts) {
   const counts = { ...activeCounts };
   const passed = [];
@@ -1075,8 +1113,14 @@ async function runPre(ctx, deps) {
   // falls back to legacy all-time count for one release.
   const capWindowDays = resolveCapWindowDays(filterRules);
   const activeCounts = buildActiveCounts(apps, { windowDays: capWindowDays });
+  let candidates = notYetEvaluated;
+  if (flags.submittableOnly) {
+    const { kept, held } = holdUnsubmittable(notYetEvaluated, apps);
+    candidates = kept;
+    stdout(`submittable-only: ${held.length} held in Inbox (the bot cannot submit them)`);
+  }
   const { passed, skipped: filteredOut } = applyPrepareFilter(
-    notYetEvaluated,
+    candidates,
     filterRules,
     activeCounts
   );
@@ -2893,6 +2937,7 @@ function makePrepareCommand(overrides = {}) {
 module.exports = makePrepareCommand();
 module.exports.makePrepareCommand = makePrepareCommand;
 module.exports.applyPrepareFilter = applyPrepareFilter;
+module.exports.holdUnsubmittable = holdUnsubmittable;
 module.exports.applySalaryFloorPass = applySalaryFloorPass;
 module.exports.applyJdWorkplacePass = applyJdWorkplacePass;
 module.exports.filterAlreadyEvaluated = filterAlreadyEvaluated;
