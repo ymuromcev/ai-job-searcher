@@ -196,3 +196,14 @@ test("isNonPipelineSender: real recruiter / ATS senders are NOT skipped", () => 
   assert.ok(!isNonPipelineSender("hire@lever.co"));
   assert.ok(!isNonPipelineSender(""));
 });
+
+// RFC 071 / BL-234 — shopping and newsletter mail bound to pipeline rows in
+// the 2026-11-12 dry run.
+test("isNonPipelineSender: Amazon transactional, Barnes & Noble, Substack", () => {
+  assert.ok(isNonPipelineSender('"Amazon.com" <payments-update@amazon.com>'));
+  assert.ok(isNonPipelineSender('"Barnes & Noble" <barnesandnoble@t.barnesandnoble.com>'));
+  assert.ok(isNonPipelineSender('"The Pragmatic Engineer" <pragmaticengineer@substack.com>'));
+  // Amazon recruiting mail and a Barnes & Noble recruiter still reach the pipeline.
+  assert.ok(!isNonPipelineSender("Jane Doe <jdoe@barnesandnoble.com>"));
+  assert.ok(!isNonPipelineSender("Amazon Recruiting <no-reply@amazon.com>"));
+});

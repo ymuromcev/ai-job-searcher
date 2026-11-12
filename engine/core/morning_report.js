@@ -216,8 +216,63 @@ function notificationText(report) {
   return text;
 }
 
+// --- morning mail check (RFC 071) ---------------------------------------------
+
+// Summary of one `check --auto` run log ({ results: [...] }): invites (any
+// role-match confidence — an invite must not be lost because the company had
+// several rows), rejections and info requests matched with HIGH confidence.
+function mailCheckSummary(runLog) {
+  const rows = (runLog && Array.isArray(runLog.results) && runLog.results) || [];
+  const known = (r) => r && r.company && r.company !== "?";
+  const pair = (r) => ({ company: r.company, role: r.role && r.role !== "?" ? r.role : "" });
+  return {
+    interviews: rows.filter((r) => known(r) && r.type === "INTERVIEW_INVITE").map(pair),
+    rejections: rows.filter((r) => known(r) && r.type === "REJECTION" && r.match === "HIGH").length,
+    info_requests: rows
+      .filter((r) => known(r) && r.type === "INFO_REQUEST" && r.match === "HIGH")
+      .map(pair),
+  };
+}
+
+function plural(n, one, few, many) {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+  return many;
+}
+
+// One line for the morning notification, or "" when the check found nothing.
+function mailCheckLine(summary) {
+  if (!summary) return "";
+  const parts = [];
+  const inv = summary.interviews.length;
+  if (inv) {
+    parts.push(`${inv} ${plural(inv, "приглашение", "приглашения", "приглашений")}`);
+  }
+  const info = summary.info_requests.length;
+  if (info) parts.push(`${info} ${plural(info, "запрос", "запроса", "запросов")} от работодателя`);
+  if (summary.rejections) {
+    const n = summary.rejections;
+    parts.push(`${n} ${plural(n, "отказ", "отказа", "отказов")}`);
+  }
+  if (!parts.length) return "";
+  // The check exited non-zero: some statuses did not reach the base.
+  return `Почта: ${parts.join(", ")}${summary.incomplete ? " (не всё записано в базу)" : ""}`;
+}
+
+// Text of the separate invite notification, or "" when there is none.
+function interviewNotificationText(summary) {
+  if (!summary || !summary.interviews.length) return "";
+  const lines = summary.interviews.map((i) => (i.role ? `${i.company} — ${i.role}` : i.company));
+  return [...new Set(lines)].join("; ");
+}
+
 module.exports = {
   buildMorningReport,
+  mailCheckSummary,
+  mailCheckLine,
+  interviewNotificationText,
   morningPath,
   notificationText,
   pickLatestMorning,

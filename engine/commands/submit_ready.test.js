@@ -80,6 +80,7 @@ function setup({ profileExtra = {}, apps = [], extra = {} } = {}) {
     pid: 4242,
     pidAlive: (pid) => pid === 4242 || pid === 777,
     runSubmit,
+    runMailCheck: async () => null,
     notify: async (title, text) => {
       notes.push({ title, text });
       return true;
@@ -463,4 +464,93 @@ test("the CLI registers submit-ready", async () => {
   });
   assert.equal(code, 0);
   assert.equal(seen.flags.concurrency, 2);
+});
+
+// RFC 071 / BL-234 — the morning mail check.
+test("after the window the mail check runs and its line joins the notification", async () => {
+  const seen = [];
+  const t = setup({
+    extra: {
+      runMailCheck: async ({ profile }) => {
+        seen.push(profile.id);
+        return {
+          code: 0,
+          summary: { interviews: [], info_requests: [], rejections: 3 },
+        };
+      },
+    },
+  });
+  await t.run(); // inside the window: no check
+  assert.deepEqual(seen, []);
+  t.clock.now = new Date(AFTER_WINDOW);
+  await t.run();
+  assert.deepEqual(seen, ["demo"]);
+  assert.equal(t.notes.length, 1);
+  assert.match(t.notes[0].text, /\. Почта: 3 отказа$/);
+  await t.run(); // same morning again: nothing new
+  assert.deepEqual(seen, ["demo"]);
+});
+
+test("an interview invite gets its own notification", async () => {
+  const t = setup({
+    extra: {
+      runMailCheck: async () => ({
+        code: 0,
+        summary: {
+          interviews: [{ company: "Acme", role: "Product Manager" }],
+          info_requests: [],
+          rejections: 0,
+        },
+      }),
+    },
+  });
+  t.clock.now = new Date(AFTER_WINDOW);
+  await t.run();
+  assert.equal(t.notes.length, 2);
+  assert.match(t.notes[0].text, /Почта: 1 приглашение/);
+  assert.equal(t.notes[1].title, "Приглашение на собеседование");
+  assert.equal(t.notes[1].text, "Acme — Product Manager");
+});
+
+test("a failing mail check never stops the morning notification", async () => {
+  const t = setup({
+    extra: {
+      runMailCheck: async () => {
+        throw new Error("IMAP down");
+      },
+    },
+  });
+  t.clock.now = new Date(AFTER_WINDOW);
+  const r = await t.run();
+  assert.equal(r.code, 0);
+  assert.equal(t.notes.length, 1);
+  assert.doesNotMatch(t.notes[0].text, /Почта/);
+  assert.match(r.err.join("\n"), /mail check failed: IMAP down/);
+});
+
+test("a stalled mail check times out and the notification still goes out", async () => {
+  const t = setup({
+    extra: {
+      mailCheckTimeoutMs: 20,
+      runMailCheck: () => new Promise(() => {}),
+    },
+  });
+  t.clock.now = new Date(AFTER_WINDOW);
+  const r = await t.run();
+  assert.equal(t.notes.length, 1);
+  assert.match(r.err.join("\n"), /mail check failed: mail check timed out/);
+});
+
+test("a check that could not record everything marks its line", async () => {
+  const t = setup({
+    extra: {
+      runMailCheck: async () => ({
+        code: 1,
+        summary: { interviews: [], info_requests: [], rejections: 2, incomplete: true },
+      }),
+    },
+  });
+  t.clock.now = new Date(AFTER_WINDOW);
+  await t.run();
+  assert.match(t.notes[0].text, /Почта: 2 отказа \(не всё записано в базу\)$/);
 });

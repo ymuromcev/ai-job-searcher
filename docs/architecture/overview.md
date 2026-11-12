@@ -188,8 +188,11 @@ profile's `apply_window` (default 02:00–11:00) it claims ready manifests by
 atomic rename, runs the `apply --phase submit` code on their rows (round
 snapshot of the apply context, deadline = manifest deadline or window close,
 whichever is first) and files them under `ready/done/`. After the window it
-runs `questions --apply` (below), refreshes the morning report and sends
-one macOS notification per date.
+runs `questions --apply` (below), refreshes the morning report, runs the
+mail check over the main and the apply mailbox (`check --auto --apply`,
+RFC 071: rejections and invites go to the TSV + Notion) and sends one macOS
+notification per date with a "Почта: …" line; an interview invite gets a
+separate notification.
 Helpers: `core/ready_manifest.js` (manifest contract, window) and
 `core/morning_report.js`.
 

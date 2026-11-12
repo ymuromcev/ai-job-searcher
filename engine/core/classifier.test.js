@@ -916,3 +916,33 @@ test("classify: bare 'closed' without position/role context → not POSITION_CLO
     );
   }
 });
+
+// RFC 071 / BL-234 — Greenhouse auto-reply from the apply mailbox
+// (ApartmentIQ, 2026-11-09): "thanks for applying" + a fit-conditioned
+// "we'll reach out to schedule an interview" is an acknowledgment.
+test("classify: 'thanks for applying … if we find that you're a fit … schedule an interview' → ACKNOWLEDGMENT", () => {
+  const body =
+    "JARED, Thanks for applying to ApartmentIQ! We appreciate your interest. Rest assured, a real human will review your application. If we find that you're a fit for one of our open roles, we'll reach out to schedule an interview! Thanks, ApartmentIQ";
+  const r = classify({ subject: "Thank you for applying to ApartmentIQ!", body });
+  assert.equal(r.type, "ACKNOWLEDGMENT", `got ${r.type} (evidence: "${r.evidence}")`);
+});
+
+test("classify: 'thanks for applying' with a committed invite stays INTERVIEW_INVITE", () => {
+  const body =
+    "Thanks for applying! We'd like to schedule an interview with you next week. Please share your availability.";
+  const r = classify({ subject: "Next steps", body });
+  assert.equal(r.type, "INTERVIEW_INVITE");
+});
+
+test("classify: real invites opened with 'thanks for applying' stay INTERVIEW_INVITE (RFC 071 review)", () => {
+  const bodies = [
+    "Thanks for applying to Acme! We would like to schedule an interview to see if you are a good fit. Please pick a time.",
+    "Thank you for applying. I would love to schedule an interview with you. If we decide you are a match after the first call, we will set up a panel.",
+    "Thanks for applying! We would like to schedule an interview. If you advance, the next round is with the team.",
+    "Thanks for applying! We'd like to schedule an interview to see if we think you're a fit.",
+  ];
+  for (const body of bodies) {
+    const r = classify({ subject: "Next steps", body });
+    assert.equal(r.type, "INTERVIEW_INVITE", body);
+  }
+});
