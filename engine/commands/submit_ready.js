@@ -36,8 +36,11 @@
 // On its first run after the window closes it runs the owner's questions
 // step (`questions --apply`, RFC 070: pull his Notion answers, requeue the
 // rows they unblock, push tonight's blocking questions), refreshes the
-// morning report (.health/morning-<date>.json) and sends one macOS
-// notification for that date (marker .health/morning-<date>.notified).
+// morning report (.health/morning-<date>.json), runs the mail check over
+// both mailboxes (`check --auto --apply`, RFC 071: rejections and invites go
+// to the TSV + Notion) and sends one macOS notification for that date
+// (marker .health/morning-<date>.notified), plus a separate one when an
+// interview invite came in.
 
 const fs = require("fs");
 const path = require("path");
@@ -129,6 +132,53 @@ async function questionsViaCommand({ ctx, profile }) {
   });
 }
 
+// The morning mail check (RFC 071, BL-234): the same `check --auto --apply`
+// the fly.io cron ran, in process, over the main and the apply mailbox
+// (RFC 068 §5) — replies to the night's applications land in the apply
+// mailbox. Its JSON run log is parsed into a short summary for the
+// notification and is not echoed into the submitter log.
+async function mailCheckViaCommand({ ctx, profile }) {
+  const { makeCheckCommand } = require("./check.js");
+  let parsed = null;
+  const code = await makeCheckCommand()({
+    profileId: profile.id,
+    profilesDir: ctx.profilesDir,
+    env: ctx.env || process.env,
+    flags: { auto: true, apply: true },
+    stdout: (s) => {
+      const text = String(s).trim();
+      if (text.startsWith("{")) {
+        try {
+          const json = JSON.parse(text);
+          if (json && typeof json.emailsFound === "number") {
+            parsed = json;
+            return;
+          }
+        } catch {
+          // not the run log — fall through and log it
+        }
+      }
+      ctx.stdout(s);
+    },
+    stderr: ctx.stderr,
+  });
+  const summary = parsed ? morning.mailCheckSummary(parsed) : null;
+  if (summary && code) summary.incomplete = true;
+  return { code, summary };
+}
+
+// A stalled mailbox must not hold the morning notification forever.
+const MAIL_CHECK_TIMEOUT_MS = 10 * 60 * 1000;
+
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms} ms`)), ms);
+    if (typeof timer.unref === "function") timer.unref();
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 function makeDefaultDeps() {
   const nightDeps = night.makeDefaultDeps();
   return {
@@ -151,6 +201,7 @@ function makeDefaultDeps() {
     pidAlive,
     runSubmit: submitViaApply,
     runQuestions: questionsViaCommand,
+    runMailCheck: mailCheckViaCommand,
     notify: macNotify,
   };
 }
@@ -369,12 +420,41 @@ async function maybeNotify(ctx, profile, deps, ws) {
     { since, target, night: nightInfo, date },
     deps
   );
-  const text = morning.notificationText(report);
+  // Replies in both mailboxes (RFC 071). A failure here never stops the
+  // morning notification; the line just stays out of it.
+  let mail = null;
+  if (deps.runMailCheck) {
+    try {
+      const res = await withTimeout(
+        deps.runMailCheck({ ctx, profile }),
+        deps.mailCheckTimeoutMs || MAIL_CHECK_TIMEOUT_MS,
+        "mail check"
+      );
+      if (res && res.code) ctx.stderr(`submit-ready: mail check exited ${res.code}`);
+      mail = (res && res.summary) || null;
+    } catch (err) {
+      ctx.stderr(`submit-ready: mail check failed: ${err.message}`);
+    }
+  }
+
+  let text = morning.notificationText(report);
+  const mailLine = morning.mailCheckLine(mail);
+  if (mailLine) text += `. ${mailLine}`;
   let sent = false;
   try {
     sent = Boolean(await deps.notify("Ночные отклики", text));
   } catch (err) {
     ctx.stderr(`submit-ready: notification failed: ${err.message}`);
+  }
+  // An interview invite gets its own notification: it must not drown in the
+  // morning counts.
+  const inviteText = morning.interviewNotificationText(mail);
+  if (inviteText) {
+    try {
+      await deps.notify("Приглашение на собеседование", inviteText);
+    } catch (err) {
+      ctx.stderr(`submit-ready: invite notification failed: ${err.message}`);
+    }
   }
   deps.writeFile(
     marker,

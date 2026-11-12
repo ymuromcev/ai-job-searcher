@@ -168,6 +168,19 @@ const NON_PIPELINE_SENDERS = [
   // filtered upstream.
   { fromIncludes: "@mail.notion.so" },
   { fromIncludes: "notify@mail.notion.so" },
+  // RFC 071 / BL-234 (dry run 2026-11-12): shopping and newsletter mail the
+  // matcher bound to pipeline rows on one shared token — an Amazon payment
+  // notice to "Amazon.com", a Barnes & Noble rewards mail to "Noble Machines",
+  // a Substack newsletter to "Tech Talent Partners". Amazon is listed by its
+  // transactional addresses only: its recruiting mail also comes from
+  // @amazon.com.
+  { fromIncludes: "payments-update@amazon.com" },
+  { fromIncludes: "order-update@amazon.com" },
+  { fromIncludes: "shipment-tracking@amazon.com" },
+  { fromIncludes: "auto-confirm@amazon.com" },
+  { fromIncludes: "return@amazon.com" },
+  { fromIncludes: "@t.barnesandnoble.com" },
+  { fromIncludes: "@substack.com" },
 ];
 
 const RECRUITER_SUBJECT_PATTERNS = [
