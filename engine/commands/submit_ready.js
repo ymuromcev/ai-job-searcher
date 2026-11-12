@@ -174,7 +174,6 @@ function withTimeout(promise, ms, label) {
   let timer;
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms} ms`)), ms);
-    if (typeof timer.unref === "function") timer.unref();
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
