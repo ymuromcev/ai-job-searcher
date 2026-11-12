@@ -222,6 +222,15 @@ const STRONG_ACK = [
   /your application (?:has been|was) received/i,
   /application (?:received|confirmation)/i,
 ];
+// Second, narrower guard (RFC 071 / BL-234): the Greenhouse auto-reply
+// "Thanks for applying to ApartmentIQ! … If we find that you're a fit for one
+// of our open roles, we'll reach out to schedule an interview!". "Thanks for
+// applying" alone opens many real invites, so it counts only together with a
+// fit condition that leads to the scheduling in the same sentence.
+const APPLY_THANKS = /\bthank(?:s| you) for applying\b/i;
+const FIT_THEN_SCHEDULE =
+  /\bif we (?:find|feel|think|believe|decide|determine|see)\b[^.!?]{0,80}\bschedule (?:(?:an?|your)\s+)?interview\b/i;
+
 const ACK_CONDITIONAL = [
   /\bif (?:you(?:'re| are)? )?(?:selected|chosen|shortlisted|a (?:good |strong )?(?:fit|match)|advance|move forward|proceed)/i,
   /\bif selected\b/i,
@@ -257,8 +266,8 @@ function classify({ subject, body } = {}) {
         if (
           type === "INTERVIEW_INVITE" &&
           pattern === SCHEDULE_INTERVIEW &&
-          STRONG_ACK.some((p) => p.test(text)) &&
-          ACK_CONDITIONAL.some((p) => p.test(text))
+          ((STRONG_ACK.some((p) => p.test(text)) && ACK_CONDITIONAL.some((p) => p.test(text))) ||
+            (APPLY_THANKS.test(text) && FIT_THEN_SCHEDULE.test(text)))
         ) {
           return { type: "ACKNOWLEDGMENT", evidence: match[0] };
         }

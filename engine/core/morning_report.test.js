@@ -238,3 +238,43 @@ test("buildMorningReport: re-submitted thanks to the owner's answers + waiting q
   assert.equal(none.answers_line, "");
   assert.doesNotMatch(morning.notificationText(none), /ответ/);
 });
+
+// RFC 071 / BL-234 — morning mail check summary and lines.
+test("mailCheckSummary: invites at any confidence, HIGH rejections and info requests", () => {
+  const log = {
+    results: [
+      { company: "Acme", role: "Product Manager", match: "LOW", type: "INTERVIEW_INVITE" },
+      { company: "Beta", role: "Sr PM", match: "HIGH", type: "REJECTION" },
+      { company: "Gamma", role: "PM", match: "LOW", type: "REJECTION" },
+      { company: "?", role: "?", match: "NONE", type: "REJECTION" },
+      { company: "Delta", role: "PM", match: "HIGH", type: "INFO_REQUEST" },
+      { company: "Eps", role: "PM", match: "HIGH", type: "ACKNOWLEDGMENT" },
+    ],
+  };
+  const s = morning.mailCheckSummary(log);
+  assert.deepEqual(s.interviews, [{ company: "Acme", role: "Product Manager" }]);
+  assert.equal(s.rejections, 1);
+  assert.deepEqual(s.info_requests, [{ company: "Delta", role: "PM" }]);
+  assert.equal(morning.mailCheckLine(s), "Почта: 1 приглашение, 1 запрос от работодателя, 1 отказ");
+  assert.equal(morning.interviewNotificationText(s), "Acme — Product Manager");
+});
+
+test("mailCheckLine: nothing found or no run → empty", () => {
+  assert.equal(morning.mailCheckLine(null), "");
+  assert.equal(morning.mailCheckLine(morning.mailCheckSummary({ results: [] })), "");
+  assert.equal(morning.interviewNotificationText(null), "");
+  const many = { interviews: [], info_requests: [], rejections: 5 };
+  assert.equal(morning.mailCheckLine(many), "Почта: 5 отказов");
+});
+
+test("interviewNotificationText: the same invite twice is listed once", () => {
+  const s = {
+    interviews: [
+      { company: "Acme", role: "PM" },
+      { company: "Acme", role: "PM" },
+    ],
+    info_requests: [],
+    rejections: 0,
+  };
+  assert.equal(morning.interviewNotificationText(s), "Acme — PM");
+});

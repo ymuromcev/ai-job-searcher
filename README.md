@@ -129,7 +129,8 @@ Set expectations explicitly:
 - **Doesn't auto-reply to recruiters.** Email is read-only (Gmail
   OAuth scope `gmail.readonly`). `check` reads replies to update
   Notion status; the tool never sends mail.
-- **Doesn't poll Gmail continuously.** `check` runs only when invoked
+- **Doesn't poll Gmail continuously.** Besides the once-a-morning mail
+  check the submitter runs after the apply window (RFC 071), `check` runs only when invoked
   (or once-a-day on a cron in `--auto` mode if you wire it up). No
   background daemon, no realtime watcher.
 - **Doesn't store credentials in the repo.** Tokens live in gitignored
