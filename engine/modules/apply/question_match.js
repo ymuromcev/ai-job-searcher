@@ -513,7 +513,7 @@ const NEGATED_RE = /\b(not|don't|do not|decline)\b/;
 // not submit" and "you may withdraw or decline consent at any time" are the
 // notice around a consent, not a refusal (labels are normalized: no commas).
 const NEGATED_CONSENT_RE =
-  /(^|\bi\s+)(do not|don't|never|refuse to|decline to)\s+(\w+\s+){0,2}(to\s+)?(consent|agree|allow|authori[sz]e|permit|give|grant)\b/;
+  /(^|\bi\s+)(do not|don't|never|refuse to|decline to|would not|wouldn't|will not|won't)\s+(\w+\s+){0,2}(to\s+)?(consent|agree|allow|authori[sz]e|permit|give|grant)\b/;
 // Demographic subjects: a radio about these is an EEO question even when its
 // label carries a consent sentence ("By selecting an option you consent to the
 // processing of your responses"). Answered as a data consent only when an

@@ -246,6 +246,28 @@ test("consent: a refusal on a Yes/No radio is never answered Yes", () => {
   assert.ok(!r || r.value !== "Yes");
 });
 
+test("consent: 'I would not like to consent' is a refusal (BL-238)", () => {
+  for (const label of [
+    "I would not like to consent to Acme storing my data",
+    "By checking this box, I would not like to consent to Acme processing my data",
+    "I wouldn't like to agree to Acme collecting my information",
+    "I will not consent to Acme storing and processing my data",
+  ]) {
+    for (const [type, options] of [
+      ["checkbox", []],
+      ["radio", ["Yes", "No"]],
+    ]) {
+      const r = ask(label, type, options);
+      assert.ok(!r || r.value !== "Yes", `${label} ${type}`);
+    }
+  }
+  const pick = ask("Data consent", "radio", [
+    "I would not like to consent",
+    "I consent to Acme storing my data",
+  ]);
+  assert.equal(pick.value, "I consent to Acme storing my data");
+});
+
 test("consent: 'I do not wish to consent' is a refusal", () => {
   for (const label of [
     "I do not wish to consent to the processing of my personal data",
