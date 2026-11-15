@@ -130,6 +130,88 @@ test("consent: a how-did-you-hear question mentioning email is not a marketing o
     "LinkedIn",
     "Other",
   ]);
-  // Unchanged from before: not answered by the legal matcher (no "No" pick).
+  // Unchanged from before BL-236: the identity matcher claims the "email" / "LinkedIn"
+  // words and gives null (the drafter answers); the legal matcher stays out of it.
   assert.equal(r, null);
+});
+
+// ---- round 3 of the review -------------------------------------------------
+
+test("consent: a bare Yes on a Hispanic/Latino or transgender radio is declined, not ticked", () => {
+  const hisp = ask(
+    "Are you Hispanic/Latino? By selecting an option you agree to the processing of your self-identification responses",
+    "radio",
+    ["Yes", "No", "Decline to self-identify"]
+  );
+  assert.equal(hisp.value, "Decline to self-identify");
+  const trans = ask(
+    "Do you identify as transgender? I consent to the collection and processing of my responses",
+    "radio",
+    ["Yes", "No", "Decline to answer"]
+  );
+  assert.equal(trans.value, "Decline to answer");
+  const plain = ask("Are you Hispanic/Latino?", "radio", ["Yes", "No", "Decline to self-identify"]);
+  assert.equal(plain.value, "Decline to self-identify");
+});
+
+test("consent: a plain Yes/No consent radio is still Yes", () => {
+  assert.equal(
+    ask("I consent to Acme storing and processing my personal data", "radio", ["Yes", "No"]).value,
+    "Yes"
+  );
+});
+
+test("consent: an email / phone inside a data consent is not a marketing opt-in", () => {
+  assert.equal(
+    ask(
+      "I consent to Acme storing and processing my personal data (name, email, phone number) for recruitment purposes"
+    ).value,
+    "Yes"
+  );
+  assert.equal(
+    ask(
+      "I agree to the Privacy Policy and the processing of my personal data, including my email address"
+    ).value,
+    "Yes"
+  );
+});
+
+test("consent: 'did you receive an email from a recruiter?' reaches how-did-you-hear", () => {
+  const r = ask(
+    "How did you hear about this job? Did you receive an email from a recruiter?",
+    "select",
+    ["Email", "LinkedIn", "Other"]
+  );
+  assert.equal(r && r.value, "Other");
+});
+
+test("consent: the future-contact phrasings stay out of Yes", () => {
+  for (const label of [
+    "I consent to Acme storing my information and emailing me about new roles",
+    "I agree to Acme storing my data and sending me updates about future opportunities",
+    "I agree to allow Acme to retain my data and notify me of future openings",
+    "I agree to receive emails from Acme about future job openings and allow Acme to store my information",
+    "I agree to receive updates from Acme and to the storing of my data",
+  ]) {
+    const r = ask(label);
+    assert.ok(!r || r.value !== "Yes", label);
+  }
+});
+
+test("consent: a notice around the consent is not a refusal", () => {
+  for (const label of [
+    "I agree to the processing of my personal data. If you do not agree, please do not submit your application.",
+    "I consent to Acme storing and processing my data. You may withdraw or decline consent at any time.",
+    "I certify that the information provided is true and complete. If you do not agree, do not submit.",
+  ]) {
+    assert.equal(ask(label).value, "Yes", label);
+  }
+  for (const label of [
+    "I do not consent to Acme storing my data",
+    "By checking this box, I do not consent to Acme storing my data",
+    "I refuse to consent to Acme storing and processing my data",
+  ]) {
+    const r = ask(label);
+    assert.ok(!r || r.value !== "Yes", label);
+  }
 });

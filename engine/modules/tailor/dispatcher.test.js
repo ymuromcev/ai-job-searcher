@@ -235,3 +235,54 @@ test("belowThresholdNote: names the coverage and says it shipped below the thres
     ""
   );
 });
+
+// --- BL-236 round 3: uncertain_about_fact with nothing to verify -------------
+
+// The shape of a real record (Revolut, job text behind a 403).
+const BLOCKED_ROW = {
+  key: "adzuna:1",
+  fitScore: "Strong",
+  flags: ["jd-unavailable"],
+  resumeVer: "ConsumerLending",
+  tailoredResume: null,
+  tailorCoverage: 0,
+  tailorEscalated: true,
+  tailorEscalationReason: "uncertain_about_fact",
+  tailorEscalationDetail: {
+    iterations: 1,
+    uncertain_facts: [{ fact: "blocked", source_hint: "No JD text (HTTP 403)" }],
+    coverage_table: [],
+  },
+};
+
+test("classifyRow (BL-236 r3): fact 'blocked' with no job text ships the base resume", () => {
+  assert.equal(classifyRow(BLOCKED_ROW), "archetype");
+  // No flag, but no draft, 0% coverage and only the placeholder fact.
+  assert.equal(classifyRow({ ...BLOCKED_ROW, flags: [] }), "archetype");
+  assert.match(belowThresholdNote(BLOCKED_ROW, "archetype"), /нет текста вакансии/);
+});
+
+test("classifyRow (BL-236 r3): a real unverified fact still holds the row", () => {
+  const real = {
+    ...BLOCKED_ROW,
+    tailorEscalationDetail: {
+      uncertain_facts: [{ fact: "led a team of 8", source_hint: "verify headcount" }],
+    },
+  };
+  assert.equal(classifyRow(real), "escalated");
+  // A real fact next to a placeholder: held.
+  const mixed = {
+    ...BLOCKED_ROW,
+    tailorEscalationDetail: { uncertain_facts: [{ fact: "blocked" }, { fact: "managed $5M" }] },
+  };
+  assert.equal(classifyRow(mixed), "escalated");
+  // A draft with real coverage and a 'blocked' entry but no jd flag: not the no-text case.
+  const drafted = {
+    ...BLOCKED_ROW,
+    flags: [],
+    tailoredResume: { contact: {} },
+    tailorCoverage: 80,
+  };
+  assert.equal(classifyRow(drafted), "escalated");
+  assert.equal(belowThresholdNote(real, "escalated"), "");
+});

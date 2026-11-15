@@ -464,10 +464,14 @@ const LEGAL_RE =
 // consent, even when the same sentence also asks to store the data.
 const MARKETING_CORE_RE =
   /\b(sms|text messages?|marketing|newsletters?|job alerts?|promotional|talent (community|network|pool)|contact me (about|regarding|with)|stay in touch|keep me (informed|updated|posted))\b/;
-// Softer words ("email", "updates", "future roles") only count together with a
-// consent verb: a "How did you hear about us? (email, LinkedIn)" is no opt-in.
+// Softer words only count together with a consent verb, and only in a
+// phrase that is an opt-in to hear from the company: "receive emails",
+// "send me", "notify me", "future roles". A bare "email" / "updates" /
+// "communications" is not one: "my personal data (name, email, phone)" is a
+// plain data consent, and "did you receive an email from a recruiter?" is a
+// how-did-you-hear question.
 const MARKETING_SOFT_RE =
-  /\b(e-?mails?|(send|sending|email|emailing|notify|notifying|inform|informing|update|updating) me|updates?|communications?|(new|future|other|similar) (opportunit\w+|openings?|roles?|positions?|jobs?))\b/;
+  /\b(receiv\w*\s+(?!an?\s)(\w+\s+){0,2}(e-?mails?|updates?|communications?)|(send|sending|email|emailing|notify|notifying|inform|informing|update|updating) me|(new|future|other|similar) (opportunit\w+|openings?|roles?|positions?|jobs?))\b/;
 const OPT_IN_WORD_RE =
   /\b(consent|agree|allow|authori[sz]e|permit|receive|opt|retain|storing|store)\b/;
 const MARKETING_RE = {
@@ -495,10 +499,18 @@ const DEMOGRAPHIC_RE =
   /\b(self[ -]?identif\w*|demographic\w*|eeo|equal (employment|opportunity))\b/;
 const NEGATED_RE = /\b(not|don't|do not|decline)\b/;
 // A refusal in the label itself ("I do not consent to Acme storing my data").
+// Only a first-person refusal counts, at the start of the label or right
+// after "I" ("... this box, I do not consent"): "If you do not agree, please do
+// not submit" and "you may withdraw or decline consent at any time" are the
+// notice around a consent, not a refusal (labels are normalized: no commas).
 const NEGATED_CONSENT_RE =
-  /\b(do not|don't|does not|doesn't|not|never|decline|refuse|withhold)\s+(to\s+)?(consent|agree|allow|authori[sz]e|permit|give|grant)|\b(decline|refuse|withhold)\b/;
-// EEO subjects: a radio about these is never answered as a data consent.
-const EEO_SUBJECT_RE = /\b(disabilit\w*|veterans?|protected veteran|handicap\w*)\b/;
+  /(^|\bi\s+)(do not|don't|never|refuse to|decline to)\s+(consent|agree|allow|authori[sz]e|permit|give|grant)\b/;
+// Demographic subjects: a radio about these is an EEO question even when its
+// label carries a consent sentence ("By selecting an option you consent to the
+// processing of your responses"). Answered as a data consent only when an
+// option is itself the consent; otherwise matchEeo declines.
+const EEO_SUBJECT_RE =
+  /\b(self[ -]?identif\w*|demographic\w*|eeo|hispanic|latino|latina|latinx|race|racial|ethnic\w*|gender|sex|transgender|lgbt\w*|sexual orientation|orientation|disabilit\w*|veterans?|handicap\w*)\b/;
 // An option that is itself the consent: "Yes, I consent …" or a bare yes.
 const BARE_CONSENT_RE = /^(yes|i agree|i consent|agree|consent|i accept|accept)$/;
 
@@ -558,7 +570,9 @@ function matchLegal(label, field, ctx) {
     const no = field.options.find((o) =>
       /^(no|decline|i do not|don't|do not)\b/.test(normalizeOption(o))
     );
-    return no ? { source: "defaults", value: no } : null;
+    // No "No" among the options: not ours to answer, the next matchers
+    // (e.g. how-did-you-hear) still get their turn (null would end the chain).
+    return no ? { source: "defaults", value: no } : undefined;
   }
   if (policy !== "accept") return undefined;
   if (!hasOptions(field)) {

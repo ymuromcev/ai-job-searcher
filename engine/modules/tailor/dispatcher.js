@@ -64,11 +64,18 @@ function classifyRow(row) {
   //     draft, or the coverage is zero (no JD text to tailor against).
   // The threshold is not read here: `tailor_ship_min_coverage` of
   // apply_defaults.json is ignored since BL-236.
-  // `uncertain_about_fact` never ships: a fact needs the owner.
+  // `uncertain_about_fact` about a REAL unverified fact of the candidate never
+  // ships: a fact needs the owner. The same reason with nothing to verify (the
+  // job text could not be fetched: fact "blocked", flag `jd-unavailable`, no
+  // draft and 0% coverage) is the "no job text -> base resume" case: it ships
+  // as "archetype" like a zero-coverage gap escalation.
   if (row.tailorEscalated === true) {
-    if (!SHIPPABLE_ESCALATIONS.has(row.tailorEscalationReason)) return "escalated";
     const coverage = Number(row.tailorCoverage);
     const hasDraft = row.tailoredResume && typeof row.tailoredResume === "object";
+    if (row.tailorEscalationReason === "uncertain_about_fact" && isBlockedNoJobText(row)) {
+      return "archetype";
+    }
+    if (!SHIPPABLE_ESCALATIONS.has(row.tailorEscalationReason)) return "escalated";
     return hasDraft && Number.isFinite(coverage) && coverage > 0 ? "tailored" : "archetype";
   }
 
@@ -76,6 +83,34 @@ function classifyRow(row) {
     return "tailored";
   }
   return "archetype";
+}
+
+// BL-236: an `uncertain_about_fact` row that holds no real fact about the
+// candidate. The record names none (every entry is the placeholder "blocked",
+// or there is no entry) and the job text is missing: the flag `jd-unavailable`
+// or, with no entry at all, no draft and zero coverage. Any other entry is a
+// real fact and keeps the row for the owner.
+function isBlockedNoJobText(row) {
+  const detail =
+    row.tailorEscalationDetail && typeof row.tailorEscalationDetail === "object"
+      ? row.tailorEscalationDetail
+      : {};
+  const facts = Array.isArray(detail.uncertain_facts) ? detail.uncertain_facts : [];
+  const isBlocked = (f) => {
+    const text = f && typeof f === "object" ? f.fact : f;
+    return (
+      String(text === undefined || text === null ? "" : text)
+        .trim()
+        .toLowerCase() === "blocked"
+    );
+  };
+  if (facts.some((f) => !isBlocked(f))) return false;
+  const flags = Array.isArray(row.flags) ? row.flags : [];
+  if (flags.includes("jd-unavailable")) return true;
+  const noDraft = !(row.tailoredResume && typeof row.tailoredResume === "object");
+  const coverage = Number(row.tailorCoverage);
+  const zero = !Number.isFinite(coverage) || coverage <= 0;
+  return facts.length > 0 ? noDraft && zero : false;
 }
 
 // The escalations that ship below the coverage target (BL-236).
@@ -95,6 +130,13 @@ const TAILOR_TARGET_COVERAGE = 85;
  */
 function belowThresholdNote(row, classification) {
   if (!row || row.tailorEscalated !== true) return "";
+  if (
+    row.tailorEscalationReason === "uncertain_about_fact" &&
+    classification === "archetype" &&
+    isBlockedNoJobText(row)
+  ) {
+    return "нет текста вакансии, подано базовым резюме";
+  }
   if (!SHIPPABLE_ESCALATIONS.has(row.tailorEscalationReason)) return "";
   if (classification !== "tailored" && classification !== "archetype") return "";
   const coverage = Number(row.tailorCoverage);

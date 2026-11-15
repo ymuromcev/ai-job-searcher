@@ -188,6 +188,37 @@ test("an old no_growth 70% record + a newer uncertain_about_fact 50% one: the ro
   assert.equal(plan.held[0].why, "uncertain_about_fact");
 });
 
+test("a 'blocked' uncertain_about_fact (no job text) goes back as the base resume, a real fact stays held", () => {
+  const blocked = rec("b1", {
+    flags: ["jd-unavailable"],
+    resumeVer: "AI_Platform",
+    tailoredResume: null,
+    tailorCoverage: 0,
+    tailorEscalationReason: "uncertain_about_fact",
+    tailorEscalationDetail: { iterations: 1, uncertain_facts: [{ fact: "blocked" }] },
+  });
+  const real = rec("r1", {
+    tailorEscalationReason: "uncertain_about_fact",
+    tailorEscalationDetail: { uncertain_facts: [{ fact: "led a team of 8" }] },
+  });
+  const records = new Map([
+    ["b1", [{ file: "f1", row: blocked }]],
+    ["r1", [{ file: "f1", row: real }]],
+  ]);
+  const plan = script.planStrong([app({ key: "b1" }), app({ key: "r1" })], records, {
+    classify: classifyRow,
+    versionKeys: new Set(["AI_Platform"]),
+  });
+  assert.deepEqual(
+    plan.eligible.map((e) => [e.app.key, e.kind]),
+    [["b1", "archetype"]]
+  );
+  assert.deepEqual(
+    plan.held.map((h) => h.app.key),
+    ["r1"]
+  );
+});
+
 test("dry-run (default): lists 2 Strong + 1 held + 1 Weak, writes nothing", async () => {
   const h = harness({
     apps: [

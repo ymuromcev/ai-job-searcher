@@ -4,12 +4,14 @@
 // 1. STRONG rows stuck in Inbox. The tailoring loop ended below the target
 //    coverage ("no_growth_below_threshold" / "iteration_cap_below_threshold"),
 //    the row was held back and never reached To Apply. Owner decision
-//    2026-11-15: submit them all the same. Each row gets its best draft from
-//    the saved results (profiles/<id>/prepare_results_*.json: of all records
-//    of the key, the one with the highest tailorCoverage, the latest on a
-//    tie), the base resume when there is no draft or 0% coverage, and goes
-//    through the ordinary `prepare --phase commit` (cover letter, resume PDF,
-//    Notion page through pushJobPage). `uncertain_about_fact` rows stay held.
+//    2026-11-15: submit them all the same. Each row gets its draft from the
+//    saved results (profiles/<id>/prepare_results_*.json: the LAST record of
+//    the key - its tailoredResume is already the best iteration of the loop
+//    and its verdict is the current one), the base resume when there is no
+//    draft or 0% coverage, and goes through the ordinary
+//    `prepare --phase commit` (cover letter, resume PDF, Notion page through
+//    pushJobPage). A row held for a real unconfirmed fact about the candidate
+//    (`uncertain_about_fact` with an actual fact in the record) stays held.
 //
 // 2. WEAK rows in To Apply with an empty resume_ver (they died as
 //    form_broken: resume_not_set). They get a resume version in place,
