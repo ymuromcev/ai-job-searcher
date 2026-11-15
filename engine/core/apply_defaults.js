@@ -36,7 +36,7 @@
 //   "start_weeks_after_offer": 2         // "When can you start?" → "2 weeks after an offer"
 //   "choice_policy": {                   // RFC 069 §4; engine defaults in question_match.js
 //     "eeo": "decline" | "blank",        //   decline option when offered / leave optional EEO empty
-//     "how_did_you_hear": ["company website", "job board", "other"]  // option preference order
+//     "how_did_you_hear": ["ai assistant", "company website", "job board", "other"]  // option preference order
 //   }
 //   "standing_answers": [                // owner's answers to recurring questions (2026-11-09):
 //     { "question": "Do you have a valid US driver's license?", "answer": "Yes" }

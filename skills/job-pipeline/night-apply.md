@@ -167,7 +167,8 @@ Back to the loop.
 3. Answers — [`SKILL.md`](SKILL.md) → `apply` → Phase 2 → **file flow**, every subagent launched with `model: "sonnet"` (BL-233): drafters (one per job file) → reviewers (a *different* fresh subagent per job, brief [`references/apply_truth_review.md`](references/apply_truth_review.md)) → one rewrite + one re-check for FAILs only. Batches of 10–20; keep one-line replies only. Tonight's rules on top of the skill:
    - no honest answer to an **optional** question → leave it out (blank);
    - no honest answer to a **required** question → leave it out; the engine skips the row as `no_honest_answer`. That is a counted skip, not a question for anyone;
-   - choice questions (selects, radios, «how did you hear», EEO) the engine did not fill → pick from the options per `apply_defaults` (EEO → "decline to self-identify" when offered); still no fit → no answer.
+   - choice questions (selects, radios, «how did you hear», EEO) the engine did not fill → pick from the options per `apply_defaults` (EEO → "decline to self-identify" when offered; how did you hear → an "AI assistant" option first, BL-241); still no fit → no answer;
+   - no answer reveals that the application is automated (BL-241): the AI found the job, he applies.
    Same deadline / usage check between batches as in Round P; if it says stop, skip the remaining drafts and hand over what passed.
 4. Bank — non-blocking:
    ```

@@ -360,15 +360,23 @@ async function tickTagged(page, fieldId, k) {
 // "How did you hear about us" pickers whose options were not readable when
 // the schema was (they load on open): the default string ("Company careers
 // page") rarely matches their wording, so the choice policy's list is tried
-// against the live options — company site, then a job board, then Other.
+// against the live options — the profile's choice policy when the caller
+// passes it (`opts.howHeard`), otherwise the engine's: company site, then a
+// job board, then Other.
 const HOW_HEARD_RE =
   /how did you (hear|find|learn|come across)|where did you (hear|find|learn)|referral source|what brought you to/i;
 
-async function chooseComboOption(page, field, value) {
+async function chooseComboOption(page, field, value, howHeard) {
   const input = row(page, field.id).locator('input[role="combobox"]').first();
   await input.click({ timeout: 5000 });
   const wants = [String(value)];
-  if (HOW_HEARD_RE.test(field.label || "")) wants.push(...DEFAULT_CHOICE_POLICY.how_did_you_hear);
+  if (HOW_HEARD_RE.test(field.label || "")) {
+    const prefs =
+      Array.isArray(howHeard) && howHeard.length
+        ? howHeard
+        : DEFAULT_CHOICE_POLICY.how_did_you_hear;
+    wants.push(...prefs);
+  }
   let texts = await visibleOptionTexts(page);
   let pick = null;
   for (const w of wants) {
@@ -388,7 +396,7 @@ async function chooseComboOption(page, field, value) {
   await page.locator(OPTION_SEL).nth(texts.indexOf(pick)).click();
 }
 
-async function fillOne(page, field, value) {
+async function fillOne(page, field, value, opts = {}) {
   const scope = row(page, field.id);
   switch (field.kind) {
     case "text": {
@@ -411,7 +419,7 @@ async function fillOne(page, field, value) {
       return;
     }
     case "combo-select":
-      await chooseComboOption(page, field, Array.isArray(value) ? value[0] : value);
+      await chooseComboOption(page, field, Array.isArray(value) ? value[0] : value, opts.howHeard);
       return;
     case "yesno": {
       const btn = scope.locator("button").filter({ hasText: exactTextRe(value) });
@@ -445,7 +453,9 @@ async function fillOne(page, field, value) {
   }
 }
 
-async function fill(page, values) {
+// opts.howHeard — the profile's "how did you hear" option preference list
+// (question_match.choicePolicy), for pickers whose options load on open.
+async function fill(page, values, opts = {}) {
   const schema = await schemaFor(page);
   // Re-tag the option inputs: React may have re-rendered rows since the read.
   await page.evaluate(scanFormInPage, ROW_SEL).catch(() => null);
@@ -456,7 +466,7 @@ async function fill(page, values) {
     const v = values[field.id];
     if (v == null || v === "" || (Array.isArray(v) && v.length === 0)) continue;
     try {
-      await fillOne(page, field, v);
+      await fillOne(page, field, v, opts);
       filled.push(field.id);
     } catch (err) {
       errors.push({ id: field.id, error: err.code || err.message });
