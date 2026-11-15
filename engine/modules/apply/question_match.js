@@ -459,18 +459,75 @@ function choiceOrText(field, value) {
 // not covered: it goes to the LLM step with the geo rule.
 const LEGAL_RE =
   /\b(certify|attest|arbitration|ai policy|use of ai|artificial intelligence|processing of personal data|personal data|privacy (policy|notice|statement)|data protection|gdpr|ccpa|terms (and|&) conditions|true(,)? (and )?(complete|correct|accurate)|complete(,)? (and )?(true|accurate|correct)|misrepresentation|falsification)\b|\b(collect|stor|process)(e|es|ing)? (and |or )?(collect|stor|process)?\w* ?(and |or )?(process\w* )?(my|of my|your) (personal )?(data|information|responses)\b/;
+// BL-236: an opt-in to hear from the company later (SMS, newsletters, job
+// alerts, a talent community, "contact me about …") is never a data-processing
+// consent, even when the same sentence also asks to store the data.
 const MARKETING_RE =
-  /\b(sms|text message|marketing|newsletter|job alerts?|promotional|talent community)\b/;
+  /\b(sms|text messages?|marketing|newsletters?|job alerts?|promotional|talent (community|network|pool)|contact me (about|regarding|with)|stay in touch|keep me (informed|updated|posted))\b/;
 const JOB_TERMS_RE =
   /\b(office|on ?site|hybrid|in person|relocat\w*|days (a|per) week|schedule|travel|shift|commute)\b/;
 const AFFIRM_RE =
-  /^(yes|i agree|agree|i acknowledge|acknowledge|i confirm|confirm|i accept|accept|i certify|i understand|i have read|acknowledged|agreed|accepted|confirmed)\b|\b(acknowledge|confirm|agree|accept)\b/;
+  /^(yes|i agree|agree|i consent|consent|i acknowledge|acknowledge|i confirm|confirm|i accept|accept|i certify|i understand|i have read|acknowledged|agreed|accepted|confirmed)\b|\b(acknowledge|confirm|agree|accept|consent)\b/;
+
+// BL-236: consent to store / process the candidate's own data, including the
+// demographic survey ("By checking this box, I consent to X collecting,
+// storing, and processing my responses to the demographic data surveys
+// above"). Runs BEFORE the EEO matcher: such a label names gender / race and
+// must not be answered as an EEO question. The consent may sit in the label
+// or in the text of an option ("Yes, I consent to the processing of my
+// data"). Not covered: marketing opt-ins (declined by matchLegal) and
+// anything about the job itself (office days, relocation).
+const CONSENT_VERB_RE =
+  /\b(consent|agree|allow|authori[sz]e|permit|permission|by (checking|ticking|selecting|clicking) (this|the) (box|checkbox))\b/;
+const DATA_VERB_RE =
+  /\b(collect(s|ed|ing)?|stor(e|es|ed|ing|age)|process(es|ed|ing)?|retain(s|ed|ing)?)\b/;
+const DATA_NOUN_RE = /\b(data|information|responses|answers|details)\b/;
+const DEMOGRAPHIC_RE =
+  /\b(self[ -]?identif\w*|demographic\w*|eeo|equal (employment|opportunity))\b/;
+const NEGATED_RE = /\b(not|don't|do not|decline)\b/;
+
+// `bare`: a lone checkbox may state the processing without a consent verb
+// ("Storing and processing my demographic information").
+function isDataConsent(text, bare = false) {
+  const consent = CONSENT_VERB_RE.test(text);
+  const verb = DATA_VERB_RE.test(text);
+  const noun = DATA_NOUN_RE.test(text);
+  if (consent && verb && noun) return true;
+  if (consent && DEMOGRAPHIC_RE.test(text)) return true;
+  return bare && verb && noun && /\bmy\b/.test(text);
+}
+
+function matchDataConsent(label, field, ctx) {
+  const lone = field.type === "checkbox" && !hasOptions(field);
+  const opts = hasOptions(field)
+    ? field.options.map((o) => ({ raw: o, n: normalizeOption(o) }))
+    : [];
+  const inLabel = isDataConsent(label, lone);
+  const inOption = opts.some((o) => isDataConsent(o.n));
+  if (!inLabel && !inOption) return undefined;
+  if (JOB_TERMS_RE.test(label)) return undefined;
+  // A marketing opt-in in the label: matchLegal declines it.
+  if (MARKETING_RE.test(label) && !inOption) return undefined;
+  const policy = (ctx.applyDefaults && ctx.applyDefaults.legal_acknowledgements) || "";
+  if (policy !== "accept") return undefined;
+  if (!opts.length) return lone ? { source: "defaults", value: "Yes" } : undefined;
+  const ok = opts.filter(
+    (o) =>
+      AFFIRM_RE.test(o.n) &&
+      !NEGATED_RE.test(o.n) &&
+      !MARKETING_RE.test(o.n) &&
+      !JOB_TERMS_RE.test(o.n)
+  );
+  const best = ok.find((o) => isDataConsent(o.n)) || ok[0];
+  return best ? { source: "defaults", value: best.raw } : null;
+}
 
 function matchLegal(label, field, ctx) {
   if (!LEGAL_RE.test(label) && !MARKETING_RE.test(label)) return undefined;
   if (JOB_TERMS_RE.test(label)) return undefined;
   const policy = (ctx.applyDefaults && ctx.applyDefaults.legal_acknowledgements) || "";
-  if (MARKETING_RE.test(label) && !LEGAL_RE.test(label)) {
+  // BL-236: a marketing opt-in mixed into a consent sentence is declined too.
+  if (MARKETING_RE.test(label)) {
     if (!hasOptions(field))
       return field.type === "checkbox" ? { source: "defaults", value: "No" } : undefined;
     const no = field.options.find((o) =>
@@ -539,6 +596,8 @@ const MATCHERS = [
   matchCountry,
   matchAddress,
   matchIdentity,
+  // Before EEO: a demographic-survey consent names gender / race (BL-236).
+  matchDataConsent,
   matchEeo,
   matchPronouns,
   matchSponsorship,

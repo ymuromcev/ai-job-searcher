@@ -225,6 +225,50 @@ describe("apply adapters on synthetic fixtures", { skip: SKIP }, () => {
     });
   });
 
+  test("greenhouse: a consent box rendered after the fill is ticked by the second pass (BL-236)", async () => {
+    const { fillAppeared } = require("../../commands/apply.js");
+    const ownerDefaults = { legal_acknowledgements: "accept" };
+    for (const [variant, ticked] of [
+      [null, true],
+      ["sms", false],
+    ]) {
+      await withPage(async (page) => {
+        await greenhouse.open(page, fixtureUrl("greenhouse_late_consent.html", variant));
+        const schema = await greenhouse.readSchema(page);
+        assert.deepEqual(
+          schema.map((f) => f.id),
+          ["first_name"],
+          "the consent box is not in the form yet"
+        );
+        await greenhouse.fill(page, { first_name: "Test" });
+        const first = await greenhouse.checkFilled(page);
+        assert.deepEqual(first.missing, ["late_consent"], "only the check sees the new box");
+
+        const fills = [];
+        const spy = {
+          ...greenhouse,
+          fill: (p, values) => {
+            fills.push(values);
+            return greenhouse.fill(p, values);
+          },
+        };
+        const late = await fillAppeared(page, spy, first, {
+          job: { company: "Acme Synthetic", answers: [] },
+          env: { applyDefaults: ownerDefaults, identity: {} },
+          llm: [],
+          root: tmp,
+          allowedFiles: [],
+          attempted: new Set(["first_name"]),
+          pastDeadline: () => false,
+        });
+        const checked = await page.evaluate(() => document.getElementById("late_consent").checked);
+        assert.equal(checked, ticked, `variant ${variant}: the box is really ticked in the DOM`);
+        assert.deepEqual(late.check.missing, ticked ? [] : ["late_consent"]);
+        assert.deepEqual(fills, ticked ? [{ late_consent: "Yes" }] : [{ late_consent: "No" }]);
+      });
+    }
+  });
+
   test("greenhouse: visible captcha after Submit stops as captcha", async () => {
     await withPage(async (page) => {
       await greenhouse.open(page, fixtureUrl("greenhouse_form.html", "captcha"));

@@ -160,8 +160,12 @@ function harness({
   companies = [],
   posting = {},
   viaPage = null,
+  profileOver = {},
+  notionFails = new Set(),
 } = {}) {
   const log = [];
+  // Order of the side effects that matter to BL-236: Notion before the TSV.
+  const events = [];
   const store = { apps: apps.map((a) => ({ ...a })), saves: 0 };
   const disk = new Map();
   for (const f of files) disk.set(f, "%PDF");
@@ -169,10 +173,11 @@ function harness({
   const shots = [];
   const adapter = (n) => fakeAdapter(n, behavior, log);
   const deps = {
-    loadProfile: () => profile(),
+    loadProfile: () => ({ ...profile(), ...profileOver }),
     loadSecrets: () => secrets,
     loadApplications: () => ({ apps: store.apps.map((a) => ({ ...a })) }),
     saveApplications: (_p, list) => {
+      events.push(["save"]);
       store.apps = list.map((a) => ({ ...a }));
       store.saves += 1;
     },
@@ -231,6 +236,8 @@ function harness({
     makeNotionClient: () => ({ fake: true }),
     fetchAllAnswers: async () => bank,
     updatePageStatus: async (client, pageId, status) => {
+      if (notionFails.has(pageId)) throw new Error("notion down");
+      events.push(["notion", pageId, status]);
       notionCalls.push([pageId, status]);
     },
     readFile: (p) => {
@@ -260,6 +267,7 @@ function harness({
     disk,
     log,
     notionCalls,
+    events,
     shots,
     out,
     err,
@@ -310,6 +318,11 @@ test("pre: builds the context, resolves standard answers, skips what it cannot d
       },
     ],
     behavior: { jdText: "Pay range $150,000 - $190,000" },
+    // The browser opens the short link and sees "not found" on the same path.
+    viaPage: (url) =>
+      url.includes("gone")
+        ? { ok: false, url, reason: "dead", status: 404, hops: [url] }
+        : { ok: false, url, reason: "blocked", status: 403, hops: [url] },
   });
   assert.equal(await h.run({ phase: "pre" }), 0);
 
@@ -340,7 +353,15 @@ test("pre: builds the context, resolves standard answers, skips what it cannot d
   assert.deepEqual(gave.adz, ["no_company_form", "unresolved_url:www.adzuna.com"]);
   assert.deepEqual(gave.wd, ["no_company_form", "unsupported_ats:epsilon.wd5.myworkdayjobs.com"]);
   assert.deepEqual(gave.nores, ["required_empty", "resume_missing"]);
-  assert.equal(ctx.skipped.find((s) => s.key === "dead").reason, "url_dead");
+  assert.equal(
+    ctx.closed.find((c) => c.key === "dead").reason,
+    "url_dead",
+    "a dead link is listed once, under closed"
+  );
+  assert.equal(
+    ctx.skipped.find((s) => s.key === "dead"),
+    undefined
+  );
   assert.equal(ctx.skipped.find((s) => s.key === "weak").reason, "fit_unscored");
 
   const byKey = Object.fromEntries(h.store.apps.map((a) => [a.key, a]));
@@ -395,6 +416,140 @@ test("pre: salary under the floor archives the row with the reason (BL-236)", as
   assert.equal(low.apply_state, "");
 });
 
+// ---- BL-236: dead links and below-floor rows leave the queue ------------------
+
+const goneBrowser = (url) => ({ ok: false, url, reason: "dead", status: 404, hops: [url] });
+const deadRows = (n) =>
+  Array.from({ length: n }, (_, i) =>
+    row({ key: `d${i}`, companyName: `Dead${i}`, url: `https://www.adzuna.com/land/ad/gone-${i}` })
+  );
+
+test("pre: a dead link is closed in Notion first, then in the TSV, counted once", async () => {
+  const h = harness({ apps: deadRows(2), files: [RESUME], viaPage: goneBrowser });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  assert.deepEqual(
+    h.events.map((e) => e[0]),
+    ["notion", "notion", "save"],
+    "Notion pages move before the TSV is written"
+  );
+  assert.deepEqual(h.notionCalls, [
+    ["page-d0", "Closed"],
+    ["page-d1", "Closed"],
+  ]);
+  for (const a of h.store.apps) {
+    assert.equal(a.status, "Closed");
+    assert.equal(a.apply_note, "url_dead");
+  }
+  const line = h.out.find((l) => l.startsWith("apply pre:"));
+  assert.match(line, /2 dead link\(s\) closed/);
+  assert.match(line, /0 closed;/, "the plain 'closed' count does not repeat them");
+  assert.match(line, /; 0 skipped/, "and neither does the skipped count");
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  assert.equal(ctx.closed.filter((c) => c.reason === "url_dead").length, 2);
+  assert.equal(ctx.skipped.filter((s) => s.reason === "url_dead").length, 0);
+  // The night's stamped record keeps them for the morning report, once.
+  const stamp = [...h.disk.keys()].find((k) => /apply_pre-.*\.json$/.test(k));
+  const rec = JSON.parse(h.disk.get(stamp));
+  assert.deepEqual(
+    rec.skipped.map((x) => x.reason),
+    ["url_dead", "url_dead"]
+  );
+});
+
+test("pre: a Notion error leaves the dead-link row To Apply (not Closed in the TSV)", async () => {
+  const h = harness({
+    apps: deadRows(2),
+    files: [RESUME],
+    viaPage: goneBrowser,
+    notionFails: new Set(["page-d0"]),
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const byKey = Object.fromEntries(h.store.apps.map((a) => [a.key, a]));
+  assert.equal(byKey.d0.status, "To Apply");
+  assert.equal(byKey.d1.status, "Closed");
+  assert.match(h.err.join("\n"), /Notion status Closed failed for d0/);
+  // Skipped tonight, with the reason, so the report still shows it.
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  assert.equal(ctx.skipped.find((s) => s.key === "d0").reason, "url_dead");
+});
+
+test("pre: no Notion token → a row with a page stays To Apply; a row without a page closes", async () => {
+  const apps = deadRows(2);
+  apps[1].notion_page_id = "";
+  const h = harness({ apps, files: [RESUME], viaPage: goneBrowser, secrets: {} });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const byKey = Object.fromEntries(h.store.apps.map((a) => [a.key, a]));
+  assert.equal(byKey.d0.status, "To Apply");
+  assert.equal(byKey.d1.status, "Closed");
+});
+
+test("pre: a dead verdict nobody confirmed (browser blocked / fetch error) closes nothing", async () => {
+  const h = harness({ apps: deadRows(2), files: [RESUME] }); // default browser: blocked
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  assert.ok(h.store.apps.every((a) => a.status === "To Apply"));
+  assert.deepEqual(h.notionCalls, []);
+  // Still reported as skipped url_dead tonight.
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  assert.equal(ctx.skipped.filter((s) => s.reason === "url_dead").length, 2);
+});
+
+test("pre: an abnormal pile of dead links in one run is not closed", async () => {
+  const h = harness({ apps: deadRows(41), files: [RESUME], viaPage: goneBrowser });
+  assert.equal(await h.run({ phase: "pre", concurrency: 4 }), 0);
+  assert.ok(h.store.apps.every((a) => a.status === "To Apply"));
+  assert.deepEqual(h.notionCalls, []);
+  assert.match(h.err.join("\n"), /41 dead links in one run .* none closed/);
+});
+
+test("pre: below-floor rows are archived in Notion first; a Notion error keeps the row", async () => {
+  const h = harness({
+    apps: [
+      row({ key: "low", companyName: "Beta", url: GH2_URL }),
+      row({ key: "low2", companyName: "Gamma", url: GH_URL }),
+    ],
+    files: [RESUME],
+    notionFails: new Set(["page-low2"]),
+  });
+  h.deps.fetchJd = async () => ({ text: "$80,000 - $100,000" });
+  h.deps.getAdapter = (n) => {
+    const a = fakeAdapter(n, {}, h.log);
+    a.jobRef = (u) => ({ slug: u === GH_URL ? "acme" : "beta", jobId: "1" });
+    return a;
+  };
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const byKey = Object.fromEntries(h.store.apps.map((a) => [a.key, a]));
+  assert.equal(byKey.low.status, "Archived");
+  assert.equal(byKey.low2.status, "To Apply");
+  assert.deepEqual(
+    h.events.map((e) => e[0]),
+    ["notion", "save"]
+  );
+  assert.deepEqual(h.notionCalls, [["page-low", "Archived"]]);
+});
+
+test("pre: a row the submitter took while Notion was moving is put back in Notion", async () => {
+  const h = harness({ apps: deadRows(1), files: [RESUME], viaPage: goneBrowser });
+  // The submitter applies to the row right after the check, before the save.
+  let loads = 0;
+  const realLoad = h.deps.loadApplications;
+  h.deps.loadApplications = (p) => {
+    loads += 1;
+    const r = realLoad(p);
+    // 1st load: pre start; 2nd: the pre-Notion re-read; 3rd: inside the lock.
+    if (loads === 3) {
+      r.apps[0].status = "Applied";
+      r.apps[0].applied_date = "2026-10-21";
+      r.apps[0].apply_state = "submitted";
+    }
+    return r;
+  };
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  assert.deepEqual(h.notionCalls, [
+    ["page-d0", "Closed"],
+    ["page-d0", "Applied"],
+  ]);
+});
+
 // ---- submit -----------------------------------------------------------------
 
 function contextFor(keys) {
@@ -442,8 +597,8 @@ function contextFor(keys) {
   };
 }
 
-function submitHarness({ apps, keys, answers, behavior }) {
-  const h = harness({ apps, behavior, files: [RESUME] });
+function submitHarness({ apps, keys, answers, behavior, profileOver }) {
+  const h = harness({ apps, behavior, files: [RESUME], profileOver });
   h.disk.set(CONTEXT_PATH, JSON.stringify(contextFor(keys)));
   h.disk.set("/fake/answers.json", JSON.stringify({ answers }));
   return h;
@@ -1054,9 +1209,14 @@ test("pre: aggregator 404 from fetch is re-checked in the browser", async () => 
     live: ["no_company_form", "unresolved_url:www.adzuna.com"],
   });
   const skipped = Object.fromEntries(ctx.skipped.map((s) => [s.key, s.reason]));
-  assert.equal(skipped.gone, "url_dead");
-  // Browser blocked: fetch's 404 stands.
+  // The browser saw "not found": the job is closed (BL-236), listed once.
+  assert.equal(ctx.closed.find((c) => c.key === "gone").reason, "url_dead");
+  assert.equal(skipped.gone, undefined);
+  // Browser blocked: fetch's 404 stands for tonight, but the row is NOT closed.
   assert.equal(skipped.blk, "url_dead");
+  const byKey = Object.fromEntries(h.store.apps.map((a) => [a.key, a]));
+  assert.equal(byKey.gone.status, "Closed");
+  assert.equal(byKey.blk.status, "To Apply");
   assert.equal(h.log.filter((l) => l[0] === "viaPage").length, 3);
 });
 
@@ -1854,4 +2014,169 @@ test("buildFillPlan: a file answer outside the profile root, or not the engine's
     root
   );
   assert.equal(llm.values.resume, undefined);
+});
+
+// ---- BL-236: fields that appear after the form is filled --------------------
+
+const OWNER_DEFAULTS = {
+  work_authorization: { authorized_us: true, requires_sponsorship: false },
+  relocation: { willing: false },
+  eeo: { policy: "decline" },
+  salary: { floor: 120000, default: 180000 },
+  how_did_you_hear_default: "Company careers page",
+  legal_acknowledgements: "accept",
+};
+const consentField = (id, label) => ({ id, label, type: "checkbox", required: true, options: [] });
+const CONSENT_DATA = consentField(
+  "consent_data",
+  "By checking this box, I agree to allow Acme to store and process my data for the purpose of considering my eligibility."
+);
+const CONSENT_SMS = consentField(
+  "consent_sms",
+  "By checking this box, I agree to receive SMS text messages about new roles."
+);
+const UNKNOWN_Q = {
+  id: "q_color",
+  label: "What is your favorite color?",
+  type: "text",
+  required: true,
+  options: [],
+};
+
+// A form whose extra required fields exist only after the first fill (a
+// checkbox Greenhouse renders once the answers are in). A checkbox is "checked"
+// when a fill carried a value for it. `inSchema`: the extras are visible to
+// the first readSchema too (the schema_changed case).
+function lateAdapter(log, extras, { inSchema = false, stuck = false, onFill = () => {} } = {}) {
+  const state = { filledOnce: false, checked: new Set() };
+  return (name) => ({
+    ...fakeAdapter(name, {}, log),
+    async readSchema() {
+      log.push(["readSchema"]);
+      return state.filledOnce || inSchema ? [...FORM, ...extras] : FORM;
+    },
+    async fill(page, values) {
+      log.push(["fill", page.url, values]);
+      state.filledOnce = true;
+      // Like the real adapters: a checkbox is only ticked by an affirmative value.
+      for (const [id, v] of Object.entries(values)) {
+        if (!stuck && !/^(no|false)$/i.test(String(v))) state.checked.add(id);
+      }
+      onFill();
+      return { filled: Object.keys(values), errors: [] };
+    },
+    async checkFilled() {
+      const missing = state.filledOnce
+        ? extras.filter((f) => !state.checked.has(f.id)).map((f) => f.id)
+        : [];
+      return { missing, missingLabels: missing.map((id) => extras.find((f) => f.id === id).label) };
+    },
+  });
+}
+
+function lateHarness(extras, opts = {}, flags = {}) {
+  const h = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers: [WHY("gh1")],
+    profileOver: { applyDefaults: OWNER_DEFAULTS },
+  });
+  h.deps.getAdapter = lateAdapter(h.log, extras, opts);
+  const run = () => h.run({ phase: "submit", answersFile: "/fake/answers.json", ...flags });
+  return { h, run, row: () => h.store.apps.find((a) => a.key === "gh1") };
+}
+
+test("submit: a consent box that appears after the fill is ticked in a second pass, no re-upload", async () => {
+  const { h, run, row: get } = lateHarness([CONSENT_DATA]);
+  assert.equal(await run(), 0);
+  assert.equal(get().status, "Applied");
+  const fills = h.log.filter((l) => l[0] === "fill");
+  assert.equal(fills.length, 2);
+  assert.ok("resume" in fills[0][2], "first pass attaches the files");
+  assert.deepEqual(fills[1][2], { consent_data: "Yes" }, "second pass: only the new field");
+  assert.equal(h.log.filter((l) => l[0] === "readSchema").length, 2, "the form is read again");
+  assert.equal(h.log.filter((l) => l[0] === "submit").length, 1);
+});
+
+test("submit: a consent box present live but not in the context is answered, not schema_changed", async () => {
+  const { h, run, row: get } = lateHarness([CONSENT_DATA], { inSchema: true });
+  assert.equal(await run(), 0);
+  assert.equal(get().status, "Applied");
+  const fills = h.log.filter((l) => l[0] === "fill");
+  assert.equal(fills.length, 1);
+  assert.equal(fills[0][2].consent_data, "Yes");
+});
+
+test("submit: an unknown required field that appears late → required_empty with its label, no click", async () => {
+  const { h, run, row: get } = lateHarness([UNKNOWN_Q]);
+  assert.equal(await run(), 0);
+  assert.equal(get().status, "To Apply");
+  assert.equal(get().apply_state, "skipped");
+  assert.equal(get().apply_note, "required_empty: What is your favorite color?");
+  assert.equal(h.log.filter((l) => l[0] === "fill").length, 1, "nothing to fill → no second fill");
+  assert.equal(h.log.filter((l) => l[0] === "submit").length, 0);
+});
+
+test("submit: a late unknown required field in the live schema stays schema_changed", async () => {
+  const { h, run, row: get } = lateHarness([UNKNOWN_Q], { inSchema: true });
+  assert.equal(await run(), 0);
+  assert.equal(get().apply_note, "no_honest_answer: What is your favorite color?");
+  assert.equal(h.log.filter((l) => l[0] === "fill").length, 0, "nothing was filled");
+  const result = JSON.parse(
+    h.disk.get([...h.disk.keys()].find((k) => /apply_results-.*\.json$/.test(k)))
+  ).results[0];
+  assert.equal(result.code, "schema_changed");
+});
+
+test("submit: a late SMS opt-in is never ticked → required_empty", async () => {
+  const { h, run, row: get } = lateHarness([CONSENT_SMS]);
+  assert.equal(await run(), 0);
+  assert.equal(get().apply_state, "skipped");
+  assert.match(get().apply_note, /^required_empty: By checking this box, I agree to receive SMS/);
+  assert.equal(h.log.filter((l) => l[0] === "submit").length, 0);
+});
+
+test("submit: the second pass stops when the empty set does not shrink (at most one extra fill)", async () => {
+  const { h, run, row: get } = lateHarness([CONSENT_DATA], { stuck: true });
+  assert.equal(await run(), 0);
+  assert.equal(get().apply_state, "skipped");
+  assert.equal(h.log.filter((l) => l[0] === "fill").length, 2, "first fill + one late pass");
+  assert.equal(h.log.filter((l) => l[0] === "submit").length, 0);
+});
+
+test("submit: a late field resolved from the owner's standing answers is filled", async () => {
+  const h = submitHarness({
+    apps: [row({ key: "gh1", companyName: "Acme", url: GH_URL })],
+    keys: [["gh1", GH_URL, "Acme"]],
+    answers: [WHY("gh1")],
+    profileOver: {
+      applyDefaults: {
+        ...OWNER_DEFAULTS,
+        standing_answers: [{ question: "What is your favorite color?", answer: "Green" }],
+      },
+    },
+  });
+  h.deps.getAdapter = lateAdapter(h.log, [UNKNOWN_Q]);
+  assert.equal(await h.run({ phase: "submit", answersFile: "/fake/answers.json" }), 0);
+  const fills = h.log.filter((l) => l[0] === "fill");
+  assert.deepEqual(fills[1][2], { q_color: "Green" });
+  assert.equal(h.store.apps[0].status, "Applied");
+});
+
+test("submit: a late pass never starts after the night's deadline", async () => {
+  let clock = Date.parse("2026-10-21T08:00:00Z");
+  const {
+    h,
+    run,
+    row: get,
+  } = lateHarness(
+    [CONSENT_DATA],
+    { onFill: () => (clock = Date.parse("2026-10-21T08:30:00Z")) },
+    { deadline: "2026-10-21T08:10:00Z" }
+  );
+  h.deps.now = () => new Date(clock);
+  assert.equal(await run(), 0);
+  assert.equal(get().status, "To Apply");
+  assert.equal(h.log.filter((l) => l[0] === "fill").length, 1);
+  assert.equal(h.log.filter((l) => l[0] === "submit").length, 0);
 });

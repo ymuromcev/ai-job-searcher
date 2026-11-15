@@ -316,6 +316,7 @@ test("prepare-collect: writes prepare_results_<ts>.json from valid rows; exit 2 
     row_key: "greenhouse:2",
     fitScore: "Weak",
     fitRationale: "outside domain",
+    resumeVer: "Growth",
     companyTier: "C",
   });
   t.clock.now = new Date(2026, 9, 22, 1, 2, 3);
@@ -350,6 +351,41 @@ test("prepare-collect: writes prepare_results_<ts>.json from valid rows; exit 2 
   assert.equal(fs.existsSync(path.join(round, "results", "greenhouse_1.json")), false);
   const refan = JSON.parse((await t.run({ phase: "prepare-fanout" })).out[0]);
   assert.equal(refan.pending, 1);
+});
+
+test("prepare-collect (BL-236): a Weak row without resumeVer goes back, and is parked after 3 tries a night", async () => {
+  const t = setup();
+  await t.run({ phase: "start" });
+  writeJson(path.join(t.profileDir, "prepare_context.json"), CTX);
+  const round = JSON.parse((await t.run({ phase: "prepare-fanout" })).out[0]).rows_dir;
+  const weakNoVer = {
+    row_key: "greenhouse:2",
+    fitScore: "Weak",
+    fitRationale: "outside domain",
+  };
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const fan = JSON.parse((await t.run({ phase: "prepare-fanout" })).out[0]);
+    assert.equal(fan.pending, 2, `attempt ${attempt}: the row is issued again`);
+    writeJson(path.join(round, "results", "greenhouse_2.json"), weakNoVer);
+    const r = await t.run({ phase: "prepare-collect" });
+    assert.equal(r.json.invalid[0].key, "greenhouse:2");
+    assert.match(r.json.invalid[0].problems.join(), /resumeVer missing/);
+    assert.deepEqual(
+      r.json.parked.map((p) => p.key),
+      attempt === 3 ? ["greenhouse:2"] : []
+    );
+  }
+  // Tonight the row is not issued again...
+  const after = JSON.parse((await t.run({ phase: "prepare-fanout" })).out[0]);
+  assert.deepEqual(after.parked, ["greenhouse:2"]);
+  assert.equal(after.pending, 1, "only the other row is issued");
+  // ...and a new night starts clean.
+  t.clock.now = new Date("2026-10-23T21:00:00.000Z");
+  fs.rmSync(lockPath(t.stateDir, "demo"));
+  await t.run({ phase: "start" });
+  const next = JSON.parse((await t.run({ phase: "prepare-fanout" })).out[0]);
+  assert.deepEqual(next.parked, []);
+  assert.equal(next.pending, 2);
 });
 
 test("apply-fanout: one job file per job with open questions; answers dir always exists", async () => {

@@ -70,6 +70,7 @@ const { generateResumePdf } = require("../modules/generators/resume_pdf_chrome.j
 const {
   classifyRow: classifyTailorRow,
   buildEscalationRecord,
+  belowThresholdNote,
   tailoredResumePath,
   tailoredResumePathPdf,
 } = require("../modules/tailor/dispatcher.js");
@@ -2133,11 +2134,8 @@ async function runCommit(ctx, deps) {
   // which keeps the escalation MD deterministic across runs.
   const tailorPlan = new Map(); // row.key -> { classification, row, tailoredDocxRel? }
   const escalations = [];
-  // RFC 068: owner policy — coverage-gap escalations at/above this ship.
-  const shipEscalatedMin =
-    profile.applyDefaults && Number.isFinite(profile.applyDefaults.tailor_ship_min_coverage)
-      ? profile.applyDefaults.tailor_ship_min_coverage
-      : null;
+  // BL-236: coverage-gap escalations ship at any coverage (the classifier no
+  // longer reads apply_defaults.tailor_ship_min_coverage).
 
   // Light-touch validation of the 5 new SKILL fields. Returns `true` if
   // the row passes; `false` (with stderr warn) on shape mismatch — caller
@@ -2224,13 +2222,14 @@ async function runCommit(ctx, deps) {
     //   - archetype: unchanged legacy path (archetype-pick by resumeVer).
     const tailorOk = validateTailorFields(r);
     if (!tailorOk) updates.tailorMalformed++;
-    const classification = tailorOk
-      ? classifyTailorRow(r, { shipEscalatedMinCoverage: shipEscalatedMin })
-      : "archetype";
-    if (classification === "tailored" && r.tailorEscalated === true) {
-      // Shipped under the owner's coverage policy — keep it visible.
+    const classification = tailorOk ? classifyTailorRow(r) : "archetype";
+    if (classification !== "escalated" && r.tailorEscalated === true) {
+      // Shipped below the coverage target (owner decision, BL-236) — keep it
+      // visible: in the escalation report and in the row's notes.
       escalations.push({ ...buildEscalationRecord(r), shipped: true });
       updates.escalatedShipped = (updates.escalatedShipped || 0) + 1;
+      const note = belowThresholdNote(r, classification);
+      if (note) r.fitRationale = [r.fitRationale, note].filter(Boolean).join(" — ");
     }
 
     if (classification === "escalated") {
@@ -2244,6 +2243,17 @@ async function runCommit(ctx, deps) {
       escalations.push(buildEscalationRecord(r));
       tailorPlan.set(r.key, { classification: "escalated", row: r });
       updates.escalated++;
+      continue;
+    }
+
+    // BL-236: Weak rows are submitted too (RFC 069 §3) and a submit without a
+    // resume version dies as form_broken: resume_not_set. A Weak row with no
+    // `resumeVer` is not promoted: no fit verdict is written, so it stays in
+    // Inbox for a fresh evaluation, same as a result the night collector
+    // rejects.
+    if (r.fitScore === "Weak" && !String(r.resumeVer || "").trim()) {
+      updates.weakNoResume = (updates.weakNoResume || 0) + 1;
+      stderr(`warn: Weak row ${r.key} has no resumeVer — not promoted, stays in Inbox`);
       continue;
     }
 
@@ -2333,6 +2343,7 @@ async function runCommit(ctx, deps) {
   // runs with no Strong rows don't require `profile.identity` to be present
   // (validator enforces it in production, but tests skip it freely).
   let canonicalContact = null;
+  const tailoredPathsTaken = new Set();
   for (const [rowKey, entry] of tailorPlan) {
     if (entry.classification !== "tailored") continue;
     const app = byKey[rowKey];
@@ -2355,9 +2366,26 @@ async function runCommit(ctx, deps) {
       entry.row.tailoredResume.contact = { ...canonicalContact };
     }
     const slug = deps.slugifyCompany(app.companyName);
-    const roleSlug = deps.slugifyRole(app.title);
+    let roleSlug = deps.slugifyRole(app.title);
+    // BL-236: two different postings of one company with the same title on
+    // the same day would share one file name (the second render overwrites
+    // the first). A name another row already holds - in this run or in the
+    // TSV - gets the row's id.
+    let pdfProbe = tailoredResumePathPdf(profileId, slug, roleSlug, dateStamp);
+    if (
+      tailoredPathsTaken.has(pdfProbe) ||
+      apps.some((a) => a.key !== rowKey && a.resume_ver === pdfProbe)
+    ) {
+      const tail =
+        String(rowKey)
+          .replace(/[^A-Za-z0-9]+/g, "")
+          .slice(-10) || "dup";
+      roleSlug = `${roleSlug}-${tail}`;
+      pdfProbe = tailoredResumePathPdf(profileId, slug, roleSlug, dateStamp);
+    }
+    tailoredPathsTaken.add(pdfProbe);
     const docxRel = tailoredResumePath(profileId, slug, roleSlug, dateStamp);
-    const pdfRel = tailoredResumePathPdf(profileId, slug, roleSlug, dateStamp);
+    const pdfRel = pdfProbe;
     const docxAbs = path.join(profile.paths.root, docxRel);
     const pdfAbs = path.join(profile.paths.root, pdfRel);
 
@@ -2777,7 +2805,9 @@ async function runCommit(ctx, deps) {
   if (updates.tailored > 0) extras.push(`${updates.tailored} tailored DOCX`);
   if (updates.escalated > 0) extras.push(`${updates.escalated} escalated`);
   if (updates.escalatedShipped > 0)
-    extras.push(`${updates.escalatedShipped} escalated but shipped (coverage policy)`);
+    extras.push(`${updates.escalatedShipped} below the coverage target but shipped`);
+  if (updates.weakNoResume > 0)
+    extras.push(`${updates.weakNoResume} Weak without resumeVer left in Inbox`);
   if (updates.carryOver > 0) extras.push(`${updates.carryOver} carry-over (RFC 049)`);
   if (tierStats.invalid > 0) extras.push(`${tierStats.invalid} invalid tier`);
   if (notionStats.pdfMissing + notionStats.notionFailed > 0) {

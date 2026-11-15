@@ -383,8 +383,10 @@ If a Strong row genuinely cannot proceed (e.g. `master_profile.md` is missing an
 - `final_coverage < 85 && last_delta < 1` (after iter≥2) → `tailorEscalated = true`, `tailorEscalationReason = "no_growth_below_threshold"`.
 - `final_coverage < 85 && last_delta >= 1 && iterations == 6` → `tailorEscalated = true`, `tailorEscalationReason = "iteration_cap_below_threshold"`.
 
+**A row that ends below the target is still submitted (BL-236, owner decision 2026-11-15).** The 85 target is what the loop aims for, not a gate: `no_growth_below_threshold` and `iteration_cap_below_threshold` rows go to `To Apply` like any other, with the best draft the loop produced; `prepare --phase commit` adds a note to the row's rationale (the coverage reached, the target 75, and that it was submitted below the threshold). Only `uncertain_about_fact` (a fact the candidate has not confirmed) holds a row back in `Inbox`. For a below-target row `tailoredResume` is the `resume_data` of the **iteration with the highest `coverage_pct` that passed the truth check** (the mirror's rules: nothing beyond the master profile and storybank; an iteration whose wording had to be dropped as unsupported does not count), not necessarily the last one. When no iteration qualifies (no JD text, 0% coverage), send `tailoredResume: null` — the engine then ships the base resume named by `resumeVer`. The old `tailor_ship_min_coverage` key in `apply_defaults.json` is ignored.
+
 **Per-row fields to attach** (carried into the results.json entry written in Step 10):
-- `tailoredResume` — the final `resume_data` object from the last subagent run. Schema matches `engine/modules/generators/resume_docx.js` input.
+- `tailoredResume` — the `resume_data` object of the best iteration (the last one when the loop ended at the target; for a below-target exit the highest-coverage iteration that passed the truth check, see above). Schema matches `engine/modules/generators/resume_docx.js` input.
 - `tailorCoverage` — final `coverage_pct` (0-100, number).
 - `tailorEscalated` — boolean.
 - `tailorEscalationReason` — one of `"no_growth_below_threshold" | "iteration_cap_below_threshold" | "uncertain_about_fact" | null`.
@@ -484,7 +486,8 @@ Per-row schema (`results[]` entry):
 - `fitScore` — `"Strong" | "Medium" | "Weak"`.
 - `fitRationale` — substantive 1-3 sentence rationale, user-facing.
 - `flags` — optional array of advisory strings (e.g. `["bridge-track", "early-stage"]`). Engine does not act on these; they surface in Notion `Notes` for the operator.
-- `clKey` + `clParagraphs` + `clBaseKey` + `resumeVer` + `salaryMin` + `salaryMax` + `city` + `state` + `workFormat` — present **iff** `fitScore` is `"Strong"` or `"Medium"`. For `"Weak"`, omit `clParagraphs` (the cover letter is generated on-demand if the operator triages "actually I want to apply" — RFC 034 §5 option A). The row still goes to Notion; the Cover Letter field in Notion will be empty.
+- `resumeVer` — present on **every** row, `"Weak"` included (BL-236): Weak rows are submitted too, and a row without a resume version cannot be. `night --phase prepare-collect` and `prepare --phase commit` both refuse a Weak row without it (the row goes back for another evaluation).
+- `clKey` + `clParagraphs` + `clBaseKey` + `salaryMin` + `salaryMax` + `city` + `state` + `workFormat` — present **iff** `fitScore` is `"Strong"` or `"Medium"`. For `"Weak"`, omit `clParagraphs` (the cover letter is generated on-demand if the operator triages "actually I want to apply" — RFC 034 §5 option A). The row still goes to Notion; the Cover Letter field in Notion will be empty.
 - **Strong-fit tailoring fields** (BL-123 / RFC 043) — emitted **only** when `fitScore == "Strong"` and Step 6.5 ran:
   - `tailoredResume: object | null` — structured resume data matching `engine/modules/generators/resume_docx.js` input schema. The engine renders the per-job DOCX/PDF from this object instead of the archetype pick.
   - `tailorCoverage: number | null` — final coverage score, 0-100.
@@ -529,7 +532,8 @@ Format:
     {
       "key": "<source>:<jobId>",
       "fitScore": "Weak",
-      "fitRationale": "Outside core PM/fintech domain — no overlapping component."
+      "fitRationale": "Outside core PM/fintech domain — no overlapping component.",
+      "resumeVer": "<archetype-key>"
     }
   ]
 }

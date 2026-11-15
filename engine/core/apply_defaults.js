@@ -30,8 +30,8 @@
 //   "address": { "street", "unit", "city", "state", "state_name", "zip", "country" }  // strings
 //   "citizenship": { "countries": ["..."], "us_permanent_resident": true }
 //   "legal_acknowledgements": "accept"   // tick truthfulness / arbitration / AI-policy / privacy consents
-//   "tailor_ship_min_coverage": 75       // Strong rows whose tailoring stalled on JD-phrase gaps
-//                                        // still go to To Apply at/above this coverage (0–100)
+//   "tailor_ship_min_coverage": 75       // ignored since BL-236 (still validated): Strong rows whose
+//                                        // tailoring stalled on JD-phrase gaps go to To Apply at ANY coverage
 //   "relatives_at_company": false        // "Do you have relatives working at X?" → No
 //   "start_weeks_after_offer": 2         // "When can you start?" → "2 weeks after an offer"
 //   "choice_policy": {                   // RFC 069 §4; engine defaults in question_match.js

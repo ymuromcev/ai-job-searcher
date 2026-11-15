@@ -329,6 +329,11 @@ function normalizeRowResult(raw, expectedKey, { resumeVersionKeys } = {}) {
       problems.push("clParagraphs must be 4 non-empty strings");
     }
     if (!isNonEmptyString(entry.clKey)) problems.push("clKey missing");
+  }
+  // BL-236: every evaluated row carries a resume version, Weak included —
+  // Weak rows are submitted too (RFC 069 §3), and a submit without one dies as
+  // form_broken: resume_not_set. A row without it goes to a repeat evaluation.
+  if (FIT_SCORES.has(entry.fitScore)) {
     const keys = resumeVersionKeys instanceof Set ? resumeVersionKeys : null;
     if (!isNonEmptyString(entry.resumeVer)) problems.push("resumeVer missing");
     else if (keys && keys.size && !keys.has(entry.resumeVer)) {
@@ -390,6 +395,35 @@ function collectRowResults(batch, byKey, opts = {}) {
   return { results, companyTiers, missing, invalid, untiered, counts };
 }
 
+// BL-236: a row whose result keeps failing the commit contract is issued to a
+// worker at most this many times in one night, then parked until the next
+// night (it stays in Inbox). Without a cap a row that cannot satisfy the
+// contract would be re-issued in every round of the night.
+const INVALID_RETRY_LIMIT = 3;
+
+// state: { night, counts: { key: n } } as stored between rounds (or null).
+// A state from another night counts as empty.
+function invalidCountsFor(state, night) {
+  return state && state.night === night && state.counts && typeof state.counts === "object"
+    ? state.counts
+    : {};
+}
+
+// Add one failed attempt for each key in `invalidKeys`.
+// -> { state, parked: [{ key, attempts }] } - parked = at or over the limit.
+function bumpInvalidCounts(state, night, invalidKeys, limit = INVALID_RETRY_LIMIT) {
+  const counts = { ...invalidCountsFor(state, night) };
+  for (const k of invalidKeys || []) counts[k] = (counts[k] || 0) + 1;
+  const parked = Object.entries(counts)
+    .filter(([, n]) => n >= limit)
+    .map(([key, attempts]) => ({ key, attempts }));
+  return { state: { night, counts }, parked };
+}
+
+function isParked(state, night, key, limit = INVALID_RETRY_LIMIT) {
+  return (invalidCountsFor(state, night)[key] || 0) >= limit;
+}
+
 // One apply_context job → the answer worker's input.
 function buildQuestionJob(job, paths) {
   return {
@@ -421,6 +455,9 @@ module.exports = {
   normalizeRowResult,
   collectRowResults,
   buildQuestionJob,
+  bumpInvalidCounts,
+  isParked,
+  INVALID_RETRY_LIMIT,
   parseClock,
   DEFAULT_STOP_AT,
   DEFAULT_MAX_HOURS,

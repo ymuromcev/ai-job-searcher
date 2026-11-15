@@ -25,7 +25,7 @@ Follow [`.claude/agents/pipeline-fit-evaluator.md`](../../../.claude/agents/pipe
 
 `resumeVer` must be a key of `profile_context.resumeVersions.versions`, copied literally.
 
-Weak rows get no cover letter (RFC 034 §5) — omit `clKey` / `clParagraphs` / `clBaseKey`.
+Weak rows get no cover letter (RFC 034 §5) — omit `clKey` / `clParagraphs` / `clBaseKey`. **They still carry `resumeVer`** (BL-236): Weak rows are submitted too, and a row without a resume version cannot be submitted. A Weak result without `resumeVer` is rejected by `prepare-collect` and the row is sent for another evaluation (at most 3 times a night).
 
 ## Step B — Strong only: the tailoring loop (SKILL Step 6.5)
 
@@ -35,6 +35,7 @@ For a `Strong` row run the full loop from [`SKILL.md`](../SKILL.md) → Step 6.5
 - Write each iteration's output to `<tailor_dir>/iter-<n>.json` (`tailor_dir` is in the payload), so a long loop can be audited.
 - Exit rules, checked in order after every iteration: coverage ≥ 85 → `threshold_met`; from iteration 2, growth < 1 point → `no_growth`; iteration 6 → `iteration_cap_reached`. **No other exit** (BL-132): not "good enough", not "this is expensive".
 - Then the escalation decision from Step 6.5 and the five fields: `tailoredResume`, `tailorCoverage`, `tailorEscalated`, `tailorEscalationReason`, `tailorEscalationDetail`.
+- **A loop that ends below the target still ships (BL-236).** `no_growth_below_threshold` and `iteration_cap_below_threshold` do not hold the row back: the engine submits it with the best draft. So `tailoredResume` is the draft of the iteration with the **highest coverage that passed the truth check** (Step 6.5), not the last one. No draft that passes (no JD text, a failed truth check on every iteration) → `tailoredResume: null` and the base resume by `resumeVer` is used. Only `uncertain_about_fact` (a fact the candidate has not confirmed) holds the row back.
 
 A Strong row still carries `clKey`, `clParagraphs`, `clBaseKey` and `resumeVer` from Step A.
 
@@ -70,7 +71,8 @@ Write `result_path` with the Write tool: one JSON object, no markdown fence, exa
 }
 ```
 
-- `clKey` / `clParagraphs` / `clBaseKey` / `resumeVer` / salary / city / state / workFormat: Strong and Medium only.
+- `clKey` / `clParagraphs` / `clBaseKey` / salary / city / state / workFormat: Strong and Medium only.
+- `resumeVer`: **every** row, Weak included (BL-236). A result without it is rejected.
 - `tailor*` fields: Strong only.
 - `companyTier`: only when `unknownTier` was true.
 - Never a `decision`, `skipReason`, `clPath` or `notionPageId` field.
