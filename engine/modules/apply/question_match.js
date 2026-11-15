@@ -462,8 +462,17 @@ const LEGAL_RE =
 // BL-236: an opt-in to hear from the company later (SMS, newsletters, job
 // alerts, a talent community, "contact me about …") is never a data-processing
 // consent, even when the same sentence also asks to store the data.
-const MARKETING_RE =
+const MARKETING_CORE_RE =
   /\b(sms|text messages?|marketing|newsletters?|job alerts?|promotional|talent (community|network|pool)|contact me (about|regarding|with)|stay in touch|keep me (informed|updated|posted))\b/;
+// Softer words ("email", "updates", "future roles") only count together with a
+// consent verb: a "How did you hear about us? (email, LinkedIn)" is no opt-in.
+const MARKETING_SOFT_RE =
+  /\b(e-?mails?|(send|sending|email|emailing|notify|notifying|inform|informing|update|updating) me|updates?|communications?|(new|future|other|similar) (opportunit\w+|openings?|roles?|positions?|jobs?))\b/;
+const OPT_IN_WORD_RE =
+  /\b(consent|agree|allow|authori[sz]e|permit|receive|opt|retain|storing|store)\b/;
+const MARKETING_RE = {
+  test: (t) => MARKETING_CORE_RE.test(t) || (MARKETING_SOFT_RE.test(t) && OPT_IN_WORD_RE.test(t)),
+};
 const JOB_TERMS_RE =
   /\b(office|on ?site|hybrid|in person|relocat\w*|days (a|per) week|schedule|travel|shift|commute)\b/;
 const AFFIRM_RE =
@@ -485,6 +494,13 @@ const DATA_NOUN_RE = /\b(data|information|responses|answers|details)\b/;
 const DEMOGRAPHIC_RE =
   /\b(self[ -]?identif\w*|demographic\w*|eeo|equal (employment|opportunity))\b/;
 const NEGATED_RE = /\b(not|don't|do not|decline)\b/;
+// A refusal in the label itself ("I do not consent to Acme storing my data").
+const NEGATED_CONSENT_RE =
+  /\b(do not|don't|does not|doesn't|not|never|decline|refuse|withhold)\s+(to\s+)?(consent|agree|allow|authori[sz]e|permit|give|grant)|\b(decline|refuse|withhold)\b/;
+// EEO subjects: a radio about these is never answered as a data consent.
+const EEO_SUBJECT_RE = /\b(disabilit\w*|veterans?|protected veteran|handicap\w*)\b/;
+// An option that is itself the consent: "Yes, I consent …" or a bare yes.
+const BARE_CONSENT_RE = /^(yes|i agree|i consent|agree|consent|i accept|accept)$/;
 
 // `bare`: a lone checkbox may state the processing without a consent verb
 // ("Storing and processing my demographic information").
@@ -506,25 +522,34 @@ function matchDataConsent(label, field, ctx) {
   const inOption = opts.some((o) => isDataConsent(o.n));
   if (!inLabel && !inOption) return undefined;
   if (JOB_TERMS_RE.test(label)) return undefined;
+  // "I do not consent to …": never ticked (matchLegal skips it too).
+  if (NEGATED_CONSENT_RE.test(label) && !inOption) return undefined;
   // A marketing opt-in in the label: matchLegal declines it.
   if (MARKETING_RE.test(label) && !inOption) return undefined;
   const policy = (ctx.applyDefaults && ctx.applyDefaults.legal_acknowledgements) || "";
   if (policy !== "accept") return undefined;
   if (!opts.length) return lone ? { source: "defaults", value: "Yes" } : undefined;
+  // Only an option that is itself the consent: "Yes, I consent to …" or a
+  // bare yes / i agree / i consent. A radio about disability or veteran status
+  // that merely carries the consent sentence in its label is an EEO question:
+  // undefined, so matchEeo declines (never "Yes, I have a disability").
   const ok = opts.filter(
     (o) =>
+      (isDataConsent(o.n) || BARE_CONSENT_RE.test(o.n)) &&
       AFFIRM_RE.test(o.n) &&
       !NEGATED_RE.test(o.n) &&
       !MARKETING_RE.test(o.n) &&
       !JOB_TERMS_RE.test(o.n)
   );
+  if (EEO_SUBJECT_RE.test(label) && !ok.some((o) => isDataConsent(o.n))) return undefined;
   const best = ok.find((o) => isDataConsent(o.n)) || ok[0];
-  return best ? { source: "defaults", value: best.raw } : null;
+  return best ? { source: "defaults", value: best.raw } : undefined;
 }
 
 function matchLegal(label, field, ctx) {
   if (!LEGAL_RE.test(label) && !MARKETING_RE.test(label)) return undefined;
   if (JOB_TERMS_RE.test(label)) return undefined;
+  if (NEGATED_CONSENT_RE.test(label) && !hasOptions(field)) return undefined;
   const policy = (ctx.applyDefaults && ctx.applyDefaults.legal_acknowledgements) || "";
   // BL-236: a marketing opt-in mixed into a consent sentence is declined too.
   if (MARKETING_RE.test(label)) {

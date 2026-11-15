@@ -479,12 +479,14 @@ function invalidStatePath(dirs) {
   return path.join(dirs.base, "invalid_counts.json");
 }
 
-// The id of tonight's run: the lock's start time ("" when no lock - a manual
-// collect outside a night counts into one shared bucket).
+// The id of tonight's run: the lock's start time. Outside a night (no lock) a
+// manual collect counts into the bucket of the calendar day ("manual:YYYY-MM-DD"),
+// so the count resets the next day instead of living forever.
 function nightId(ctx, profile, deps) {
   const file = lockPath(deps.stateDir(ctx.env || process.env), profile.id);
   const lock = deps.fileExists(file) ? readJson(file, deps) : null;
-  return lock && lock.started_at ? String(lock.started_at) : "";
+  if (lock && lock.started_at) return String(lock.started_at);
+  return `manual:${deps.now().toISOString().slice(0, 10)}`;
 }
 
 function readPrepareContext(ctx, root, deps) {

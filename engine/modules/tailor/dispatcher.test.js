@@ -225,8 +225,8 @@ test("belowThresholdNote: names the coverage and says it shipped below the thres
     tailorEscalationReason: "no_growth_below_threshold",
     tailorCoverage: 62.4,
   };
-  assert.equal(belowThresholdNote(row, "tailored"), "coverage 62% < 75, подано ниже порога");
-  assert.match(belowThresholdNote({ ...row, tailorCoverage: 0 }, "archetype"), /^coverage 0% < 75/);
+  assert.equal(belowThresholdNote(row, "tailored"), "coverage 62% < 85, подано ниже порога");
+  assert.match(belowThresholdNote({ ...row, tailorCoverage: 0 }, "archetype"), /^coverage 0% < 85/);
   assert.match(belowThresholdNote({ ...row, tailorCoverage: 0 }, "archetype"), /базовое резюме/);
   assert.equal(belowThresholdNote(row, "escalated"), "");
   assert.equal(belowThresholdNote({ ...row, tailorEscalated: false }, "tailored"), "");

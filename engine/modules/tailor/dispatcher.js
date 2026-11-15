@@ -84,9 +84,9 @@ const SHIPPABLE_ESCALATIONS = new Set([
   "iteration_cap_below_threshold",
 ]);
 
-// The coverage the tailor loop aims for (SKILL Step 6.5). Rows that end below
+// The coverage the tailor loop aims for and stops at (SKILL Step 6.5: 85). Rows that end below
 // it still ship; the note on the row says so.
-const TAILOR_TARGET_COVERAGE = 75;
+const TAILOR_TARGET_COVERAGE = 85;
 
 /**
  * The note a row carries when it was submitted below the coverage target

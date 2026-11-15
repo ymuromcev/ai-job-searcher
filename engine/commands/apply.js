@@ -88,8 +88,10 @@ const { detectBlocker, sleep } = require("../modules/apply/_dom.js");
 const { skipReasonFor, skipNote, isSkipReason } = require("../modules/apply/skip_reasons.js");
 
 const DEFAULT_CONCURRENCY = 4;
-// More dead links than this in one `pre` run means the check itself is broken
-// (BL-236): nothing is closed. A normal night finds a handful.
+// At most this many dead links are closed per `pre` run (BL-236): a broken
+// check can never wipe the whole queue in one go, while a real backlog (68
+// dead Adzuna links) drains over a few rounds of the night. Only reliable
+// verdicts (the browser saw "not found") reach this cap at all.
 const DEAD_CLOSE_MAX = 40;
 const STATE_DIR = ".apply-state";
 const CONTEXT_FILE = "apply_context.json";
@@ -874,15 +876,14 @@ async function runPre(ctx, deps) {
       skippedNow.push({ ...r.job, reason: r.skip });
     } else if (r.skip) skippedNow.push({ ...r.job, reason: r.skip });
   }
-  // A mass of "dead" links in one run looks like a broken check (a site that
-  // started answering 404 to everyone), not like a mass of dead postings:
-  // nothing is closed, the rows are only skipped tonight.
+  // Close at most DEAD_CLOSE_MAX per run; the rest are only skipped now and
+  // are closed by the next round (they stay To Apply, queue order keeps them).
   if (deadClosed.length > DEAD_CLOSE_MAX) {
     stderr(
-      `warn: ${deadClosed.length} dead links in one run (limit ${DEAD_CLOSE_MAX}) — looks like ` +
-        `a broken check; none closed`
+      `warn: ${deadClosed.length} dead links in one run - closing ${DEAD_CLOSE_MAX}, ` +
+        `the rest on the next round`
     );
-    for (const d of deadClosed.splice(0)) skippedNow.push(d);
+    for (const d of deadClosed.splice(DEAD_CLOSE_MAX)) skippedNow.push(d);
   }
 
   // Persist states: skipped (with the reason) for rows the bot gave up on,

@@ -5540,9 +5540,9 @@ test("prepare --phase commit (BL-236): a Strong row below the coverage target sh
   assert.equal(docx.length, 1, "the draft is rendered");
   assert.deepEqual(docx[0].data.version, { summary: "best draft" });
   assert.match(saved[0].resume_ver, /^resumes\/tailored\/.*\.pdf$/);
-  assert.match(saved[0].fit_rationale, /coverage 58% < 75, подано ниже порога/);
+  assert.match(saved[0].fit_rationale, /coverage 58% < 85, подано ниже порога/);
   assert.equal(pushes.length, 1, "the Notion page is created");
-  assert.match(pushes[0].notes, /coverage 58% < 75, подано ниже порога/);
+  assert.match(pushes[0].notes, /coverage 58% < 85, подано ниже порога/);
   assert.ok(ctx._lines.some((l) => /1 below the coverage target but shipped/.test(l)));
 });
 
@@ -5560,7 +5560,7 @@ test("prepare --phase commit (BL-236): no draft or 0% coverage → the base resu
   for (const a of saved) {
     assert.equal(a.status, "To Apply");
     assert.equal(a.resume_ver, "v1", "the archetype from resumeVer");
-    assert.match(a.fit_rationale, /coverage 0% < 75, подано ниже порога \(базовое резюме/);
+    assert.match(a.fit_rationale, /coverage 0% < 85, подано ниже порога \(базовое резюме/);
   }
   assert.equal(pushes.length, 2);
 });
@@ -5587,7 +5587,7 @@ test("prepare --phase commit (BL-236): the old ship threshold in apply_defaults 
     makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } })
   );
   assert.equal(code, 0);
-  assert.equal(deps._getSaved()[0].status, "To Apply", "40% < 75 ships all the same");
+  assert.equal(deps._getSaved()[0].status, "To Apply", "40% < 85 ships all the same");
 });
 
 test("prepare --phase commit (BL-236): uncertain_about_fact is NOT shipped, a gap escalation next to it is", async () => {

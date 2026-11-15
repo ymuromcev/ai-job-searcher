@@ -139,20 +139,53 @@ test("parseArgs: --profile is required, --apply is opt-in", () => {
   );
 });
 
-test("the record with the highest coverage wins, the later file on a tie", () => {
+test("the LAST record by key wins, whatever the earlier coverage was", () => {
   const records = new Map([
     [
       "a",
       [
         { file: "f1", row: rec("a", { tailorCoverage: 70 }) },
         { file: "f2", row: rec("a", { tailorCoverage: 55 }) },
-        { file: "f3", row: rec("a", { tailorCoverage: 70 }) },
       ],
     ],
   ]);
   const best = script.bestRecord(records.get("a"));
-  assert.equal(best.file, "f3");
-  assert.equal(best.cov, 70);
+  assert.equal(best.file, "f2");
+  assert.equal(best.cov, 55);
+});
+
+test("an old no_growth 70% record + a newer uncertain_about_fact 50% one: the row is held", () => {
+  const apps = [app({ key: "u1" })];
+  const records = new Map([
+    [
+      "u1",
+      [
+        {
+          file: "f1",
+          row: rec("u1", {
+            tailorCoverage: 70,
+            tailorEscalated: true,
+            tailorEscalationReason: "no_growth_below_threshold",
+          }),
+        },
+        {
+          file: "f2",
+          row: rec("u1", {
+            tailorCoverage: 50,
+            tailorEscalated: true,
+            tailorEscalationReason: "uncertain_about_fact",
+          }),
+        },
+      ],
+    ],
+  ]);
+  const plan = script.planStrong(apps, records, {
+    classify: classifyRow,
+    versionKeys: new Set(),
+  });
+  assert.equal(plan.eligible.length, 0);
+  assert.equal(plan.held.length, 1);
+  assert.equal(plan.held[0].why, "uncertain_about_fact");
 });
 
 test("dry-run (default): lists 2 Strong + 1 held + 1 Weak, writes nothing", async () => {
@@ -234,6 +267,24 @@ test("--apply: Strong go through the ordinary commit, fit_evaluated_at is not mo
         apply_state: "skipped",
         apply_note: "no_company_form: unresolved_url:x",
       }),
+      app({
+        key: "w4",
+        status: "To Apply",
+        fit_score: "Weak",
+        notion_page_id: "p",
+        apply_state: "skipped",
+        apply_note: "captcha",
+        title: "Risk and Fraud Product Manager",
+      }),
+      app({
+        key: "w5",
+        status: "To Apply",
+        fit_score: "Weak",
+        notion_page_id: "p",
+        apply_state: "skipped",
+        apply_note: "no_honest_answer: salary",
+        title: "Risk and Fraud Product Manager",
+      }),
     ],
     files: FILES([[rec("s1")], [rec("s2", { tailorCoverage: 0 })]]),
   });
@@ -260,6 +311,12 @@ test("--apply: Strong go through the ordinary commit, fit_evaluated_at is not mo
   // no_company_form is not touched.
   assert.equal(by.w3.resume_ver, "");
   assert.equal(by.w3.apply_state, "skipped");
+  // Skipped for another reason (captcha, no_honest_answer): left exactly as is.
+  for (const k of ["w4", "w5"]) {
+    assert.equal(by[k].resume_ver, "");
+    assert.equal(by[k].apply_state, "skipped");
+  }
+  assert.equal(by.w4.apply_note, "captcha");
   assert.match(h.out.join("\n"), /Strong: 2 of 2 row\(s\) are in To Apply/);
 });
 

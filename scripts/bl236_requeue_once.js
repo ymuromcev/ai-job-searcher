@@ -73,14 +73,16 @@ function stuckStrong(apps) {
 }
 
 // records: Map key → [{ file, row }] in file order (oldest first). The record
-// to use is the one with the highest coverage; the later file wins a tie.
+// to use is the LAST one for the key: its tailoredResume is already the best
+// iteration of the loop (SKILL Step 6.5), and its verdict (e.g. a fact that
+// needs the owner) is the current one - an older, better-covered record must
+// not override it.
 function bestRecord(list) {
-  let best = null;
+  let last = null;
   for (const rec of list || []) {
-    const cov = Number(rec.row && rec.row.tailorCoverage) || 0;
-    if (!best || cov >= best.cov) best = { ...rec, cov };
+    last = { ...rec, cov: Number(rec.row && rec.row.tailorCoverage) || 0 };
   }
-  return best;
+  return last;
 }
 
 // → { eligible: [{ app, row, kind, coverage, file }], held: [{ app, why }],
@@ -145,7 +147,12 @@ function isWeakWithoutResume(a) {
     !str(a.resume_ver).trim() &&
     !str(a.applied_date).trim() &&
     !/^no_company_form/.test(str(a.apply_note)) &&
-    str(a.apply_state) !== "submitted"
+    // Only the two states this script cures: never tried (empty state) and
+    // the failure it fixes (skipped, form_broken: resume_not_set). A row
+    // skipped for any other reason (captcha, no_honest_answer, ...) is left
+    // exactly as it is.
+    (!str(a.apply_state).trim() ||
+      (a.apply_state === "skipped" && /resume_not_set/.test(str(a.apply_note))))
   );
 }
 

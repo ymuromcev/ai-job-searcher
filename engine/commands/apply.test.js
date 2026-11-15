@@ -493,12 +493,15 @@ test("pre: a dead verdict nobody confirmed (browser blocked / fetch error) close
   assert.equal(ctx.skipped.filter((s) => s.reason === "url_dead").length, 2);
 });
 
-test("pre: an abnormal pile of dead links in one run is not closed", async () => {
-  const h = harness({ apps: deadRows(41), files: [RESUME], viaPage: goneBrowser });
+test("pre: a night-sized backlog of 68 reliably dead links drains over rounds, 40 per run", async () => {
+  const h = harness({ apps: deadRows(68), files: [RESUME], viaPage: goneBrowser });
   assert.equal(await h.run({ phase: "pre", concurrency: 4 }), 0);
-  assert.ok(h.store.apps.every((a) => a.status === "To Apply"));
-  assert.deepEqual(h.notionCalls, []);
-  assert.match(h.err.join("\n"), /41 dead links in one run .* none closed/);
+  assert.equal(h.store.apps.filter((a) => a.status === "Closed").length, 40);
+  assert.equal(h.notionCalls.length, 40);
+  assert.match(h.err.join("\n"), /68 dead links in one run - closing 40/);
+  // Next round: the remaining 28 are checked again and closed.
+  assert.equal(await h.run({ phase: "pre", concurrency: 4 }), 0);
+  assert.ok(h.store.apps.every((a) => a.status === "Closed"));
 });
 
 test("pre: below-floor rows are archived in Notion first; a Notion error keeps the row", async () => {

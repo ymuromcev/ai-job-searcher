@@ -388,6 +388,24 @@ test("prepare-collect (BL-236): a Weak row without resumeVer goes back, and is p
   assert.equal(next.pending, 2);
 });
 
+test("prepare-collect (BL-236): outside a night (no lock) the invalid count resets by calendar day", async () => {
+  const t = setup(); // no `start`: no lock
+  writeJson(path.join(t.profileDir, "prepare_context.json"), CTX);
+  const round = JSON.parse((await t.run({ phase: "prepare-fanout" })).out[0]).rows_dir;
+  const weakNoVer = { row_key: "greenhouse:2", fitScore: "Weak", fitRationale: "outside domain" };
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    writeJson(path.join(round, "results", "greenhouse_2.json"), weakNoVer);
+    await t.run({ phase: "prepare-collect" });
+  }
+  const same = JSON.parse((await t.run({ phase: "prepare-fanout" })).out[0]);
+  assert.deepEqual(same.parked, ["greenhouse:2"], "parked the same day");
+  // The next day the row is issued again, with a clean count.
+  t.clock.now = new Date(t.clock.now.getTime() + 24 * 3600 * 1000);
+  const next = JSON.parse((await t.run({ phase: "prepare-fanout" })).out[0]);
+  assert.deepEqual(next.parked, []);
+  assert.equal(next.pending, 2);
+});
+
 test("apply-fanout: one job file per job with open questions; answers dir always exists", async () => {
   const t = setup();
   writeJson(path.join(t.profileDir, ".apply-state", "apply_context.json"), {
