@@ -52,6 +52,8 @@ Written by a new `night --phase ready` (atomic rename), never by hand. The night
 - Captcha, account/password, broken form → skipped with reason; the bot moves on to the next row. Nothing goes to a «do by hand» queue.
 - Runbook rewrite: «Never ask a question» stays; every «leave for the human» path becomes «skip, count the reason».
 
+**Amendment 2026-11-15 (BL-236).** Below-target tailoring does not hold a Strong row back: a coverage-gap escalation is submitted with the best draft (or the base resume) and a note on the row; only `uncertain_about_fact` waits. Weak rows carry a `resumeVer` like the rest. Before `required_empty`, the submitter reads the form again (a consent box or a follow-up question can appear only after the form is filled), answers the empty required fields from standing answers and deterministic rules (no LLM, no new file uploads, at most two passes, stops when the set of empty fields does not shrink), and checks again. A confirmed dead link closes the job (Notion first, then the TSV); pay below the floor archives it.
+
 ### 5. Aggregator rows
 
 `resolve_url` for Adzuna rows: search the company's Greenhouse / Lever / Ashby board (existing adapters' board endpoints) for the same title; match → canonical form URL; no match → skipped `no_company_form`.

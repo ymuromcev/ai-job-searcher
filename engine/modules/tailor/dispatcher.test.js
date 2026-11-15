@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 
 const {
   classifyRow,
+  belowThresholdNote,
   buildEscalationRecord,
   tailoredResumePath,
   tailoredResumePathPdf,
@@ -25,14 +26,14 @@ test("classifyRow: tailored when tailoredResume present and not escalated", () =
   assert.equal(classifyRow(row), "tailored");
 });
 
-test("classifyRow: escalated when tailorEscalated=true", () => {
+test("classifyRow: escalated when tailorEscalated=true for an unverified fact", () => {
   const row = {
     key: "gh:2",
     fitScore: "Strong",
     tailoredResume: null,
     tailorCoverage: 72,
     tailorEscalated: true,
-    tailorEscalationReason: "no_growth_below_threshold",
+    tailorEscalationReason: "uncertain_about_fact",
     tailorEscalationDetail: { iterations: [{ n: 1, coverage_pct: 72, missing: [] }] },
   };
   assert.equal(classifyRow(row), "escalated");
@@ -176,36 +177,112 @@ test("tailoredResumePathPdf: profile id does not leak into the path", () => {
   assert.equal(p, "resumes/tailored/brex_head-of-product_20260101.pdf");
 });
 
-test("classifyRow: coverage-gap escalation ships at/above the owner's threshold", () => {
+test("classifyRow (BL-236): a coverage-gap escalation ships with the draft at ANY coverage", () => {
   const base = {
     tailorEscalated: true,
     tailorEscalationReason: "no_growth_below_threshold",
-    tailorCoverage: 78,
+    tailorCoverage: 54,
     tailoredResume: { contact: {} },
   };
-  assert.equal(classifyRow(base), "escalated", "no policy → unchanged");
-  assert.equal(classifyRow(base, { shipEscalatedMinCoverage: 75 }), "tailored");
+  assert.equal(classifyRow(base), "tailored");
+  assert.equal(classifyRow({ ...base, tailorCoverage: 1 }), "tailored");
+  assert.equal(classifyRow({ ...base, tailorCoverage: 74 }), "tailored");
   assert.equal(
-    classifyRow({ ...base, tailorCoverage: 70 }, { shipEscalatedMinCoverage: 75 }),
-    "escalated"
-  );
-  assert.equal(
-    classifyRow(
-      { ...base, tailorEscalationReason: "iteration_cap_below_threshold" },
-      { shipEscalatedMinCoverage: 75 }
-    ),
+    classifyRow({ ...base, tailorEscalationReason: "iteration_cap_below_threshold" }),
     "tailored"
   );
+  // The old policy argument is ignored.
+  assert.equal(classifyRow(base, { shipEscalatedMinCoverage: 99 }), "tailored");
+});
+
+test("classifyRow (BL-236): no draft, or 0% coverage → the base resume (archetype)", () => {
+  const base = {
+    tailorEscalated: true,
+    tailorEscalationReason: "iteration_cap_below_threshold",
+    tailorCoverage: 60,
+    tailoredResume: { contact: {} },
+  };
+  assert.equal(classifyRow({ ...base, tailoredResume: null }), "archetype");
+  assert.equal(classifyRow({ ...base, tailoredResume: undefined }), "archetype");
+  assert.equal(classifyRow({ ...base, tailorCoverage: 0 }), "archetype", "no JD text to tailor to");
+  assert.equal(classifyRow({ ...base, tailorCoverage: null }), "archetype");
+});
+
+test("classifyRow (BL-236): an unverified fact is never shipped", () => {
+  const row = {
+    tailorEscalated: true,
+    tailorEscalationReason: "uncertain_about_fact",
+    tailorCoverage: 90,
+    tailoredResume: { contact: {} },
+  };
+  assert.equal(classifyRow(row), "escalated");
+  assert.equal(classifyRow({ ...row, tailorEscalationReason: null }), "escalated");
+});
+
+test("belowThresholdNote: names the coverage and says it shipped below the threshold", () => {
+  const row = {
+    tailorEscalated: true,
+    tailorEscalationReason: "no_growth_below_threshold",
+    tailorCoverage: 62.4,
+  };
+  assert.equal(belowThresholdNote(row, "tailored"), "coverage 62% < 85, подано ниже порога");
+  assert.match(belowThresholdNote({ ...row, tailorCoverage: 0 }, "archetype"), /^coverage 0% < 85/);
+  assert.match(belowThresholdNote({ ...row, tailorCoverage: 0 }, "archetype"), /базовое резюме/);
+  assert.equal(belowThresholdNote(row, "escalated"), "");
+  assert.equal(belowThresholdNote({ ...row, tailorEscalated: false }, "tailored"), "");
   assert.equal(
-    classifyRow(
-      { ...base, tailorEscalationReason: "uncertain_about_fact" },
-      { shipEscalatedMinCoverage: 75 }
-    ),
-    "escalated",
-    "a fact question always waits for the owner"
+    belowThresholdNote({ ...row, tailorEscalationReason: "uncertain_about_fact" }, "escalated"),
+    ""
   );
-  assert.equal(
-    classifyRow({ ...base, tailoredResume: null }, { shipEscalatedMinCoverage: 75 }),
-    "escalated"
-  );
+});
+
+// --- BL-236 round 3: uncertain_about_fact with nothing to verify -------------
+
+// The shape of a real record (Revolut, job text behind a 403).
+const BLOCKED_ROW = {
+  key: "adzuna:1",
+  fitScore: "Strong",
+  flags: ["jd-unavailable"],
+  resumeVer: "ConsumerLending",
+  tailoredResume: null,
+  tailorCoverage: 0,
+  tailorEscalated: true,
+  tailorEscalationReason: "uncertain_about_fact",
+  tailorEscalationDetail: {
+    iterations: 1,
+    uncertain_facts: [{ fact: "blocked", source_hint: "No JD text (HTTP 403)" }],
+    coverage_table: [],
+  },
+};
+
+test("classifyRow (BL-236 r3): fact 'blocked' with no job text ships the base resume", () => {
+  assert.equal(classifyRow(BLOCKED_ROW), "archetype");
+  // No flag, but no draft, 0% coverage and only the placeholder fact.
+  assert.equal(classifyRow({ ...BLOCKED_ROW, flags: [] }), "archetype");
+  assert.match(belowThresholdNote(BLOCKED_ROW, "archetype"), /нет текста вакансии/);
+});
+
+test("classifyRow (BL-236 r3): a real unverified fact still holds the row", () => {
+  const real = {
+    ...BLOCKED_ROW,
+    tailorEscalationDetail: {
+      uncertain_facts: [{ fact: "led a team of 8", source_hint: "verify headcount" }],
+    },
+  };
+  assert.equal(classifyRow(real), "escalated");
+  // A real fact next to a placeholder: held.
+  const mixed = {
+    ...BLOCKED_ROW,
+    tailorEscalationDetail: { uncertain_facts: [{ fact: "blocked" }, { fact: "managed $5M" }] },
+  };
+  assert.equal(classifyRow(mixed), "escalated");
+  // A draft with real coverage and a 'blocked' entry but no jd flag: not the no-text case.
+  const drafted = {
+    ...BLOCKED_ROW,
+    flags: [],
+    tailoredResume: { contact: {} },
+    tailorCoverage: 80,
+  };
+  assert.equal(classifyRow(drafted), "escalated");
+  assert.equal(belowThresholdNote(real, "escalated"), "");
 });

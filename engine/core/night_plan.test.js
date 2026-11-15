@@ -356,8 +356,15 @@ test("normalizeRowResult: accepts evaluator output and enforces the commit contr
   assert.equal(medium.companyTier, "B");
 
   const weak = plan.normalizeRowResult(
-    { row_key: "k2", fitScore: "Skip", fitRationale: "no overlap", clParagraphs: CL },
-    "k2"
+    {
+      row_key: "k2",
+      fitScore: "Skip",
+      fitRationale: "no overlap",
+      clParagraphs: CL,
+      resumeVer: "Growth",
+    },
+    "k2",
+    { resumeVersionKeys: VERSIONS }
   );
   assert.deepEqual(weak.problems, []);
   assert.equal(weak.entry.fitScore, "Weak");
@@ -415,6 +422,49 @@ test("normalizeRowResult: accepts evaluator output and enforces the commit contr
   assert.deepEqual(plan.normalizeRowResult("unparseable", "k7").problems, ["not a JSON object"]);
 });
 
+test("normalizeRowResult (BL-236): Weak needs a resumeVer too — it is submitted like the rest", () => {
+  const weakNoVer = plan.normalizeRowResult(
+    { key: "w1", fitScore: "Weak", fitRationale: "no overlap" },
+    "w1",
+    { resumeVersionKeys: VERSIONS }
+  );
+  assert.deepEqual(weakNoVer.problems, ["resumeVer missing"]);
+  const skipNoVer = plan.normalizeRowResult(
+    { key: "w2", fitScore: "Skip", fitRationale: "no overlap", resumeVer: "  " },
+    "w2"
+  );
+  assert.deepEqual(skipNoVer.problems, ["resumeVer missing"], "Skip becomes Weak, same rule");
+  const unknown = plan.normalizeRowResult(
+    { key: "w3", fitScore: "Weak", fitRationale: "r", resumeVer: "Nope" },
+    "w3",
+    { resumeVersionKeys: VERSIONS }
+  );
+  assert.match(unknown.problems.join(), /not in resume_versions/);
+  const ok = plan.normalizeRowResult(
+    { key: "w4", fitScore: "Weak", fitRationale: "r", resumeVer: "Platform" },
+    "w4",
+    { resumeVersionKeys: VERSIONS }
+  );
+  assert.deepEqual(ok.problems, []);
+});
+
+test("bumpInvalidCounts / isParked (BL-236): a row is re-issued at most 3 times a night", () => {
+  let state = null;
+  for (let i = 1; i <= 2; i += 1) {
+    const r = plan.bumpInvalidCounts(state, "night-1", ["a"]);
+    state = r.state;
+    assert.deepEqual(r.parked, []);
+    assert.equal(plan.isParked(state, "night-1", "a"), false);
+  }
+  const third = plan.bumpInvalidCounts(state, "night-1", ["a", "b"]);
+  assert.deepEqual(third.parked, [{ key: "a", attempts: 3 }]);
+  assert.equal(plan.isParked(third.state, "night-1", "a"), true);
+  assert.equal(plan.isParked(third.state, "night-1", "b"), false);
+  // The next night starts clean.
+  assert.equal(plan.isParked(third.state, "night-2", "a"), false);
+  assert.deepEqual(plan.bumpInvalidCounts(third.state, "night-2", ["a"]).parked, []);
+});
+
 test("collectRowResults: committable rows, tiers, missing and invalid listed", () => {
   const batch = [
     { key: "a", companyName: "Newco" },
@@ -435,7 +485,7 @@ test("collectRowResults: committable rows, tiers, missing and invalid listed", (
         companyTier: "C",
       },
     ],
-    ["b", { row_key: "b", fitScore: "Weak", fitRationale: "r" }],
+    ["b", { row_key: "b", fitScore: "Weak", fitRationale: "r", resumeVer: "Growth" }],
     ["c", { row_key: "c", fitScore: "Strong", fitRationale: "r" }],
   ]);
   const c = plan.collectRowResults(batch, byKey, {
@@ -456,7 +506,7 @@ test("collectRowResults: committable rows, tiers, missing and invalid listed", (
   // A committed row of an unknown-tier company without a tier is reported.
   const noTier = plan.collectRowResults(
     [{ key: "a", companyName: "Newco" }],
-    new Map([["a", { row_key: "a", fitScore: "Weak", fitRationale: "r" }]]),
+    new Map([["a", { row_key: "a", fitScore: "Weak", fitRationale: "r", resumeVer: "Growth" }]]),
     { unknownTierCompanies: ["Newco"] }
   );
   assert.deepEqual(noTier.untiered, ["Newco"]);

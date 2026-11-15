@@ -1,0 +1,44 @@
+<!doctype html>
+<!--
+  Synthetic Greenhouse form for BL-236: a required consent checkbox that is
+  NOT in the form when it loads. It is rendered once the first name has a
+  value, like the data-processing boxes of the live forms, so neither the
+  schema read by `apply --phase pre` nor the first read at submit time knows
+  it. No real candidate or company data.
+
+  Variants via query string:
+    ?variant=sms  — the late checkbox is an SMS opt-in (must never be ticked)
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Product Manager — Acme Synthetic</title>
+  </head>
+  <body>
+    <h1>Product Manager</h1>
+    <form method="get" action="greenhouse_confirmation.html" id="application-form">
+      <div class="field-wrapper">
+        <label id="first_name-label" for="first_name"
+          >First Name<span aria-hidden="true">*</span></label
+        >
+        <input id="first_name" type="text" aria-required="true" />
+      </div>
+      <div id="late-slot"></div>
+      <button type="submit">Submit application</button>
+    </form>
+    <script>
+      const sms = new URLSearchParams(location.search).get("variant") === "sms";
+      const text = sms
+        ? "By checking this box, I agree to receive SMS text messages about new roles."
+        : "By checking this box, I agree to allow Acme Synthetic to store and process my data for the purpose of considering my eligibility.";
+      document.getElementById("first_name").addEventListener("input", (e) => {
+        const slot = document.getElementById("late-slot");
+        if (!e.target.value || slot.children.length) return;
+        slot.innerHTML =
+          '<label><input id="late_consent" name="late_consent" type="checkbox" required />' +
+          text +
+          "</label>";
+      });
+    </script>
+  </body>
+</html>

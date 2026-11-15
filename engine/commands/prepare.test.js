@@ -1504,7 +1504,7 @@ test("prepare --phase commit (RFC 049): orphan Weak from prepare_context.already
         fitRationale: "Mid-cap fintech analyst not a strong PM fit.",
         clKey: "",
         clPath: "",
-        resumeVer: "",
+        resumeVer: "v1",
       },
     ],
   };
@@ -1784,8 +1784,8 @@ test("prepare --phase commit (RFC 034): legacy `decision` warning fires once eve
         resumeVer: "v",
         clParagraphs: ["P1", "P2", "P3", "P4"],
       },
-      { key: "gh:2", decision: "skip", fitScore: "Weak" }, // no CL — RFC 034 §5(A)
-      { key: "gh:3", decision: "archive", fitScore: "Weak" }, // no CL — RFC 034 §5(A)
+      { key: "gh:2", decision: "skip", fitScore: "Weak", resumeVer: "v1" }, // no CL — RFC 034 §5(A)
+      { key: "gh:3", decision: "archive", fitScore: "Weak", resumeVer: "v1" }, // no CL — RFC 034 §5(A)
     ],
   };
   const rec = makeClRecorder();
@@ -1834,6 +1834,7 @@ test("prepare --phase commit (RFC 034): Strong + Medium + Weak all reach Notion 
       {
         key: "gh:3",
         fitScore: "Weak",
+        resumeVer: "v1",
         fitRationale: "outside core domain",
         // Per RFC 034 §5 option A: no clParagraphs for Weak.
       },
@@ -1923,6 +1924,7 @@ test("prepare --phase commit (RFC 059): Strong + Medium + Weak all get company_p
       {
         key: "gh:3",
         fitScore: "Weak",
+        resumeVer: "v1",
         fitRationale: "outside core",
       },
     ],
@@ -2131,6 +2133,7 @@ test("prepare --phase commit (RFC 034): Notion failure on Weak row reverts to In
       {
         key: "gh:3",
         fitScore: "Weak",
+        resumeVer: "v1",
         fitRationale: "outside core domain",
         // No clParagraphs for Weak.
       },
@@ -2232,6 +2235,7 @@ test("prepare --phase commit (BL-9): invalid skipReason (back-compat) warns and 
       {
         key: "gh:1",
         fitScore: "Weak",
+        resumeVer: "v1",
         skipReason: "not_a_pm_role", // legacy / invalid value
       },
     ],
@@ -2867,6 +2871,7 @@ test("prepare --phase commit (RFC 034): Weak row WITHOUT clParagraphs does NOT w
       {
         key: "gh:1",
         fitScore: "Weak",
+        resumeVer: "v1",
         fitRationale: "outside core domain",
         // No clKey, no clParagraphs — correct shape for Weak.
       },
@@ -5417,7 +5422,7 @@ test("prepare --phase commit (BL-126 Block A): unknown pageCount (legacy rendere
   assert.equal(saved[0].resume_ver, "resumes/tailored/Stripe_senior-product-manager_20260420.pdf");
 });
 
-test("prepare --phase commit (BL-123): escalated row stays Inbox, writes MD report, no Notion push", async () => {
+test("prepare --phase commit (BL-123): an unverified fact stays Inbox, writes MD report, no Notion push", async () => {
   const apps = [makeApp({ key: "gh:2", status: "Inbox" })];
   const results = {
     profileId: "testuser",
@@ -5431,7 +5436,7 @@ test("prepare --phase commit (BL-123): escalated row stays Inbox, writes MD repo
         tailoredResume: null,
         tailorCoverage: 68,
         tailorEscalated: true,
-        tailorEscalationReason: "no_growth_below_threshold",
+        tailorEscalationReason: "uncertain_about_fact",
         tailorEscalationDetail: {
           iterations: [
             { n: 1, coverage_pct: 60, missing: ["sql", "python"] },
@@ -5476,11 +5481,162 @@ test("prepare --phase commit (BL-123): escalated row stays Inbox, writes MD repo
   assert.match(writtenPath, /\.tailor-state\/escalations-\d+\.md$/);
   assert.match(writtenContent, /# Tailor escalations/);
   assert.match(writtenContent, /Acme PM/);
-  assert.match(writtenContent, /no_growth_below_threshold/);
+  assert.match(writtenContent, /uncertain_about_fact/);
 
   // stdout summary printed.
   assert.ok(ctx._lines.some((l) => /Tailor escalations: 1/.test(l)));
   assert.ok(ctx._lines.some((l) => /tailor escalations: wrote /.test(l)));
+});
+
+// ---- BL-236: below the coverage target the row still ships ---------------------
+
+function escalatedGapRow(key, over = {}) {
+  return {
+    key,
+    fitScore: "Strong",
+    fitRationale: "core fit",
+    clKey: "stripe_pm_20260420",
+    clParagraphs: ["Hi.", "Bye."],
+    resumeVer: "v1",
+    tailoredResume: {
+      contact: { name: "Test", phone: "555", email: "a@b.c", location: "SF" },
+      version: { summary: "best draft" },
+    },
+    tailorCoverage: 58,
+    tailorEscalated: true,
+    tailorEscalationReason: "iteration_cap_below_threshold",
+    tailorEscalationDetail: { iterations: [{ n: 1, coverage_pct: 58, missing: ["sql"] }] },
+    ...over,
+  };
+}
+
+async function commitRows(rows, apps) {
+  const pushes = [];
+  const docx = [];
+  const deps = makeCommitDeps(apps, {
+    readFile: () => JSON.stringify({ profileId: "testuser", results: rows }),
+    generateResumeDocx: async (data, outPath) => docx.push({ data, outPath }),
+    generateCoverLetterPdf: async () => {},
+    fileExists: () => false,
+    mkdirp: () => {},
+    writeFile: () => {},
+    pushJobPage: async ({ jobFields }) => {
+      pushes.push(jobFields);
+      return { pageId: `page-${pushes.length}`, dedup: false };
+    },
+  });
+  const ctx = makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } });
+  const code = await makePrepareCommand(deps)(ctx);
+  return { code, ctx, pushes, docx, saved: deps._getSaved() };
+}
+
+test("prepare --phase commit (BL-236): a Strong row below the coverage target ships with its best draft and says so", async () => {
+  const { code, pushes, docx, saved, ctx } = await commitRows(
+    [escalatedGapRow("gh:1")],
+    [makeApp({ key: "gh:1", status: "Inbox" })]
+  );
+  assert.equal(code, 0);
+  assert.equal(saved[0].status, "To Apply");
+  assert.equal(docx.length, 1, "the draft is rendered");
+  assert.deepEqual(docx[0].data.version, { summary: "best draft" });
+  assert.match(saved[0].resume_ver, /^resumes\/tailored\/.*\.pdf$/);
+  assert.match(saved[0].fit_rationale, /coverage 58% < 85, подано ниже порога/);
+  assert.equal(pushes.length, 1, "the Notion page is created");
+  assert.match(pushes[0].notes, /coverage 58% < 85, подано ниже порога/);
+  assert.ok(ctx._lines.some((l) => /1 below the coverage target but shipped/.test(l)));
+});
+
+test("prepare --phase commit (BL-236): no draft or 0% coverage → the base resume by resumeVer, still shipped", async () => {
+  const rows = [
+    escalatedGapRow("gh:1", { tailoredResume: null, tailorCoverage: 0 }),
+    escalatedGapRow("gh:2", { tailorCoverage: 0 }),
+  ];
+  const { code, docx, saved, pushes } = await commitRows(rows, [
+    makeApp({ key: "gh:1", status: "Inbox" }),
+    makeApp({ key: "gh:2", status: "Inbox" }),
+  ]);
+  assert.equal(code, 0);
+  assert.equal(docx.length, 0, "no tailored DOCX");
+  for (const a of saved) {
+    assert.equal(a.status, "To Apply");
+    assert.equal(a.resume_ver, "v1", "the archetype from resumeVer");
+    assert.match(a.fit_rationale, /coverage 0% < 85, подано ниже порога \(базовое резюме/);
+  }
+  assert.equal(pushes.length, 2);
+});
+
+test("prepare --phase commit (BL-236): the old ship threshold in apply_defaults is ignored", async () => {
+  const deps = makeCommitDeps([makeApp({ key: "gh:1", status: "Inbox" })], {
+    readFile: () =>
+      JSON.stringify({
+        profileId: "testuser",
+        results: [escalatedGapRow("gh:1", { tailorCoverage: 40 })],
+      }),
+    generateResumeDocx: async () => {},
+    generateCoverLetterPdf: async () => {},
+    fileExists: () => false,
+    mkdirp: () => {},
+    writeFile: () => {},
+  });
+  const base = deps.loadProfile;
+  deps.loadProfile = (...a) => ({
+    ...base(...a),
+    applyDefaults: { tailor_ship_min_coverage: 75 },
+  });
+  const code = await makePrepareCommand(deps)(
+    makeCtx({ flags: { phase: "commit", resultsFile: "/r.json" } })
+  );
+  assert.equal(code, 0);
+  assert.equal(deps._getSaved()[0].status, "To Apply", "40% < 85 ships all the same");
+});
+
+test("prepare --phase commit (BL-236): uncertain_about_fact is NOT shipped, a gap escalation next to it is", async () => {
+  const rows = [
+    escalatedGapRow("gh:1", { tailorEscalationReason: "uncertain_about_fact" }),
+    escalatedGapRow("gh:2"),
+  ];
+  const { saved, pushes } = await commitRows(rows, [
+    makeApp({ key: "gh:1", status: "Inbox" }),
+    makeApp({ key: "gh:2", status: "Inbox" }),
+  ]);
+  const by = Object.fromEntries(saved.map((a) => [a.key, a]));
+  assert.equal(by["gh:1"].status, "Inbox", "waits for the owner");
+  assert.equal(by["gh:2"].status, "To Apply");
+  assert.equal(pushes.length, 1);
+});
+
+test("prepare --phase commit (BL-236): two postings with one company and title get different resume files", async () => {
+  const rows = [
+    escalatedGapRow("gh:1", { tailorCoverage: 60 }),
+    escalatedGapRow("gh:2", { tailorCoverage: 62 }),
+  ];
+  const { saved, docx } = await commitRows(rows, [
+    makeApp({ key: "gh:1", status: "Inbox" }),
+    makeApp({ key: "gh:2", status: "Inbox" }),
+  ]);
+  assert.equal(docx.length, 2);
+  const [a, b] = saved.map((x) => x.resume_ver);
+  assert.notEqual(a, b, "the second render does not overwrite the first");
+  assert.match(a, /^resumes\/tailored\/Stripe_senior-product-manager_\d{8}\.pdf$/);
+  assert.match(b, /^resumes\/tailored\/Stripe_senior-product-manager-gh2_\d{8}\.pdf$/);
+  assert.equal(new Set(docx.map((d) => d.outPath)).size, 2);
+});
+
+test("prepare --phase commit (BL-236): a Weak row without resumeVer is not promoted", async () => {
+  const rows = [
+    { key: "gh:1", fitScore: "Weak", fitRationale: "outside core" },
+    { key: "gh:2", fitScore: "Weak", fitRationale: "outside core", resumeVer: "v1" },
+  ];
+  const { saved, pushes, ctx } = await commitRows(rows, [
+    makeApp({ key: "gh:1", status: "Inbox" }),
+    makeApp({ key: "gh:2", status: "Inbox" }),
+  ]);
+  const by = Object.fromEntries(saved.map((a) => [a.key, a]));
+  assert.equal(by["gh:1"].status, "Inbox");
+  assert.equal(by["gh:1"].fit_score || "", "", "no verdict written: it gets judged again");
+  assert.equal(by["gh:2"].status, "To Apply");
+  assert.equal(pushes.length, 1);
+  assert.ok(ctx._errLines.some((l) => /Weak row gh:1 has no resumeVer/.test(l)));
 });
 
 test("prepare --phase commit (BL-123): mixed batch — tailored + escalated + archetype each take correct path", async () => {
@@ -5602,7 +5758,7 @@ test("prepare --phase commit (BL-123): no escalations → no MD report write", a
   const apps = [makeApp({ key: "gh:1", status: "Inbox" })];
   const results = {
     profileId: "testuser",
-    results: [{ key: "gh:1", fitScore: "Weak" }],
+    results: [{ key: "gh:1", fitScore: "Weak", resumeVer: "v1" }],
   };
   let writeCalls = 0;
   const deps = makeCommitDeps(apps, {

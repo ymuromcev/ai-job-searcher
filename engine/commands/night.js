@@ -473,6 +473,22 @@ function pruneRows(dirs, batchKeys, deps) {
   return removed;
 }
 
+// BL-236: per-night count of failed (invalid) results per row, kept next to
+// the row files (prune leaves it alone: it only cleans the four subfolders).
+function invalidStatePath(dirs) {
+  return path.join(dirs.base, "invalid_counts.json");
+}
+
+// The id of tonight's run: the lock's start time. Outside a night (no lock) a
+// manual collect counts into the bucket of the calendar day ("manual:YYYY-MM-DD"),
+// so the count resets the next day instead of living forever.
+function nightId(ctx, profile, deps) {
+  const file = lockPath(deps.stateDir(ctx.env || process.env), profile.id);
+  const lock = deps.fileExists(file) ? readJson(file, deps) : null;
+  if (lock && lock.started_at) return String(lock.started_at);
+  return `manual:${deps.now().toISOString().slice(0, 10)}`;
+}
+
 function readPrepareContext(ctx, root, deps) {
   const context = readJson(path.join(root, "prepare_context.json"), deps);
   if (!context || !Array.isArray(context.batch)) {
@@ -505,12 +521,21 @@ function runPrepareFanout(ctx, profile, deps) {
   };
 
   const pending = [];
+  const parked = [];
   let done = 0;
+  const night = nightId(ctx, profile, deps);
+  const invalidState = readJson(invalidStatePath(dirs), deps);
   for (const entry of context.batch) {
     const sk = plan.safeKey(entry.key);
     const resultPath = path.join(dirs.results, `${sk}.json`);
     if (deps.fileExists(resultPath)) {
       done++;
+      continue;
+    }
+    // A row that already failed the contract the limit of times tonight is
+    // not issued again: it stays in Inbox until the next night.
+    if (plan.isParked(invalidState, night, entry.key)) {
+      parked.push(entry.key);
       continue;
     }
     const jdPath = entry.jdText ? path.join(dirs.jd, `${sk}.md`) : null;
@@ -534,6 +559,7 @@ function runPrepareFanout(ctx, profile, deps) {
     rows: context.batch.length,
     pending: pending.length,
     already_done: done,
+    parked,
     pruned,
     brief: "skills/job-pipeline/references/night_row_worker.md",
   });
@@ -565,8 +591,16 @@ function runPrepareCollect(ctx, profile, deps) {
     unknownTierCompanies: context.unknownTierCompanies || [],
     resumeVersionKeys: new Set(versions),
   });
-  // An invalid result is removed so the next prepare-fanout re-issues the row.
+  // An invalid result is removed so the next prepare-fanout re-issues the row
+  // - at most INVALID_RETRY_LIMIT times a night (BL-236), then it is parked.
   for (const bad of c.invalid) deps.removeFile(pathOf(bad.key));
+  const night = nightId(ctx, profile, deps);
+  const bumped = plan.bumpInvalidCounts(
+    readJson(invalidStatePath(dirs), deps),
+    night,
+    c.invalid.map((b) => b.key)
+  );
+  if (c.invalid.length) deps.writeFile(invalidStatePath(dirs), JSON.stringify(bumped.state));
 
   let resultsFile = null;
   if (c.results.length) {
@@ -592,11 +626,17 @@ function runPrepareCollect(ctx, profile, deps) {
     committable: c.results.length,
     missing: c.missing,
     invalid: c.invalid,
+    parked: bumped.parked,
     untiered_companies: c.untiered,
   });
   for (const bad of c.invalid) {
     stderr(
       `  invalid ${bad.key}: ${bad.problems.join("; ")} (result removed — re-issued on fan-out)`
+    );
+  }
+  for (const p of bumped.parked) {
+    stderr(
+      `  parked ${p.key}: ${p.attempts} invalid results tonight - not issued again until the next night`
     );
   }
   if (c.missing.length) stderr(`  no result yet: ${c.missing.length} row(s) — they stay in Inbox`);

@@ -29,12 +29,16 @@ const path = require("path");
  *                  no escalation. Engine generates DOCX from
  *                  row.tailoredResume and uses that path everywhere the
  *                  archetype DOCX would have gone.
- *   "escalated"  — SKILL flagged the row for human triage (no_growth,
- *                  iteration_cap, or uncertain_fact). Engine reverts to
- *                  Inbox and accumulates a record for the batch report.
- *   "archetype"  — Default path. Weak/Medium rows or Strong rows that
- *                  came in before the tailor-loop existed. Engine uses
- *                  the legacy archetype-pick flow (resumeVer key).
+ *   "escalated"  — SKILL flagged the row for human triage because of an
+ *                  unverified fact (`uncertain_about_fact`). Engine reverts
+ *                  to Inbox and accumulates a record for the batch report.
+ *                  Since BL-236 a coverage-gap escalation (no_growth /
+ *                  iteration_cap below the target) is NOT escalated: it
+ *                  ships, see classifyRow.
+ *   "archetype"  — Default path. Weak/Medium rows, Strong rows that
+ *                  came in before the tailor-loop existed, and (BL-236)
+ *                  coverage-gap escalations with no draft or 0% coverage.
+ *                  Engine uses the legacy archetype-pick flow (resumeVer).
  *
  * Light shape validation only — caller logs a warn and falls back to
  * "archetype" when a Strong row carries malformed tailor fields. We do
@@ -44,38 +48,101 @@ const path = require("path");
  * @param {object} row — entry from results.json `results[]`
  * @returns {"tailored" | "escalated" | "archetype"}
  */
-function classifyRow(row, opts = {}) {
+function classifyRow(row) {
   if (!row || typeof row !== "object") return "archetype";
 
   // Escalation wins even if a tailoredResume was also provided — the
   // SKILL contract is that escalated rows skip the auto-ship path.
-  // Exception (RFC 068 auto-apply, owner policy `tailor_ship_min_coverage`):
-  // a coverage-gap escalation (no growth / iteration cap — the resume only
-  // lacks JD phrases the candidate has no basis for) at or above that
-  // coverage ships as tailored; it still lands in the escalation report.
-  // `uncertain_about_fact` never ships: a fact needs the owner.
+  // BL-236 (owner, 2026-11-15): when the rounds of tailoring did not reach
+  // the target coverage, the row is submitted all the same ("if we did not
+  // get to the threshold after all the rounds, submit anyway"). A
+  // coverage-gap escalation (no growth / iteration cap — the resume only
+  // lacks JD phrases the candidate has no basis for) ships:
+  //   - as "tailored" with the best draft the loop produced, at ANY coverage
+  //     above zero;
+  //   - as "archetype" (the base resume by `resumeVer`) when there is no
+  //     draft, or the coverage is zero (no JD text to tailor against).
+  // The threshold is not read here: `tailor_ship_min_coverage` of
+  // apply_defaults.json is ignored since BL-236.
+  // `uncertain_about_fact` about a REAL unverified fact of the candidate never
+  // ships: a fact needs the owner. The same reason with nothing to verify (the
+  // job text could not be fetched: fact "blocked", flag `jd-unavailable`, no
+  // draft and 0% coverage) is the "no job text -> base resume" case: it ships
+  // as "archetype" like a zero-coverage gap escalation.
   if (row.tailorEscalated === true) {
-    const min = opts.shipEscalatedMinCoverage;
-    const gapOnly =
-      row.tailorEscalationReason === "no_growth_below_threshold" ||
-      row.tailorEscalationReason === "iteration_cap_below_threshold";
-    if (
-      Number.isFinite(min) &&
-      gapOnly &&
-      Number.isFinite(row.tailorCoverage) &&
-      row.tailorCoverage >= min &&
-      row.tailoredResume &&
-      typeof row.tailoredResume === "object"
-    ) {
-      return "tailored";
+    const coverage = Number(row.tailorCoverage);
+    const hasDraft = row.tailoredResume && typeof row.tailoredResume === "object";
+    if (row.tailorEscalationReason === "uncertain_about_fact" && isBlockedNoJobText(row)) {
+      return "archetype";
     }
-    return "escalated";
+    if (!SHIPPABLE_ESCALATIONS.has(row.tailorEscalationReason)) return "escalated";
+    return hasDraft && Number.isFinite(coverage) && coverage > 0 ? "tailored" : "archetype";
   }
 
   if (row.tailoredResume && typeof row.tailoredResume === "object") {
     return "tailored";
   }
   return "archetype";
+}
+
+// BL-236: an `uncertain_about_fact` row that holds no real fact about the
+// candidate. The record names none (every entry is the placeholder "blocked",
+// or there is no entry) and the job text is missing: the flag `jd-unavailable`
+// or, with no entry at all, no draft and zero coverage. Any other entry is a
+// real fact and keeps the row for the owner.
+function isBlockedNoJobText(row) {
+  const detail =
+    row.tailorEscalationDetail && typeof row.tailorEscalationDetail === "object"
+      ? row.tailorEscalationDetail
+      : {};
+  const facts = Array.isArray(detail.uncertain_facts) ? detail.uncertain_facts : [];
+  const isBlocked = (f) => {
+    const text = f && typeof f === "object" ? f.fact : f;
+    return (
+      String(text === undefined || text === null ? "" : text)
+        .trim()
+        .toLowerCase() === "blocked"
+    );
+  };
+  if (facts.some((f) => !isBlocked(f))) return false;
+  const flags = Array.isArray(row.flags) ? row.flags : [];
+  if (flags.includes("jd-unavailable")) return true;
+  const noDraft = !(row.tailoredResume && typeof row.tailoredResume === "object");
+  const coverage = Number(row.tailorCoverage);
+  const zero = !Number.isFinite(coverage) || coverage <= 0;
+  return facts.length > 0 ? noDraft && zero : false;
+}
+
+// The escalations that ship below the coverage target (BL-236).
+const SHIPPABLE_ESCALATIONS = new Set([
+  "no_growth_below_threshold",
+  "iteration_cap_below_threshold",
+]);
+
+// The coverage the tailor loop aims for and stops at (SKILL Step 6.5: 85). Rows that end below
+// it still ship; the note on the row says so.
+const TAILOR_TARGET_COVERAGE = 85;
+
+/**
+ * The note a row carries when it was submitted below the coverage target
+ * (BL-236), or "" when it does not apply. `classification` is the verdict of
+ * classifyRow for the row.
+ */
+function belowThresholdNote(row, classification) {
+  if (!row || row.tailorEscalated !== true) return "";
+  if (
+    row.tailorEscalationReason === "uncertain_about_fact" &&
+    classification === "archetype" &&
+    isBlockedNoJobText(row)
+  ) {
+    return "нет текста вакансии, подано базовым резюме";
+  }
+  if (!SHIPPABLE_ESCALATIONS.has(row.tailorEscalationReason)) return "";
+  if (classification !== "tailored" && classification !== "archetype") return "";
+  const coverage = Number(row.tailorCoverage);
+  const pct = Number.isFinite(coverage) ? Math.round(coverage) : 0;
+  const base = classification === "archetype" ? " (базовое резюме, подгонки нет)" : "";
+  return `coverage ${pct}% < ${TAILOR_TARGET_COVERAGE}, подано ниже порога${base}`;
 }
 
 /**
@@ -185,6 +252,8 @@ function tailoredResumePathPdf(profileId, companySlug, roleSlug, dateStamp) {
 
 module.exports = {
   classifyRow,
+  belowThresholdNote,
+  TAILOR_TARGET_COVERAGE,
   buildEscalationRecord,
   tailoredResumePath,
   tailoredResumePathPdf,
