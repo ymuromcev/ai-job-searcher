@@ -471,11 +471,20 @@ const MARKETING_CORE_RE =
 // plain data consent, and "did you receive an email from a recruiter?" is a
 // how-did-you-hear question.
 const MARKETING_SOFT_RE =
-  /\b(receiv\w*\s+(?!an?\s)(\w+\s+){0,2}(e-?mails?|updates?|communications?)|(send|sending|email|emailing|notify|notifying|inform|informing|update|updating) me|(new|future|other|similar) (opportunit\w+|openings?|roles?|positions?|jobs?))\b/;
-const OPT_IN_WORD_RE =
-  /\b(consent|agree|allow|authori[sz]e|permit|receive|opt|retain|storing|store)\b/;
+  /\b((send|sending|email|emailing|notify|notifying|inform|informing|update|updating) me|(new|future|other|similar) (opportunit\w+|openings?|roles?|positions?|jobs?))\b/;
+// "receive … emails / updates / communications" is an opt-in only together
+// with a real verb of consent ("I agree to receive an email update"), never
+// on its own: "did you receive an email from a recruiter?" is a
+// how-did-you-hear question. Articles and a few words may sit in between
+// ("receive a weekly digest of updates").
+const MARKETING_RECEIVE_RE = /\breceiv\w*\s+(\w+\s+){0,4}(e-?mails?|updates?|communications?)\b/;
+const OPT_IN_VERB_RE = /\b(consent|agree|allow|authori[sz]e|permit|opt|would like|wish)\b/;
+const OPT_IN_WORD_RE = /\b(consent|agree|allow|authori[sz]e|permit|opt|retain|storing|store)\b/;
 const MARKETING_RE = {
-  test: (t) => MARKETING_CORE_RE.test(t) || (MARKETING_SOFT_RE.test(t) && OPT_IN_WORD_RE.test(t)),
+  test: (t) =>
+    MARKETING_CORE_RE.test(t) ||
+    (MARKETING_SOFT_RE.test(t) && OPT_IN_WORD_RE.test(t)) ||
+    (MARKETING_RECEIVE_RE.test(t) && OPT_IN_VERB_RE.test(t)),
 };
 const JOB_TERMS_RE =
   /\b(office|on ?site|hybrid|in person|relocat\w*|days (a|per) week|schedule|travel|shift|commute)\b/;
@@ -504,7 +513,7 @@ const NEGATED_RE = /\b(not|don't|do not|decline)\b/;
 // not submit" and "you may withdraw or decline consent at any time" are the
 // notice around a consent, not a refusal (labels are normalized: no commas).
 const NEGATED_CONSENT_RE =
-  /(^|\bi\s+)(do not|don't|never|refuse to|decline to)\s+(consent|agree|allow|authori[sz]e|permit|give|grant)\b/;
+  /(^|\bi\s+)(do not|don't|never|refuse to|decline to)\s+(\w+\s+){0,2}(to\s+)?(consent|agree|allow|authori[sz]e|permit|give|grant)\b/;
 // Demographic subjects: a radio about these is an EEO question even when its
 // label carries a consent sentence ("By selecting an option you consent to the
 // processing of your responses"). Answered as a data consent only when an
@@ -561,7 +570,8 @@ function matchDataConsent(label, field, ctx) {
 function matchLegal(label, field, ctx) {
   if (!LEGAL_RE.test(label) && !MARKETING_RE.test(label)) return undefined;
   if (JOB_TERMS_RE.test(label)) return undefined;
-  if (NEGATED_CONSENT_RE.test(label) && !hasOptions(field)) return undefined;
+  // A refusal in the label is never answered, with or without options.
+  if (NEGATED_CONSENT_RE.test(label)) return undefined;
   const policy = (ctx.applyDefaults && ctx.applyDefaults.legal_acknowledgements) || "";
   // BL-236: a marketing opt-in mixed into a consent sentence is declined too.
   if (MARKETING_RE.test(label)) {

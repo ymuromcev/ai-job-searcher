@@ -215,3 +215,48 @@ test("consent: a notice around the consent is not a refusal", () => {
     assert.ok(!r || r.value !== "Yes", label);
   }
 });
+
+test("consent: 'receive' with an article is still a marketing opt-in, never Yes", () => {
+  for (const label of [
+    "I agree to receive an email update from Acme and to the processing of my personal data",
+    "I consent to receive a monthly email from Acme and to the storing of my data",
+    "I consent to receive a weekly digest of updates from Acme and to the storing of my data",
+  ]) {
+    const r = ask(label);
+    assert.ok(!r || r.value !== "Yes", label);
+  }
+});
+
+test("consent: 'receive an email from a recruiter' is a question, not a marketing opt-in", () => {
+  const how = ask(
+    "How did you hear about this job? Did you receive an email from a recruiter?",
+    "select",
+    ["Email", "LinkedIn", "Other"]
+  );
+  assert.equal(how && how.value, "Other");
+  const yn = ask("Did you receive an email from a recruiter about this role?", "radio", [
+    "Yes",
+    "No",
+  ]);
+  assert.ok(!yn || yn.value !== "No");
+});
+
+test("consent: a refusal on a Yes/No radio is never answered Yes", () => {
+  const r = ask("I do not consent to Acme storing my data", "radio", ["Yes", "No"]);
+  assert.ok(!r || r.value !== "Yes");
+});
+
+test("consent: 'I do not wish to consent' is a refusal", () => {
+  for (const label of [
+    "I do not wish to consent to the processing of my personal data",
+    "I don't want to agree to Acme storing my data",
+  ]) {
+    for (const [type, options] of [
+      ["checkbox", []],
+      ["radio", ["Yes", "No"]],
+    ]) {
+      const r = ask(label, type, options);
+      assert.ok(!r || r.value !== "Yes", `${label} ${type}`);
+    }
+  }
+});
