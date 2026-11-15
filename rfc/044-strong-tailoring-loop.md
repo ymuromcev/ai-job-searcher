@@ -343,6 +343,10 @@ Post-approval discovery: node engine не имеет Anthropic SDK / LLM invocat
 - Добавлена секция «results.json schema extension» — контракт SKILL → engine (5 новых полей на Strong-строку).
 - Sections без изменений: research summary, lexical mirror rationale, threshold rationale, loop semantics, escalation surface, no-fabrication guard, olegvg mining, tests, out-of-scope, open questions, notes.
 
+## 2026-11-15 — below-threshold rows ship (BL-236)
+
+Владелец: если за все раунды подгонки порог не достигнут, всё равно подавать. `classifyRow` больше не читает `tailor_ship_min_coverage` (ключ в `apply_defaults.json` игнорируется): `no_growth_below_threshold` / `iteration_cap_below_threshold` + `tailoredResume` и покрытие > 0 → `tailored` (черновик — из итерации с наибольшим покрытием, прошедшей проверку на правду, SKILL Step 6.5); нет черновика или покрытие 0 → `archetype` (базовое резюме по `resumeVer`); в notes строки — «coverage N% < 85, подано ниже порога». `uncertain_about_fact` по-прежнему `escalated` и не подаётся. Файлы подогнанных резюме двух вакансий одной компании с одним названием больше не затирают друг друга.
+
 ## 2026-05-25 — acceptance test findings (BL-123 Step 14)
 
 Acceptance test прогнали end-to-end на jared: subagent live на Calendly Staff PM (coverage 64%, 4 uncertain_facts, 22 exact-match lexical mirror hits) + engine `prepare --phase commit --dry-run` на synthetic results.json с 3 строками (escalated / tailored / archetype). Все три route'а отработали: tailored → DOCX path `resumes/tailored/<slug>-<date>.docx`, escalated → status stays Inbox + escalation report MD + stdout summary, archetype → legacy resumeVer path. Engine wire подтверждён.

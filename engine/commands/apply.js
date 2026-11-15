@@ -88,6 +88,11 @@ const { detectBlocker, sleep } = require("../modules/apply/_dom.js");
 const { skipReasonFor, skipNote, isSkipReason } = require("../modules/apply/skip_reasons.js");
 
 const DEFAULT_CONCURRENCY = 4;
+// At most this many dead links are closed per `pre` run (BL-236): a broken
+// check can never wipe the whole queue in one go, while a real backlog (68
+// dead Adzuna links) drains over a few rounds of the night. Only reliable
+// verdicts (the browser saw "not found") reach this cap at all.
+const DEAD_CLOSE_MAX = 40;
 const STATE_DIR = ".apply-state";
 const CONTEXT_FILE = "apply_context.json";
 
@@ -543,6 +548,13 @@ async function resolveJobUrl(app, env) {
     slugIndex,
   });
   const origHost = hostOf(app.url);
+  // BL-236: a "dead" verdict closes the job for good, so it must be one we
+  // can trust: the browser opened the aggregator page and saw "not found" on
+  // the same path, or a plain fetch got 404 / 410 from a non-aggregator link.
+  // Aggregators answer node fetch with 404 for live ads, so for them a fetch
+  // verdict that the browser could not confirm (blocked, crashed, a bot page)
+  // is NOT reliable: the row is skipped tonight and looked at again.
+  let browserSaw = false;
   // Aggregators (Adzuna) answer node fetch with 403/404 even for live ads, so
   // a "dead" from fetch is re-checked in the browser before it is believed.
   if (!res.ok && res.reason !== "unsafe_url" && aggregatorHost(origHost)) {
@@ -550,6 +562,7 @@ async function resolveJobUrl(app, env) {
     const { page, close } = await b.newPage();
     try {
       const viaPage = await deps.resolveViaPage(page, app.url, { detectAts: deps.detectAts });
+      browserSaw = viaPage.reason === "dead";
       if (viaPage.ok) {
         res = viaPage;
       } else if (viaPage.reason === "no_ats" && viaPage.url && hostOf(viaPage.url) !== origHost) {
@@ -568,7 +581,9 @@ async function resolveJobUrl(app, env) {
     }
   }
   if (!res.ok) {
-    if (res.reason === "dead") return { skip: "url_dead" };
+    if (res.reason === "dead") {
+      return { skip: "url_dead", reliable: aggregatorHost(origHost) ? browserSaw : true };
+    }
     if (res.reason === "no_company_form") return { manual: "no_company_form" };
     const host = hostOf(res.url) || origHost;
     if (res.reason === "no_ats" && !aggregatorHost(host)) {
@@ -602,7 +617,7 @@ async function preparePreJob(app, env) {
   const where = await resolveJobUrl(app, env);
   if (where.closed) return { job, closed: true };
   if (where.manual) return { job, stop: where.manual };
-  if (where.skip) return { job, skip: where.skip };
+  if (where.skip) return { job, skip: where.skip, reliable: where.reliable === true };
   const res = where.res;
   const ats = res.ats;
   if (ats && deps.noSubmitAts && deps.noSubmitAts.has(ats)) {
@@ -821,7 +836,9 @@ async function runPre(ctx, deps) {
   const formHolders = submittedFormRefs(apps, slugIndex, deps);
   const gaveUp = []; // vocabulary skips (RFC 069 §4): the row is done for tonight
   const closed = [];
+  const deadClosed = []; // dead link seen for sure → Closed (apply_note url_dead)
   const skippedNow = [];
+  const belowFloor = []; // published pay under the floor → Archived
   const giveUp = (job, code) => {
     const reason = skipReasonFor(code);
     gaveUp.push({ ...job, reason, ...(code !== reason ? { code } : {}) });
@@ -847,15 +864,55 @@ async function runPre(ctx, deps) {
       jobs.push(r.entry);
     } else if (r.closed) closed.push({ ...r.job, reason: "job_closed" });
     else if (r.stop) giveUp(r.job, r.stop);
-    else if (r.skip) skippedNow.push({ ...r.job, reason: r.skip });
+    else if (r.skip === "url_dead" && r.reliable) {
+      // BL-236: the posting no longer opens and the check can be trusted (the
+      // browser saw "not found", or a 404 from a non-aggregator link): the job
+      // is Closed, not re-checked in the browser on every round of every
+      // night. An unreliable verdict (blocked / fetch error) is only skipped.
+      deadClosed.push({ ...r.job, reason: "url_dead" });
+    } else if (r.skip === "salary_below_floor") {
+      // Same rule as `prepare` (RFC 068 §4a): archived with the reason.
+      belowFloor.push({ ...r.job, reason: "salary_below_floor" });
+      skippedNow.push({ ...r.job, reason: r.skip });
+    } else if (r.skip) skippedNow.push({ ...r.job, reason: r.skip });
+  }
+  // Close at most DEAD_CLOSE_MAX per run; the rest are only skipped now and
+  // are closed by the next round (they stay To Apply, queue order keeps them).
+  if (deadClosed.length > DEAD_CLOSE_MAX) {
+    stderr(
+      `warn: ${deadClosed.length} dead links in one run - closing ${DEAD_CLOSE_MAX}, ` +
+        `the rest on the next round`
+    );
+    for (const d of deadClosed.splice(DEAD_CLOSE_MAX)) skippedNow.push(d);
   }
 
   // Persist states: skipped (with the reason) for rows the bot gave up on,
   // "queued" for jobs carried to the LLM / submit steps. Nothing is left for
   // a human.
   let byKey = new Map(apps.map((a) => [a.key, a]));
+  const movedNotion = []; // [{ row, status }] Notion pages moved before the TSV
+  let notionMove = null;
   if (!flags.dryRun) {
     const nowIso = deps.now().toISOString();
+    // BL-236: Notion first, the TSV second (as `requeue`): sync is pull-only,
+    // so a row closed only in the TSV would flip back to To Apply, and a row
+    // whose page could not be moved stays To Apply untouched.
+    if (deadClosed.length || belowFloor.length) {
+      const freshByKey = new Map(
+        deps.loadApplications(applicationsPath).apps.map((a) => [a.key, a])
+      );
+      notionMove = { freshByKey, profile, secrets, deps, stderr };
+      const closedOk = await moveNotionFirst(deadClosed, "Closed", notionMove);
+      const archivedOk = await moveNotionFirst(belowFloor, "Archived", notionMove);
+      for (const x of closedOk.kept) skippedNow.push({ ...x, reason: "url_dead" });
+      for (const x of archivedOk.kept) {
+        if (!skippedNow.some((y) => y.key === x.key)) skippedNow.push(x);
+      }
+      for (const x of closedOk.moved) movedNotion.push({ row: x, status: "Closed" });
+      for (const x of archivedOk.moved) movedNotion.push({ row: x, status: "Archived" });
+      deadClosed.splice(0, deadClosed.length, ...closedOk.moved);
+      belowFloor.splice(0, belowFloor.length, ...archivedOk.moved);
+    }
     for (const m of gaveUp) {
       const a = byKey.get(m.key);
       if (!a) continue;
@@ -875,7 +932,7 @@ async function runPre(ctx, deps) {
       if (!a) continue;
       a.status = "Closed";
       a.apply_state = "";
-      a.apply_note = "job_closed";
+      a.apply_note = c.reason || "job_closed";
       a.updatedAt = nowIso;
     }
     // Outside the profile's geo (safety net for rows that predate the rule):
@@ -889,7 +946,31 @@ async function runPre(ctx, deps) {
       a.apply_note = "";
       a.updatedAt = nowIso;
     }
-    if (gaveUp.length || jobs.length || closed.length || outOfArea.length) {
+    for (const d of deadClosed) {
+      const a = byKey.get(d.key);
+      if (!a) continue;
+      a.status = "Closed";
+      a.apply_state = "";
+      a.apply_note = "url_dead";
+      a.updatedAt = nowIso;
+    }
+    for (const f of belowFloor) {
+      const a = byKey.get(f.key);
+      if (!a) continue;
+      a.status = "Archived";
+      if (!String(a.skip_reason || "").trim()) a.skip_reason = f.reason;
+      a.apply_state = "";
+      a.apply_note = "";
+      a.updatedAt = nowIso;
+    }
+    if (
+      gaveUp.length ||
+      jobs.length ||
+      closed.length ||
+      deadClosed.length ||
+      outOfArea.length ||
+      belowFloor.length
+    ) {
       const merged = await deps.withApplicationsLock(applicationsPath, () => {
         const fresh = deps.loadApplications(applicationsPath).apps;
         const m = applicationsTsv.mergeRowChanges(fresh, apps, loadedRows);
@@ -912,13 +993,23 @@ async function runPre(ctx, deps) {
           });
           jobs.splice(i, 1);
         }
-        for (const list of [closed, outOfArea, gaveUp]) {
+        for (const list of [closed, deadClosed, outOfArea, belowFloor, gaveUp]) {
           for (let i = list.length - 1; i >= 0; i -= 1)
             if (lost.has(list[i].key)) list.splice(i, 1);
         }
         stderr(`apply pre: ${lost.size} row(s) changed by the submitter meanwhile — left as is`);
       }
       byKey = new Map(merged.apps.map((a) => [a.key, a]));
+      // A page moved before the TSV, whose row the submitter took meanwhile:
+      // back to the row's own status.
+      if (notionMove && merged.conflicts.length) {
+        const lost = new Set(merged.conflicts);
+        await revertNotion(
+          movedNotion.filter((m) => lost.has(m.row.key)),
+          byKey,
+          notionMove
+        );
+      }
     }
     await pushStatusToNotion(closed, "Closed", byKey, profile, secrets, deps, stderr);
     await pushStatusToNotion(outOfArea, "Archived", byKey, profile, secrets, deps, stderr);
@@ -928,7 +1019,7 @@ async function runPre(ctx, deps) {
     generated_at: deps.now().toISOString(),
     profile: profileId,
     jobs,
-    closed,
+    closed: [...closed, ...deadClosed],
     // Queue gate skips, pre skips (url_dead, salary_below_floor) and the rows
     // the bot gave up on (vocabulary reason + the detailed `code`).
     skipped: [...skipped, ...skippedNow, ...gaveUp],
@@ -948,7 +1039,9 @@ async function runPre(ctx, deps) {
         generated_at: context.generated_at,
         dry_run: Boolean(flags.dryRun),
         jobs: jobs.map((j) => ({ key: j.key })),
-        skipped: [...skippedNow, ...gaveUp].map(keyOf),
+        // Dead links closed tonight are listed here once: the morning report
+        // counts them as url_dead in the night they were closed, never again.
+        skipped: [...skippedNow, ...deadClosed, ...gaveUp].map(keyOf),
         // Which bank answers went into which forms — the board's reuse count.
         bank_used: bankUsesFromJobs(jobs),
       },
@@ -961,6 +1054,7 @@ async function runPre(ctx, deps) {
   stdout(
     `apply pre: ${jobs.length} form(s) read — ${jobs.length - needLlm} fully answered, ` +
       `${needLlm} need the LLM step; ${closed.length} closed; ` +
+      (deadClosed.length ? `${deadClosed.length} dead link(s) closed; ` : "") +
       `${skippedNow.length + gaveUp.length} skipped`
   );
   for (const m of gaveUp) {
@@ -983,6 +1077,65 @@ async function pushStatusToNotion(rows, status, byKey, profile, secrets, deps, s
       await deps.updatePageStatus(client, a.notion_page_id, status, propertyMap);
     } catch (err) {
       stderr(`warn: Notion status ${status} failed for ${c.key}: ${err.message}`);
+    }
+  }
+}
+
+// BL-236: move the Notion pages of `rows` to `status` BEFORE the TSV is
+// written. -> { moved, kept }: `moved` rows may be written to the TSV, `kept`
+// rows stay To Apply (page not movable: no token, API error) or were taken by
+// the submitter meanwhile (re-read of the TSV).
+async function moveNotionFirst(rows, status, { freshByKey, profile, secrets, deps, stderr }) {
+  const moved = [];
+  const kept = [];
+  if (!rows.length) return { moved, kept };
+  const propertyMap =
+    (profile.notion && profile.notion.property_map) || notionSync.DEFAULT_PROPERTY_MAP;
+  let client = null;
+  for (const c of rows) {
+    const fresh = freshByKey.get(c.key);
+    if (!fresh || applicationsTsv.isSubmitProtected(fresh) || fresh.status !== "To Apply") {
+      kept.push(c);
+      continue;
+    }
+    if (!fresh.notion_page_id) {
+      moved.push(c);
+      continue;
+    }
+    if (!secrets.NOTION_TOKEN) {
+      stderr(
+        `warn: no Notion token — ${c.key} stays To Apply (a TSV-only ${status} would be undone by sync)`
+      );
+      kept.push(c);
+      continue;
+    }
+    try {
+      client = client || deps.makeNotionClient(secrets.NOTION_TOKEN);
+      await deps.updatePageStatus(client, fresh.notion_page_id, status, propertyMap);
+      moved.push(c);
+    } catch (err) {
+      stderr(
+        `warn: Notion status ${status} failed for ${c.key}: ${err.message} — row stays To Apply`
+      );
+      kept.push(c);
+    }
+  }
+  return { moved, kept };
+}
+
+// Put pages moved by moveNotionFirst back to the status their TSV row has now.
+async function revertNotion(list, byKey, { profile, secrets, deps, stderr }) {
+  if (!list.length || !secrets.NOTION_TOKEN) return;
+  const propertyMap =
+    (profile.notion && profile.notion.property_map) || notionSync.DEFAULT_PROPERTY_MAP;
+  const client = deps.makeNotionClient(secrets.NOTION_TOKEN);
+  for (const { row } of list) {
+    const a = byKey.get(row.key);
+    if (!a || !a.notion_page_id) continue;
+    try {
+      await deps.updatePageStatus(client, a.notion_page_id, a.status, propertyMap);
+    } catch (err) {
+      stderr(`warn: Notion revert to ${a.status} failed for ${row.key}: ${err.message}`);
     }
   }
 }
@@ -1079,6 +1232,69 @@ async function passEmailCode(page, adapter, job, since, env) {
   return again;
 }
 
+// Passes of "read the form again, answer what appeared, check again" before a
+// required_empty (BL-236).
+const MAX_LATE_PASSES = 2;
+
+// Deterministic answers (standing answers + matchQuestion, no answer bank, no
+// LLM, no file) for required fields of the live form that the context never
+// had. → answers[] in the shape of `job.answers`.
+function resolveLate(fields, ids, job, env) {
+  const want = new Set(ids);
+  const targets = (fields || []).filter((f) => want.has(f.id) && f.type !== "file");
+  if (!targets.length) return [];
+  return resolveFields(targets, {
+    job,
+    identity: env.identity || {},
+    applyDefaults: env.applyDefaults || null,
+    salary: null,
+    bank: [],
+    files: {},
+  }).answers;
+}
+
+// The required-field guard found empty fields after the fill. Up to
+// MAX_LATE_PASSES times: re-read the form (the adapter fills by the schema it
+// cached), answer the empty required fields deterministically, fill ONLY
+// those (never the files again — Lever wipes fields on a second upload), and
+// check again. Stops when a pass did not shrink the set of empty fields.
+// -> { check, fields, deadline? }
+async function fillAppeared(page, adapter, check, ctx) {
+  const { job, env, llm, root, allowedFiles, attempted, pastDeadline } = ctx;
+  let current = check;
+  let fields = null;
+  for (let pass = 0; pass < MAX_LATE_PASSES && current.missing.length; pass += 1) {
+    if (pastDeadline()) return { check: current, fields, deadline: true };
+    const fresh = await adapter.readSchema(page);
+    fields = fresh;
+    const ids = current.missing.filter((id) => !attempted.has(id));
+    const extra = resolveLate(fresh, ids, job, env);
+    if (!extra.length) break;
+    const plan = buildFillPlan(
+      fresh,
+      { ...job, answers: [...(job.answers || []), ...extra] },
+      llm,
+      root,
+      allowedFiles
+    );
+    const isFile = new Set(fresh.filter((f) => f.type === "file").map((f) => f.id));
+    const values = {};
+    for (const id of ids) {
+      if (!isFile.has(id) && Object.prototype.hasOwnProperty.call(plan.values, id)) {
+        values[id] = plan.values[id];
+      }
+    }
+    if (!Object.keys(values).length) break;
+    for (const id of Object.keys(values)) attempted.add(id);
+    await adapter.fill(page, values);
+    const next = await adapter.checkFilled(page);
+    const shrunk = next.missing.length < current.missing.length;
+    current = next;
+    if (!shrunk) break;
+  }
+  return { check: current, fields };
+}
+
 async function submitOne(job, env) {
   const { profile, deps, browser, flags, writeRow, applicationsPath, llmByKey, stdout } = env;
   const root = profile.paths.root;
@@ -1132,13 +1348,30 @@ async function submitOne(job, env) {
     if (!opened.ok) return skipped(out, opened.reason);
 
     const live = await adapter.readSchema(page);
-    const plan = buildFillPlan(live, job, llmByKey.get(job.key) || [], root, allowedFiles);
+    const llm = llmByKey.get(job.key) || [];
+    let plan = buildFillPlan(live, job, llm, root, allowedFiles);
+    if (plan.missingRequired.length) {
+      // BL-236: a required question the context never saw (a consent box pre
+      // did not read) is answered from the standing answers and the
+      // deterministic matcher before the row is called changed.
+      const extra = resolveLate(live, plan.missingRequired, job, env);
+      if (extra.length) {
+        plan = buildFillPlan(
+          live,
+          { ...job, answers: [...(job.answers || []), ...extra] },
+          llm,
+          root,
+          allowedFiles
+        );
+      }
+    }
     if (plan.missingRequired.length) {
       // The live form asks a required question the context never saw.
       return skipped(out, "schema_changed", {
         empty_fields: labelsOf(plan.missingRequired, live),
       });
     }
+    const attempted = new Set(Object.keys(plan.values));
     const filled = await adapter.fill(page, plan.values);
     const requiredIds = new Set(live.filter((f) => f.required).map((f) => f.id));
     const hardErrors = filled.errors.filter((e) => requiredIds.has(e.id));
@@ -1154,11 +1387,28 @@ async function submitOne(job, env) {
       });
     }
     // Required-field guard: anything required still empty → never Submit.
-    const check = await adapter.checkFilled(page);
+    let check = await adapter.checkFilled(page);
+    let liveNow = live;
+    if (check.missing.length) {
+      // BL-236: fields that appeared only after the form was filled (consent
+      // boxes, follow-up questions) are found by this check and nowhere else.
+      const late = await fillAppeared(page, adapter, check, {
+        job,
+        env,
+        llm,
+        root,
+        allowedFiles,
+        attempted,
+        pastDeadline,
+      });
+      if (late.deadline) return { ...out, outcome: "skipped", reason: "deadline" };
+      check = late.check;
+      if (late.fields) liveNow = late.fields;
+    }
     if (check.missing.length) {
       await screenshot(page, shotAbs, deps);
       return skipped(out, "required_empty", {
-        empty_fields: check.missingLabels || labelsOf(check.missing, live),
+        empty_fields: check.missingLabels || labelsOf(check.missing, liveNow),
         screenshot: shotRel,
       });
     }
@@ -1422,6 +1672,10 @@ async function runSubmit(ctx, deps) {
     notion,
     stdout,
     deadlineMs,
+    // BL-236: the second pass before required_empty answers by the owner's
+    // standing answers and the deterministic matcher.
+    applyDefaults: loadApplyDefaults(profile, deps),
+    identity: profile.identity || {},
     codeWaiter: flags.dryRun ? null : deps.makeCodeWaiter(profileId, ctx.env || process.env),
     slugIndex: loadSlugIndex(ctx, deps, stderr),
     sentForms: sentFormsFromResults(profile, deps),
@@ -1701,6 +1955,8 @@ module.exports = makeApplyCommand();
 module.exports.makeApplyCommand = makeApplyCommand;
 module.exports.resolveFields = resolveFields;
 module.exports.buildFillPlan = buildFillPlan;
+module.exports.fillAppeared = fillAppeared;
+module.exports.DEAD_CLOSE_MAX = DEAD_CLOSE_MAX;
 module.exports.searchBank = searchBank;
 module.exports.loadAnswersFile = loadAnswersFile;
 module.exports.alreadyApplied = alreadyApplied;

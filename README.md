@@ -253,6 +253,22 @@ dry it finds more companies on Greenhouse / Lever / Ashby and keeps going.
   standing answer and re-applies to those jobs; "Skip such jobs" makes the
   bot skip every job that asks it. Nothing waits on him: unanswered
   questions only keep their jobs skipped.
+- **Tailoring below the target does not hold a row back (BL-236).** If the
+  rounds of resume tailoring end under the target coverage, the row is still
+  submitted with the best draft (or the base resume when there is none); the
+  note on the row says the coverage and that it went out below the threshold.
+  Only a fact the candidate has not confirmed keeps a Strong row in Inbox. Weak
+  rows carry a resume version like the rest; a Weak result without one goes
+  back for another evaluation (at most 3 times a night).
+- **Dead links and consent boxes (BL-236).** A posting whose link is
+  confirmed dead (the browser saw "not found") becomes Closed in Notion and the
+  TSV (Notion first), and pay below the floor becomes Archived — neither is
+  re-checked every round; the morning report counts them once. Consent boxes
+  to store and process the candidate's data (including the demographic survey)
+  are ticked, also when they appear only after the form is filled: before a
+  required_empty the bot reads the form again and answers the empty required
+  fields from standing answers and deterministic rules (never a marketing
+  opt-in, never a condition of the job), at most two passes, no new uploads.
 - **The morning shows results, not questions:** submitted N (Strong /
   Medium / Weak), the list with confirmation status, one line of skip
   reasons, why it stopped below the target, and "re-submitted thanks to
