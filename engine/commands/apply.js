@@ -77,7 +77,12 @@ const {
   checkPostingOpen,
 } = require("../modules/apply/canonical_url.js");
 const companiesTsv = require("../core/companies.js");
-const { matchQuestion, pickOption, normalizeLabel } = require("../modules/apply/question_match.js");
+const {
+  matchQuestion,
+  pickOption,
+  normalizeLabel,
+  choicePolicy,
+} = require("../modules/apply/question_match.js");
 const { parsePublishedRange, computeDesiredSalary } = require("../modules/apply/salary.js");
 const { resolveResumePdf, resolveCoverLetterPdf } = require("../modules/apply/resume_path.js");
 const { buildQueue, SUBMITTING_PREFIX } = require("../modules/apply/queue.js");
@@ -1259,6 +1264,14 @@ function resolveLate(fields, ids, job, env) {
 // those (never the files again — Lever wipes fields on a second upload), and
 // check again. Stops when a pass did not shrink the set of empty fields.
 // -> { check, fields, deadline? }
+// What the adapter needs from the profile while filling: the "how did you
+// hear" option preferences, for pickers whose options load only when opened.
+function fillOptions(env) {
+  return {
+    howHeard: choicePolicy({ applyDefaults: (env && env.applyDefaults) || {} }).how_did_you_hear,
+  };
+}
+
 async function fillAppeared(page, adapter, check, ctx) {
   const { job, env, llm, root, allowedFiles, attempted, pastDeadline } = ctx;
   let current = check;
@@ -1286,7 +1299,7 @@ async function fillAppeared(page, adapter, check, ctx) {
     }
     if (!Object.keys(values).length) break;
     for (const id of Object.keys(values)) attempted.add(id);
-    await adapter.fill(page, values);
+    await adapter.fill(page, values, fillOptions(env));
     const next = await adapter.checkFilled(page);
     const shrunk = next.missing.length < current.missing.length;
     current = next;
@@ -1372,7 +1385,7 @@ async function submitOne(job, env) {
       });
     }
     const attempted = new Set(Object.keys(plan.values));
-    const filled = await adapter.fill(page, plan.values);
+    const filled = await adapter.fill(page, plan.values, fillOptions(env));
     const requiredIds = new Set(live.filter((f) => f.required).map((f) => f.id));
     const hardErrors = filled.errors.filter((e) => requiredIds.has(e.id));
     if (hardErrors.length) {
@@ -1881,7 +1894,7 @@ async function runOpen(ctx, deps) {
     }
     const live = await adapter.readSchema(page);
     const plan = buildFillPlan(live, job, llm, root);
-    await adapter.fill(page, plan.values);
+    await adapter.fill(page, plan.values, fillOptions({ applyDefaults }));
     const left = plan.missingRequired.map((f) => f.label || f.id);
     stdout(`opened ${job.company} — ${job.title}: the form is filled`);
     if (left.length) stdout(`  fill in yourself: ${left.join("; ")}`);
