@@ -344,6 +344,15 @@ test("legal: truthfulness, arbitration, AI policy, privacy → affirmative; mark
     ask("I acknowledge this role requires in-office work 3 days a week in Warsaw", "select", yn),
     null
   );
+  // Data-processing consent checkboxes (BL-236): Greenhouse "store and
+  // process my data" and the demographic-survey consent.
+  for (const label of [
+    "By checking this box, I agree to allow The Motley Fool to store and process my data for the purpose of considering my eligibility regarding my current application for employment.",
+    "By checking this box, I consent to D3 collecting, storing, and processing my responses to the demographic data surveys above.",
+    "I consent to Acme processing my personal information",
+  ]) {
+    assert.equal(ask(label, "checkbox").value, "Yes", label);
+  }
   // Without the owner's policy the legal questions are not auto-answered.
   assert.equal(ask("AI Policy for Interviewers", "select", yn, {}), null);
 });

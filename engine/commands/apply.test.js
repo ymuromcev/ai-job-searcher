@@ -347,7 +347,9 @@ test("pre: builds the context, resolves standard answers, skips what it cannot d
   assert.equal(byKey.gh1.apply_state, "queued");
   assert.equal(byKey.adz.apply_state, "skipped");
   assert.equal(byKey.adz.apply_note, "no_company_form: unresolved_url:www.adzuna.com");
-  assert.equal(byKey.dead.apply_state, "", "dead links leave the row untouched");
+  assert.equal(byKey.dead.status, "Closed", "a dead link closes the job");
+  assert.equal(byKey.dead.apply_state, "");
+  assert.equal(byKey.dead.apply_note, "url_dead");
   assert.equal(byKey.gh1.status, "To Apply");
 });
 
@@ -371,6 +373,26 @@ test("pre: captcha at open → skipped captcha; salary under floor → skipped; 
   assert.deepEqual(gaveUp(ctx).cap, ["captcha", undefined]);
   assert.equal(ctx.skipped.find((s) => s.key === "low").reason, "salary_below_floor");
   assert.equal(h.store.saves, 0);
+});
+
+test("pre: salary under the floor archives the row with the reason (BL-236)", async () => {
+  const h = harness({
+    apps: [row({ key: "low", companyName: "Beta", url: GH2_URL })],
+    files: [RESUME],
+  });
+  h.deps.fetchJd = async () => ({ text: "$80,000 - $100,000" });
+  h.deps.getAdapter = (n) => {
+    const a = fakeAdapter(n, {}, h.log);
+    a.jobRef = () => ({ slug: "beta", jobId: "1" });
+    return a;
+  };
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const ctx = JSON.parse(h.disk.get(CONTEXT_PATH));
+  assert.equal(ctx.skipped.find((s) => s.key === "low").reason, "salary_below_floor");
+  const low = h.store.apps.find((a) => a.key === "low");
+  assert.equal(low.status, "Archived");
+  assert.equal(low.skip_reason, "salary_below_floor");
+  assert.equal(low.apply_state, "");
 });
 
 // ---- submit -----------------------------------------------------------------

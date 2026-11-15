@@ -822,6 +822,7 @@ async function runPre(ctx, deps) {
   const gaveUp = []; // vocabulary skips (RFC 069 §4): the row is done for tonight
   const closed = [];
   const skippedNow = [];
+  const belowFloor = []; // published pay under the floor → Archived
   const giveUp = (job, code) => {
     const reason = skipReasonFor(code);
     gaveUp.push({ ...job, reason, ...(code !== reason ? { code } : {}) });
@@ -847,7 +848,17 @@ async function runPre(ctx, deps) {
       jobs.push(r.entry);
     } else if (r.closed) closed.push({ ...r.job, reason: "job_closed" });
     else if (r.stop) giveUp(r.job, r.stop);
-    else if (r.skip) skippedNow.push({ ...r.job, reason: r.skip });
+    else if (r.skip === "url_dead") {
+      // The posting no longer opens: the job is Closed, not re-checked in the
+      // browser on every round of every night.
+      // Still listed under skipped, so tonight's report counts it once.
+      closed.push({ ...r.job, reason: "url_dead" });
+      skippedNow.push({ ...r.job, reason: r.skip });
+    } else if (r.skip === "salary_below_floor") {
+      // Same rule as `prepare` (RFC 068 §4a): archived with the reason.
+      belowFloor.push({ ...r.job, reason: "salary_below_floor" });
+      skippedNow.push({ ...r.job, reason: r.skip });
+    } else if (r.skip) skippedNow.push({ ...r.job, reason: r.skip });
   }
 
   // Persist states: skipped (with the reason) for rows the bot gave up on,
@@ -875,7 +886,7 @@ async function runPre(ctx, deps) {
       if (!a) continue;
       a.status = "Closed";
       a.apply_state = "";
-      a.apply_note = "job_closed";
+      a.apply_note = c.reason || "job_closed";
       a.updatedAt = nowIso;
     }
     // Outside the profile's geo (safety net for rows that predate the rule):
@@ -889,7 +900,22 @@ async function runPre(ctx, deps) {
       a.apply_note = "";
       a.updatedAt = nowIso;
     }
-    if (gaveUp.length || jobs.length || closed.length || outOfArea.length) {
+    for (const f of belowFloor) {
+      const a = byKey.get(f.key);
+      if (!a) continue;
+      a.status = "Archived";
+      if (!String(a.skip_reason || "").trim()) a.skip_reason = f.reason;
+      a.apply_state = "";
+      a.apply_note = "";
+      a.updatedAt = nowIso;
+    }
+    if (
+      gaveUp.length ||
+      jobs.length ||
+      closed.length ||
+      outOfArea.length ||
+      belowFloor.length
+    ) {
       const merged = await deps.withApplicationsLock(applicationsPath, () => {
         const fresh = deps.loadApplications(applicationsPath).apps;
         const m = applicationsTsv.mergeRowChanges(fresh, apps, loadedRows);
@@ -912,7 +938,7 @@ async function runPre(ctx, deps) {
           });
           jobs.splice(i, 1);
         }
-        for (const list of [closed, outOfArea, gaveUp]) {
+        for (const list of [closed, outOfArea, belowFloor, gaveUp]) {
           for (let i = list.length - 1; i >= 0; i -= 1)
             if (lost.has(list[i].key)) list.splice(i, 1);
         }
@@ -921,7 +947,15 @@ async function runPre(ctx, deps) {
       byKey = new Map(merged.apps.map((a) => [a.key, a]));
     }
     await pushStatusToNotion(closed, "Closed", byKey, profile, secrets, deps, stderr);
-    await pushStatusToNotion(outOfArea, "Archived", byKey, profile, secrets, deps, stderr);
+    await pushStatusToNotion(
+      [...outOfArea, ...belowFloor],
+      "Archived",
+      byKey,
+      profile,
+      secrets,
+      deps,
+      stderr
+    );
   }
 
   const context = {

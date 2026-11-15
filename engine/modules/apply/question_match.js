@@ -458,7 +458,7 @@ function choiceOrText(field, value) {
 // An acknowledgement about the job itself (office days, schedule, travel) is
 // not covered: it goes to the LLM step with the geo rule.
 const LEGAL_RE =
-  /\b(certify|attest|arbitration|ai policy|use of ai|artificial intelligence|processing of personal data|personal data|privacy (policy|notice|statement)|data protection|gdpr|ccpa|terms (and|&) conditions|true(,)? (and )?(complete|correct|accurate)|complete(,)? (and )?(true|accurate|correct)|misrepresentation|falsification)\b/;
+  /\b(certify|attest|arbitration|ai policy|use of ai|artificial intelligence|processing of personal data|personal data|privacy (policy|notice|statement)|data protection|gdpr|ccpa|terms (and|&) conditions|true(,)? (and )?(complete|correct|accurate)|complete(,)? (and )?(true|accurate|correct)|misrepresentation|falsification)\b|\b(collect|stor|process)(e|es|ing)? (and |or )?(collect|stor|process)?\w* ?(and |or )?(process\w* )?(my|of my|your) (personal )?(data|information|responses)\b/;
 const MARKETING_RE =
   /\b(sms|text message|marketing|newsletter|job alerts?|promotional|talent community)\b/;
 const JOB_TERMS_RE =
