@@ -63,6 +63,7 @@ const {
   classifyJdWorkplace,
   jdWorkplaceVerdict,
   needsJdWorkplaceCheck,
+  isChannelMatch,
 } = require("../core/jd_workplace.js");
 const { ensureFresh: ensureFreshFitProfile } = require("../core/fit_profile.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
@@ -813,7 +814,9 @@ function applyJdWorkplacePass(aliveResults, jdByAppKey, profileGeo) {
       continue;
     }
     const workplace = classifyJdWorkplace(jdText);
-    const verdict = jdWorkplaceVerdict(workplace, profileGeo.home_state);
+    const verdict = jdWorkplaceVerdict(workplace, profileGeo.home_state, {
+      officeAbroad: isChannelMatch(geoMatchedBy),
+    });
     if (!verdict.drop) {
       surviving.push(urlRes);
       continue;

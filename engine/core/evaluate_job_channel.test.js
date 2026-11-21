@@ -166,12 +166,18 @@ test("New Mexico is a US state, never the country (no channel pass-through)", ()
   assert.equal(r.skipReason, "geo_not_home_state_or_remote");
 });
 
-// --- case 28: the JD workplace check (BL-225) does not fire on it ----------------
+// --- case 28 (BL-243 round 3): the JD workplace check (BL-225) runs on it --------
 
-test("matchedBy channel:ru_latam is not a JD-workplace-check trigger (BL-225 does not drop it)", () => {
-  assert.equal(needsJdWorkplaceCheck("channel:ru_latam"), false);
-  // control: the triggers of BL-225 are unchanged
+test("matchedBy channel:ru_latam is a JD-workplace-check trigger, like every non-home-state pass", () => {
+  assert.equal(needsJdWorkplaceCheck("channel:ru_latam"), true);
+  // the passing entry still carries the matchedBy the check reads
+  const r = run({ ...PLATA, locations: ["Mexico City"] });
+  assert.equal(r.decision, "keep");
+  assert.equal(needsJdWorkplaceCheck(r.matched.geoMatchedBy), true);
+  // control: the triggers of BL-225 are unchanged, a home-state pass is not checked
   assert.equal(needsJdWorkplaceCheck("us_unspecified"), true);
+  assert.equal(needsJdWorkplaceCheck("home_state:CA"), false);
+  assert.equal(needsJdWorkplaceCheck("remote:structured"), false);
 });
 
 test("geo.blocklist of the profile still wins over the channel exception", () => {

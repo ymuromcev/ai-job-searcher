@@ -6013,15 +6013,15 @@ test("applyPrepareFilter (BL-243): profile without channel_exceptions (lilia / r
   );
 });
 
-test("prepare --phase pre (BL-243): a Plata «Mexico City» row reaches the batch; Acme's does not", async () => {
-  const apps = [chApp("gh:1", "Plata", ["Mexico City"]), chApp("gh:2", "Acme", ["Mexico City"])];
+// `jdByKey`: JD text per row key (default: a JD that says nothing about the format).
+async function runChannelPre(apps, jdByKey = {}) {
   const deps = makePrepDeps(apps, {
     loadChannelIndex: () => CH_INDEX,
     loadProfile: () => ({
       id: "testuser",
       filterRules: CH_RULES,
       geo: HOME_CA_GEO,
-      company_tiers: { Plata: "A", Acme: "A" },
+      company_tiers: { Plata: "A", Acme: "A", Unlimit: "A" },
       paths: {
         root: "/fake/profiles/testuser",
         applicationsTsv: "/fake/profiles/testuser/applications.tsv",
@@ -6032,20 +6032,110 @@ test("prepare --phase pre (BL-243): a Plata «Mexico City» row reaches the batc
       inputs.map((i) => ({
         key: i.key,
         status: "fetched",
-        text: "Senior PM\nThis is an onsite role in our Mexico City office.\n",
+        text: jdByKey[i.key] === undefined ? "Senior PM\nYou will own payments.\n" : jdByKey[i.key],
       })),
   });
   await makePrepareCommand(deps)(makeCtx());
-  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  return JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+}
+
+test("prepare --phase pre (BL-243): a Plata «Mexico City» row reaches the batch; Acme's does not", async () => {
+  const apps = [chApp("gh:1", "Plata", ["Mexico City"]), chApp("gh:2", "Acme", ["Mexico City"])];
+  const result = await runChannelPre(apps);
   assert.deepEqual(
     result.batch.map((b) => b.key),
     ["gh:1"]
   );
   assert.equal(result.batch[0].geo_matched_by, "channel:ru_latam");
   assert.equal(result.skipped.find((s) => s.key === "gh:2").reason, "location_blocklist");
-  // «onsite у Plata не архивируем» (RFC 072, out of scope): the BL-225 JD
-  // workplace check does not act on a channel match, the row is not archived.
   assert.notEqual(apps.find((a) => a.key === "gh:1").status, "Archived");
+});
+
+// BL-243 round 3, point 4: matchedBy channel:ru_latam goes through the BL-225
+// JD workplace check like every other non-home-state pass. «Mexico City» + a
+// remote JD or a JD with no format passes (case 19 / 28); an explicit onsite /
+// hybrid office is archived with the BL-225 reason (case 29).
+test("prepare --phase pre (BL-243): Plata «Mexico City» with a remote JD or a JD without a format passes", async () => {
+  const apps = [
+    chApp("gh:1", "Plata", ["Mexico City"]),
+    chApp("gh:2", "Plata", ["Mexico City"]),
+    chApp("gh:3", "Unlimit", ["Remote, Brazil"]),
+    chApp("gh:4", "Plata", ["Mexico City"]),
+  ];
+  const result = await runChannelPre(apps, {
+    "gh:1": "Senior PM\nThis is a fully remote role for candidates in LATAM and the US.\n",
+    "gh:2": "Senior PM\nYou will own the cards roadmap with design and engineering.\n",
+    "gh:3": "Senior PM\nLocation: Remote, Brazil\nWe are a remote-first company.\n",
+    "gh:4": "Senior PM\nSCHEDULE: Full-time · Remote\n",
+  });
+  assert.deepEqual(result.batch.map((b) => b.key).sort(), ["gh:1", "gh:2", "gh:3", "gh:4"]);
+  assert.deepEqual(result.skipped, []);
+  for (const a of apps) assert.notEqual(a.status, "Archived", a.key);
+});
+
+test("prepare --phase pre (BL-243): Plata / Unlimit with an explicit onsite or hybrid office JD are archived as geo_jd_not_remote", async () => {
+  const apps = [
+    chApp("gh:1", "Plata", ["Mexico City"]),
+    chApp("gh:2", "Plata", ["Mexico City"]),
+    chApp("gh:3", "Unlimit", ["São Paulo"]),
+    chApp("gh:4", "Plata", ["Mexico City"]),
+    chApp("gh:5", "Plata", ["Mexico City"]),
+  ];
+  const result = await runChannelPre(apps, {
+    "gh:1": "Senior PM\nThis is an onsite role in our Mexico City office.\n",
+    "gh:2": "Senior PM\nSCHEDULE: Full-time · Hybrid\nThree days a week in the office.\n",
+    // an office the classifier does not know by name: the row's own location is the office
+    "gh:3": "Senior PM\nThis is an on-site role. Work from our Paulista office.\n",
+    "gh:4": "Senior PM\nSCHEDULE: Full-time · On-site\n",
+    // a named home-state office keeps the row, as for every other row
+    "gh:5": "Senior PM\nHybrid work model: 3 days a week in our San Francisco office.\n",
+  });
+  assert.deepEqual(
+    result.batch.map((b) => b.key),
+    ["gh:5"]
+  );
+  const reasons = Object.fromEntries(result.skipped.map((s) => [s.key, s.reason]));
+  assert.deepEqual(reasons, {
+    "gh:1": "geo_jd_not_remote",
+    "gh:2": "geo_jd_not_remote",
+    "gh:3": "geo_jd_not_remote",
+    "gh:4": "geo_jd_not_remote",
+  });
+  for (const k of ["gh:1", "gh:2", "gh:3", "gh:4"]) {
+    const a = apps.find((x) => x.key === k);
+    assert.equal(a.status, "Archived", k);
+    assert.equal(a.skip_reason, "geo_jd_not_remote", k);
+  }
+  assert.notEqual(apps.find((x) => x.key === "gh:5").status, "Archived");
+});
+
+test("applyJdWorkplacePass (BL-243): the channel match is checked; a row without JD text and a non-home-state mode are not", () => {
+  const { applyJdWorkplacePass } = require("./prepare.js");
+  const onsite = { status: "fetched", text: "This is an onsite role in our Mexico City office." };
+  const alive = [
+    { key: "a", url: "u", _geoResult: { ok: true, matchedBy: "channel:ru_latam" } },
+    { key: "b", url: "u", _geoResult: { ok: true, matchedBy: "channel:ru_latam" } },
+  ];
+  const r = applyJdWorkplacePass(
+    alive,
+    { a: onsite, b: { status: "not_found", text: null } },
+    HOME_CA_GEO
+  );
+  assert.deepEqual(
+    r.aliveResults.map((x) => x.key),
+    ["b"]
+  );
+  assert.equal(r.jdWorkplaceSkipped[0].reason, "geo_jd_not_remote");
+  assert.equal(r.jdWorkplaceSkipped[0].geoMatchedBy, "channel:ru_latam");
+  const other = applyJdWorkplacePass(
+    alive,
+    { a: onsite, b: onsite },
+    {
+      ...HOME_CA_GEO,
+      mode: "home_state",
+    }
+  );
+  assert.equal(other.aliveResults.length, 2, "other geo modes: the pass is a no-op as before");
 });
 
 const CH_DEFAULTS = {

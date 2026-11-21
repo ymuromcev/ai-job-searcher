@@ -256,3 +256,87 @@ test("validateApplyDefaults: by_channel floor 0 / default 0 is an error; getSala
     95000
   );
 });
+
+// --- BL-243 round 3 ---------------------------------------------------------------
+
+// point 1: «Million» / a glued USD code keep the multiplier; only a glued CURRENCY code does not
+test("multiplier suffix: «$5 Million», «$1.2 million», «$150kUSD» read; «$60,000 MXN» does not become 60 million", () => {
+  const single = (t) => parsePublishedSalaryRange(t, { allowSingle: true });
+  assert.deepEqual(single("$5 Million"), { min: null, max: 5000000 });
+  assert.deepEqual(single("$1.2 million"), { min: null, max: 1200000 });
+  assert.deepEqual(single("$150kUSD"), { min: null, max: 150000 });
+  assert.deepEqual(single("$150k"), { min: null, max: 150000 });
+  assert.deepEqual(single("$1.2M"), { min: null, max: 1200000 });
+  assert.deepEqual(single("$150K USD"), { min: null, max: 150000 });
+  assert.deepEqual(parsePublishedSalaryRange("$140-190k"), { min: 140000, max: 190000 });
+  assert.deepEqual(parsePublishedSalaryRange("$1 Million - $2 Million"), {
+    min: 1000000,
+    max: 2000000,
+  });
+  // a currency code starting with the letter is still not a suffix
+  assert.equal(single("$60,000 MXN"), null);
+  assert.equal(single("$60,000MXN"), null);
+  assert.equal(parsePublishedSalaryRange("$45,000 - $60,000 MXN"), null);
+});
+
+// point 2: a lone amount is judged by the rest of its sentence, not only by the next word
+test("«Between $45,000 and $60,000 MXN per month» / «$45,000 a $60,000 MXN mensuales» give no dollar figure (Compensation section)", () => {
+  for (const line of [
+    "Between $45,000 and $60,000 MXN per month",
+    "$45,000 a $60,000 MXN mensuales",
+    "$45,000 y $60,000 MXN al mes",
+    "From $45,000 to MXN 60,000 per month",
+  ]) {
+    assert.equal(
+      publishedSalaryFromJd(`Senior PM\nCompensation\n${line}\nBenefits\nx\n`),
+      null,
+      line
+    );
+    assert.equal(parsePublishedSalaryRange(line, { allowSingle: true }), null, line);
+  }
+  // the next sentence / line is a different statement: a USD figure before it is read
+  assert.deepEqual(
+    publishedSalaryFromJd("Senior PM\nCompensation\nBase salary $150,000. Bonus paid monthly.\n"),
+    { min: null, max: 150000 }
+  );
+  assert.deepEqual(
+    publishedSalaryFromJd("Senior PM\nCompensation\n$150,000 and $180,000 per year\n"),
+    { min: null, max: 180000 }
+  );
+});
+
+// point 3: «USD monthly» / «USD per month» / «/month» are per month
+test("«USD monthly», «USD per month», «/month» are not annual (range and single, both parsers)", () => {
+  const ranges = [
+    "$11,000 - $14,000 USD monthly",
+    "$11,000 - $14,000 USD per month",
+    "$11,000 - $14,000/month",
+    "$11,000 - $14,000 USD/month",
+    "$11,000 - $14,000 / month",
+  ];
+  for (const t of ranges) {
+    assert.equal(parsePublishedSalaryRange(t), null, t);
+    assert.equal(parsePublishedRange(t.replace(/11,000/, "21,000")), null, t);
+    assert.equal(parsePublishedSalaryRange(t, { allowSingle: true }), null, t);
+  }
+  for (const t of ["$12,000 USD monthly", "$12,000 USD per month", "$12,000/month"]) {
+    assert.equal(parsePublishedSalaryRange(t, { allowSingle: true }), null, t);
+    assert.equal(publishedSalaryFromJd(`Senior PM\nCompensation\n${t}\n`), null, t);
+  }
+  // control: an annual USD range with the USD code is untouched
+  assert.deepEqual(parsePublishedSalaryRange("$110,000 - $140,000 USD per year"), {
+    min: 110000,
+    max: 140000,
+  });
+  assert.deepEqual(parsePublishedRange("$110,000 - $140,000 USD"), { min: 110000, max: 140000 });
+});
+
+test("an implausible range is dropped as a whole: its second figure is not read as a single", () => {
+  // «$1,000 - $200,000»: the lower bound is noise, the pair is not a usable range
+  assert.equal(parsePublishedSalaryRange("$1,000 - $200,000", { allowSingle: true }), null);
+  // a lone amount elsewhere is still read
+  assert.deepEqual(
+    parsePublishedSalaryRange("$1,000 - $200,000. Pay: $150,000", { allowSingle: true }),
+    { min: null, max: 150000 }
+  );
+});

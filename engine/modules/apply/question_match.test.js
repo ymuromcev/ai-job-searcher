@@ -259,6 +259,10 @@ test("salary: a currency or period in the label → no honest answer, not 180000
     "Sueldo mensual deseado",
     "Salario deseado por mes",
     "Pretensão salarial mensal (BRL)",
+    // BL-243 round 3: the currency sign alone (normalizeLabel drops the "$")
+    "Salário pretendido (R$)",
+    "Salary expectation (R$)",
+    "Pretensión salarial (MX$)",
   ]) {
     assert.deepEqual(m(text(label)), gap, label);
   }

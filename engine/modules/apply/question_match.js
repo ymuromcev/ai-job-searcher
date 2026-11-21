@@ -320,11 +320,15 @@ const SALARY_ES_RE = /\b(sueldo|salario|salarial|sal rio|remuneraci\w*|remunera\
 const FOREIGN_UNIT_RE =
   /\b(mxn|cop|brl|ars|clp|pen|uyu|pesos?|reais|monthly|mensual(es)?|mensal|per month|a month|al mes|por mes|cada mes)\b|\/\s?(month|mo|mes)\b/;
 
+// "(R$)" / "MX$" — the sign is cut off by normalizeLabel, so it is read on the raw label.
+const FOREIGN_SIGN_RE = /(?:^|[^A-Za-z])(?:R|MX)\$/;
+
 function matchSalary(label, field, ctx) {
   const english = SALARY_EN_RE.test(label);
   const spanish = !english && SALARY_ES_RE.test(label);
   if (!english && !spanish) return undefined;
-  const foreign = FOREIGN_UNIT_RE.test(label);
+  const foreign =
+    FOREIGN_UNIT_RE.test(label) || FOREIGN_SIGN_RE.test(String((field && field.label) || ""));
   // A Spanish-worded salary question stays with the LLM step unless it names a
   // currency / period — then it must not be answered with annual USD either.
   if (spanish && !foreign) return undefined;

@@ -11,7 +11,11 @@
 // an annual floor.
 
 const { extractJDStructure } = require("./jd_extract.js");
-const { isNonUsdOrMonthlyContext, sectionIsNonUsdOrMonthly } = require("./salary_context.js");
+const {
+  isNonUsdOrMonthlyContext,
+  lineTailIsNonUsdOrMonthly,
+  sectionIsNonUsdOrMonthly,
+} = require("./salary_context.js");
 
 // Plausible annual-salary bounds. Anything outside is noise ("$5M ARR",
 // "$500 learning stipend") and ignored.
@@ -19,9 +23,11 @@ const MIN_ANNUAL = 10000;
 const MAX_ANNUAL = 5000000;
 
 const NUM = String.raw`(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)`;
-// A k / m multiplier is a suffix only when no letter follows it: "$60,000 MXN"
-// is not "$60,000 M" (sixty million).
-const SUFFIX = String.raw`\s*(?:([kKmM])(?![A-Za-z]))?`;
+// A k / m multiplier is a suffix when no letter follows it ("$150K", "$1.2M"),
+// when it is spelled out ("$5 Million") or when a USD code is glued to it
+// ("$150kUSD"). A currency code starting with the letter is not a suffix:
+// "$60,000 MXN" is not "$60,000 M" (sixty million).
+const SUFFIX = String.raw`\s*(?:([kKmM])(?:(?![A-Za-z])|illion\b|ILLION\b|(?=USD\b|usd\b)))?`;
 const SEP = String.raw`\s*(?:USD|usd)?\s*(?:-|–|—|to)\s*(?:USD\s*)?`;
 // Range: "$140,000 - $190,000", "$140K–$190K", "$140-190k", "USD 140,000 to 190,000".
 const RANGE_RE = new RegExp(
@@ -76,7 +82,11 @@ function scanRanges(text) {
     if (!bSuf && aSuf && parseFloat(bNum.replace(/,/g, "")) < 1000) bSuf = aSuf;
     const a = toNumber(aNum, aSuf);
     const b = toNumber(bNum, bSuf);
-    if (!plausible(a) || !plausible(b)) continue;
+    if (!plausible(a) || !plausible(b)) {
+      // Not a usable range, but its second figure is still part of it.
+      dropped.push([m.index, end]);
+      continue;
+    }
     ranges.push({ min: Math.min(a, b), max: Math.max(a, b) });
   }
   return { ranges, dropped };
@@ -90,7 +100,11 @@ function findSingles(text, dropped = scanRanges(text).dropped) {
     // A figure inside a dropped (non-USD / monthly / hourly) range is part of it.
     if (dropped.some(([a, b]) => m.index >= a && m.index < b)) continue;
     if (isHourlyAfter(text, m.index + m[0].length)) continue;
-    if (isNonUsdOrMonthlyContext(text, m.index, m.index + m[0].length)) continue;
+    const end = m.index + m[0].length;
+    if (isNonUsdOrMonthlyContext(text, m.index, end)) continue;
+    // "Between $45,000 and $60,000 MXN per month": the currency / period is
+    // in the rest of the sentence, not right after this figure.
+    if (lineTailIsNonUsdOrMonthly(text, end)) continue;
     const n = toNumber(m[1], m[2]);
     if (plausible(n)) out.push(n);
   }

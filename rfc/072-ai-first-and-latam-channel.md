@@ -59,8 +59,14 @@ Out of scope: new adapters (Praktika on Teamtailor), inDrive/Kodland/ID Finance
      one fitting place is enough);
   2. step 7 geo: `enforceGeo(..., { channelAllow })` returns `ok` with
      `matchedBy: "channel:ru_latam"` when a location (not in `geo.blocklist`)
-     matches; this value is not a trigger of the BL-225 JD workplace check, so an
-     onsite JD of such a company is not archived (kept as is: out of scope);
+     matches; the value is a trigger of the BL-225 JD workplace check
+     (`needsJdWorkplaceCheck`), like `us_unspecified` and `remote:*` — the owner works
+     from the US, so the check judges the JD of such a row: «Mexico City» with a
+     remote JD, or a JD that says nothing about the format, passes; an explicit
+     onsite / hybrid office is archived with the BL-225 reason `geo_jd_not_remote`
+     (`prepare` JD pass, `jdWorkplaceVerdict(..., { officeAbroad: true })`: a channel
+     row sits outside the home state, so the office does not have to be named in the
+     JD; a named home-state office keeps the row, as for any row);
   3. step 6 salary: `getSalaryFloor(applyDefaults, channel)`.
 - The channel is passed in the five places that judge a job: `filter.js` (scan,
   from `scan.js`), `prepare.js` (pass 1, the `geo_title_excluded` pre-check — a
@@ -83,7 +89,12 @@ Out of scope: new adapters (Praktika on Teamtailor), inDrive/Kodland/ID Finance
   both parsers (`published_salary.js` for prepare, `salary.js` for the bot, plus the
   JD «Compensation» section lookup) drop it, so the channel default applies. The
   figures of a dropped range are not re-read as single dollar amounts either, and a
-  glued prefix (`MX$45,000`, `R$45,000`, `COP$…`) counts as a currency. The salary
+  glued prefix (`MX$45,000`, `R$45,000`, `COP$…`) counts as a currency. A lone
+  amount is judged by the rest of its sentence («Between $45,000 and $60,000 MXN per
+  month» gives nothing), `USD monthly` / `USD per month` / `/month` are per month,
+  an implausible range is dropped as a whole, and `$5 Million`, `$1.2 million`,
+  `$150kUSD` keep their multiplier (only a glued currency code such as `MXN` is
+  not a suffix). The salary
   numbers `floor` and `default` of a channel must be > 0 (the validator rejects 0).
 - Form side («no surprise in pesos»): a salary field whose label names a currency
   (MXN / COP / BRL / ARS / CLP / PEN / UYU, «pesos») or a period («monthly»,

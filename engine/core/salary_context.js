@@ -14,9 +14,18 @@
 const CURRENCY = String.raw`(?:MXN|COP|BRL|ARS|CLP|PEN|UYU|MX\$|R\$)`;
 const MONTHLY = String.raw`(?:mensual(?:es)?|mensal|monthly|per\s+month|a\s+month|al\s+mes|por\s+mes)`;
 
-// Text right after the range.
+// A period mark: "monthly", "per month", "/month" (BL-243).
+const PERIOD = String.raw`(?:${MONTHLY}\b|\/\s*(?:month|mo|mes|m[eê]s)\b)`;
+
+// Text right after the range. A glued or spaced "USD" may sit in between
+// ("$12,000 USD monthly", "$12,000 USD/month") — it is still per month.
 const AFTER_RE = new RegExp(
-  String.raw`^\s*(?:(?:${CURRENCY})(?![A-Za-z])|${MONTHLY}\b|\/\s*(?:month|mo|mes|m[eê]s)\b)`,
+  String.raw`^\s*(?:USD\s*)?(?:(?:${CURRENCY})(?![A-Za-z])|${PERIOD})`,
+  "i"
+);
+// Anywhere in the tail of a sentence: a currency code or a period mark.
+const TAIL_RE = new RegExp(
+  String.raw`(?<![A-Za-z])(?:${CURRENCY})(?![A-Za-z])|(?<![A-Za-z])${PERIOD}`,
   "i"
 );
 // Text right before the range ("MXN $45,000 - $60,000", "MXN45,000"). A range
@@ -38,6 +47,22 @@ function isNonUsdOrMonthlyContext(text, start, end) {
 }
 
 /**
+ * A lone amount is judged by the whole rest of its sentence / line, not only by
+ * the word right after it: "Between $45,000 and $60,000 MXN per month" has no
+ * "-" / "to" range for the range parser, and the first figure ("$45,000") is
+ * followed by "and", not by the currency.
+ *
+ * @param {string} text  full text
+ * @param {number} end   index right after the amount
+ * @returns {boolean} true when a non-USD code / period mark follows in the same line or sentence
+ */
+function lineTailIsNonUsdOrMonthly(text, end) {
+  const rest = String(text || "").slice(end, end + 160);
+  const stop = rest.search(/\n|[.!?;](?:\s|$)/);
+  return TAIL_RE.test(stop >= 0 ? rest.slice(0, stop) : rest);
+}
+
+/**
  * `extractJDStructure().salary_text` is the amount without the words around it
  * ("$45,000 - $60,000" out of "… $60,000 MXN mensuales"). Look the section up
  * in the full JD and judge the text around it.
@@ -55,4 +80,8 @@ function sectionIsNonUsdOrMonthly(fullText, sectionText) {
   return isNonUsdOrMonthlyContext(full, idx, idx + sec.length);
 }
 
-module.exports = { isNonUsdOrMonthlyContext, sectionIsNonUsdOrMonthly };
+module.exports = {
+  isNonUsdOrMonthlyContext,
+  lineTailIsNonUsdOrMonthly,
+  sectionIsNonUsdOrMonthly,
+};
