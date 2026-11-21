@@ -709,11 +709,13 @@ function enforceHomeStateOrRemote(locs, profileGeo, jobMeta) {
  * @param {object}   [jobMeta]     Optional extra job signals, used only by
  *                                 "home_state_or_remote": { isRemote?: boolean,
  *                                 workplaceType?: string, title?: string }.
+ *                                 `channelAllow` ({ channel, test(loc) }, BL-243)
+ *                                 works in every restrictive mode.
  * @returns {{ ok: boolean, reason: string | null, matchedBy: string | null }}
  *   - ok=true:  reason=null, matchedBy describes which clause matched
  *               ("city:Sacramento" / "remote" / "country:US" / "unrestricted" /
  *               "home_state:CA" / "remote:structured" / "remote:location" /
- *               "remote:title" / "us_unspecified").
+ *               "remote:title" / "us_unspecified" / "channel:<channel>").
  *   - ok=false: reason ∈ { "geo_metro_miss", "geo_country_miss",
  *                          "geo_remote_only_miss", "geo_blocklist",
  *                          "geo_no_location", "geo_unknown_mode",
@@ -731,6 +733,20 @@ function enforceGeo(jobLocations, profileGeo, jobMeta) {
   // Normalize input: accept array (canonical) or single string (legacy).
   const locsRaw = Array.isArray(jobLocations) ? jobLocations : jobLocations ? [jobLocations] : [];
   const locs = locsRaw.map(normalizeLocStr).filter(Boolean);
+
+  // BL-243 (RFC 072): channel exception. A company of a channel whose profile
+  // lists `channel_exceptions[channel].allow_patterns` passes when ANY location
+  // matches an allow pattern (a mixed list needs one fitting place). Locations
+  // in profile.geo.blocklist never count. Only the explicit matcher passed in
+  // `jobMeta.channelAllow` (built by company_channel.buildChannelAllow) opens
+  // this path; other channels and company-less rows are judged as before.
+  const channelAllow = jobMeta && jobMeta.channelAllow;
+  if (channelAllow && typeof channelAllow.test === "function" && mode !== "unrestricted") {
+    const hit = locs.find((l) => !locInBlocklist(l, profileGeo.blocklist) && channelAllow.test(l));
+    if (hit) {
+      return { ok: true, reason: null, matchedBy: `channel:${channelAllow.channel}` };
+    }
+  }
 
   // RFC 068 §3: this mode weighs locations together with structured remote
   // flags and the title, so it has its own evaluator (handles empty locs).

@@ -16,7 +16,7 @@ The scheduled task prompt is just: **"Open `skills/job-pipeline/night-apply.md` 
 | `P` (profile) | `jared` |
 | Target | 30 distinct submitted jobs — `night start` reads it from the profile (`apply_target`, default 30) |
 | Stop starting new work | 11:00 local — from the profile (`apply_stop_at`, default `11:00`), never more than 14 h after the start |
-| Fits applied to | Strong → Medium → Weak (the queue orders them; never edit `fit_score`) |
+| Fits applied to | Strong → Medium → Weak (the queue orders them; never edit `fit_score`); inside one fit the AI vacancies go first, then the newest (`filter_rules.apply_priority`, BL-243); rows of a channel company (Plata, Unlimit: `channel_exceptions` in `filter_rules.json`) keep their LatAm locations and use the salary bar `salary.by_channel` (80000) |
 | Subagent batch | 10–20 parallel subagents, then wait for the whole batch |
 | Browser concurrency | `--concurrency 4` for `apply --phase pre` |
 

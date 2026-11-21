@@ -237,6 +237,44 @@ test("salary: single number or range", () => {
   assert.equal(m(select("Expected compensation", ["<100k", "100-150k", "150k+"])), null);
 });
 
+// BL-243 round 2 (point 6): a salary asked in another currency / per period is
+// never answered with our annual-USD number.
+test("salary: a currency or period in the label → no honest answer, not 180000", () => {
+  const gap = { source: "salary", value: "", honest_gap: "foreign_currency_salary" };
+  for (const label of [
+    "Salary expectation (MXN)",
+    "Desired salary in COP",
+    "Expected salary (BRL)",
+    "Salary expectations ARS",
+    "Desired salary - CLP",
+    "Salary expectation (PEN)",
+    "Desired salary UYU",
+    "Monthly salary expectation",
+    "What is your monthly compensation expectation?",
+    "Desired salary per month",
+    "Desired salary / month",
+    "Expected salary a month",
+    "Expectativa salarial mensual",
+    "Pretensión salarial (MXN)",
+    "Sueldo mensual deseado",
+    "Salario deseado por mes",
+    "Pretensão salarial mensal (BRL)",
+    // BL-243 round 3: the currency sign alone (normalizeLabel drops the "$")
+    "Salário pretendido (R$)",
+    "Salary expectation (R$)",
+    "Pretensión salarial (MX$)",
+  ]) {
+    assert.deepEqual(m(text(label)), gap, label);
+  }
+  // plain / annual USD questions keep today's answer
+  assert.deepEqual(m(text("Desired salary (USD, annual)")), { source: "salary", value: "180000" });
+  assert.deepEqual(m(text("Salary expectations")), { source: "salary", value: "180000" });
+  // a Spanish salary word without a currency / period stays with the LLM step
+  assert.equal(m(text("Pretensión salarial")), null);
+  // a bucketed select stays with the LLM step either way
+  assert.equal(m(select("Monthly salary (MXN)", ["<30k", "30-60k", "60k+"])), null);
+});
+
 test("file fields", () => {
   assert.deepEqual(m({ id: "r", label: "Resume/CV", type: "file", options: [] }), {
     source: "file",

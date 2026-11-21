@@ -34,7 +34,7 @@ function row(over) {
   };
 }
 
-function setup({ apps = [], profileExtra = {} } = {}) {
+function setup({ apps = [], profileExtra = {}, deps = {} } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "aijs-night-"));
   const profilesDir = path.join(root, "profiles");
   const profileDir = path.join(profilesDir, "demo");
@@ -57,6 +57,7 @@ function setup({ apps = [], profileExtra = {} } = {}) {
   const stateDir = path.join(root, "state");
   const clock = { now: new Date(START) };
   const cmd = makeNightCommand({
+    ...deps,
     stateDir: () => stateDir,
     now: () => new Date(clock.now),
     // `wait` sleeps on the fake clock; a test hook may change the disk meanwhile.
@@ -771,4 +772,54 @@ test("check: waiting on a submitter with no heartbeat in 30 min → warning, sho
   );
   assert.deepEqual(report.warnings, ["submitter_not_running"]);
   assert.equal(report.warning_line, "отправка не запускалась");
+});
+
+// --- BL-243 (RFC 072): night.js builds the same queue as apply.js ------------------
+
+// The night only counts the backlog (it never lists it), so this test checks the
+// count and the index request; the AI order itself is tested on the queue
+// (queue_ai.test.js) and in `apply --phase pre` (apply.test.js).
+test("start (BL-243): the apply-ready backlog is counted through the same buildQueue — channel index requested, company cap applied", async () => {
+  const seen = [];
+  const t = setup({
+    apps: [
+      row({ key: "1", companyName: "Plata", title: "Product Manager" }),
+      row({ key: "2", companyName: "Plata", title: "AI Product Manager" }),
+      row({ key: "3", companyName: "Other", title: "Product Manager" }),
+    ],
+    profileExtra: { filter_rules_file: "filter_rules.json" },
+    deps: {
+      loadChannelIndex: (profile) => {
+        seen.push(profile.id);
+        return { size: 1, channelOf: (n) => (n === "Plata" ? "ru_latam" : "") };
+      },
+    },
+  });
+  fs.writeFileSync(
+    path.join(t.profileDir, "filter_rules.json"),
+    JSON.stringify({
+      company_cap: { max_active: 1, window_days: 30 },
+      apply_priority: { ai_title_patterns: ["AI"] },
+      channel_exceptions: { ru_latam: { allow_patterns: ["Mexico"] } },
+    })
+  );
+  const r = await t.run({ phase: "start", target: 10, stopAt: "", maxHours: 2 });
+  assert.equal(r.code, 0);
+  assert.deepEqual(seen, ["demo"], "the channel index is requested for the profile");
+  // cap 1 per company: Plata keeps one of its two rows, Other keeps one
+  assert.equal(r.json.apply_ready, 2);
+});
+
+test("start (BL-243): a broken index loader never breaks the night (no channel = today's queue)", async () => {
+  const t = setup({
+    apps: [row({ key: "1" }), row({ key: "2" })],
+    deps: {
+      loadChannelIndex: () => {
+        throw new Error("companies.tsv unreadable");
+      },
+    },
+  });
+  const r = await t.run({ phase: "start", target: 10, stopAt: "", maxHours: 2 });
+  assert.equal(r.code, 0);
+  assert.equal(r.json.apply_ready, 2);
 });

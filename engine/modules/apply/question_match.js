@@ -9,6 +9,10 @@
 //   { source: "policy", value: "", leave_blank: true }
 //                                   — the choice policy says: leave this
 //                                     optional question empty
+//   { source: "salary", value: "", honest_gap: "foreign_currency_salary" }
+//                                   — a salary question in another currency or
+//                                     per period (MXN, "monthly"): no honest
+//                                     answer from our annual-USD number
 //   null                            — not a standard question (bank / LLM step)
 //
 // No LLM: normalized label text + synonym tables. For select / radio fields
@@ -307,16 +311,30 @@ function matchHowHeard(label, field, ctx) {
   return null;
 }
 
+const SALARY_EN_RE =
+  /\b(salary|compensation|pay expectations?|expected pay|desired pay|base pay|pay range|total comp|ote)\b/;
+// Spanish / Portuguese salary words (labels are accent-stripped by normalizeLabel).
+const SALARY_ES_RE = /\b(sueldo|salario|salarial|sal rio|remuneraci\w*|remunera\w*)\b/;
+// BL-243: the form names a currency other than ours or a pay period — the
+// desired-salary number we hold is annual USD, so it is never typed there.
+const FOREIGN_UNIT_RE =
+  /\b(mxn|cop|brl|ars|clp|pen|uyu|pesos?|reais|monthly|mensual(es)?|mensal|per month|a month|al mes|por mes|cada mes)\b|\/\s?(month|mo|mes)\b/;
+
+// "(R$)" / "MX$" — the sign is cut off by normalizeLabel, so it is read on the raw label.
+const FOREIGN_SIGN_RE = /(?:^|[^A-Za-z])(?:R|MX)\$/;
+
 function matchSalary(label, field, ctx) {
-  if (
-    !/\b(salary|compensation|pay expectations?|expected pay|desired pay|base pay|pay range|total comp|ote)\b/.test(
-      label
-    )
-  ) {
-    return undefined;
-  }
+  const english = SALARY_EN_RE.test(label);
+  const spanish = !english && SALARY_ES_RE.test(label);
+  if (!english && !spanish) return undefined;
+  const foreign =
+    FOREIGN_UNIT_RE.test(label) || FOREIGN_SIGN_RE.test(String((field && field.label) || ""));
+  // A Spanish-worded salary question stays with the LLM step unless it names a
+  // currency / period — then it must not be answered with annual USD either.
+  if (spanish && !foreign) return undefined;
   if (!ctx.salary) return null;
   if (isChoice(field)) return null; // bucketed salary selects go to the LLM step
+  if (foreign) return { source: "salary", value: "", honest_gap: "foreign_currency_salary" };
   const wantsRange = /\brange\b|\bmin(imum)?\b.*\bmax(imum)?\b/.test(label);
   return { source: "salary", value: salaryAnswer(ctx.salary, { wantsRange }) };
 }

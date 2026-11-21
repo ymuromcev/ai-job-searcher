@@ -21,7 +21,8 @@
 //     "salary": {
 //       "floor": 120000,                   // number >= 0 — published range top below this → skip
 //       "default": 180000,                 // number >= floor — used when no range is published
-//       "currency": "USD"                  // ISO 4217 code
+//       "currency": "USD",                 // ISO 4217 code
+//       "by_channel": { "ru_latam": { "floor": 80000, "default": 80000 } }  // optional, BL-243
 //     },
 //     "how_did_you_hear_default": "Company careers page"  // non-empty string
 //   }
@@ -100,6 +101,10 @@ function isNonNegativeNumber(v) {
   return typeof v === "number" && Number.isFinite(v) && v >= 0;
 }
 
+function isPositiveNumber(v) {
+  return typeof v === "number" && Number.isFinite(v) && v > 0;
+}
+
 /**
  * Validate an apply_defaults object against the RFC 068 contract.
  *
@@ -172,6 +177,37 @@ function validateApplyDefaults(raw) {
     }
     if (typeof sal.currency !== "string" || !CURRENCY_RE.test(sal.currency)) {
       err(`${base}.salary.currency`, `must be a 3-letter ISO code (e.g. "USD")`);
+    }
+    // BL-243 (RFC 072): optional per-channel override `{ <channel>: { floor, default } }`.
+    // Each present key is a number > 0; default >= floor when both are given.
+    if (sal.by_channel !== undefined) {
+      if (!isPlainObject(sal.by_channel)) {
+        err(`${base}.salary.by_channel`, "must be an object keyed by channel");
+      } else {
+        for (const [ch, o] of Object.entries(sal.by_channel)) {
+          const at = `${base}.salary.by_channel.${ch}`;
+          if (!isPlainObject(o)) {
+            err(at, "must be an object { floor, default }");
+            continue;
+          }
+          // > 0 (not >= 0): the apply bot treats a non-positive channel value as
+          // "not set" and falls back to the general one, so a 0 here would make
+          // prepare and the bot disagree on the floor.
+          const fOk = o.floor === undefined || isPositiveNumber(o.floor);
+          const dOk = o.default === undefined || isPositiveNumber(o.default);
+          if (!fOk) err(`${at}.floor`, "must be a number > 0");
+          if (!dOk) err(`${at}.default`, "must be a number > 0");
+          if (
+            fOk &&
+            dOk &&
+            o.floor !== undefined &&
+            o.default !== undefined &&
+            o.default < o.floor
+          ) {
+            err(`${at}.default`, `must be >= ${at}.floor (${o.floor}), got ${o.default}`);
+          }
+        }
+      }
     }
   }
 
@@ -298,14 +334,27 @@ function validateApplyDefaults(raw) {
 /**
  * Salary floor from a loaded `profile.applyDefaults`, or null when the
  * profile has no apply_defaults (or the floor is not a usable number).
+ * BL-243: `channel` selects `salary.by_channel[channel].floor` when present
+ * (a company of the RU-friendly LatAm pool has its own bar); anything else
+ * falls back to the general floor.
  *
  * @param {object|null|undefined} applyDefaults
+ * @param {string} [channel]
  * @returns {number|null}
  */
-function getSalaryFloor(applyDefaults) {
+function getSalaryFloor(applyDefaults, channel) {
   if (!isPlainObject(applyDefaults) || !isPlainObject(applyDefaults.salary)) return null;
-  const floor = applyDefaults.salary.floor;
-  return isNonNegativeNumber(floor) ? floor : null;
+  const sal = applyDefaults.salary;
+  if (
+    channel &&
+    isPlainObject(sal.by_channel) &&
+    Object.prototype.hasOwnProperty.call(sal.by_channel, channel) &&
+    isPlainObject(sal.by_channel[channel]) &&
+    isPositiveNumber(sal.by_channel[channel].floor)
+  ) {
+    return sal.by_channel[channel].floor;
+  }
+  return isNonNegativeNumber(sal.floor) ? sal.floor : null;
 }
 
 module.exports = {

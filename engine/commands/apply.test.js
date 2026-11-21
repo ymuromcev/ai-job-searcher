@@ -2183,3 +2183,237 @@ test("submit: a late pass never starts after the night's deadline", async () => 
   assert.equal(h.log.filter((l) => l[0] === "fill").length, 1);
   assert.equal(h.log.filter((l) => l[0] === "submit").length, 0);
 });
+
+// --- BL-243 (RFC 072): LatAm channel + AI order in `apply --phase pre` -----------
+
+const { buildChannelIndex } = require("../core/company_channel.js");
+
+const LATAM_URL = (slug) => `https://job-boards.greenhouse.io/${slug}/jobs/1`;
+const LATAM_RULES = {
+  company_cap: { max_active: 3, window_days: 30 },
+  location_blocklist: ["Mexico", "Brazil", "Cyprus", "London"],
+  channel_exceptions: { ru_latam: { allow_patterns: ["Mexico", "Brazil", "LATAM"] } },
+  apply_priority: { ai_title_patterns: ["AI", "LLM"], ai_track_ids: [], ai_companies: [] },
+};
+const LATAM_SALARY = {
+  floor: 95000,
+  default: 180000,
+  currency: "USD",
+  by_channel: { ru_latam: { floor: 80000, default: 80000 } },
+};
+
+function latamHarness({ apps, jd = {}, rules = LATAM_RULES, salary = LATAM_SALARY }) {
+  const h = harness({ apps, files: [RESUME] });
+  h.deps.loadProfile = () => ({
+    ...profile(),
+    geo: { mode: "home_state_or_remote", home_state: "CA" },
+    filterRules: rules,
+    applyDefaults: { ...profile().applyDefaults, salary },
+  });
+  h.deps.loadChannelIndex = () =>
+    buildChannelIndex([{ name: "Plata", extra: { channel: "ru_latam" } }]);
+  h.deps.fetchJd = async (job) => ({ text: jd[job.slug] || "" });
+  h.deps.getAdapter = (n) => {
+    const a = fakeAdapter(n, {}, h.log);
+    a.jobRef = (u) => ({ slug: new URL(u).pathname.split("/")[1], jobId: "1" });
+    return a;
+  };
+  return h;
+}
+const ctxOf = (h) => JSON.parse(h.disk.get(CONTEXT_PATH));
+
+test("pre (BL-243): Plata «Mexico City» is queued without archive; the same city at Acme is archived", async () => {
+  const h = latamHarness({
+    apps: [
+      row({ key: "pl", companyName: "Plata", url: LATAM_URL("plata"), locations: ["Mexico City"] }),
+      row({ key: "ac", companyName: "Acme", url: LATAM_URL("acme"), locations: ["Mexico City"] }),
+      row({
+        key: "cy",
+        companyName: "Plata",
+        url: LATAM_URL("plata2"),
+        locations: ["Limassol, Cyprus"],
+      }),
+    ],
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  assert.deepEqual(
+    ctxOf(h).jobs.map((j) => j.key),
+    ["pl"]
+  );
+  const status = Object.fromEntries(h.store.apps.map((a) => [a.key, a.status]));
+  assert.equal(status.pl, "To Apply");
+  assert.equal(status.ac, "Archived");
+  assert.equal(status.cy, "Archived");
+});
+
+test("pre (BL-243): without channel_exceptions (rollback / lilia) Plata «Mexico City» is archived", async () => {
+  const rules = { ...LATAM_RULES };
+  delete rules.channel_exceptions;
+  const h = latamHarness({
+    apps: [
+      row({ key: "pl", companyName: "Plata", url: LATAM_URL("plata"), locations: ["Mexico City"] }),
+    ],
+    rules,
+  });
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  assert.equal(h.store.apps[0].status, "Archived");
+});
+
+test("pre (BL-243): the apply queue is ordered fit first, then AI first inside one fit", async () => {
+  const h = latamHarness({
+    apps: [
+      row({ key: "plain", companyName: "A", url: LATAM_URL("a"), locations: ["Remote"] }),
+      row({
+        key: "ai",
+        companyName: "B",
+        title: "AI Product Manager",
+        url: LATAM_URL("b"),
+        locations: ["Remote"],
+        createdAt: "2026-10-01T00:00:00Z",
+      }),
+      row({
+        key: "med-ai",
+        companyName: "C",
+        title: "LLM Product Manager",
+        fit_score: "Medium",
+        url: LATAM_URL("c"),
+        locations: ["Remote"],
+      }),
+    ],
+  });
+  assert.equal(await h.run({ phase: "pre", concurrency: 1 }), 0);
+  assert.deepEqual(
+    ctxOf(h).jobs.map((j) => j.key),
+    ["ai", "plain", "med-ai"]
+  );
+});
+
+test("pre (BL-243): ru_latam salary — default 80000, 85–90k kept, 60–75k archived, MXN text → default", async () => {
+  const h = latamHarness({
+    rules: { ...LATAM_RULES, company_cap: { max_active: 10, window_days: 30 } },
+    apps: [
+      row({
+        key: "none",
+        companyName: "Plata",
+        url: LATAM_URL("s-none"),
+        locations: ["Mexico City"],
+      }),
+      row({ key: "ok", companyName: "Plata", url: LATAM_URL("s-ok"), locations: ["Mexico City"] }),
+      row({
+        key: "low",
+        companyName: "Plata",
+        url: LATAM_URL("s-low"),
+        locations: ["Mexico City"],
+      }),
+      row({
+        key: "mxn",
+        companyName: "Plata",
+        url: LATAM_URL("s-mxn"),
+        locations: ["Mexico City"],
+      }),
+      row({ key: "acme", companyName: "Acme", url: LATAM_URL("s-acme"), locations: ["Remote"] }),
+    ],
+    jd: {
+      "s-ok": "Pay range $85,000 - $90,000",
+      "s-low": "Pay range $60,000 - $75,000",
+      "s-mxn": "Sueldo $45,000 – $60,000 MXN mensuales",
+      "s-acme": "Pay range $85,000 - $90,000",
+    },
+  });
+  assert.equal(await h.run({ phase: "pre", concurrency: 1 }), 0);
+  const ctx = ctxOf(h);
+  const byKey = Object.fromEntries(ctx.jobs.map((j) => [j.key, j]));
+  assert.deepEqual(Object.keys(byKey).sort(), ["mxn", "none", "ok"]);
+  const salaryOf = (j) => j.answers.find((a) => a.field_id === "q_salary").value;
+  assert.equal(salaryOf(byKey.none), "80000");
+  assert.equal(salaryOf(byKey.ok), "90000");
+  assert.deepEqual(byKey.ok.salary.published_range, { min: 85000, max: 90000 });
+  assert.equal(salaryOf(byKey.mxn), "80000");
+  assert.equal(byKey.mxn.salary.published_range, null);
+  assert.equal(ctx.skipped.find((s) => s.key === "low").reason, "salary_below_floor");
+  assert.equal(ctx.skipped.find((s) => s.key === "acme").reason, "salary_below_floor");
+});
+
+// --- BL-243 round 2, point 6: «no surprise in pesos» ------------------------------
+
+const PESO_FIELD = (over = {}) => ({
+  id: "q_peso",
+  label: "Expectativa salarial mensual (MXN)",
+  type: "text",
+  required: true,
+  options: [],
+  ...over,
+});
+
+test("pre (BL-243): a required salary field in MXN / per month is never filled with 80000 — no_honest_answer with the label", async () => {
+  const h = latamHarness({
+    apps: [
+      row({ key: "pl", companyName: "Plata", url: LATAM_URL("plata"), locations: ["Mexico City"] }),
+    ],
+  });
+  h.deps.getAdapter = (n) => {
+    const a = fakeAdapter(n, { [LATAM_URL("plata")]: { form: [...FORM, PESO_FIELD()] } }, h.log);
+    a.jobRef = (u) => ({ slug: new URL(u).pathname.split("/")[1], jobId: "1" });
+    return a;
+  };
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const ctx = ctxOf(h);
+  assert.deepEqual(ctx.jobs, []);
+  const a = h.store.apps[0];
+  assert.equal(a.status, "To Apply");
+  assert.equal(a.apply_state, "skipped");
+  assert.equal(
+    a.apply_note,
+    "no_honest_answer: foreign_currency_salary: Expectativa salarial mensual (MXN)"
+  );
+  assert.ok(!JSON.stringify(ctx).includes('"80000"'), "80000 is nowhere in the context");
+});
+
+test("resolveFields (BL-243): MXN / monthly salary — required blocks, optional stays empty, the owner's answers still win", () => {
+  const ctx = (over = {}) => ({
+    job: { company: "Plata", title: "PM" },
+    identity: {},
+    applyDefaults: {},
+    salary: { value: 80000, low: 80000, high: 80000 },
+    bank: [],
+    files: { resume: { rel: "r.pdf" }, cover_letter: null },
+    ...over,
+  });
+  const req = resolveFields([PESO_FIELD()], ctx());
+  assert.deepEqual(req.answers, []);
+  assert.deepEqual(req.unanswered, [], "not sent to the drafter either");
+  assert.deepEqual(req.blockers, ["foreign_currency_salary: Expectativa salarial mensual (MXN)"]);
+  const { skipReasonFor, skipNote } = require("../modules/apply/skip_reasons.js");
+  assert.equal(
+    skipNote(skipReasonFor(req.blockers[0]), req.blockers[0]),
+    "no_honest_answer: foreign_currency_salary: Expectativa salarial mensual (MXN)"
+  );
+
+  const opt = resolveFields([PESO_FIELD({ required: false })], ctx());
+  assert.deepEqual([opt.answers, opt.unanswered, opt.blockers], [[], [], []]);
+
+  const standing = resolveFields(
+    [PESO_FIELD()],
+    ctx({
+      applyDefaults: {
+        standing_answers: [{ question: "Expectativa salarial mensual (MXN)", answer: "70000 MXN" }],
+      },
+    })
+  );
+  assert.deepEqual(standing.blockers, []);
+  assert.equal(standing.answers[0].value, "70000 MXN");
+  assert.equal(standing.answers[0].source, "standing");
+
+  const usd = resolveFields([PESO_FIELD({ label: "Desired salary (USD)" })], ctx());
+  assert.equal(usd.answers[0].value, "80000");
+});
+
+test("owner questions (BL-243): the foreign-salary note parses to the clean label, like any blocker", () => {
+  const oq = require("../core/owner_questions.js");
+  assert.deepEqual(
+    oq.parseBlockers(
+      "no_honest_answer: foreign_currency_salary: Expectativa salarial mensual (MXN)"
+    ),
+    { blockers: ["Expectativa salarial mensual (MXN)"], ownerSkip: false }
+  );
+});

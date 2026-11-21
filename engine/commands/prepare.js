@@ -52,15 +52,22 @@ const {
 const { findTitleBlocklistHit } = require("../core/filter.js");
 const { evaluateJob } = require("../core/evaluate_job.js");
 const { getSalaryFloor } = require("../core/apply_defaults.js");
+const {
+  buildChannelAllow,
+  channelFor,
+  loadChannelIndexForProfile,
+  EMPTY_INDEX,
+} = require("../core/company_channel.js");
 const { publishedSalaryFromJd } = require("../core/published_salary.js");
 const {
   classifyJdWorkplace,
   jdWorkplaceVerdict,
   needsJdWorkplaceCheck,
+  isChannelMatch,
 } = require("../core/jd_workplace.js");
 const { ensureFresh: ensureFreshFitProfile } = require("../core/fit_profile.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
-const { resolveProfilesDir } = require("../core/paths.js");
+const { resolveProfilesDir, resolveDataDir } = require("../core/paths.js");
 const { slugifyCompany } = require("../core/company_slug.js");
 const { slugifyRole } = require("../core/role_slug.js");
 const { pickClBase } = require("../core/cl_base_matcher.js");
@@ -270,14 +277,30 @@ function filterAlreadyEvaluated(apps) {
 // `_geoResult` cache (BL-102): `evaluateJob` returns the full
 // `enforceGeo` result via `matched.geoResult` so the passing app can
 // carry `_geoResult` downstream (`url_check.js` spread → `urlRes`).
-function jobFromTsv(app) {
+function jobFromTsv(app, channel = "") {
   return {
     company: String(app.companyName || ""),
     title: String(app.title || ""),
     locations: Array.isArray(app.locations) ? app.locations : [],
     url: app.url ? String(app.url) : "",
     source: app.source ? String(app.source) : "",
+    // BL-243 (RFC 072): company channel (companies.tsv extra_json.channel).
+    channel,
   };
+}
+
+// BL-243: channel index of the run. `deps.loadChannelIndex` lets tests inject
+// one; by default companies.tsv is read only when the profile has
+// `channel_exceptions` (otherwise nothing could use the channel).
+function resolveChannelIndex(profile, ctx, deps) {
+  try {
+    if (typeof deps.loadChannelIndex === "function") {
+      return deps.loadChannelIndex(profile, ctx) || EMPTY_INDEX;
+    }
+    return loadChannelIndexForProfile(profile, resolveDataDir((ctx && ctx.env) || process.env));
+  } catch {
+    return EMPTY_INDEX;
+  }
 }
 
 // BL-A (2026-05-25): sources excluded from prepare entirely.
@@ -325,7 +348,9 @@ function holdUnsubmittable(rows, allApps) {
   return { kept, held };
 }
 
-function applyPrepareFilter(apps, rules, activeCounts) {
+function applyPrepareFilter(apps, rules, activeCounts, opts = {}) {
+  // BL-243: `opts.channelIndex` — company channel index (core/company_channel.js).
+  const channelIndex = opts.channelIndex || null;
   const counts = { ...activeCounts };
   const passed = [];
   const skipped = [];
@@ -354,7 +379,8 @@ function applyPrepareFilter(apps, rules, activeCounts) {
       continue;
     }
 
-    const evalJob = jobFromTsv(app);
+    const channel = channelFor(channelIndex, app.companyName);
+    const evalJob = jobFromTsv(app, channel);
 
     // Pass 1: blocklists + requirelist + cap + location_blocklist
     // (no profile.geo → evaluateJob skips its geo step entirely).
@@ -401,7 +427,13 @@ function applyPrepareFilter(apps, rules, activeCounts) {
     if (geoMode && geoMode !== "unrestricted") {
       const titleGeo = extractTitleGeo(app.title);
       const inclusive = titleMentionsCandidateGeo(app.title, profileGeo);
-      if (!inclusive && titleGeo.excluded) {
+      // BL-243: a channel company's title marker that the channel allows
+      // ("(LATAM)", "Remote - LATAM") is not an exclusion; "(EMEA)" still is.
+      const channelAllow = buildChannelAllow(rules, channel);
+      const channelAllowsMarker = Boolean(
+        channelAllow && titleGeo.marker && channelAllow.test(titleGeo.marker)
+      );
+      if (!inclusive && titleGeo.excluded && !channelAllowsMarker) {
         skipped.push({
           key: app.key,
           reason: "geo_title_excluded",
@@ -421,7 +453,10 @@ function applyPrepareFilter(apps, rules, activeCounts) {
     if (profileGeo) {
       const r2 = evaluateJob({
         job: evalJob,
-        profile: { filter_rules: {}, geo: profileGeo },
+        profile: {
+          filter_rules: { channel_exceptions: rules && rules.channel_exceptions },
+          geo: profileGeo,
+        },
         appState: { companyCounts: counts },
         context: "prepare",
       });
@@ -705,13 +740,21 @@ function applyRequirementBlockersPass(aliveResults, jdByAppKey, compiledPatterns
 // pass only extracts the published range and feeds it in. No-op when the
 // profile has no apply_defaults (or no floor). Rows without a JD body or
 // without a published range pass through.
-function applySalaryFloorPass(aliveResults, jdByAppKey, applyDefaults) {
-  if (getSalaryFloor(applyDefaults) === null) {
+function applySalaryFloorPass(aliveResults, jdByAppKey, applyDefaults, opts = {}) {
+  // BL-243: per-company channel -> `salary.by_channel[channel].floor` (the
+  // RU-friendly LatAm pool has its own bar); no channel -> the general floor.
+  const channelIndex = opts.channelIndex || null;
+  if (!applyDefaults) {
     return { aliveResults, salaryFloorSkipped: [] };
   }
   const surviving = [];
   const salaryFloorSkipped = [];
   for (const urlRes of aliveResults) {
+    const channel = channelFor(channelIndex, urlRes.companyName);
+    if (getSalaryFloor(applyDefaults, channel) === null) {
+      surviving.push(urlRes);
+      continue;
+    }
     const jd = jdByAppKey[urlRes.key];
     const jdText = jd && jd.text ? jd.text : "";
     const published = jdText ? publishedSalaryFromJd(jdText) : null;
@@ -725,6 +768,7 @@ function applySalaryFloorPass(aliveResults, jdByAppKey, applyDefaults) {
         title: urlRes.title,
         locations: [],
         published_salary: published,
+        channel,
       },
       profile: { filter_rules: {}, applyDefaults },
       appState: { companyCounts: {} },
@@ -770,7 +814,9 @@ function applyJdWorkplacePass(aliveResults, jdByAppKey, profileGeo) {
       continue;
     }
     const workplace = classifyJdWorkplace(jdText);
-    const verdict = jdWorkplaceVerdict(workplace, profileGeo.home_state);
+    const verdict = jdWorkplaceVerdict(workplace, profileGeo.home_state, {
+      officeAbroad: isChannelMatch(geoMatchedBy),
+    });
     if (!verdict.drop) {
       surviving.push(urlRes);
       continue;
@@ -1120,10 +1166,12 @@ async function runPre(ctx, deps) {
     candidates = kept;
     stdout(`submittable-only: ${held.length} held in Inbox (the bot cannot submit them)`);
   }
+  const channelIndex = resolveChannelIndex(profile, ctx, deps);
   const { passed, skipped: filteredOut } = applyPrepareFilter(
     candidates,
     filterRules,
-    activeCounts
+    activeCounts,
+    { channelIndex }
   );
   stdout(`after filter: ${passed.length} passed, ${filteredOut.length} skipped`);
 
@@ -1188,7 +1236,8 @@ async function runPre(ctx, deps) {
   const { aliveResults: aliveAfterSF, salaryFloorSkipped } = applySalaryFloorPass(
     aliveAfterRB,
     jdByAppKey,
-    profile.applyDefaults
+    profile.applyDefaults,
+    { channelIndex }
   );
 
   // Assemble batch entries. Track unique companies in batch whose tier is
@@ -1552,10 +1601,12 @@ async function runPreTopup(ctx, deps) {
     const co = e.companyName;
     if (co) activeCounts[co] = (activeCounts[co] || 0) + 1;
   }
+  const channelIndex = resolveChannelIndex(profile, ctx, deps);
   const { passed, skipped: filteredOut } = applyPrepareFilter(
     notYetEvaluated,
     filterRules,
-    activeCounts
+    activeCounts,
+    { channelIndex }
   );
   stdout(`topup: after filter ${passed.length} passed, ${filteredOut.length} skipped`);
 
@@ -1602,7 +1653,8 @@ async function runPreTopup(ctx, deps) {
   const { aliveResults: aliveAfterSF, salaryFloorSkipped } = applySalaryFloorPass(
     aliveAfterRB,
     jdByAppKey,
-    profile.applyDefaults
+    profile.applyDefaults,
+    { channelIndex }
   );
 
   const unknownTierSet = new Set(prevUnknownTiers);

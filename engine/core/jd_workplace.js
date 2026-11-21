@@ -43,8 +43,17 @@ const JD_WORKPLACE_CHECK_MATCHED_BY = Object.freeze(
   new Set(["us_unspecified", "remote:location", "remote:title"])
 );
 
+// BL-243 (RFC 072): a company of a channel (`matchedBy: "channel:ru_latam"`)
+// passed geo by a non-home-state location — a LatAm place the profile allows
+// for it. It needs the same JD check as any other non-home-state pass: the
+// owner works from the US, so an explicitly onsite / hybrid role in that
+// office is ruled out, a remote one or one with no format stated stays.
+function isChannelMatch(matchedBy) {
+  return /^channel:[^\s:]+$/.test(String(matchedBy || ""));
+}
+
 function needsJdWorkplaceCheck(matchedBy) {
-  return JD_WORKPLACE_CHECK_MATCHED_BY.has(String(matchedBy || ""));
+  return JD_WORKPLACE_CHECK_MATCHED_BY.has(String(matchedBy || "")) || isChannelMatch(matchedBy);
 }
 
 // --- Text normalization ------------------------------------------------------
@@ -413,16 +422,21 @@ function classifyJdWorkplace(jdText) {
  *
  * @param {{workplace: string, offices: string[]}} classification
  * @param {string} homeState  2-letter code or full state name.
+ * @param {{officeAbroad?: boolean}} [opts]  officeAbroad (BL-243): the row itself
+ *   sits outside the home state (a channel row: its allowed LatAm location), so
+ *   a hybrid / onsite JD is a drop even when it names no office — the office it
+ *   means is the row's own. A named office in the home state still keeps it.
  * @returns {{ drop: boolean, reason: string|null }}
  */
-function jdWorkplaceVerdict(classification, homeState) {
+function jdWorkplaceVerdict(classification, homeState, opts = {}) {
   const keep = { drop: false, reason: null };
   const home = canonicalStateCode(homeState);
   if (!classification || !home) return keep;
   const { workplace, offices } = classification;
   if (workplace !== "hybrid" && workplace !== "onsite") return keep;
-  if (!Array.isArray(offices) || offices.length === 0) return keep;
-  if (offices.includes(home)) return keep;
+  const named = Array.isArray(offices) ? offices : [];
+  if (named.length === 0 && !(opts && opts.officeAbroad)) return keep;
+  if (named.includes(home)) return keep;
   return { drop: true, reason: "geo_jd_not_remote" };
 }
 
@@ -430,6 +444,7 @@ module.exports = {
   classifyJdWorkplace,
   jdWorkplaceVerdict,
   needsJdWorkplaceCheck,
+  isChannelMatch,
   JD_WORKPLACE_CHECK_MATCHED_BY,
   // Exported for tests.
   extractPlaces,

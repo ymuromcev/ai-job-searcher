@@ -26,11 +26,23 @@
 //      A miss is skipped with `archive: true` and the engine's geo reason;
 //      `apply --phase pre` archives the row.
 //
-// Order: Strong → Medium → Weak, then newest `createdAt` first (RFC 069 §3).
+// Order: Strong → Medium → Weak; inside one fit the AI vacancies go first
+// (BL-243, RFC 072; owner: «1. Мэтч 2. ИИ»); then newest `createdAt` first
+// (RFC 069 §3). What counts as AI is profile data
+// (`filter_rules.apply_priority`, core/ai_priority.js); without that block the
+// order is exactly the old one. The sort runs BEFORE the company cap and the
+// `limit`, so both keep the best rows: AI rows of a company take its cap slots
+// first, and `--limit N` drops non-AI rows of the same fit before AI ones.
 // `limit` truncates after gating.
+//
+// Channel (BL-243): a company of a channel with `channel_exceptions` (the
+// RU-friendly LatAm pool) keeps its allowed locations in the geo safety net;
+// `opts.channelIndex` is built from companies.tsv by the caller.
 
 const { evaluateJob } = require("../../core/evaluate_job.js");
 const { enforceGeo } = require("../../core/geo_enforcer.js");
+const { buildIsAi } = require("../../core/ai_priority.js");
+const { buildChannelAllow, channelFor } = require("../../core/company_channel.js");
 
 // Fit priority: lower rank goes first.
 const FIT_RANK = { Strong: 0, Medium: 1, Weak: 2 };
@@ -62,7 +74,8 @@ function createdMs(app) {
   return Number.isFinite(t) ? t : 0;
 }
 
-// apps: TSV rows. opts: { filterRules, buildActiveCounts, windowDays, now, limit }.
+// apps: TSV rows. opts: { filterRules, buildActiveCounts, windowDays, now, limit,
+// profileGeo, channelIndex, warn }.
 // Returns { queue: app[], skipped: [{ key, company, title, reason, detail? }] }.
 function buildQueue(apps, opts = {}) {
   const {
@@ -72,6 +85,8 @@ function buildQueue(apps, opts = {}) {
     now,
     limit = null,
     profileGeo = null,
+    channelIndex = null,
+    warn,
   } = opts;
   if (typeof buildActiveCounts !== "function") {
     throw new Error("buildQueue: buildActiveCounts is required");
@@ -99,9 +114,11 @@ function buildQueue(apps, opts = {}) {
       continue;
     }
     if (profileGeo) {
+      const channel = channelFor(channelIndex, app.companyName);
       const geo = enforceGeo(app.locations || [], profileGeo, {
         title: app.title,
         workplaceType: app.workplaceType || "",
+        channelAllow: buildChannelAllow(filterRules, channel),
       });
       if (!geo.ok) {
         skipped.push({ ...base, reason: geo.reason, archive: true });
@@ -111,8 +128,13 @@ function buildQueue(apps, opts = {}) {
     candidates.push(app);
   }
 
+  const isAi = buildIsAi(filterRules, { warn });
+  const aiRank = new Map(candidates.map((a) => [a, isAi(a) ? 0 : 1]));
   candidates.sort(
-    (a, b) => FIT_RANK[a.fit_score] - FIT_RANK[b.fit_score] || createdMs(b) - createdMs(a)
+    (a, b) =>
+      FIT_RANK[a.fit_score] - FIT_RANK[b.fit_score] ||
+      aiRank.get(a) - aiRank.get(b) ||
+      createdMs(b) - createdMs(a)
   );
 
   const settled = apps.filter((a) => a.status !== "To Apply" && a.status !== "Inbox");

@@ -5,6 +5,7 @@ const {
   classifyJdWorkplace,
   jdWorkplaceVerdict,
   needsJdWorkplaceCheck,
+  isChannelMatch,
   extractPlaces,
   htmlToText,
 } = require("./jd_workplace.js");
@@ -231,4 +232,31 @@ test("extractPlaces: City, ST / city table / state names / DC / Canada", () => {
 
 test("htmlToText: strips tags and decodes common entities", () => {
   assert.equal(htmlToText("<p>A &amp; B&nbsp;C</p>").trim(), "A & B C");
+});
+
+// --- BL-243: channel rows (matchedBy "channel:ru_latam") ------------------------------
+
+test("isChannelMatch / needsJdWorkplaceCheck: channel:<name> only", () => {
+  assert.equal(isChannelMatch("channel:ru_latam"), true);
+  assert.equal(isChannelMatch("channel:"), false);
+  assert.equal(isChannelMatch("channels:ru_latam"), false);
+  assert.equal(isChannelMatch("home_state:CA"), false);
+  assert.equal(isChannelMatch(null), false);
+  assert.equal(needsJdWorkplaceCheck("channel:ru_latam"), true);
+});
+
+test("jdWorkplaceVerdict officeAbroad: onsite / hybrid drops even with no named office; remote / unknown / home office keep", () => {
+  const abroad = (jd) => jdWorkplaceVerdict(classifyJdWorkplace(jd), "CA", { officeAbroad: true });
+  const plain = (jd) => jdWorkplaceVerdict(classifyJdWorkplace(jd), "CA");
+  const onsiteNoOffice = "SCHEDULE: Full-time · On-site\nYou will own payments.";
+  assert.deepEqual(abroad(onsiteNoOffice), { drop: true, reason: "geo_jd_not_remote" });
+  assert.deepEqual(plain(onsiteNoOffice), { drop: false, reason: null }, "default is unchanged");
+  assert.equal(abroad("SCHEDULE: Full-time · Hybrid").drop, true);
+  assert.equal(abroad("This is an onsite role in our Mexico City office.").drop, true);
+  // remote and no-format JDs stay
+  assert.equal(abroad("This is a fully remote role.").drop, false);
+  assert.equal(abroad("You will own payments with design and engineering.").drop, false);
+  assert.equal(abroad("").drop, false);
+  // a named home-state office keeps the row (same as for any row)
+  assert.equal(abroad("Hybrid work model, 3 days a week in our San Francisco office.").drop, false);
 });

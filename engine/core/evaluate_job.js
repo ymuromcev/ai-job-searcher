@@ -27,10 +27,18 @@
 //                                `job.published_salary` + a floor in
 //                                `profile.applyDefaults.salary.floor`)
 //   7. geo                      (skipped in `email`)
+//
+// BL-243 (RFC 072) channel exception — `job.channel` (optional) together with
+// `filter_rules.channel_exceptions[channel].allow_patterns` and
+// `applyDefaults.salary.by_channel[channel]` changes THREE steps and nothing
+// else: 5 (an allowed location skips location_blocklist), 6 (the channel's
+// salary floor), 7 (an allowed location passes geo as `channel:<channel>`).
+// No channel, or no block for that channel → every step behaves as before.
 
 const { enforceGeo, hasUsMarker } = require("./geo_enforcer.js");
 const { getSalaryFloor } = require("./apply_defaults.js");
 const { findTitleBlocklistHit } = require("./filter_helpers.js");
+const { buildChannelAllow } = require("./company_channel.js");
 const { isEngineSkipReason } = require("./skip_reasons.js");
 
 function escapeRegex(s) {
@@ -80,6 +88,9 @@ function normalizeJob(raw) {
       job.published_salary && typeof job.published_salary === "object"
         ? job.published_salary
         : null,
+    // BL-243 (RFC 072): company channel from companies.tsv (extra_json.channel),
+    // resolved by the caller via core/company_channel.js. "" = no channel.
+    channel: typeof job.channel === "string" ? job.channel : "",
   };
 }
 
@@ -206,6 +217,8 @@ function evaluateJob({ job, profile, appState, context }) {
   // RFC 013: profile-level geo lives at `profile.geo`; legacy callers may
   // inject it as `rules.geo`. Both accepted.
   const profileGeo = (profile && profile.geo) || (rules && rules.geo) || null;
+  // BL-243: matcher for this job's channel (null = no exception).
+  const channelAllow = buildChannelAllow(rules, norm.channel);
 
   // ---- 1. company_blocklist ----
   const companyBlocklist = normalizeCompanyBlocklist(rules);
@@ -282,7 +295,10 @@ function evaluateJob({ job, profile, appState, context }) {
   // when present.
   if (shouldRunLocationBlocklist(context)) {
     const locsLower = norm.locations.map((l) => l.toLowerCase());
-    if (locsLower.length > 0 && !hasUsMarker(locsLower)) {
+    // BL-243: one allowed location is enough for a channel company — the
+    // location_blocklist branch is skipped (same shape as the US-marker rule).
+    const channelAllowed = channelAllow && norm.locations.some((l) => channelAllow.test(l));
+    if (locsLower.length > 0 && !channelAllowed && !hasUsMarker(locsLower)) {
       const blocklist = Array.isArray(rules.location_blocklist) ? rules.location_blocklist : [];
       for (const blocked of blocklist) {
         const needle = String(blocked || "").toLowerCase();
@@ -305,7 +321,7 @@ function evaluateJob({ job, profile, appState, context }) {
   // No-op unless the profile has apply_defaults (salary.floor) AND the job
   // carries a published range in `job.published_salary`.
   if (shouldRunSalaryFloor(context)) {
-    const floor = getSalaryFloor(profile && profile.applyDefaults);
+    const floor = getSalaryFloor(profile && profile.applyDefaults, norm.channel);
     const res = checkSalaryFloor(norm.published_salary, floor);
     if (res.below) {
       return {
@@ -327,6 +343,7 @@ function evaluateJob({ job, profile, appState, context }) {
       isRemote: norm.isRemote,
       workplaceType: norm.workplaceType,
       title: norm.title,
+      channelAllow,
     });
     const mode = profileGeo.mode || "unrestricted";
     if (!geoResult.ok && mode !== "unrestricted") {

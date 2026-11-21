@@ -17,6 +17,7 @@ const jobsTsv = require("../core/jobs_tsv.js");
 const applications = require("../core/applications_tsv.js");
 const { scan } = require("../core/scan.js");
 const { filterJobs } = require("../core/filter.js");
+const { buildChannelIndex, channelFor } = require("../core/company_channel.js");
 const adapterRegistry = require("../modules/discovery/index.js");
 const { resolveProfilesDir } = require("../core/paths.js");
 const scanHealthLog = require("../core/scan_health_log.js");
@@ -335,9 +336,16 @@ function makeScanCommand(overrides = {}) {
     // matching (a posting like ["Sacramento", "Remote"] should pass for
     // someone whose policy allows either). Single-location string (`location`)
     // kept for blocklist back-compat — historic contract.
+    // BL-243 (RFC 072): channel per company from companies.tsv extra_json
+    // (profile aliases included) — lets filter.js apply channel_exceptions.
+    const channelIndex = buildChannelIndex(companyRows, {
+      profileId,
+      aliases: profile.company_aliases || null,
+    });
     const filterInputs = result.fresh.map((j) => ({
       _job: j,
       company: j.companyName,
+      channel: channelFor(channelIndex, j.companyName),
       role: j.title,
       locations: Array.isArray(j.locations) ? j.locations.map(String) : [],
       location: Array.isArray(j.locations) && j.locations.length > 0 ? String(j.locations[0]) : "",

@@ -45,6 +45,9 @@ function jobFromAdapterScan(scanJob) {
     // RFC 068 §3: structured remote signals (geo mode home_state_or_remote).
     isRemote: typeof j.isRemote === "boolean" ? j.isRemote : null,
     workplaceType: typeof j.workplaceType === "string" ? j.workplaceType : "",
+    // BL-243 (RFC 072): company channel (companies.tsv extra_json.channel),
+    // set by the caller (scan.js / validate.js); absent = no channel.
+    channel: typeof j.channel === "string" ? j.channel : "",
   };
 }
 
