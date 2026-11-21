@@ -64,7 +64,8 @@ const path = require("path");
 
 const profileLoader = require("../core/profile_loader.js");
 const applicationsTsv = require("../core/applications_tsv.js");
-const { resolveProfilesDir } = require("../core/paths.js");
+const { resolveProfilesDir, resolveDataDir } = require("../core/paths.js");
+const { loadChannelIndexForProfile, EMPTY_INDEX } = require("../core/company_channel.js");
 const { buildQueue } = require("../modules/apply/queue.js");
 const { buildActiveCounts, resolveCapWindowDays } = require("./prepare.js");
 const { defaultStateDir } = require("./board.js");
@@ -107,6 +108,9 @@ function makeDefaultDeps() {
     removeFile: (p) => fs.rmSync(p, { force: true, recursive: true }),
     appendNightRun: nightLog.appendNightRun,
     stateDir: (env) => defaultStateDir(env),
+    // BL-243: company channel index (companies.tsv extra_json.channel); reads the
+    // file only when the profile has `channel_exceptions`.
+    loadChannelIndex: (profile) => loadChannelIndexForProfile(profile, resolveDataDir(process.env)),
     now: () => new Date(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   };
@@ -238,10 +242,22 @@ function pendingKeys(profile, deps, submittedKeys = []) {
   return keys;
 }
 
-function applyQueue(apps, profile, now) {
+// BL-243: same order and geo/channel rules as `apply --phase pre` (the two
+// buildQueue callers must agree, or the night counts a different backlog).
+function channelIndexOf(profile, deps) {
+  try {
+    return (deps && deps.loadChannelIndex && deps.loadChannelIndex(profile)) || EMPTY_INDEX;
+  } catch {
+    return EMPTY_INDEX;
+  }
+}
+
+function applyQueue(apps, profile, now, deps) {
   const filterRules = profile.filterRules || {};
   return buildQueue(apps, {
     filterRules,
+    channelIndex: channelIndexOf(profile, deps),
+    warn: () => {},
     buildActiveCounts,
     windowDays: resolveCapWindowDays(filterRules),
     now,
@@ -253,7 +269,7 @@ function progress(profile, lock, deps) {
   const { apps } = deps.loadApplications(profile.paths.applicationsTsv);
   const apply = plan.summarizeApplyFiles(applyFiles(profile, deps), lock.started_at);
   const seen = new Set(apply.seenKeys);
-  const queue = applyQueue(apps, profile, now);
+  const queue = applyQueue(apps, profile, now, deps);
   const applyFresh = queue.filter((a) => !seen.has(a.key)).length;
   const ctx = readJson(path.join(profile.paths.root, "prepare_context.json"), deps);
   const ctxMs = ctx ? Date.parse(ctx.generatedAt) : NaN;
@@ -370,7 +386,7 @@ function runStart(ctx, profile, deps) {
   deps.writeFile(file, JSON.stringify(lock, null, 2));
 
   const { apps } = deps.loadApplications(profile.paths.applicationsTsv);
-  const applyReady = applyQueue(apps, profile, now).length;
+  const applyReady = applyQueue(apps, profile, now, deps).length;
   stdout(
     `night started for ${profile.id}: target ${target} applications, stop starting new work at ` +
       `${deadline.toString()} (${plan.minutesLeft(now, deadline)} min); apply-ready backlog ${applyReady}`

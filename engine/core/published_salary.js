@@ -11,6 +11,7 @@
 // an annual floor.
 
 const { extractJDStructure } = require("./jd_extract.js");
+const { isNonUsdOrMonthlyContext, sectionIsNonUsdOrMonthly } = require("./salary_context.js");
 
 // Plausible annual-salary bounds. Anything outside is noise ("$5M ARR",
 // "$500 learning stipend") and ignored.
@@ -53,6 +54,8 @@ function findRanges(text) {
   let m;
   while ((m = RANGE_RE.exec(text)) !== null) {
     if (isHourlyAfter(text, m.index + m[0].length)) continue;
+    // BL-243: "$45,000 - $60,000 MXN mensuales" is not an annual USD range.
+    if (isNonUsdOrMonthlyContext(text, m.index, m.index + m[0].length)) continue;
     let [, aNum, aSuf, bNum, bSuf] = m;
     // "$140-190K": the suffix on one bound applies to a bare small other bound.
     if (!aSuf && bSuf && parseFloat(aNum.replace(/,/g, "")) < 1000) aSuf = bSuf;
@@ -71,6 +74,7 @@ function findSingles(text) {
   let m;
   while ((m = SINGLE_RE.exec(text)) !== null) {
     if (isHourlyAfter(text, m.index + m[0].length)) continue;
+    if (isNonUsdOrMonthlyContext(text, m.index, m.index + m[0].length)) continue;
     const n = toNumber(m[1], m[2]);
     if (plausible(n)) out.push(n);
   }
@@ -130,8 +134,9 @@ function publishedSalaryFromJd(jdText) {
   const text = String(jdText == null ? "" : jdText);
   if (!text) return null;
   const structured = extractJDStructure(text);
+  // BL-243: the section text lost its currency words — judge it in the full JD.
   const fromSection =
-    structured && structured.salary_text
+    structured && structured.salary_text && !sectionIsNonUsdOrMonthly(text, structured.salary_text)
       ? parsePublishedSalaryRange(structured.salary_text, { allowSingle: true })
       : null;
   return mergeRanges(fromSection, parsePublishedSalaryRange(text));

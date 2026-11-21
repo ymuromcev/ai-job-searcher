@@ -1,6 +1,6 @@
 # RFC 072 — AI vacancies first + LatAm RU-friendly channel
 
-Status: approved 21.11.2026 (direction approved by owner 21.11.2026: «Да, и латам добавляем»)
+Status: approved 21.11.2026 (direction approved by owner 21.11.2026: «Да, и латам добавляем»; order «Порядок приоритета: 1. Мэтч 2. ИИ. Если в одном мэтч, а в другом мэтч и ИИ, выигрывает второй.»; salary bar «Давай от 80к»). Revised after the analyst cases (BL-243, round 1).
 Tier: M · Backlog: BL-243 (AI first), BL-242 (LatAm)
 
 ## What the owner sees
@@ -22,31 +22,85 @@ Out of scope: new adapters (Praktika on Teamtailor), inDrive/Kodland/ID Finance
 ### A. AI-first ordering
 - `engine/modules/apply/queue.js` sort key becomes
   `(FIT_RANK, isAi ? 0 : 1, newest)` — fit first, AI breaks ties
-  (owner 21.11.2026: «1. Мэтч 2. ИИ»).
-- `isAi(app)` = title matches the `ai_roles` track patterns OR an AI title
-  regex (`\bAI\b|GenAI|Generative|LLM|Agentic|Machine Learning`) that
-  lives in `filter_rules.json` → `apply_priority.ai_title_patterns`
-  (profile data, not engine constants).
+  (owner 21.11.2026: «1. Мэтч 2. ИИ»). The sort runs BEFORE the company cap and
+  the `--limit`, so a company's AI rows take its cap slots first and `--limit N`
+  pushes non-AI rows of the same fit out (`over_limit`, they stay To Apply).
+  Both `buildQueue` callers use it: `apply --phase pre` (`apply.js`) and the
+  night backlog count (`night.js`).
+- `isAi(app)` (`engine/core/ai_priority.js`) is built from profile data
+  `filter_rules.apply_priority`, not engine constants:
+  - `ai_title_patterns` — regex sources, wrapped in word boundaries, case-insensitive
+    (`AI`, `GenAI`, `Generative`, `LLM`, `Agentic`, `Machine Learning`). `AI` does
+    not match `Sustainability`, `Thailand`, `OpenAI`; it does match `Ai PM`,
+    `(AI)`, `AI/ML`, `AI-native`. A bad regex is reported through `warn` and skipped.
+  - `ai_track_ids` — `role_targets` tracks (e.g. `ai_roles`) whose patterns also
+    count, as literal phrases on word boundaries.
+  - `ai_companies` — company names, exact match after `company_keys.normalizeName`;
+    every role of such a company counts as AI.
+  - Empty / null title is not AI. No `apply_priority` block means never AI, so the
+    order is exactly today's (the rollback switch, and the state of the second profile).
 - Strong non-AI goes before Medium AI; within the same fit AI goes first.
+- Out of scope: `prepare` takes Inbox rows without regard to AI.
 
 ### B. LatAm channel exception
-- `data/companies.tsv` already carries `extra_json.channel = "ru_latam"`.
-- Scan: `filter.js` skips `location_blocklist` patterns listed in
-  `filter_rules.json` → `channel_exceptions.ru_latam.allow_patterns`
-  (Mexico, Colombia, LATAM, Latin America, Brazil, Argentina, Chile, Peru,
-  Remote LATAM) only for jobs whose company has `channel=ru_latam`.
-- Apply: `geo_enforcer` gets the same exception via a `channel` hint on
-  the row, so the queue does not archive the job a second time.
-- Salary: `apply_defaults.salary.floor_by_channel.ru_latam = 80000`;
-  the bot fills ≥ $80k for those rows instead of the US floor.
+- `data/companies.tsv` already carries `extra_json.channel = "ru_latam"` (Plata,
+  Unlimit). No column is added. `engine/core/company_channel.js` builds the index
+  "normalized company name (plus the profile's `company_aliases`) → channel":
+  exact match, never a prefix (`Unlimited Technologies` is not `Unlimit`;
+  `Plata Card` has no channel unless the profile lists it as an alias). Broken or
+  missing `extra_json` / `channel` costs only that row. The channel travels as the
+  optional `job.channel` of `evaluateJob`.
+- The exception lives in ONE place, `evaluate_job.js`, driven by
+  `filter_rules.channel_exceptions[channel].allow_patterns` (matcher
+  `company_channel.buildChannelAllow`: word boundaries, no case, no diacritics;
+  `New Mexico` never counts):
+  1. step 5 `location_blocklist`: when any location of the job matches an allow
+     pattern the blocklist is not applied (mixed `["Mexico City", "Madrid"]` passes:
+     one fitting place is enough);
+  2. step 7 geo: `enforceGeo(..., { channelAllow })` returns `ok` with
+     `matchedBy: "channel:ru_latam"` when a location (not in `geo.blocklist`)
+     matches; this value is not a trigger of the BL-225 JD workplace check, so an
+     onsite JD of such a company is not archived (kept as is: out of scope);
+  3. step 6 salary: `getSalaryFloor(applyDefaults, channel)`.
+- The channel is passed in the five places that judge a job: `filter.js` (scan,
+  from `scan.js`), `prepare.js` (pass 1, the `geo_title_excluded` pre-check — a
+  marker the channel allows, `(LATAM)` / `Remote - LATAM`, is not an exclusion,
+  `(EMEA)` still is — pass 2, and the salary-floor pass), `validate.js` (the
+  retro-sweep, so `validate --apply` does not archive To Apply Plata
+  «Mexico City»), `queue.js` (the geo safety net, `apply.js` and `night.js` pass the
+  index), and `apply.js` (desired salary). Companies without the channel and
+  locations outside the allow list (Cyprus, London, Moscow, Belgrade, Yerevan …)
+  are archived as today.
+- Salary: `apply_defaults.salary.by_channel.ru_latam = { floor: 80000, default: 80000 }`
+  (owner, 21.11.2026: from 80k). `salary.js normalizeConfig(cfg, channel)` overlays the
+  channel's `floor` / `default` over the general ones; both `computeDesiredSalary`
+  calls in `apply.js` and `applySalaryFloorPass` in `prepare.js` take the channel;
+  `apply_defaults.js` validates `by_channel`. No published range: 80000. Range
+  85–90k: kept (answer `90000` / `85000-90000`); 60–75k: `salary_below_floor`;
+  120–150k: `150000`; 70–90k: `80000-90000`. Other companies keep the general floor
+  95000. A range quoted in another currency or per month («$45,000 – $60,000 MXN
+  mensuales», BRL / COP / ARS / CLP / PEN, `/month`) is not an annual USD range:
+  both parsers (`published_salary.js` for prepare, `salary.js` for the bot, plus the
+  JD «Compensation» section lookup) drop it, so the channel default applies.
 
 ## Tests
-- queue: Strong AI < Strong non-AI < Medium AI; non-AI order unchanged.
-- filter: Plata job in "Mexico City" kept; same location from a company
-  without the channel still archived.
-- geo_enforcer: channel hint bypasses only the allow-listed patterns.
-- salary: ru_latam row gets 80000.
+- queue: Strong AI < Strong non-AI < Medium AI; non-AI order unchanged; `--limit`;
+  company cap; the geo net with the channel.
+- ai_priority: false friends, case and separators, companies, bad regex, no block.
+- company_channel: name matching, aliases, exact-not-prefix, broken `extra_json`.
+- evaluate_job / filter / scan / prepare / validate / apply / night: Plata
+  «Mexico City» kept, the same location from a company without the channel still
+  archived, mixed locations, accents, `(LATAM)` vs `(EMEA)`, non-LatAm places cut,
+  `matchedBy channel:ru_latam`, salary floors and answers, MXN texts.
+- All fixtures are in the tests: nothing depends on a working copy of a real profile.
 
 ## Rollback
-Remove `apply_priority` / `channel_exceptions` blocks from filter_rules.json —
-engine falls back to today's behaviour.
+Two files per profile, both optional blocks (copies `.pre-bl243-2026-11-21` sit
+next to the owner's files):
+- `profiles/<id>/filter_rules.json`: remove `apply_priority` (order goes back to
+  fit + newest) and `channel_exceptions` (Plata / Unlimit locations are archived
+  again).
+- `profiles/<id>/apply_defaults.json`: remove `salary.by_channel` (the channel
+  companies use the general floor and default again).
+The engine reads nothing else; with both blocks gone every step behaves as before
+BL-243.

@@ -5893,3 +5893,207 @@ test("holdUnsubmittable: empty input", () => {
   assert.deepEqual(holdUnsubmittable([], []), { kept: [], held: [] });
   assert.deepEqual(holdUnsubmittable(undefined, undefined), { kept: [], held: [] });
 });
+
+// --- BL-243 (RFC 072): the channel exception in prepare ------------------------
+
+const { buildChannelIndex } = require("../core/company_channel.js");
+
+const CH_ALLOW = [
+  "Mexico",
+  "México",
+  "Ciudad de México",
+  "CDMX",
+  "Colombia",
+  "Bogotá",
+  "LATAM",
+  "Latin America",
+  "Brazil",
+  "São Paulo",
+  "Argentina",
+  "Buenos Aires",
+];
+const CH_RULES = {
+  location_blocklist: [
+    "Mexico",
+    "Brazil",
+    "Colombia",
+    "Bogota",
+    "LATAM",
+    "Madrid",
+    "Cyprus",
+    "London",
+  ],
+  channel_exceptions: { ru_latam: { allow_patterns: CH_ALLOW } },
+  geo: HOME_CA_GEO,
+};
+const CH_INDEX = buildChannelIndex([
+  { name: "Plata", extra: { channel: "ru_latam" } },
+  { name: "Unlimit", extra: { channel: "ru_latam" } },
+]);
+const chApp = (key, companyName, locations, title = "Senior Product Manager") => ({
+  ...makeInboxApp({ key, companyName, title }),
+  locations,
+});
+
+test("applyPrepareFilter (BL-243): pass 1 and pass 2 both honour the channel exception", () => {
+  const apps = [
+    chApp("gh:1", "Plata", ["Mexico City"]),
+    chApp("gh:2", "Plata", ["Remote, Brazil"]),
+    chApp("gh:3", "Plata", ["Ciudad de México"]),
+    chApp("gh:4", "Unlimit", ["Mexico City", "Madrid"]),
+  ];
+  const { passed, skipped } = applyPrepareFilter(apps, CH_RULES, {}, { channelIndex: CH_INDEX });
+  assert.deepEqual(
+    passed.map((a) => a.key),
+    ["gh:1", "gh:2", "gh:3", "gh:4"]
+  );
+  assert.equal(skipped.length, 0);
+  assert.equal(passed[0]._geoResult.matchedBy, "channel:ru_latam");
+});
+
+test("applyPrepareFilter (BL-243): a company without the channel is archived as today (main regression)", () => {
+  const apps = [
+    chApp("gh:1", "Acme", ["Mexico City"]),
+    chApp("gh:2", "Acme", ["Remote, Brazil"]),
+    chApp("gh:3", "Acme", ["Ciudad de México"]),
+  ];
+  const { passed, skipped } = applyPrepareFilter(apps, CH_RULES, {}, { channelIndex: CH_INDEX });
+  assert.equal(passed.length, 0);
+  assert.deepEqual(
+    skipped.map((s) => s.reason),
+    ["location_blocklist", "location_blocklist", "geo_not_home_state_or_remote"]
+  );
+  // no index at all behaves the same (callers that know nothing of channels)
+  const none = applyPrepareFilter([chApp("gh:4", "Plata", ["Mexico City"])], CH_RULES, {});
+  assert.equal(none.skipped[0].reason, "location_blocklist");
+});
+
+test("applyPrepareFilter (BL-243): Plata / Unlimit with Cyprus, Belgrade, London, Moscow, Yerevan are archived", () => {
+  const apps = ["Limassol, Cyprus", "Belgrade", "London", "Moscow", "Yerevan"].flatMap((l, i) => [
+    chApp(`gh:p${i}`, "Plata", [l]),
+    chApp(`gh:u${i}`, "Unlimit", [l]),
+  ]);
+  const { passed, skipped } = applyPrepareFilter(apps, CH_RULES, {}, { channelIndex: CH_INDEX });
+  assert.equal(passed.length, 0);
+  assert.equal(skipped.length, 10);
+});
+
+test("applyPrepareFilter (BL-243): «(LATAM)» / «Remote LATAM» in a Plata title is kept; «(EMEA)» is still cut", () => {
+  const apps = [
+    chApp("gh:1", "Plata", ["Mexico City"], "Senior PM (LATAM)"),
+    chApp("gh:2", "Plata", ["Remote"], "PM – Remote LATAM"),
+    chApp("gh:3", "Plata", ["Mexico City"], "Senior PM (EMEA)"),
+    chApp("gh:4", "Plata", ["Mexico City"], "Product Manager (LATAM only)"),
+    chApp("gh:5", "Acme", ["Remote"], "Senior PM (LATAM)"),
+    chApp("gh:6", "Plata", ["Remote"], "Senior PM (UK/EU)"),
+  ];
+  const { passed, skipped } = applyPrepareFilter(apps, CH_RULES, {}, { channelIndex: CH_INDEX });
+  assert.deepEqual(
+    passed.map((a) => a.key),
+    ["gh:1", "gh:2", "gh:4"]
+  );
+  const reasons = Object.fromEntries(skipped.map((s) => [s.key, s.reason]));
+  assert.equal(reasons["gh:3"], "geo_title_excluded");
+  assert.equal(reasons["gh:5"], "geo_title_excluded");
+  assert.equal(reasons["gh:6"], "geo_title_excluded");
+});
+
+test("applyPrepareFilter (BL-243): profile without channel_exceptions (lilia / rollback) — nothing changes", () => {
+  const rules = { ...CH_RULES };
+  delete rules.channel_exceptions;
+  const apps = [
+    chApp("gh:1", "Plata", ["Mexico City"]),
+    chApp("gh:2", "Plata", ["Remote"], "Senior PM (LATAM)"),
+  ];
+  const { passed, skipped } = applyPrepareFilter(apps, rules, {}, { channelIndex: CH_INDEX });
+  assert.equal(passed.length, 0);
+  assert.deepEqual(
+    skipped.map((s) => s.reason),
+    ["location_blocklist", "geo_title_excluded"]
+  );
+});
+
+test("prepare --phase pre (BL-243): a Plata «Mexico City» row reaches the batch; Acme's does not", async () => {
+  const apps = [chApp("gh:1", "Plata", ["Mexico City"]), chApp("gh:2", "Acme", ["Mexico City"])];
+  const deps = makePrepDeps(apps, {
+    loadChannelIndex: () => CH_INDEX,
+    loadProfile: () => ({
+      id: "testuser",
+      filterRules: CH_RULES,
+      geo: HOME_CA_GEO,
+      company_tiers: { Plata: "A", Acme: "A" },
+      paths: {
+        root: "/fake/profiles/testuser",
+        applicationsTsv: "/fake/profiles/testuser/applications.tsv",
+        jdCacheDir: "/fake/profiles/testuser/jd_cache",
+      },
+    }),
+    fetchJds: async (inputs) =>
+      inputs.map((i) => ({
+        key: i.key,
+        status: "fetched",
+        text: "Senior PM\nThis is an onsite role in our Mexico City office.\n",
+      })),
+  });
+  await makePrepareCommand(deps)(makeCtx());
+  const result = JSON.parse(deps._written["/fake/profiles/testuser/prepare_context.json"]);
+  assert.deepEqual(
+    result.batch.map((b) => b.key),
+    ["gh:1"]
+  );
+  assert.equal(result.batch[0].geo_matched_by, "channel:ru_latam");
+  assert.equal(result.skipped.find((s) => s.key === "gh:2").reason, "location_blocklist");
+  // «onsite у Plata не архивируем» (RFC 072, out of scope): the BL-225 JD
+  // workplace check does not act on a channel match, the row is not archived.
+  assert.notEqual(apps.find((a) => a.key === "gh:1").status, "Archived");
+});
+
+const CH_DEFAULTS = {
+  salary: {
+    floor: 95000,
+    default: 180000,
+    currency: "USD",
+    by_channel: { ru_latam: { floor: 80000, default: 80000 } },
+  },
+};
+
+test("applySalaryFloorPass (BL-243): channel floor 80000 for Plata, general 95000 for Acme", () => {
+  const { applySalaryFloorPass } = require("./prepare.js");
+  const alive = [
+    { key: "gh:1", companyName: "Plata", title: "PM", url: "u" }, // 85-90k → stays
+    { key: "gh:2", companyName: "Plata", title: "PM", url: "u" }, // 60-75k → below 80k
+    { key: "gh:3", companyName: "Plata", title: "PM", url: "u" }, // 70-90k → stays
+    { key: "gh:4", companyName: "Acme", title: "PM", url: "u" }, // 85k top → below 95k
+    { key: "gh:5", companyName: "Plata", title: "PM", url: "u" }, // MXN → no range → stays
+  ];
+  const jds = {
+    "gh:1": "Base pay range: $85,000 - $90,000 per year.",
+    "gh:2": "Base pay range: $60,000 - $75,000 per year.",
+    "gh:3": "Base pay range: $70,000 - $90,000 per year.",
+    "gh:4": "Base pay range: $70,000 - $85,000 per year.",
+    "gh:5": "Salary: $45,000 – $60,000 MXN mensuales",
+  };
+  const byKey = Object.fromEntries(
+    Object.entries(jds).map(([k, text]) => [k, { status: "fetched", text }])
+  );
+  const r = applySalaryFloorPass(alive, byKey, CH_DEFAULTS, { channelIndex: CH_INDEX });
+  assert.deepEqual(
+    r.aliveResults.map((a) => a.key),
+    ["gh:1", "gh:3", "gh:5"]
+  );
+  const skipped = Object.fromEntries(r.salaryFloorSkipped.map((s) => [s.key, s.floor]));
+  assert.deepEqual(skipped, { "gh:2": 80000, "gh:4": 95000 });
+});
+
+test("applySalaryFloorPass (BL-243): rollback — without by_channel (or without an index) the general floor rules", () => {
+  const { applySalaryFloorPass } = require("./prepare.js");
+  const alive = [{ key: "gh:1", companyName: "Plata", title: "PM", url: "u" }];
+  const byKey = { "gh:1": { status: "fetched", text: "Pay: $85,000 - $90,000 per year." } };
+  const plain = { salary: { floor: 95000, default: 180000, currency: "USD" } };
+  assert.equal(
+    applySalaryFloorPass(alive, byKey, plain, { channelIndex: CH_INDEX }).salaryFloorSkipped.length,
+    1
+  );
+  assert.equal(applySalaryFloorPass(alive, byKey, CH_DEFAULTS).salaryFloorSkipped.length, 1);
+  assert.equal(applySalaryFloorPass(alive, byKey, null).salaryFloorSkipped.length, 0);
+});

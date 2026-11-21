@@ -68,6 +68,11 @@ const { extractJDStructure } = require("../core/jd_extract.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 const { todayLocalISO } = require("../core/auto_no_response_sweep.js");
 const { buildActiveCounts, resolveCapWindowDays } = require("./prepare.js");
+const {
+  channelFor,
+  loadChannelIndexForProfile,
+  EMPTY_INDEX,
+} = require("../core/company_channel.js");
 
 const { detectAts, getAdapter } = require("../modules/apply/index.js");
 const { resolveUrl, resolveViaPage, hostOf } = require("../modules/apply/resolve_url.js");
@@ -84,6 +89,7 @@ const {
   choicePolicy,
 } = require("../modules/apply/question_match.js");
 const { parsePublishedRange, computeDesiredSalary } = require("../modules/apply/salary.js");
+const { sectionIsNonUsdOrMonthly } = require("../core/salary_context.js");
 const { resolveResumePdf, resolveCoverLetterPdf } = require("../modules/apply/resume_path.js");
 const { buildQueue, SUBMITTING_PREFIX } = require("../modules/apply/queue.js");
 const { runPool, makeMutex } = require("../modules/apply/pool.js");
@@ -503,7 +509,18 @@ async function pageText(page) {
   }
 }
 
-async function salaryForJob(job, ats, adapter, resolvedUrl, profile, deps, applyDefaults) {
+// `channel` (BL-243): company channel -> `salary.by_channel[channel]` (floor and
+// default of the RU-friendly LatAm pool); "" -> the general salary block.
+async function salaryForJob(
+  job,
+  ats,
+  adapter,
+  resolvedUrl,
+  profile,
+  deps,
+  applyDefaults,
+  channel = ""
+) {
   let text = "";
   const ref = adapter && adapter.jobRef ? adapter.jobRef(resolvedUrl) : null;
   if (ref && ref.slug && ref.jobId) {
@@ -520,10 +537,17 @@ async function salaryForJob(job, ats, adapter, resolvedUrl, profile, deps, apply
   let range = null;
   if (text) {
     const structure = deps.extractJDStructure(text);
+    // BL-243: salary_text has lost "MXN mensuales" — judge it inside the full JD.
+    const section = (structure && structure.salary_text) || "";
     range =
-      parsePublishedRange((structure && structure.salary_text) || "") || parsePublishedRange(text);
+      (section && !sectionIsNonUsdOrMonthly(text, section) ? parsePublishedRange(section) : null) ||
+      parsePublishedRange(text);
   }
-  const desired = computeDesiredSalary({ range, salaryCfg: applyDefaults && applyDefaults.salary });
+  const desired = computeDesiredSalary({
+    range,
+    salaryCfg: applyDefaults && applyDefaults.salary,
+    channel,
+  });
   return { range, desired };
 }
 
@@ -610,7 +634,8 @@ async function resolveJobUrl(app, env) {
 }
 
 async function preparePreJob(app, env) {
-  const { profile, deps, applyDefaults, bank, browser, stderr } = env;
+  const { profile, deps, applyDefaults, bank, browser, stderr, channelIndex } = env;
+  const channel = channelFor(channelIndex, app.companyName);
   const job = {
     key: app.key,
     company: app.companyName,
@@ -637,7 +662,16 @@ async function preparePreJob(app, env) {
   if (resume.error) return { job, stop: resume.error };
   const cl = resolveCoverLetterPdf(app, profile, { exists: deps.fileExists });
 
-  let salary = await salaryForJob(job, ats, adapter, res.url, profile, deps, applyDefaults);
+  let salary = await salaryForJob(
+    job,
+    ats,
+    adapter,
+    res.url,
+    profile,
+    deps,
+    applyDefaults,
+    channel
+  );
   if (salary.desired.belowFloor) return { job, skip: "salary_below_floor" };
 
   const b = await browser.get(ats);
@@ -656,6 +690,7 @@ async function preparePreJob(app, env) {
           desired: computeDesiredSalary({
             range,
             salaryCfg: applyDefaults && applyDefaults.salary,
+            channel,
           }),
         };
         if (salary.desired.belowFloor) return { job, skip: "salary_below_floor" };
@@ -762,6 +797,19 @@ function submittedFormRefs(apps, slugIndex, deps) {
   return out;
 }
 
+// BL-243: company channel index (companies.tsv extra_json.channel) — read only
+// when the profile has `channel_exceptions`; `deps.loadChannelIndex` for tests.
+function resolveChannelIndex(profile, ctx, deps) {
+  try {
+    if (typeof deps.loadChannelIndex === "function") {
+      return deps.loadChannelIndex(profile, ctx) || EMPTY_INDEX;
+    }
+    return loadChannelIndexForProfile(profile, resolveDataDir((ctx && ctx.env) || process.env));
+  } catch {
+    return EMPTY_INDEX;
+  }
+}
+
 // Board slugs for ATS-sourced rows (canonical form URLs).
 function loadSlugIndex(ctx, deps, stderr) {
   try {
@@ -797,8 +845,11 @@ async function runPre(ctx, deps) {
   // TSV lock and applies only this run's per-row changes (mergeRowChanges).
   const loadedRows = applicationsTsv.snapshotRows(apps);
   const filterRules = profile.filterRules || {};
+  const channelIndex = resolveChannelIndex(profile, ctx, deps);
   const { queue, skipped } = buildQueue(apps, {
     filterRules,
+    channelIndex,
+    warn: (msg) => stderr(`warn: ${msg}`),
     buildActiveCounts: deps.buildActiveCounts,
     windowDays: deps.resolveCapWindowDays(filterRules),
     now: deps.now(),
@@ -816,7 +867,7 @@ async function runPre(ctx, deps) {
   const slugIndex = loadSlugIndex(ctx, deps, stderr);
 
   const browser = makeBrowserHandle(deps);
-  const env = { profile, deps, applyDefaults, bank, browser, stderr, slugIndex };
+  const env = { profile, deps, applyDefaults, bank, browser, stderr, slugIndex, channelIndex };
   if (queue.length > 0 && !(await browserReady(browser, stderr))) return 1;
   let results;
   try {

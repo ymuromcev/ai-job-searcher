@@ -826,3 +826,87 @@ test("scan default health writer: writes into an existing profile dir, skips a m
   assert.equal(await makeScanCommand(deps)(makeCtx().ctx), 0);
   assert.equal(fs.existsSync(missing), false);
 });
+
+// --- BL-243 (RFC 072): scan keeps the allowed locations of a channel company ------
+
+function latamScanDeps({ withExceptions = true, aliases = null } = {}) {
+  const filterRules = {
+    location_blocklist: ["Mexico", "Brazil", "Cyprus", "London"],
+    ...(withExceptions
+      ? { channel_exceptions: { ru_latam: { allow_patterns: ["Mexico", "Brazil", "LATAM"] } } }
+      : {}),
+  };
+  const jobs = [
+    fakeJob({
+      jobId: "1",
+      companyName: "Plata",
+      title: "Product Manager",
+      locations: ["Mexico City"],
+    }),
+    fakeJob({
+      jobId: "2",
+      companyName: "Acme",
+      title: "Product Manager",
+      locations: ["Mexico City"],
+    }),
+    fakeJob({
+      jobId: "3",
+      companyName: "Plata",
+      title: "Product Manager",
+      locations: ["Limassol, Cyprus"],
+    }),
+    fakeJob({
+      jobId: "4",
+      companyName: "Plata Card",
+      title: "Product Manager",
+      locations: ["Mexico City"],
+    }),
+  ];
+  return makeDeps({
+    loadProfile: () => ({
+      id: "jared",
+      modules: ["discovery:greenhouse"],
+      discovery: {},
+      filterRules,
+      geo: { mode: "home_state_or_remote", home_state: "CA" },
+      ...(aliases ? { company_aliases: aliases } : {}),
+      paths: { root: "/tmp/profiles/jared" },
+    }),
+    loadCompanies: () => ({
+      rows: [
+        { name: "Plata", source: "greenhouse", slug: "platacard", extra: { channel: "ru_latam" } },
+        { name: "Acme", source: "greenhouse", slug: "acme", extra: null },
+      ],
+    }),
+    scan: async () => ({
+      fresh: jobs,
+      pool: jobs,
+      summary: { greenhouse: { total: 4, error: null } },
+      errors: [],
+    }),
+  });
+}
+
+test("scan (BL-243): Plata «Mexico City» goes to Inbox; Acme's, Plata's Cyprus and unlisted «Plata Card» are archived", async () => {
+  const { deps, calls } = latamScanDeps();
+  const { ctx, out } = makeCtx();
+  assert.equal(await makeScanCommand(deps)(ctx), 0);
+  assert.match(out.lines.join("\n"), /filter: 1 passed, 3 rejected/);
+  const rejected = calls.appendRejectionsLog[0].lines.map((l) => l.title + "|" + l.kind);
+  assert.equal(rejected.length, 3);
+});
+
+test("scan (BL-243): a profile alias lets the brand «Plata Card» through as well", async () => {
+  const { deps, calls } = latamScanDeps({ aliases: { Plata: ["Plata Card"] } });
+  const { ctx, out } = makeCtx();
+  assert.equal(await makeScanCommand(deps)(ctx), 0);
+  assert.match(out.lines.join("\n"), /filter: 2 passed, 2 rejected/);
+  assert.equal(calls.appendRejectionsLog[0].lines.length, 2);
+});
+
+test("scan (BL-243): without channel_exceptions (rollback / lilia) every Mexico City row is archived", async () => {
+  const { deps } = latamScanDeps({ withExceptions: false });
+  const { ctx, out } = makeCtx();
+  assert.equal(await makeScanCommand(deps)(ctx), 0);
+  assert.match(out.lines.join("\n"), /filter: 0 passed, 4 rejected/);
+});

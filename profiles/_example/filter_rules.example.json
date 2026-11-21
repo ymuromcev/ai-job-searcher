@@ -34,6 +34,22 @@
       }
     ]
   },
+  "apply_priority": {
+    "_description": "BL-243 / RFC 072 — apply order: fit first (Strong, Medium, Weak), then AI vacancies first inside one fit. Remove this block to go back to fit + newest order. ai_title_patterns: regex sources matched on word boundaries, case-insensitive, against the job title (a bad regex is skipped with a warning). ai_track_ids: role_targets track ids whose patterns also count as AI. ai_companies: company names (exact after normalization) whose every role counts as AI.",
+    "ai_title_patterns": ["AI", "GenAI", "Generative", "LLM", "Agentic", "Machine Learning"],
+    "ai_track_ids": [],
+    "ai_companies": ["ExampleAiLab"]
+  },
+  "channel_exceptions": {
+    "_description": "BL-242 / RFC 072 — a company whose data/companies.tsv extra_json has channel=<key> keeps locations matching allow_patterns that location_blocklist and geo would otherwise archive (word boundaries, no case, no diacritics; one fitting location in a mixed list is enough; a title marker such as '(LATAM)' is allowed the same way, '(EMEA)' is not). Other companies and other channels are judged as before. Salary bar for the channel: apply_defaults.json salary.by_channel. Remove this block to go back to the old behaviour.",
+    "ru_latam": {
+      "allow_patterns": [
+        "Mexico", "México", "Ciudad de México", "CDMX", "Colombia", "Bogotá", "Medellín",
+        "LATAM", "Latin America", "Brazil", "Brasil", "São Paulo", "Argentina", "Buenos Aires",
+        "Chile", "Peru", "Uruguay", "Montevideo"
+      ]
+    }
+  },
   "location_rules": {
     "_description": "Restrict to specific locations / remote-only. Empty = no location filter.",
     "allowed_substrings": []

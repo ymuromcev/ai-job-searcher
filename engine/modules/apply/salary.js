@@ -8,8 +8,16 @@
 //     all; `computeDesiredSalary` reports `belowFloor: true` so the caller
 //     can skip it (prepare enforces the same gate earlier).
 //
+// Channel (BL-243, RFC 072): `salary.by_channel[channel] = { floor, default }`
+// overrides the general floor / default for a company of that channel (the
+// RU-friendly LatAm pool: floor and default 80000). Amounts quoted in another
+// currency or per month ("$45,000 - $60,000 MXN mensuales") are not annual USD
+// ranges and are dropped: no range -> the channel default.
+//
 // Amounts are returned as plain digit strings ("180000") because many ATS
 // salary inputs validate as numbers; ranges as "120000-150000".
+
+const { isNonUsdOrMonthlyContext } = require("../../core/salary_context.js");
 
 const DEFAULT_FLOOR = 120000;
 const DEFAULT_SALARY = 180000;
@@ -46,6 +54,7 @@ function parsePublishedRange(text) {
   while ((m = RANGE_RE.exec(s))) {
     const tail = s.slice(m.index + m[0].length, m.index + m[0].length + 12);
     if (HOURLY_RE.test(tail)) continue;
+    if (isNonUsdOrMonthlyContext(s, m.index, m.index + m[0].length)) continue;
     const a = parseAmount(m[1]);
     const b = parseAmount(m[2]);
     if (a == null || b == null) continue;
@@ -57,24 +66,36 @@ function parsePublishedRange(text) {
   return null;
 }
 
-function normalizeConfig(salaryCfg) {
+function positive(v) {
+  return Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : null;
+}
+
+// `channel` (optional): overlay `salaryCfg.by_channel[channel]` — each present
+// key (floor / default) replaces the general one; the rest stays general.
+function normalizeConfig(salaryCfg, channel) {
   const cfg = salaryCfg || {};
-  const floor =
-    Number.isFinite(Number(cfg.floor)) && Number(cfg.floor) > 0 ? Number(cfg.floor) : DEFAULT_FLOOR;
-  const def =
-    Number.isFinite(Number(cfg.default)) && Number(cfg.default) > 0
-      ? Number(cfg.default)
-      : DEFAULT_SALARY;
+  const byChannel =
+    channel &&
+    cfg.by_channel &&
+    typeof cfg.by_channel === "object" &&
+    Object.prototype.hasOwnProperty.call(cfg.by_channel, channel) &&
+    cfg.by_channel[channel] &&
+    typeof cfg.by_channel[channel] === "object"
+      ? cfg.by_channel[channel]
+      : {};
+  const floor = positive(byChannel.floor) || positive(cfg.floor) || DEFAULT_FLOOR;
+  const def = positive(byChannel.default) || positive(cfg.default) || DEFAULT_SALARY;
   return { floor, default: def, currency: cfg.currency || "USD" };
 }
 
 // range: {min, max} | null (published). salaryCfg: applyDefaults.salary.
+// channel: company channel ("" / undefined = none) -> salary.by_channel overlay.
 // Returns { value, low, high, source, belowFloor }.
 //   value — single desired amount (number)
 //   low/high — range answer (numbers)
 //   source — "published_range" | "default"
-function computeDesiredSalary({ range, salaryCfg } = {}) {
-  const cfg = normalizeConfig(salaryCfg);
+function computeDesiredSalary({ range, salaryCfg, channel } = {}) {
+  const cfg = normalizeConfig(salaryCfg, channel);
   if (range && Number.isFinite(range.max) && range.max > 0) {
     const max = range.max;
     const min = Number.isFinite(range.min) && range.min > 0 ? range.min : max;
@@ -110,6 +131,7 @@ module.exports = {
   computeDesiredSalary,
   salaryAnswer,
   parseAmount,
+  normalizeConfig,
   DEFAULT_FLOOR,
   DEFAULT_SALARY,
 };

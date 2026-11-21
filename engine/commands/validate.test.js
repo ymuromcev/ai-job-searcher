@@ -1055,3 +1055,67 @@ test("BL-18 notion_status_schema: respects profile.notion.property_map.status.fi
   assert.equal(code, 0);
   assert.match(out.all(), /notion_status_schema: ok/);
 });
+
+// --- BL-243 (RFC 072): the retro-sweep honours the channel exception -------------
+
+const { buildChannelIndex } = require("../core/company_channel.js");
+
+function latamSweepProfile(withExceptions = true) {
+  const filterRules = {
+    location_blocklist: ["Mexico", "Brazil", "Cyprus"],
+    ...(withExceptions
+      ? { channel_exceptions: { ru_latam: { allow_patterns: ["Mexico", "Brazil", "LATAM"] } } }
+      : {}),
+  };
+  return makeProfile({
+    geo: { mode: "home_state_or_remote", home_state: "CA" },
+    filterRules,
+  });
+}
+
+async function runLatamSweep({ withExceptions = true, apply = true }) {
+  const apps = [
+    fakeApp({ key: "gh:1", jobId: "1", companyName: "Plata", locations: ["Mexico City"] }),
+    fakeApp({ key: "gh:2", jobId: "2", companyName: "Acme", locations: ["Mexico City"] }),
+    fakeApp({ key: "gh:3", jobId: "3", companyName: "Plata", locations: ["Limassol, Cyprus"] }),
+    fakeApp({ key: "gh:4", jobId: "4", companyName: "Plata", locations: ["Remote, Brazil"] }),
+  ];
+  let savedRows = null;
+  const deps = makeDeps({
+    loadApplications: () => ({ apps }),
+    saveApplications: (_p, rows) => {
+      savedRows = rows;
+    },
+    loadProfile: () => latamSweepProfile(withExceptions),
+    loadChannelIndex: () => buildChannelIndex([{ name: "Plata", extra: { channel: "ru_latam" } }]),
+    now: () => "2026-11-21T00:00:00Z",
+  });
+  const { ctx, out } = makeCtx();
+  ctx.flags.apply = apply;
+  const code = await makeValidateCommand(deps)(ctx);
+  return { code, out, savedRows };
+}
+
+test("retro_sweep (BL-243): validate --apply keeps To Apply Plata «Mexico City» / «Remote, Brazil", async () => {
+  const { savedRows, out } = await runLatamSweep({});
+  const status = Object.fromEntries(savedRows.map((r) => [r.key, r.status]));
+  assert.equal(status["gh:1"], "To Apply", "Plata Mexico City stays");
+  assert.equal(status["gh:4"], "To Apply", "Plata Remote, Brazil stays");
+  assert.equal(status["gh:2"], "Archived", "a company without the channel is archived as today");
+  assert.equal(status["gh:3"], "Archived", "Plata with Cyprus is archived as today");
+  assert.match(out.all(), /retro_sweep: archived 2 row/);
+});
+
+test("retro_sweep (BL-243): without channel_exceptions (rollback / lilia) Plata is swept as today", async () => {
+  const { savedRows } = await runLatamSweep({ withExceptions: false });
+  const status = Object.fromEntries(savedRows.map((r) => [r.key, r.status]));
+  assert.equal(status["gh:1"], "Archived");
+  assert.equal(status["gh:4"], "Archived");
+});
+
+test("retro_sweep (BL-243): without --apply nothing of the channel is reported as a match", async () => {
+  const { out } = await runLatamSweep({ apply: false });
+  const all = out.all();
+  assert.match(all, /retro_sweep: 2 row\(s\) now match blocklists/);
+  assert.doesNotMatch(all, /MATCH Plata — PM \(location_blocklist: Mexico\)/);
+});

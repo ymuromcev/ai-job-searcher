@@ -23,7 +23,12 @@ const jobsTsv = require("../core/jobs_tsv.js");
 const applications = require("../core/applications_tsv.js");
 const { matchBlocklists } = require("../core/filter.js");
 const { checkFreshness: checkFitProfileFreshness } = require("../core/fit_profile.js");
-const { resolveProfilesDir } = require("../core/paths.js");
+const { resolveProfilesDir, resolveDataDir } = require("../core/paths.js");
+const {
+  channelFor,
+  loadChannelIndexForProfile,
+  EMPTY_INDEX,
+} = require("../core/company_channel.js");
 const { defaultFetch } = require("../modules/discovery/_http.js");
 const { planDedup } = require("../core/tsv_dedup.js");
 const notion = require("../core/notion_sync.js");
@@ -558,6 +563,17 @@ function makeValidateCommand(overrides = {}) {
         filterRules.location_blocklist.length > 0) ||
       geoActive;
     if (appsResult.apps.length > 0 && hasBlocklistRules) {
+      // BL-243 (RFC 072): the retro-sweep must not archive a channel company's
+      // allowed location (Plata "Mexico City") that scan/prepare let through.
+      let channelIndex = EMPTY_INDEX;
+      try {
+        channelIndex =
+          typeof deps.loadChannelIndex === "function"
+            ? deps.loadChannelIndex(profile, ctx) || EMPTY_INDEX
+            : loadChannelIndexForProfile(profile, resolveDataDir(ctx.env || process.env));
+      } catch {
+        channelIndex = EMPTY_INDEX;
+      }
       const matches = [];
       for (const app of appsResult.apps) {
         if (!RETRO_SWEEP_STATUSES.has(app.status)) continue;
@@ -569,6 +585,7 @@ function makeValidateCommand(overrides = {}) {
             company: app.companyName,
             role: app.title,
             locations: Array.isArray(app.locations) ? app.locations : [],
+            channel: channelFor(channelIndex, app.companyName),
           },
           filterRules
         );
