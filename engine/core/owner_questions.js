@@ -41,6 +41,9 @@ function statePath(profileRoot) {
 const COMPANY_PLACEHOLDER = "<company>";
 const NO_HONEST_ANSWER = "no_honest_answer";
 const OWNER_SKIP_CODE = "owner_skip";
+// A salary field in another currency / per period (BL-243): not answered with
+// our annual-USD number; the row is skipped as no_honest_answer.
+const FOREIGN_SALARY_CODE = "foreign_currency_salary";
 const REQUEUE_NOTE_SUFFIX = "answers";
 // Forms the bot never submits (Ashby: invisible bot check, see apply.js
 // NO_SUBMIT_ATS): their questions are not collected and the rows stay put.
@@ -130,6 +133,11 @@ function parseBlockers(note) {
   if (detail.startsWith(`${OWNER_SKIP_CODE}:`)) {
     ownerSkip = true;
     detail = detail.slice(OWNER_SKIP_CODE.length + 1).trim();
+  }
+  // BL-243: "no_honest_answer: foreign_currency_salary: <label>" — the label
+  // is the blocker; the owner answers it like any other question.
+  if (detail.startsWith(`${FOREIGN_SALARY_CODE}:`)) {
+    detail = detail.slice(FOREIGN_SALARY_CODE.length + 1).trim();
   }
   if (detail === NO_HONEST_ANSWER || detail === "schema_changed") detail = "";
   const seen = new Set();
@@ -333,6 +341,7 @@ module.exports = {
   statePath,
   COMPANY_PLACEHOLDER,
   OWNER_SKIP_CODE,
+  FOREIGN_SALARY_CODE,
   NO_SUBMIT_HOST_RE,
   cleanLabel,
   displayQuestion,

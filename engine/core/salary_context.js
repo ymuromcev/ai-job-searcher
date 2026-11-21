@@ -19,8 +19,10 @@ const AFTER_RE = new RegExp(
   String.raw`^\s*(?:(?:${CURRENCY})(?![A-Za-z])|${MONTHLY}\b|\/\s*(?:month|mo|mes|m[eê]s)\b)`,
   "i"
 );
-// Text right before the range ("MXN $45,000 - $60,000", "MXN45,000").
-const BEFORE_RE = new RegExp(String.raw`(?:^|[^A-Za-z])${CURRENCY}\s*$`, "i");
+// Text right before the range ("MXN $45,000 - $60,000", "MXN45,000"). A range
+// match starts at its first "$", so a glued "MX$45,000" / "R$45,000" arrives
+// here as a bare "MX" / "R" ending the slice (no space in between).
+const BEFORE_RE = new RegExp(String.raw`(?:^|[^A-Za-z])(?:${CURRENCY}\s*|MX|R)$`, "i");
 
 /**
  * @param {string} text   full text

@@ -19,7 +19,9 @@ const MIN_ANNUAL = 10000;
 const MAX_ANNUAL = 5000000;
 
 const NUM = String.raw`(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)`;
-const SUFFIX = String.raw`\s*([kKmM])?`;
+// A k / m multiplier is a suffix only when no letter follows it: "$60,000 MXN"
+// is not "$60,000 M" (sixty million).
+const SUFFIX = String.raw`\s*(?:([kKmM])(?![A-Za-z]))?`;
 const SEP = String.raw`\s*(?:USD|usd)?\s*(?:-|–|—|to)\s*(?:USD\s*)?`;
 // Range: "$140,000 - $190,000", "$140K–$190K", "$140-190k", "USD 140,000 to 190,000".
 const RANGE_RE = new RegExp(
@@ -48,14 +50,26 @@ function isHourlyAfter(text, endIndex) {
   return HOURLY_RE.test(text.slice(endIndex, endIndex + 24));
 }
 
-function findRanges(text) {
-  const out = [];
+// Scan every range-shaped piece of text. `ranges` are the usable annual-USD
+// ones; `dropped` are the spans of pieces rejected for hourly / non-USD /
+// per-month context (BL-243), so a lone amount inside such a span is never
+// re-read as a single dollar figure.
+function scanRanges(text) {
+  const ranges = [];
+  const dropped = [];
   RANGE_RE.lastIndex = 0;
   let m;
   while ((m = RANGE_RE.exec(text)) !== null) {
-    if (isHourlyAfter(text, m.index + m[0].length)) continue;
+    const end = m.index + m[0].length;
+    if (isHourlyAfter(text, end)) {
+      dropped.push([m.index, end]);
+      continue;
+    }
     // BL-243: "$45,000 - $60,000 MXN mensuales" is not an annual USD range.
-    if (isNonUsdOrMonthlyContext(text, m.index, m.index + m[0].length)) continue;
+    if (isNonUsdOrMonthlyContext(text, m.index, end)) {
+      dropped.push([m.index, end]);
+      continue;
+    }
     let [, aNum, aSuf, bNum, bSuf] = m;
     // "$140-190K": the suffix on one bound applies to a bare small other bound.
     if (!aSuf && bSuf && parseFloat(aNum.replace(/,/g, "")) < 1000) aSuf = bSuf;
@@ -63,16 +77,18 @@ function findRanges(text) {
     const a = toNumber(aNum, aSuf);
     const b = toNumber(bNum, bSuf);
     if (!plausible(a) || !plausible(b)) continue;
-    out.push({ min: Math.min(a, b), max: Math.max(a, b) });
+    ranges.push({ min: Math.min(a, b), max: Math.max(a, b) });
   }
-  return out;
+  return { ranges, dropped };
 }
 
-function findSingles(text) {
+function findSingles(text, dropped = scanRanges(text).dropped) {
   const out = [];
   SINGLE_RE.lastIndex = 0;
   let m;
   while ((m = SINGLE_RE.exec(text)) !== null) {
+    // A figure inside a dropped (non-USD / monthly / hourly) range is part of it.
+    if (dropped.some(([a, b]) => m.index >= a && m.index < b)) continue;
     if (isHourlyAfter(text, m.index + m[0].length)) continue;
     if (isNonUsdOrMonthlyContext(text, m.index, m.index + m[0].length)) continue;
     const n = toNumber(m[1], m[2]);
@@ -97,7 +113,7 @@ function findSingles(text) {
 function parsePublishedSalaryRange(text, opts = {}) {
   const s = String(text == null ? "" : text);
   if (!s) return null;
-  const ranges = findRanges(s);
+  const { ranges, dropped } = scanRanges(s);
   if (ranges.length > 0) {
     return {
       min: Math.min(...ranges.map((r) => r.min)),
@@ -105,7 +121,7 @@ function parsePublishedSalaryRange(text, opts = {}) {
     };
   }
   if (opts.allowSingle) {
-    const singles = findSingles(s);
+    const singles = findSingles(s, dropped);
     if (singles.length > 0) return { min: null, max: Math.max(...singles) };
   }
   return null;

@@ -69,6 +69,8 @@ const CODE_TO_REASON = Object.freeze({
   schema_changed: "no_honest_answer",
   // The form asks a question the owner marked "skip such jobs" (RFC 070).
   owner_skip: "no_honest_answer",
+  // BL-243: a salary asked in another currency / per period (MXN, "monthly").
+  foreign_currency_salary: "no_honest_answer",
 });
 
 // Guard skips: the per-row guards that leave the row as it is (the job was

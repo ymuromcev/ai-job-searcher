@@ -194,3 +194,65 @@ test("validateApplyDefaults accepts by_channel and rejects bad shapes", () => {
   assert.ok(bad({ ru_latam: { floor: 80000, default: 70000 } }).length > 0);
   assert.deepEqual(bad({ ru_latam: { floor: 80000 } }), []);
 });
+
+// --- BL-243 round 2 -------------------------------------------------------------
+
+// point 1: a lone amount inside a dropped (MXN / monthly) range is not a dollar figure
+test("allowSingle: figures of a MXN / monthly range are not re-read as single dollars", () => {
+  assert.equal(publishedSalaryFromJd("Compensation\n$45,000 - $60,000 MXN\n"), null);
+  assert.equal(publishedSalaryFromJd("Compensation\n$45,000 - $60,000 MXN mensuales\n"), null);
+  assert.equal(parsePublishedSalaryRange("MXN $45,000 - $60,000", { allowSingle: true }), null);
+  assert.equal(parsePublishedSalaryRange("$45,000 - $60,000 MXN", { allowSingle: true }), null);
+  assert.equal(parsePublishedSalaryRange("$45,000 - $60,000 / month", { allowSingle: true }), null);
+  // a real single amount elsewhere in the section is still read
+  assert.deepEqual(parsePublishedSalaryRange("Pay: $150,000", { allowSingle: true }), {
+    min: null,
+    max: 150000,
+  });
+  assert.deepEqual(
+    publishedSalaryFromJd("Compensation\n$150,000 base\n\nBonus tier $45,000 - $60,000 MXN"),
+    { min: null, max: 150000 }
+  );
+  // a letter after "M" is not the million suffix
+  assert.equal(parsePublishedSalaryRange("$60,000 MXN", { allowSingle: true }), null);
+  assert.deepEqual(parsePublishedSalaryRange("$1.2M", { allowSingle: true }), {
+    min: null,
+    max: 1200000,
+  });
+});
+
+// point 2: glued currency prefixes
+test("glued prefixes MX$ / R$ / COP$ are not annual USD (both parsers)", () => {
+  for (const t of [
+    "MX$45,000 – $60,000",
+    "MX$45,000 - MX$60,000",
+    "R$45,000 - $60,000",
+    "COP$45,000 - $60,000",
+    "ARS$45,000 - $60,000",
+    "CLP$45,000 - $60,000",
+  ]) {
+    assert.equal(parsePublishedRange(t), null, t);
+    assert.equal(parsePublishedSalaryRange(t), null, t);
+    assert.equal(parsePublishedSalaryRange(t, { allowSingle: true }), null, t);
+  }
+  assert.equal(publishedSalaryFromJd("Compensation\nMX$45,000 – $60,000\n"), null);
+  // plain USD around is untouched
+  assert.deepEqual(parsePublishedRange("US$85,000 - $95,000"), { min: 85000, max: 95000 });
+});
+
+// point 4: by_channel floor / default must be > 0
+test("validateApplyDefaults: by_channel floor 0 / default 0 is an error; getSalaryFloor ignores 0", () => {
+  const bad = (by_channel) =>
+    validateApplyDefaults({ ...BASE, salary: { ...CFG, by_channel } }, "demo");
+  assert.ok(bad({ ru_latam: { floor: 0 } }).length > 0);
+  assert.ok(bad({ ru_latam: { default: 0 } }).length > 0);
+  assert.deepEqual(bad({ ru_latam: { floor: 1, default: 1 } }), []);
+  assert.equal(
+    getSalaryFloor({ salary: { ...CFG, by_channel: { ru_latam: { floor: 0 } } } }, LATAM),
+    95000
+  );
+  assert.equal(
+    normalizeConfig({ ...CFG, by_channel: { ru_latam: { floor: 0 } } }, LATAM).floor,
+    95000
+  );
+});

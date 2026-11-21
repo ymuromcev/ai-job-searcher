@@ -81,7 +81,18 @@ Out of scope: new adapters (Praktika on Teamtailor), inDrive/Kodland/ID Finance
   95000. A range quoted in another currency or per month («$45,000 – $60,000 MXN
   mensuales», BRL / COP / ARS / CLP / PEN, `/month`) is not an annual USD range:
   both parsers (`published_salary.js` for prepare, `salary.js` for the bot, plus the
-  JD «Compensation» section lookup) drop it, so the channel default applies.
+  JD «Compensation» section lookup) drop it, so the channel default applies. The
+  figures of a dropped range are not re-read as single dollar amounts either, and a
+  glued prefix (`MX$45,000`, `R$45,000`, `COP$…`) counts as a currency. The salary
+  numbers `floor` and `default` of a channel must be > 0 (the validator rejects 0).
+- Form side («no surprise in pesos»): a salary field whose label names a currency
+  (MXN / COP / BRL / ARS / CLP / PEN / UYU, «pesos») or a period («monthly»,
+  «mensual», «per month», «al mes») is not answered with the annual-USD number.
+  The owner's answer bank or standing answer still fills it; otherwise a required
+  field skips the row (`apply_state = skipped`, `apply_note = no_honest_answer:
+  foreign_currency_salary: <label>`, the bot never hands rows to a human, RFC 069)
+  and an optional one stays empty. The owner sees the label among the questions
+  and can answer it once. A bucketed select keeps going to the LLM step.
 
 ## Tests
 - queue: Strong AI < Strong non-AI < Medium AI; non-AI order unchanged; `--limit`;
@@ -102,5 +113,10 @@ next to the owner's files):
   again).
 - `profiles/<id>/apply_defaults.json`: remove `salary.by_channel` (the channel
   companies use the general floor and default again).
-The engine reads nothing else; with both blocks gone every step behaves as before
-BL-243.
+The engine reads nothing else; with both blocks gone the order, the geo rule and the
+salary bar behave as before BL-243. Not covered by the switch, and for every company
+and profile: a published range quoted in another currency (MXN / BRL / COP / ARS /
+CLP / PEN / UYU) or per month is no longer read as annual USD (`salary_context.js`,
+both parsers), and a salary field of the form named in another currency or per
+period is never answered with our annual-USD number (the row is skipped as
+`no_honest_answer`). To undo those, revert the BL-243 code, not the profile files.

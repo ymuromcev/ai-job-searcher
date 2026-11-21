@@ -776,7 +776,10 @@ test("check: waiting on a submitter with no heartbeat in 30 min → warning, sho
 
 // --- BL-243 (RFC 072): night.js builds the same queue as apply.js ------------------
 
-test("start (BL-243): the apply-ready backlog goes through the same buildQueue — channel index loaded, AI block read", async () => {
+// The night only counts the backlog (it never lists it), so this test checks the
+// count and the index request; the AI order itself is tested on the queue
+// (queue_ai.test.js) and in `apply --phase pre` (apply.test.js).
+test("start (BL-243): the apply-ready backlog is counted through the same buildQueue — channel index requested, company cap applied", async () => {
   const seen = [];
   const t = setup({
     apps: [
@@ -803,7 +806,7 @@ test("start (BL-243): the apply-ready backlog goes through the same buildQueue �
   const r = await t.run({ phase: "start", target: 10, stopAt: "", maxHours: 2 });
   assert.equal(r.code, 0);
   assert.deepEqual(seen, ["demo"], "the channel index is requested for the profile");
-  // cap 1 per company: Plata keeps one row (the AI one first), Other keeps one
+  // cap 1 per company: Plata keeps one of its two rows, Other keeps one
   assert.equal(r.json.apply_ready, 2);
 });
 

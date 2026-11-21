@@ -215,3 +215,21 @@ test("allow: no block / other channel / empty list → null (no exception)", () 
     null
   );
 });
+
+// --- BL-243 round 2, point 7: Unlimit's «Sao Paolo» typo and «Lima» --------------
+
+test("allow (example profile): «Sao Paolo» (typo) and «Lima» pass; «Limassol» does not", () => {
+  const example = JSON.parse(
+    fs.readFileSync(
+      path.join(__dirname, "..", "..", "profiles", "_example", "filter_rules.example.json"),
+      "utf8"
+    )
+  );
+  const allow = buildChannelAllow(example, "ru_latam");
+  for (const loc of ["Sao Paolo", "Sao Paolo, Brazil", "São Paulo", "Lima", "Lima, Peru"]) {
+    assert.equal(allow.test(loc), true, loc);
+  }
+  for (const loc of ["Limassol, Cyprus", "Cyprus"]) {
+    assert.equal(allow.test(loc), false, loc);
+  }
+});

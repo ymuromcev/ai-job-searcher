@@ -101,6 +101,10 @@ function isNonNegativeNumber(v) {
   return typeof v === "number" && Number.isFinite(v) && v >= 0;
 }
 
+function isPositiveNumber(v) {
+  return typeof v === "number" && Number.isFinite(v) && v > 0;
+}
+
 /**
  * Validate an apply_defaults object against the RFC 068 contract.
  *
@@ -175,7 +179,7 @@ function validateApplyDefaults(raw) {
       err(`${base}.salary.currency`, `must be a 3-letter ISO code (e.g. "USD")`);
     }
     // BL-243 (RFC 072): optional per-channel override `{ <channel>: { floor, default } }`.
-    // Each present key is a number >= 0; default >= floor when both are given.
+    // Each present key is a number > 0; default >= floor when both are given.
     if (sal.by_channel !== undefined) {
       if (!isPlainObject(sal.by_channel)) {
         err(`${base}.salary.by_channel`, "must be an object keyed by channel");
@@ -186,10 +190,13 @@ function validateApplyDefaults(raw) {
             err(at, "must be an object { floor, default }");
             continue;
           }
-          const fOk = o.floor === undefined || isNonNegativeNumber(o.floor);
-          const dOk = o.default === undefined || isNonNegativeNumber(o.default);
-          if (!fOk) err(`${at}.floor`, "must be a number >= 0");
-          if (!dOk) err(`${at}.default`, "must be a number >= 0");
+          // > 0 (not >= 0): the apply bot treats a non-positive channel value as
+          // "not set" and falls back to the general one, so a 0 here would make
+          // prepare and the bot disagree on the floor.
+          const fOk = o.floor === undefined || isPositiveNumber(o.floor);
+          const dOk = o.default === undefined || isPositiveNumber(o.default);
+          if (!fOk) err(`${at}.floor`, "must be a number > 0");
+          if (!dOk) err(`${at}.default`, "must be a number > 0");
           if (
             fOk &&
             dOk &&
@@ -343,7 +350,7 @@ function getSalaryFloor(applyDefaults, channel) {
     isPlainObject(sal.by_channel) &&
     Object.prototype.hasOwnProperty.call(sal.by_channel, channel) &&
     isPlainObject(sal.by_channel[channel]) &&
-    isNonNegativeNumber(sal.by_channel[channel].floor)
+    isPositiveNumber(sal.by_channel[channel].floor)
   ) {
     return sal.by_channel[channel].floor;
   }

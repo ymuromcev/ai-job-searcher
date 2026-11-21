@@ -45,8 +45,8 @@
     "ru_latam": {
       "allow_patterns": [
         "Mexico", "México", "Ciudad de México", "CDMX", "Colombia", "Bogotá", "Medellín",
-        "LATAM", "Latin America", "Brazil", "Brasil", "São Paulo", "Argentina", "Buenos Aires",
-        "Chile", "Peru", "Uruguay", "Montevideo"
+        "LATAM", "Latin America", "Brazil", "Brasil", "São Paulo", "Sao Paolo", "Argentina",
+        "Buenos Aires", "Chile", "Peru", "Lima", "Uruguay", "Montevideo"
       ]
     }
   },

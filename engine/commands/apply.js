@@ -286,6 +286,19 @@ function resolveFields(fields, { job, identity, applyDefaults, salary, bank, fil
     // Choice policy: this optional question stays empty (EEO without a
     // decline option, …) — neither answered nor sent to the drafter.
     if (m && m.leave_blank && !field.required) continue;
+    // BL-243: a salary asked in another currency / per period — never our
+    // annual-USD number. The bank (the owner's own answer) may still answer;
+    // otherwise a required one is no_honest_answer, an optional one stays empty.
+    if (m && m.honest_gap) {
+      const bg = searchBank(bank, job, field);
+      if (bg) answers.push({ field_id: field.id, label: field.label, ...bg });
+      else if (field.required) {
+        blockers.push(
+          `${ownerQuestions.FOREIGN_SALARY_CODE}: ${ownerQuestions.cleanLabel(field.label)}`
+        );
+      }
+      continue;
+    }
     if (m && m.value !== "" && m.value != null) {
       answers.push({ field_id: field.id, label: field.label, value: m.value, source: m.source });
       continue;

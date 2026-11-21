@@ -2333,3 +2333,87 @@ test("pre (BL-243): ru_latam salary — default 80000, 85–90k kept, 60–75k a
   assert.equal(ctx.skipped.find((s) => s.key === "low").reason, "salary_below_floor");
   assert.equal(ctx.skipped.find((s) => s.key === "acme").reason, "salary_below_floor");
 });
+
+// --- BL-243 round 2, point 6: «no surprise in pesos» ------------------------------
+
+const PESO_FIELD = (over = {}) => ({
+  id: "q_peso",
+  label: "Expectativa salarial mensual (MXN)",
+  type: "text",
+  required: true,
+  options: [],
+  ...over,
+});
+
+test("pre (BL-243): a required salary field in MXN / per month is never filled with 80000 — no_honest_answer with the label", async () => {
+  const h = latamHarness({
+    apps: [
+      row({ key: "pl", companyName: "Plata", url: LATAM_URL("plata"), locations: ["Mexico City"] }),
+    ],
+  });
+  h.deps.getAdapter = (n) => {
+    const a = fakeAdapter(n, { [LATAM_URL("plata")]: { form: [...FORM, PESO_FIELD()] } }, h.log);
+    a.jobRef = (u) => ({ slug: new URL(u).pathname.split("/")[1], jobId: "1" });
+    return a;
+  };
+  assert.equal(await h.run({ phase: "pre" }), 0);
+  const ctx = ctxOf(h);
+  assert.deepEqual(ctx.jobs, []);
+  const a = h.store.apps[0];
+  assert.equal(a.status, "To Apply");
+  assert.equal(a.apply_state, "skipped");
+  assert.equal(
+    a.apply_note,
+    "no_honest_answer: foreign_currency_salary: Expectativa salarial mensual (MXN)"
+  );
+  assert.ok(!JSON.stringify(ctx).includes('"80000"'), "80000 is nowhere in the context");
+});
+
+test("resolveFields (BL-243): MXN / monthly salary — required blocks, optional stays empty, the owner's answers still win", () => {
+  const ctx = (over = {}) => ({
+    job: { company: "Plata", title: "PM" },
+    identity: {},
+    applyDefaults: {},
+    salary: { value: 80000, low: 80000, high: 80000 },
+    bank: [],
+    files: { resume: { rel: "r.pdf" }, cover_letter: null },
+    ...over,
+  });
+  const req = resolveFields([PESO_FIELD()], ctx());
+  assert.deepEqual(req.answers, []);
+  assert.deepEqual(req.unanswered, [], "not sent to the drafter either");
+  assert.deepEqual(req.blockers, ["foreign_currency_salary: Expectativa salarial mensual (MXN)"]);
+  const { skipReasonFor, skipNote } = require("../modules/apply/skip_reasons.js");
+  assert.equal(
+    skipNote(skipReasonFor(req.blockers[0]), req.blockers[0]),
+    "no_honest_answer: foreign_currency_salary: Expectativa salarial mensual (MXN)"
+  );
+
+  const opt = resolveFields([PESO_FIELD({ required: false })], ctx());
+  assert.deepEqual([opt.answers, opt.unanswered, opt.blockers], [[], [], []]);
+
+  const standing = resolveFields(
+    [PESO_FIELD()],
+    ctx({
+      applyDefaults: {
+        standing_answers: [{ question: "Expectativa salarial mensual (MXN)", answer: "70000 MXN" }],
+      },
+    })
+  );
+  assert.deepEqual(standing.blockers, []);
+  assert.equal(standing.answers[0].value, "70000 MXN");
+  assert.equal(standing.answers[0].source, "standing");
+
+  const usd = resolveFields([PESO_FIELD({ label: "Desired salary (USD)" })], ctx());
+  assert.equal(usd.answers[0].value, "80000");
+});
+
+test("owner questions (BL-243): the foreign-salary note parses to the clean label, like any blocker", () => {
+  const oq = require("../core/owner_questions.js");
+  assert.deepEqual(
+    oq.parseBlockers(
+      "no_honest_answer: foreign_currency_salary: Expectativa salarial mensual (MXN)"
+    ),
+    { blockers: ["Expectativa salarial mensual (MXN)"], ownerSkip: false }
+  );
+});
