@@ -80,6 +80,18 @@ For each story, capture:
 - **Action**: What YOU did (3-5 sentences, specific)
 - **Result**: Outcome with metrics if possible (2-3 sentences)
 
+**The card comes first, the say-aloud text second (BL-249).** In `coaching_state.md` the STAR facts are written as a four-line card above the say-aloud table, and the spoken lines are cut from the card, not from project documentation:
+
+```markdown
+**Карточка STAR**
+- **Ситуация:** <что было и почему это была проблема>
+- **Задача:** <что именно надо было сделать, чья ответственность>
+- **Действие:** <что сделал кандидат, по шагам>
+- **Результат:** <цифра или наблюдаемое изменение>
+```
+
+A description of *how a system is built* is not a story. If the Result is empty, a ⚠️ gap or "нет", ask the candidate; if there is truly no result, write `**Тип:** подход, не STAR — <почему>` instead of the card. Such a story is only ever an "if asked" answer about approach, never in a konspekt's «Истории» block. `scripts/storybank_audit.js` and the write hook `scripts/hooks/storybank_card_guard.js` reject a story from S040 with neither the card nor the mark.
+
 ### Step 3: Index and Tag
 
 Create the table entry for each story. Be honest about strength scores:

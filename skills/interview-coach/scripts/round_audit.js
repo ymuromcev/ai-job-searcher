@@ -12,6 +12,8 @@
 //
 // Exit 0 = clean, 1 = findings, 2 = usage error.
 
+const storybank = require("./storybank_audit.js");
+
 const FREEZE_HOURS = 4;
 
 // Markers are structural (headings and table column names), never prose, so a
@@ -483,8 +485,111 @@ function detectTriggerMissing(cheatsheetText) {
     );
 }
 
+// --- konspekt detectors (BL-249, BL-250) -------------------------------------
+
+const STORIES_HEADING = "## 🗣️ Истории";
+const ROLES_HEADING_RE = /^#{2,4}\s.*Последние роли.*$/m;
+const ROLES_TRANSCLUSION_RE = /!\[\[coaching_state#\^say-roles\]\]/;
+
+/** A konspekt (as opposed to a round-state file) has the spoken sections. */
+function isKonspekt(text) {
+  return String(text || "").includes(STORIES_HEADING) || /^## 🗣️ Вводные вопросы/m.test(text);
+}
+
+/** Text of the «Истории» block: up to the next H2. */
+function storiesSection(text) {
+  return extractSection(text, STORIES_HEADING);
+}
+
+/** Text from a roles heading to the next heading of the same or higher level. */
+function rolesSection(text) {
+  const m = ROLES_HEADING_RE.exec(String(text || ""));
+  if (!m) return null;
+  const level = /^(#+)/.exec(m[0])[1].length;
+  const rest = String(text)
+    .slice(m.index + m[0].length)
+    .split("\n");
+  const out = [];
+  for (const line of rest) {
+    const h = /^(#+)\s/.exec(line);
+    if (h && h[1].length <= level) break;
+    if (/^---\s*$/.test(line)) break;
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
+/** 14. A story marked «подход, не STAR» sitting in the «Истории» block. */
+function detectApproachInStories(roundText, storybankText = "") {
+  if (!isKonspekt(roundText) || !storybankText) return [];
+  const approach = new Set(storybank.approachStoryIds(storybankText));
+  if (approach.size === 0) return [];
+  const out = [];
+  const re = /!\[\[coaching_state#\^say-(s\d+)\]\]/i;
+  const section = storiesSection(roundText);
+  for (const line of section.split("\n")) {
+    // A transclusion inside a `>` quote is an "if asked" block: that is where
+    // an approach story belongs.
+    if (line.trim().startsWith(">")) continue;
+    const m = re.exec(line);
+    if (m && approach.has(m[1].toLowerCase())) {
+      out.push(
+        finding(
+          "approach-in-stories",
+          `${m[1].toUpperCase()} помечена «подход, не STAR» (нет результата), но стоит в блоке «Истории». Ей место в «если спросит» как ответ про подход.`
+        )
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * 15. A recruiter screen without the three last roles, or with them
+ * re-assembled instead of transcluded from the storybank block.
+ * manager / panel / exam konspekts do not need the section.
+ */
+function detectRolesBlock(roundText, storybankText = "") {
+  const fm = parseFrontmatter(roundText);
+  if (String(fm.kind || "").trim() !== "screening" || !isKonspekt(roundText)) return [];
+  const section = rolesSection(roundText);
+  if (section === null) {
+    return [
+      finding(
+        "roles-section-missing",
+        "kind: screening — нет раздела «Последние роли». Рекрутёрский скрин всегда проверяет три последних места: кому подчинялся, почему ушёл, оценка 1–10. Вставь блок `![[coaching_state#^say-roles]]`."
+      ),
+    ];
+  }
+  const out = [];
+  if (!ROLES_TRANSCLUSION_RE.test(section)) {
+    out.push(
+      finding(
+        "roles-not-transcluded",
+        "«Последние роли» собраны в конспекте заново. Блок живёт в storybank и вставляется как есть: `![[coaching_state#^say-roles]]`, без пересборки."
+      )
+    );
+    out.push(...storybank.auditRoles(section, "«Последние роли» в конспекте"));
+    return out;
+  }
+  if (storybankText) {
+    const block = storybank.extractRolesBlock(storybankText);
+    if (!block) {
+      out.push(
+        finding(
+          "roles-block-missing",
+          "в storybank нет блока `^say-roles`: трансклюзия в конспекте ведёт в пустоту."
+        )
+      );
+    } else {
+      out.push(...storybank.auditRoles(block, "storybank ^say-roles"));
+    }
+  }
+  return out;
+}
+
 /** Run every detector. `cheatsheetText` and `mtimeMs` are optional. */
-function auditRound({ roundText, cheatsheetText = "", mtimeMs = 0 }) {
+function auditRound({ roundText, cheatsheetText = "", mtimeMs = 0, storybankText = "" }) {
   return [
     ...detectMissingSource(roundText),
     ...detectUnstartedWhenReady(roundText),
@@ -499,6 +604,8 @@ function auditRound({ roundText, cheatsheetText = "", mtimeMs = 0 }) {
     ...detectCaseNodeWithoutSource(roundText),
     ...detectApexNamesMachinery(roundText),
     ...detectTriggerMissing(cheatsheetText),
+    ...detectApproachInStories(roundText, storybankText),
+    ...detectRolesBlock(roundText, storybankText),
   ];
 }
 
@@ -539,6 +646,8 @@ module.exports = {
   detectCaseNodeWithoutSource,
   detectApexNamesMachinery,
   detectTriggerMissing,
+  detectApproachInStories,
+  detectRolesBlock,
   auditRound,
   formatReport,
 };
@@ -564,7 +673,7 @@ if (require.main === module) {
   const roundFiles = fs.statSync(target).isDirectory()
     ? fs
         .readdirSync(target)
-        .filter((f) => /_(exam|manager|screening)\.md$/.test(f))
+        .filter((f) => /_(exam|manager|screening)\.md$/.test(f) || /-screen\.md$/.test(f))
         .map((f) => path.join(target, f))
     : [target];
 
@@ -580,10 +689,16 @@ if (require.main === module) {
     const sibling = file.replace(/\.md$/, "_ШПАРГАЛКА.md");
     const sheet = explicit || (fs.existsSync(sibling) ? sibling : null);
     const cheatsheetText = sheet && fs.existsSync(sheet) ? fs.readFileSync(sheet, "utf8") : "";
+    const bankCandidates = [
+      path.join(path.dirname(file), "coaching_state.md"),
+      path.join(path.dirname(file), "..", "coaching_state.md"),
+    ];
+    const bankFile = bankCandidates.find((c) => fs.existsSync(c));
     const findings = auditRound({
       roundText,
       cheatsheetText,
       mtimeMs: fs.statSync(file).mtimeMs,
+      storybankText: bankFile ? fs.readFileSync(bankFile, "utf8") : "",
     });
     total += findings.length;
     process.stdout.write(`${formatReport(findings, path.basename(file))}\n\n`);
