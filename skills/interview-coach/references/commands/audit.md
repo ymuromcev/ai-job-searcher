@@ -46,6 +46,10 @@ Exit code 0 means clean, 1 means findings. The cheat sheet is auto-paired by nam
 | 11  | `case-node-without-source`  | an unroll node states an answer with no `[тема N]`, no `[K<n>]` and no `мой синтез` |
 | 12  | `apex-names-machinery`      | a case apex names the apparatus instead of a decision — a step posing as a case |
 | 13  | `trigger-missing`           | a cheat-sheet entry has a definition but no `Триггер:` situation line          |
+| 14  | `approach-in-stories`       | a konspekt's «Истории» block transcludes a story marked «подход, не STAR» (needs `coaching_state.md` beside the file) |
+| 15  | `roles-section-missing` / `roles-not-transcluded` / `roles-count` / `roles-rows` / `roles-score` | a `kind: screening` konspekt has no «Последние роли», re-assembles it instead of `![[coaching_state#^say-roles]]`, or the block has fewer than 3 roles / 3 rows each / a score |
+
+Storybank itself: `node skills/interview-coach/scripts/storybank_audit.js profiles/<id>/interview-coach-state/coaching_state.md` — every story from S040 needs a STAR card or the «подход, не STAR» mark; the `^say-roles` block needs 3 roles × 3 rows (BL-249, BL-250). The same check runs as a write hook (`scripts/hooks/storybank_card_guard.js`).
 
 `мой синтез` in the source cell satisfies detector 1 on purpose — it is an honest declaration of lower reliability, not a gap.
 
@@ -87,5 +91,5 @@ The block shape these detectors read is defined in `debrief.md` → "Outcome Blo
 ## Limits
 
 - The audit reads files. It cannot tell whether a topic marked `отработан вслух` was genuinely answered out loud — that invariant is the coach's, and its failure mode is documented in `prep-exam.md` § "Core invariant".
-- Rounds of kind `screening` and `manager` have no curriculum table, so detectors 1, 2, 7, 10–13 are naturally silent for them; detectors 3, 4, 8 and 9 still apply.
+- Rounds of kind `screening` and `manager` have no curriculum table, so detectors 1, 2, 7, 10–13 are naturally silent for them; detectors 3, 4, 8 and 9 still apply, and 14–15 apply to their konspekt files.
 - Detector 13 runs at audit time, not at write time. The `Формула:` rule is checkable on a single line in isolation, so the write guard enforces it; a missing `Триггер:` is only visible against the whole entry, and blocking a partial edit that is about to add the next line would be a false positive.

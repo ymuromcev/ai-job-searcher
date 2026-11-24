@@ -382,3 +382,119 @@ test("formatReport states the readiness rule when findings exist", () => {
   assert.match(report, /Готовность объявляет кандидат/);
   assert.match(audit.formatReport([], "round.md"), /чисто/);
 });
+
+// --- konspekt detectors (BL-249, BL-250) -----------------------------------
+
+const BANK_ROLES = `#### ROLES — Последние роли
+**Credit Mentor**
+
+| 🇷🇺 | 🇬🇧 |
+|---|---|
+| Подчинялся основателям. | I reported to the founders. |
+| Ушёл, когда закрыли. | I left when it closed. |
+| Оценка 9 из 10. | A 9 out of 10. |
+
+**Альфа-Банк**
+
+| 🇷🇺 | 🇬🇧 |
+|---|---|
+| Подчинялся Head of Product. | I reported to the Head of Product. |
+| Ушёл: переехал. | I left: I moved. |
+| Оценка 9 из 10. | A 9 out of 10. |
+
+**КРОК**
+
+| 🇷🇺 | 🇬🇧 |
+|---|---|
+| Подчинялся Head of Product. | I reported to the Head of Product. |
+| Ушёл: хотел строить продукт. | I left: wanted to build product. |
+| Оценка 8 из 10. | An 8 out of 10. |
+^say-roles
+`;
+
+const BANK_APPROACH = `#### S045 — Подход
+**Тип:** подход, не STAR — результата нет.
+
+| 🇷🇺 | 🇬🇧 |
+|---|---|
+| а | a |
+^say-s045
+`;
+
+function konspekt({ kind = "screening", stories = "", roles = "" }) {
+  return `---
+kind: ${kind}
+company: X
+---
+
+# X
+
+## 🗣️ Вводные вопросы
+
+### Q0. Что знаешь
+
+## 🗣️ Истории
+
+${stories}
+${roles}
+
+---
+
+## 🗣️ Бюрократия
+`;
+}
+
+test("screening konspekt without «Последние роли» is a finding", () => {
+  const f = audit.detectRolesBlock(konspekt({}), BANK_ROLES);
+  assert.equal(f[0].code, "roles-section-missing");
+});
+
+test("screening konspekt with the transclusion and a full storybank block is clean", () => {
+  const text = konspekt({ roles: "### 6. Последние роли\n\n![[coaching_state#^say-roles]]\n" });
+  assert.deepEqual(audit.detectRolesBlock(text, BANK_ROLES), []);
+});
+
+test("roles re-assembled in the konspekt are flagged: not transcluded and short", () => {
+  const roles = `### 6. Последние роли
+
+**Credit Mentor**
+
+| 🇷🇺 | 🇬🇧 |
+|---|---|
+| Подчинялся основателям. | I reported to the founders. |
+| Оценка 9 из 10. | A 9 out of 10. |
+`;
+  const codes = audit.detectRolesBlock(konspekt({ roles }), BANK_ROLES).map((f) => f.code);
+  assert.ok(codes.includes("roles-not-transcluded"));
+  assert.ok(codes.includes("roles-count"));
+  assert.ok(codes.includes("roles-rows"));
+});
+
+test("transclusion into a storybank without the block is flagged", () => {
+  const text = konspekt({ roles: "### 6. Последние роли\n\n![[coaching_state#^say-roles]]\n" });
+  assert.equal(audit.detectRolesBlock(text, "#### S001 — x\n")[0].code, "roles-block-missing");
+});
+
+test("manager and exam konspekts do not need the roles section", () => {
+  assert.deepEqual(audit.detectRolesBlock(konspekt({ kind: "manager" }), BANK_ROLES), []);
+  assert.deepEqual(audit.detectRolesBlock(konspekt({ kind: "exam" }), BANK_ROLES), []);
+});
+
+test("a round-state file (no spoken sections) is not a konspekt", () => {
+  const state = "---\nkind: screening\n---\n\n# X\n\n## Покрытие\n";
+  assert.deepEqual(audit.detectRolesBlock(state, BANK_ROLES), []);
+});
+
+test("an approach story transcluded into «Истории» is flagged", () => {
+  const text = konspekt({ stories: "### 1. Подход\n\n![[coaching_state#^say-s045]]\n" });
+  const f = audit.detectApproachInStories(text, BANK_APPROACH);
+  assert.equal(f[0].code, "approach-in-stories");
+});
+
+test("an approach story kept in «если спросит» is fine", () => {
+  const text = konspekt({
+    stories: "### 1. Другая\n\n> **Если спросит**\n>\n> ![[coaching_state#^say-s045]]\n",
+  });
+  // quoted transclusion is still inside the Истории section: only unquoted ones count
+  assert.deepEqual(audit.detectApproachInStories(text, BANK_APPROACH).length, 0);
+});

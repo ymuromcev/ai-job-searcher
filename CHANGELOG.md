@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+- **Storybank stories are real STAR, checked (BL-249).** Every story from S040 carries a Ситуация / Задача / Действие / Результат card above its say-aloud table, or the mark «подход, не STAR» (no result → only an "if asked" answer, never in a konspekt's «Истории»). `skills/interview-coach/scripts/storybank_audit.js` audits `coaching_state.md`; `hooks/storybank_card_guard.js` (PreToolUse, wired in `.claude/settings.json`) blocks writing a story without either; `round_audit.js` detector 14 keeps an approach story out of «Истории». Rules: `conventions.md` rule 28, `storybank-guide.md` Step 2.
+- **«Последние роли» is one fixed storybank block (BL-250).** `^say-roles` holds the last three roles × three RU/EN rows (reported to, why left, score N of 10); a `kind: screening` konspekt transcludes it as is. `round_audit.js` detector 15 fails a screening konspekt with no section, a re-assembled one, or fewer than three roles. Rules: `conventions.md` rule 8, `konspekt-skeleton.md`.
+
 ### Fixed
 
 - **"How did you hear about this role?" — his AI job search assistant found it (BL-241, owner rule 2026-11-15).** A profile's `choice_policy.how_did_you_hear` is now honoured on Ashby pickers whose options load only when opened (`adapter.fill(page, values, { howHeard })`, passed from `apply`); before, those used only the engine list. Owner profile: an "AI assistant" option first, then company site / job board / Other; free text "My AI job search assistant found this role for me." The drafter rules (SKILL `apply`, night runbook) and the truth check (new item 10) forbid any answer that reveals the application itself is automated.
