@@ -97,7 +97,9 @@ archives per scan). Profile-specific scoring still happens downstream in
 `core/filter.js`.
 
 Current members: `adzuna`, `remoteok`, `the_muse`, `usajobs`, `calcareers`,
-`indeed` (browser-ingest staging file, but conceptually keyword-driven).
+`indeed` (browser-ingest staging file, but conceptually keyword-driven),
+`walmart` (one company, but ~20k postings behind a semantic search: focused
+keyword queries, first page each — RFC 073).
 
 **Low-coverage adapters (BL-145 audit, 2026-05-27).** Three feed/keyword
 adapters return technically valid data but a thin slice that rarely

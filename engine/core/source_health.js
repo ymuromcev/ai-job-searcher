@@ -32,6 +32,7 @@ const SOURCE_NAMES = {
   taleo: "Taleo",
   workable: "Workable",
   ultipro: "UltiPro",
+  walmart: "Walmart careers",
   adzuna: "Adzuna",
   the_muse: "The Muse",
   remoteok: "RemoteOK",

@@ -542,6 +542,66 @@ function formatUltipro(html, job) {
   return parts.join("\n").trim();
 }
 
+// --- Walmart careers JD fetcher (RFC 073) ------------------------------------
+//
+// careers.walmart.com server-renders each job page. The discovery adapter
+// (`engine/modules/discovery/walmart.js`) builds `job.url` from a regex-gated
+// `R-\d+` id; we still re-check host and path here so a tampered TSV row
+// cannot redirect the GET, and cap the body size before parsing.
+
+const WALMART_HOST = "careers.walmart.com";
+const WALMART_PATH_RE = /^\/us\/en\/jobs\/R-\d{5,9}$/;
+
+function isAllowedWalmartUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return (
+    parsed.protocol === "https:" &&
+    parsed.hostname === WALMART_HOST &&
+    WALMART_PATH_RE.test(parsed.pathname) &&
+    !parsed.search
+  );
+}
+
+function formatWalmart(html, job) {
+  if (typeof html !== "string" || !html) return null;
+  const text = stripHtml(
+    html
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[\s\S]*?<\/style>/gi, "")
+      .replace(/<\/(div|section|span|p|li|h[1-6])>/gi, "\n")
+  )
+    .replace(/&#x27;|&rsquo;|&lsquo;/g, "'")
+    .split("\n")
+    .map((l) => l.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n");
+  const start = text.indexOf("Position Summary");
+  if (start < 0) return null;
+  const locIdx = text.indexOf("Primary Location", start);
+  let end = text.length;
+  if (locIdx > 0) {
+    const nl = text.indexOf("\n", text.indexOf("\n", locIdx) + 1);
+    end = nl > 0 ? nl : text.length;
+  }
+  const body = text.slice(start, end).trim();
+  if (!body) return null;
+  const head = text.slice(0, start);
+  const pay = head.match(/\$[\d,]+(?:\.\d+)?\s*-\s*\$[\d,]+(?:\.\d+)?\/(?:yr|hr)/g);
+  const parts = [`TITLE: ${(job && job.title) || ""}`];
+  const loc = Array.isArray(job && job.locations) ? job.locations.join(" / ") : "";
+  if (loc) parts.push(`LOCATION: ${loc}`);
+  if (pay && pay.length) parts.push(`SALARY: ${Array.from(new Set(pay)).join("; ")}`);
+  if (job && job.jobId) parts.push(`REQ ID: ${job.jobId}`);
+  parts.push("");
+  parts.push(body);
+  return parts.join("\n").trim();
+}
+
 // --- Source registry --------------------------------------------------------
 //
 // SUPPORTED — discovery sources for which jd_cache has a fetcher.
@@ -559,6 +619,7 @@ const SUPPORTED = new Set([
   "workable",
   "ashby",
   "ultipro",
+  "walmart",
 ]);
 
 const JD_UNSUPPORTED = new Map([
@@ -733,6 +794,23 @@ async function fetchJd(job, cacheDir, deps = {}) {
       }
       const capped = html.length > MAX_HTML_BYTES ? html.slice(0, MAX_HTML_BYTES) : html;
       text = formatUltipro(capped, job);
+    } else if (source === "walmart") {
+      // SSRF guard: only https://careers.walmart.com/us/en/jobs/R-<digits>.
+      if (!job.url || typeof job.url !== "string" || !isAllowedWalmartUrl(job.url)) {
+        return { key, status: "not_found" };
+      }
+      const res = await d.fetchFn(job.url, {
+        timeoutMs: 15000,
+        retries: 1,
+        headers: { "User-Agent": HTML_UA },
+      });
+      if (!res.ok) return { key, status: "not_found" };
+      const html = await res.text();
+      if (typeof html !== "string" || html.length === 0) {
+        return { key, status: "not_found" };
+      }
+      const capped = html.length > MAX_HTML_BYTES ? html.slice(0, MAX_HTML_BYTES) : html;
+      text = formatWalmart(capped, job);
     }
   } catch (err) {
     return { key, status: "error", error: err.message };
@@ -773,6 +851,8 @@ module.exports = {
   formatWorkday,
   formatIcims,
   formatTaleo,
+  formatWalmart,
+  isAllowedWalmartUrl,
   formatWorkable,
   formatAshby,
   formatUltipro,

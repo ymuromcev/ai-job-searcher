@@ -225,6 +225,7 @@ One short message in Russian, results only (no questions, no «доделать 
 - **Пропуски:** the `skip_line` from the morning file (`captcha 4 · required_empty 3 · no_honest_answer 2`).
 - **Твои ответы:** the `answers_line` from the morning file (`подано заново по твоим ответам: N · ждут твоего ответа: M`) with `answers.view_url`; leave the line out when it is empty. A fact, not a request — the owner answers when he wants.
 - **Нашли и подготовили:** new jobs from scan and top-up (companies added, slugs rejected); prepared Strong / Medium / Weak; a Strong row with neither a tailored resume nor an escalation is a bug — name it.
+- **Walmart:** run `node scripts/fresh_by_source.js --profile jared --source walmart --hours 24` (read-only). Each printed line is a new Walmart / Sam's Club / VIZIO vacancy from tonight's scan that passed the filters; the bot cannot submit these (Walmart account), so list every line as is (title — city — link) under «Walmart — новые, для Светланы». No lines → leave the item out.
 - **Предупреждения:** `scan_failed`, prepare/commit/apply failures with the stderr line, a missing token (by env-var name), usage stop, `companies add` missing.
 
 If nothing was found and nothing was submitted: `📭 новых вакансий нет, подано 0` plus why.

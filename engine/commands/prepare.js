@@ -315,7 +315,7 @@ const PREPARE_SOURCE_EXCLUDE = new Set(["calcareers"]);
 // NO_SUBMIT_ATS; Workday needs an account), and a company whose form already
 // showed a captcha shows it again. Such rows stay in Inbox untouched — they
 // are only left out of tonight's batch, so no tokens are spent on them.
-const NO_SUBMIT_SOURCES = new Set(["ashby", "workday"]);
+const NO_SUBMIT_SOURCES = new Set(["ashby", "workday", "walmart"]);
 
 function companyKey(name) {
   return String(name || "")
