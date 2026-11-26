@@ -1268,7 +1268,8 @@ test("walmart fetch is host- and path-locked", async () => {
     isAllowedWalmartUrl("https://careers.walmart.com.evil.io/us/en/jobs/R-2603947"),
     false
   );
-  assert.equal(isAllowedWalmartUrl("https://careers.walmart.com/us/en/jobs/R-1?x=1"), false);
+  assert.equal(isAllowedWalmartUrl("https://careers.walmart.com/us/en/jobs/R-2603947?x=1"), false);
+  assert.equal(isAllowedWalmartUrl("https://careers.walmart.com:8443/us/en/jobs/R-2603947"), false);
   let called = false;
   const r = await fetchJd(
     { source: "walmart", slug: "walmart", jobId: "R-2603947", url: "https://evil.io/x" },

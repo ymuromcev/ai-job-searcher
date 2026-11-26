@@ -134,3 +134,10 @@ test("discover reads only the first page per query by default", async () => {
   assert.equal(fetchFn.calls.length, 2);
   assert.equal(jobs.length, 2);
 });
+
+test("mapJob drops non-US rows and tolerates bad dates", () => {
+  assert.equal(mapJob(TARGET, rawJob(1, { city: "CHENNAI", state: "TN", country: "IN" })), null);
+  assert.equal(mapJob(TARGET, rawJob(1, { jobPostingStartDate: 1e20 })).postedAt, null);
+  assert.equal(mapJob(TARGET, rawJob(1, { jobPostingStartDate: 1795046400 })).postedAt, null);
+  assert.notEqual(mapJob(TARGET, rawJob(1, { country: "" })), null);
+});

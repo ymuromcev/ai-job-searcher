@@ -66,8 +66,10 @@ function formatLocation(city, state) {
 
 function toIsoDate(ms) {
   const n = Number(ms);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return new Date(n).toISOString().slice(0, 10);
+  // Epoch milliseconds only: seconds (< 1e11) or absurd values give null.
+  if (!Number.isFinite(n) || n < 1e11 || n > 1e14) return null;
+  const d = new Date(n);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
 function queriesFor(target) {
@@ -129,6 +131,10 @@ function mapJob(target, raw) {
   if (!raw || typeof raw !== "object") return null;
   const jobId = sanitizeText(raw.job_id);
   if (!JOB_ID_RE.test(jobId)) return null;
+  // Walmart Global Tech also posts abroad (e.g. Chennai, TN = Tamil Nadu); a
+  // non-US row would read as a US state downstream, so drop it here.
+  const country = sanitizeText(raw.country).toUpperCase();
+  if (country && country !== "US" && country !== "USA") return null;
   const title = sanitizeText(raw.jobPostingTitle || raw.title);
   if (!title) return null;
   const extra = Array.isArray(raw.additionalLocationCities)
@@ -182,7 +188,12 @@ async function discover(targets, ctx = {}) {
         const raws = artifact && Array.isArray(artifact.jobs) ? artifact.jobs : [];
         if (!raws.length) break;
         for (const r of raws) {
-          const job = mapJob(target, r);
+          let job = null;
+          try {
+            job = mapJob(target, r);
+          } catch (err) {
+            c.logger.warn(`[${SOURCE}] ${target.slug}: skipped row: ${err.message}`);
+          }
           if (job && !seen.has(job.jobId)) seen.set(job.jobId, job);
         }
         const total = Number(artifact.totalResults || artifact.total_jobs);

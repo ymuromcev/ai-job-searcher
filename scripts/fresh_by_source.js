@@ -57,8 +57,11 @@ function main() {
   const args = parseArgs(process.argv.slice(2));
   const { loadProfile } = require("../engine/core/profile_loader.js");
   const applicationsTsv = require("../engine/core/applications_tsv.js");
-  // Same as the CLI: profiles/ is resolved from the working directory (repo root).
-  const profile = loadProfile(args.profile);
+  const { resolveProfilesDir } = require("../engine/core/paths.js");
+  // Same resolution as the CLI (honours AI_JOB_SEARCHER_DATA_DIR).
+  const profile = loadProfile(args.profile, {
+    profilesDir: resolveProfilesDir({}, process.env),
+  });
   const { apps } = applicationsTsv.load(profile.paths.applicationsTsv);
   for (const app of pickFresh(apps, args)) console.log(formatLine(app));
 }

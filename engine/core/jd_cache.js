@@ -562,6 +562,7 @@ function isAllowedWalmartUrl(url) {
   return (
     parsed.protocol === "https:" &&
     parsed.hostname === WALMART_HOST &&
+    !parsed.port &&
     WALMART_PATH_RE.test(parsed.pathname) &&
     !parsed.search
   );

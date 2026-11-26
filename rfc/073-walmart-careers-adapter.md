@@ -16,7 +16,7 @@ or VIZIO postings. Today Walmart roles reach the pipeline only by chance via Adz
 ## Chosen
 B, behind a per-profile opt-in (`discovery:walmart` + one `companies.tsv` row with
 `searchTexts`). Keyword adapter, like `workday` multi-query mode. JD body via the server-rendered
-job page in `core/jd_cache.js` (host-locked to careers.walmart.com, id `R-\d+`). Added to
+job page in `core/jd_cache.js` (host-locked to careers.walmart.com, id `R-` + 5–9 digits). Added to
 `NO_SUBMIT_SOURCES` (apply needs a Walmart account). Robots.txt risk is surfaced to the owner.
 
 ## Identity & PII
