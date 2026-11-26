@@ -61,7 +61,7 @@ on-disk shape. Every downstream module sees flat:
 ```jsonc
 {
   "company_blocklist": [ "Acme", "Globex", ... ],
-  "title_blocklist":   [ { "pattern": "VP", "reason": "..." }, ... ],
+  "title_blocklist":   [ { "pattern": "VP", "reason": "...", "except_companies": ["Acme"] /* optional */ }, ... ],
   "title_requirelist": [ { "pattern": "...", "reason": "..." }, ... ],
   "location_blocklist":[ "India", "London", "EMEA", ... ],
   "company_cap":       { "max_active": 3, "active_statuses": [...], "overrides": { ... } },
@@ -361,7 +361,7 @@ re-enters `--phase pre`.
 
 1. `company_blocklist` (CC-3 lowercase equality)
 2. `title_requirelist` (positive gate; slash-split, word-boundary)
-3. `title_blocklist` (slash-split, word-boundary)
+3. `title_blocklist` (slash-split, word-boundary; an entry with `except_companies` is not applied to jobs from those companies, case-insensitive exact name)
 4. `company_cap` (active count `>= max_active` blocks; per-company `overrides`)
 5. URL liveness (HEAD + GET fallback, SSRF guard)
 

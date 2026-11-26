@@ -113,13 +113,25 @@ function normalizeCompanyBlocklist(rules) {
 // Returns the original `{pattern, reason}` entries (preserves `reason`
 // for diagnostics) plus a parallel array of bare lowercase pattern
 // strings for `findTitleBlocklistHit`.
-function normalizeTitleBlocklist(rules) {
+// BL-252: an entry may carry `except_companies: ["Walmart", ...]` — the
+// pattern is not applied to jobs from those companies (case-insensitive,
+// exact name). Lets a profile keep a junior title for one company only.
+function normalizeTitleBlocklist(rules, company) {
   const raw = Array.isArray(rules && rules.title_blocklist) ? rules.title_blocklist : [];
+  const companyLower = String(company || "").toLowerCase();
   const entries = [];
   const patterns = [];
   for (const item of raw) {
     const pattern = item && typeof item === "object" ? item.pattern : item;
     if (typeof pattern !== "string" || !pattern) continue;
+    const except = item && typeof item === "object" ? item.except_companies : null;
+    if (
+      companyLower &&
+      Array.isArray(except) &&
+      except.some((c) => String(c || "").toLowerCase() === companyLower)
+    ) {
+      continue;
+    }
     const reason = item && typeof item === "object" ? item.reason : undefined;
     entries.push({ pattern, reason });
     patterns.push(pattern);
@@ -247,7 +259,10 @@ function evaluateJob({ job, profile, appState, context }) {
   }
 
   // ---- 3. title_blocklist (word-boundary canonical, always) ----
-  const { entries: titleEntries, patterns: titlePatterns } = normalizeTitleBlocklist(rules);
+  const { entries: titleEntries, patterns: titlePatterns } = normalizeTitleBlocklist(
+    rules,
+    norm.company
+  );
   if (titlePatterns.length > 0 && norm.title) {
     const hit = findTitleBlocklistHit(norm.title, titlePatterns);
     if (hit) {
