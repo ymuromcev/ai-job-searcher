@@ -635,3 +635,23 @@ test("throws on invalid context", () => {
     /context must be/
   );
 });
+
+// ── BL-252: title_blocklist except_companies ─────────────────────────
+
+test("title_blocklist except_companies: pattern skipped only for the listed company", () => {
+  const rules = {
+    title_blocklist: [
+      { pattern: "Associate Product Manager", reason: "Too junior", except_companies: ["Walmart"] },
+    ],
+  };
+  const run = (company) =>
+    evaluateJob({
+      job: jobOf({ title: "Associate Product Manager", company }),
+      profile: profileWith(rules),
+      appState: { companyCounts: {} },
+      context: "scan",
+    });
+  assert.equal(run("walmart").decision, "keep");
+  assert.equal(run("Acme").decision, "skip");
+  assert.equal(run("Acme").skipReason, "title_blocklist");
+});
