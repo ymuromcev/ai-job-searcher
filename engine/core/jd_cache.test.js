@@ -1232,3 +1232,56 @@ test("SUPPORTED and JD_UNSUPPORTED are disjoint", () => {
     );
   }
 });
+
+// --- Walmart careers (RFC 073) ----------------------------------------------
+
+test("formatWalmart: extracts summary through primary location, adds salary", () => {
+  const { formatWalmart } = require("./jd_cache.js");
+  const html = `<html><head><script>var x = "Position Summary fake";</script></head><body>
+    <h1>(USA) Senior Product Manager</h1><div>$117,000 - $234,000/yr</div>
+    <div>Position Summary...</div><p>Build &amp; ship things.</p>
+    <div>Minimum Qualifications...</div><p>7 years of PM.</p>
+    <div>Primary Location...</div><div>809 11th Ave, Sunnyvale, CA</div><div>Benefits</div></body></html>`;
+  const t = formatWalmart(html, {
+    title: "(USA) Senior Product Manager",
+    locations: ["Sunnyvale, CA"],
+    jobId: "R-2603947",
+  });
+  assert.match(t, /^TITLE: \(USA\) Senior Product Manager/);
+  assert.match(t, /SALARY: \$117,000 - \$234,000\/yr/);
+  assert.match(t, /REQ ID: R-2603947/);
+  assert.match(t, /Build & ship things\./);
+  assert.match(t, /809 11th Ave, Sunnyvale, CA/);
+  assert.doesNotMatch(t, /fake|Benefits/);
+});
+
+test("formatWalmart: returns null when the page has no job body", () => {
+  const { formatWalmart } = require("./jd_cache.js");
+  assert.equal(formatWalmart("<html><body>Not found</body></html>", {}), null);
+});
+
+test("walmart fetch is host- and path-locked", async () => {
+  const { fetchJd, isAllowedWalmartUrl } = require("./jd_cache.js");
+  assert.equal(isAllowedWalmartUrl("https://careers.walmart.com/us/en/jobs/R-2603947"), true);
+  assert.equal(isAllowedWalmartUrl("http://careers.walmart.com/us/en/jobs/R-2603947"), false);
+  assert.equal(
+    isAllowedWalmartUrl("https://careers.walmart.com.evil.io/us/en/jobs/R-2603947"),
+    false
+  );
+  assert.equal(isAllowedWalmartUrl("https://careers.walmart.com/us/en/jobs/R-2603947?x=1"), false);
+  assert.equal(isAllowedWalmartUrl("https://careers.walmart.com:8443/us/en/jobs/R-2603947"), false);
+  let called = false;
+  const r = await fetchJd(
+    { source: "walmart", slug: "walmart", jobId: "R-2603947", url: "https://evil.io/x" },
+    "/nonexistent-cache-dir",
+    {
+      exists: async () => false,
+      fetchFn: async () => {
+        called = true;
+        return { ok: true, text: async () => "" };
+      },
+    }
+  );
+  assert.equal(r.status, "not_found");
+  assert.equal(called, false);
+});

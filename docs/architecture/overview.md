@@ -233,6 +233,7 @@ run via the `modules: ["discovery:<name>", ...]` array.
 | `usajobs.js` | USAJOBS Search API. Requires API key + email in `.env`. |
 | `calcareers.js` | California state careers feed. |
 | `remoteok.js` | RemoteOK JSON feed; feed-mode injection in `scan.js`. |
+| `walmart.js` | careers.walmart.com search (persisted GraphQL query the site's own search page sends); Walmart, Sam's Club, VIZIO. Keyword adapter: `searchTexts` from the `companies.tsv` row, first page (10) per query. JD via the server-rendered job page, host- and path-locked in `jd_cache.js`. Held out of the night's submittable batch (apply needs a Walmart account); `scripts/fresh_by_source.js` names new rows in the morning message. RFC 073. |
 | `the_muse.js` | The Muse listings API. |
 | `adzuna.js` | Adzuna aggregator. |
 | `indeed.js` | Indeed scraper (rate-limited; ToS risk flagged in BACKLOG). |

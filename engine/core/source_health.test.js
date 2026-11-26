@@ -123,6 +123,7 @@ test("source: human names for every adapter key; unknown key shown raw", () => {
     calcareers: "CalCareers",
     indeed: "Indeed",
     jobsyn: "Jobsyn",
+    walmart: "Walmart careers",
   };
   assert.deepEqual(SOURCE_NAMES, expected);
   assert.equal(sourceName("brand_new"), "brand_new");

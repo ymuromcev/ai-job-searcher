@@ -47,7 +47,8 @@ engine/              shared code — no PII, no personal preferences
     discovery/       ATS / board adapters (Greenhouse, Lever, Ashby,
                      SmartRecruiters, Workday, Oracle Recruiting Cloud,
                      NLX Jobsyn, iCIMS, CalCareers, USAJOBS, RemoteOK,
-                     Indeed, Adzuna, The Muse). Auto-registered.
+                     Indeed, Adzuna, The Muse, Walmart careers).
+                     Auto-registered.
     generators/      Resume DOCX / PDF, cover letter PDF.
     tracking/        Gmail delegation (via Claude MCP, not OAuth-on-disk).
   core/              filter / dedup / validator / notion_sync /
@@ -297,7 +298,7 @@ It installs `~/Library/LaunchAgents/com.<user>.ai-job-searcher.submit-<id>.plist
 
 ## Discovery adapters
 
-Fifteen adapters ship out of the box; enable them per profile in
+Sixteen adapters ship out of the box; enable them per profile in
 `profile.json.modules`:
 
 | Module | Source |
@@ -317,6 +318,7 @@ Fifteen adapters ship out of the box; enable them per profile in
 | `discovery:indeed` | Indeed (manual login prep via `indeed-prep`) |
 | `discovery:adzuna` | Adzuna keyword-search aggregator (needs free app id + key) |
 | `discovery:the_muse` | The Muse public listings API |
+| `discovery:walmart` | careers.walmart.com (Walmart, Sam's Club, VIZIO) — keyword search, first page per query; its Workday tenant is closed (RFC 073) |
 
 New adapters live under `engine/modules/discovery/` and auto-register
 via `index.js`.

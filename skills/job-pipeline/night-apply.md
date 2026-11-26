@@ -129,7 +129,7 @@ Follow [`SKILL.md`](SKILL.md) → `prepare` → *Run parameters* (night column) 
    ```
    cd "$REPO" && node engine/cli.js prepare --profile jared --phase pre --mode fresh --batch <prepare_batch> --no-sync --submittable-only
    ```
-   (Drop `--no-sync` only for the first pre of a night whose scan failed. `--submittable-only` keeps out of the batch the rows the bot cannot submit — Ashby / Workday, companies whose form showed a captcha; they stay in Inbox and cost no tokens.) Exit ≠ 0 → retry once; second failure → no more prepare rounds tonight: from now on, when check says `prepare` or `topup`, do a Round A instead if `apply_fresh` > 0, otherwise finish with `prepare_failed`. Read only the stats: `node -e 'const c=require("./profiles/jared/prepare_context.json");console.log(JSON.stringify({inBatch:c.batch.length,...c.stats}))'`. `inBatch` 0 → back to the loop (check will see the empty round).
+   (Drop `--no-sync` only for the first pre of a night whose scan failed. `--submittable-only` keeps out of the batch the rows the bot cannot submit — Ashby / Workday / Walmart, companies whose form showed a captcha; they stay in Inbox and cost no tokens.) Exit ≠ 0 → retry once; second failure → no more prepare rounds tonight: from now on, when check says `prepare` or `topup`, do a Round A instead if `apply_fresh` > 0, otherwise finish with `prepare_failed`. Read only the stats: `node -e 'const c=require("./profiles/jared/prepare_context.json");console.log(JSON.stringify({inBatch:c.batch.length,...c.stats}))'`. `inBatch` 0 → back to the loop (check will see the empty round).
 2. Fan out:
    ```
    cd "$REPO" && node engine/cli.js night --profile jared --phase prepare-fanout
@@ -225,6 +225,7 @@ One short message in Russian, results only (no questions, no «доделать 
 - **Пропуски:** the `skip_line` from the morning file (`captcha 4 · required_empty 3 · no_honest_answer 2`).
 - **Твои ответы:** the `answers_line` from the morning file (`подано заново по твоим ответам: N · ждут твоего ответа: M`) with `answers.view_url`; leave the line out when it is empty. A fact, not a request — the owner answers when he wants.
 - **Нашли и подготовили:** new jobs from scan and top-up (companies added, slugs rejected); prepared Strong / Medium / Weak; a Strong row with neither a tailored resume nor an escalation is a bug — name it.
+- **Walmart:** run `node scripts/fresh_by_source.js --profile jared --source walmart --hours 24` (read-only). Each printed line is a new Walmart / Sam's Club / VIZIO vacancy from tonight's scan that passed the filters; the bot cannot submit these (Walmart account), so list every line as is (title — city — link) under «Walmart — новые». No lines → leave the item out.
 - **Предупреждения:** `scan_failed`, prepare/commit/apply failures with the stderr line, a missing token (by env-var name), usage stop, `companies add` missing.
 
 If nothing was found and nothing was submitted: `📭 новых вакансий нет, подано 0` plus why.
